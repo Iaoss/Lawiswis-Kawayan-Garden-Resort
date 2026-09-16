@@ -6,6 +6,7 @@ import {
 } from 'firebase/firestore';
 import ReceptionistLayout from '../components/ReceptionistLayout';
 import { useSettings } from '../components/SettingsContext';
+import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -39,6 +40,15 @@ export default function ReceptionistDashboard() {
   const ACCENT    = settings?.accentColor || '#d4f550';
   const ACCENT_TEXT = dark ? '#0a1a0a' : '#111';
   const DARK_CHIP = dark ? '#0a1a0a' : '#1a2420';
+
+  // Keep receptionist stat cards aligned with the admin dashboard palette.
+  const STAT_BLOB_COLORS = [
+  ['#dff8ee', '#b6ecd5', '#8cdec0'], // New Bookings — mint
+  ['#e8f2ff', '#bfdcff', '#9fc8f8'], // Check-In — blue
+  ['#fff5e9', '#ffe4ca', '#ffd2b0'], // Check-Out — peach
+  ['#f3f8e3', '#dff0b6', '#c9e38e'],
+  ];
+  const STAT_CARD_BACKGROUNDS = ['#effbf5', '#eef6ff', '#fff8f0', '#f6fbe9'];
 
   const [stats, setStats] = useState({ todayArrivals: 0, todayDepartures: 0, checkedIn: 0, pendingPayments: 0, availableRooms: 0, totalRooms: 0 });
   const [arrivals, setArrivals] = useState([]);
@@ -235,14 +245,33 @@ export default function ReceptionistDashboard() {
         </div>
 
         {/* Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '14px', marginBottom: '24px' }}>
-          {cards.map(c => (
-            <div key={c.label} style={S.card}>
-              <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: c.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px' }}>
-                <i className={`ti ${c.icon}`} style={{ fontSize: '18px', color: c.color }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '14px', marginBottom: '24px' }}>
+          {cards.map((c, index) => (
+            <div
+              key={c.label}
+              style={{
+                position: 'relative', overflow: 'hidden', minHeight: '164px',
+                borderRadius: '16px', padding: '20px',
+                // Match the admin dashboard screenshot: fixed light pastel cards.
+                background: STAT_CARD_BACKGROUNDS[index % 4],
+                border: '1px solid #e6ebe7',
+                boxShadow: '0 2px 8px rgba(30, 50, 40, 0.03)',
+              }}
+            >
+              <AnimatedGradient
+                colors={STAT_BLOB_COLORS[index % 4]}
+                blur="medium"
+                className="absolute inset-0"
+              />
+              <div style={{ position: 'relative', zIndex: 1 }}>
+                <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '6px' }}>{c.label}</div>
+                <div style={{ fontSize: '28px', fontWeight: '700', color: TEXT, lineHeight: 1 }}>{c.value}</div>
+                <div style={{ marginTop: '14px' }}>
+                  <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <i className={`ti ${c.icon}`} style={{ fontSize: '20px', color: TEXT }} />
+                  </div>
+                </div>
               </div>
-              <div style={{ fontSize: '24px', fontWeight: '700', color: TEXT, lineHeight: 1 }}>{c.value}</div>
-              <div style={{ fontSize: '11px', color: MUTED, marginTop: '4px' }}>{c.label}</div>
             </div>
           ))}
         </div>

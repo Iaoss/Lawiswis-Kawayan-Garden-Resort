@@ -1,14 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
-import { collection, getDocs, updateDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc, addDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { createPayMongoCheckout } from '../../lib/paymongo';
 
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
-  const ACCENT      = settings?.accentColor || '#c8f06e';
+  const ACCENT      = settings?.accentColor || '#9cb56f';
   const ACCENT_TEXT = '#0a1a0a';
   const BG      = dark ? '#020b09' : '#f4f6f4';
   const CARD    = dark ? '#1c1c1c' : '#ffffff';
@@ -23,12 +24,18 @@ export default function Billing() {
   const SUCCESS_TEXT = dark ? '#86efac' : '#15803d';
   const SELECTED_BG  = dark ? '#1e3a5f' : '#eff6ff';
   const HOVER_BG      = dark ? '#242422' : '#eff6ff';
+  const PAYMONGO_BLUE = '#0b8de5';
 
   const [reservations, setReservations] = useState([]);
   const [selected, setSelected] = useState(null);
   const [extraCharge, setExtraCharge] = useState({ description: '', amount: '' });
   const [paymentAmount, setPaymentAmount] = useState('');
   const [success, setSuccess] = useState('');
+
+  // ── PayMongo payment link ──────────────────────────────────
+  const [payLink, setPayLink] = useState('');
+  const [payLinkLoading, setPayLinkLoading] = useState(false);
+  const [payLinkError, setPayLinkError] = useState('');
 
   const fetchReservations = async () => {
     const snap = await getDocs(collection(db, 'reservations'));
@@ -38,8 +45,29 @@ export default function Billing() {
 
   useEffect(() => { fetchReservations(); }, []);
 
+  // Live-updates the open reservation so a PayMongo payment (confirmed by
+  // the webhook, which writes straight to Firestore) shows up here the
+  // moment it lands, without staff needing to click back into the list.
+  useEffect(() => {
+    if (!selected?.id) return;
+    const unsub = onSnapshot(doc(db, 'reservations', selected.id), (snap) => {
+      if (!snap.exists()) return;
+      const data = { id: snap.id, ...snap.data() };
+      setSelected(data);
+      setReservations(prev => prev.map(r => (r.id === data.id ? data : r)));
+    });
+    return unsub;
+  }, [selected?.id]);
+
   const totalPaid = (r) => Number(r.amountPaid || 0);
   const totalBalance = (r) => Number(r.totalAmount || 0) + Number(r.extraCharges || 0) - totalPaid(r);
+
+  const selectReservation = (r) => {
+    setSelected(r);
+    setSuccess('');
+    setPayLink('');
+    setPayLinkError('');
+  };
 
   const handleAddExtra = async () => {
     if (!extraCharge.description || !extraCharge.amount) return;
@@ -72,6 +100,41 @@ export default function Billing() {
     fetchReservations();
     setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded!`);
     setSelected(prev => ({ ...prev, amountPaid: newPaid, paymentStatus }));
+  };
+
+  // Generates a PayMongo Checkout Session for the amount above and shows
+  // the link — the guest pays on their own device (GCash, Maya, GrabPay
+  // or card). We don't navigate staff's own browser there: the webhook
+  // marks the reservation paid server-side once the guest completes it,
+  // and the live listener above reflects that automatically.
+  const handleGeneratePayMongoLink = async () => {
+    if (!paymentAmount || Number(paymentAmount) <= 0) return;
+    setPayLinkLoading(true);
+    setPayLinkError('');
+    setPayLink('');
+    try {
+      const { checkoutUrl } = await createPayMongoCheckout({
+        reservationId: selected.id,
+        guestName: selected.guestName,
+        guestEmail: selected.guestEmail,
+        description: `Room ${selected.roomNumber} — ${selected.guestName}`,
+        amount: Number(paymentAmount),
+      });
+      setPayLink(checkoutUrl);
+    } catch (err) {
+      setPayLinkError(err.message || 'Could not generate payment link. Please try again.');
+    } finally {
+      setPayLinkLoading(false);
+    }
+  };
+
+  const copyPayLink = async () => {
+    try {
+      await navigator.clipboard.writeText(payLink);
+      setSuccess('Payment link copied!');
+    } catch {
+      // Clipboard permission denied — the link is still visible/selectable in the field.
+    }
   };
 
   const handleCheckout = async () => {
@@ -108,7 +171,7 @@ export default function Billing() {
               <p style={{ textAlign: 'center', color: MUTED, padding: '32px 0', fontSize: '13px' }}>No active reservations.</p>
             ) : (
               reservations.map(r => (
-                <div key={r.id} onClick={() => { setSelected(r); setSuccess(''); }}
+                <div key={r.id} onClick={() => selectReservation(r)}
                   style={{
                     padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, cursor: 'pointer',
                     background: selected?.id === r.id ? SELECTED_BG : 'transparent',
@@ -188,8 +251,49 @@ export default function Billing() {
                       style={{ ...inp, flex: 1 }} />
                     <button onClick={handlePayment}
                       style={{ background: dark ? '#1e6b3a' : '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '8px 18px', fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
-                      Record Payment
+                      Record Cash Payment
                     </button>
+                  </div>
+
+                  {/* ── PayMongo payment link ── */}
+                  <div style={{ borderTop: `1px solid ${BORDER}`, marginTop: '16px', paddingTop: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: '600', color: TEXT }}>Or send a payment link</span>
+                    </div>
+                    <p style={{ fontSize: '11px', color: MUTED, marginBottom: '10px', lineHeight: 1.5 }}>
+                      Uses the amount above. The guest pays with GCash, Maya, GrabPay, or card on their own device — the balance here updates automatically once they pay.
+                    </p>
+                    <button
+                      onClick={handleGeneratePayMongoLink}
+                      disabled={payLinkLoading || !paymentAmount || Number(paymentAmount) <= 0}
+                      style={{
+                        background: PAYMONGO_BLUE, color: '#fff', border: 'none', borderRadius: '8px',
+                        padding: '8px 18px', fontSize: '13px', fontWeight: '700',
+                        cursor: (payLinkLoading || !paymentAmount) ? 'default' : 'pointer',
+                        opacity: (payLinkLoading || !paymentAmount || Number(paymentAmount) <= 0) ? 0.55 : 1,
+                        fontFamily: "'Poppins', sans-serif",
+                      }}>
+                      {payLinkLoading ? 'Generating…' : 'Generate Payment Link'}
+                    </button>
+
+                    {payLinkError && (
+                      <div style={{ marginTop: '10px', fontSize: '12px', color: RED }}>{payLinkError}</div>
+                    )}
+
+                    {payLink && (
+                      <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+                        <input readOnly value={payLink} onFocus={e => e.target.select()}
+                          style={{ ...inp, flex: 1, color: SUBTEXT }} />
+                        <button onClick={copyPayLink}
+                          style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '8px 14px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", whiteSpace: 'nowrap' }}>
+                          Copy
+                        </button>
+                        <button onClick={() => window.open(payLink, '_blank', 'noopener,noreferrer')}
+                          style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '8px 14px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", whiteSpace: 'nowrap' }}>
+                          Preview
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 

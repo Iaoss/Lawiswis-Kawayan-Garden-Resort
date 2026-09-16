@@ -4,26 +4,26 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export const DEFAULT_SETTINGS = {
-  darkMode:       false,
-  compactSidebar: false,
-  fontSize:       'medium',
-  accentColor:    '#c8f06e',
-  currency:       'PHP',
-  dateFormat:     'MM/DD/YYYY',
-  notifications:  true,
-  soundAlerts:    false,
-  emailAlerts:    true,
-  autoLogout:     '30',
-  sessionTimeout: true,
-  showRevenue:    true,
-  showOccupancy:  true,
+  darkMode:         false,
+  fontSize:         'medium',
+  accentColor:      '#9cb56f',
+  currency:         'PHP',
+  dateFormat:       'MM/DD/YYYY',
+  notifications:    true,
+  soundAlerts:      false,
+  showRevenue:      true,
+  showOccupancy:    true,
   showReservations: true,
-  showChart:      true,
+  showChart:        true,
 };
 
+// Auto logout is no longer user-configurable — it just runs.
+const IDLE_LOGOUT_MS = 30 * 60 * 1000;
+const IDLE_WARNING_MS = 60 * 1000;
+
 // Fast local cache, keyed per-uid so different accounts on the same
-// browser never collide. This is ONLY used to avoid a flash of the
-// wrong theme before Firestore responds — Firestore is the source of truth.
+// browser never collide. Only used to avoid a flash of the wrong theme
+// before Firestore responds — Firestore is the source of truth.
 function loadCache(uid) {
   if (!uid) return { ...DEFAULT_SETTINGS };
   try {
@@ -40,7 +40,6 @@ export const SettingsContext = createContext(null);
 
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState({ ...DEFAULT_SETTINGS });
-  const [uid, setUid] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const uidRef = useRef(null);
 
@@ -49,19 +48,14 @@ export function SettingsProvider({ children }) {
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         uidRef.current = null;
-        setUid(null);
         setSettings({ ...DEFAULT_SETTINGS });
         setLoaded(true);
         return;
       }
 
       uidRef.current = user.uid;
-      setUid(user.uid);
-
-      // Fast paint from local cache first
       setSettings(loadCache(user.uid));
 
-      // Then confirm/correct from Firestore
       try {
         const snap = await getDoc(doc(db, 'users', user.uid));
         const stored = snap.exists() ? snap.data().settings : null;
@@ -80,7 +74,7 @@ export function SettingsProvider({ children }) {
   const persist = async (next) => {
     setSettings(next);
     const currentUid = uidRef.current;
-    if (!currentUid) return; // not logged in, nothing to persist
+    if (!currentUid) return;
     saveCache(currentUid, next);
     try {
       await setDoc(doc(db, 'users', currentUid), { settings: next }, { merge: true });
@@ -89,44 +83,31 @@ export function SettingsProvider({ children }) {
     }
   };
 
-  const updateSetting = (key, value) => {
-    persist({ ...settings, [key]: value });
-  };
+  const updateSetting = (key, value) => persist({ ...settings, [key]: value });
+  const saveAll = (s) => persist({ ...DEFAULT_SETTINGS, ...s });
+  const resetAll = () => persist({ ...DEFAULT_SETTINGS });
 
-  const saveAll = (s) => {
-    persist(s);
-  };
-
-  const resetAll = () => {
-    persist({ ...DEFAULT_SETTINGS });
-  };
-
-  // ── Dark Mode ──
+  // ── Dark mode ──
   useEffect(() => {
     const root = document.documentElement;
-    if (settings.darkMode) {
-      root.setAttribute('data-theme', 'dark');
-    } else {
-      root.removeAttribute('data-theme');
-    }
+    if (settings.darkMode) root.setAttribute('data-theme', 'dark');
+    else root.removeAttribute('data-theme');
   }, [settings.darkMode]);
 
-  // ── Accent Color ──
+  // ── Accent color ──
   useEffect(() => {
     document.documentElement.style.setProperty('--accent', settings.accentColor);
     document.documentElement.style.setProperty('--accent-dark', '#1a3a1a');
   }, [settings.accentColor]);
 
-  // ── Font Size ──
+  // ── Font size ──
   useEffect(() => {
     const map = { small: '13px', medium: '15px', large: '17px' };
     document.documentElement.style.setProperty('--base-font', map[settings.fontSize] || '15px');
   }, [settings.fontSize]);
 
-  // ── Auto Logout ──
+  // ── Idle auto logout ──
   useEffect(() => {
-    if (settings.autoLogout === 'never') return;
-    const ms = Number(settings.autoLogout) * 60 * 1000;
     let timer;
     let warnTimer;
 
@@ -134,19 +115,15 @@ export function SettingsProvider({ children }) {
       clearTimeout(timer);
       clearTimeout(warnTimer);
 
-      if (settings.sessionTimeout && settings.autoLogout !== 'never') {
-        warnTimer = setTimeout(() => {
-          if (window.confirm('⏱ You will be logged out in 1 minute due to inactivity. Stay logged in?')) {
-            reset();
-          }
-        }, ms - 60000);
-      }
+      warnTimer = setTimeout(() => {
+        if (window.confirm('You will be signed out in 1 minute due to inactivity. Stay signed in?')) reset();
+      }, IDLE_LOGOUT_MS - IDLE_WARNING_MS);
 
       timer = setTimeout(() => {
         import('firebase/auth').then(({ getAuth, signOut }) => {
           signOut(getAuth()).finally(() => { window.location.href = '/'; });
         });
-      }, ms);
+      }, IDLE_LOGOUT_MS);
     };
 
     const events = ['mousemove', 'keydown', 'click', 'scroll'];
@@ -158,12 +135,12 @@ export function SettingsProvider({ children }) {
       clearTimeout(warnTimer);
       events.forEach(e => window.removeEventListener(e, reset));
     };
-  }, [settings.autoLogout, settings.sessionTimeout]);
+  }, []);
 
   const formatCurrency = (amount) => {
     const symbols = { PHP: '₱', USD: '$' };
     const sym = symbols[settings.currency] || '₱';
-    return `${sym}${Number(amount).toLocaleString()}`;
+    return `${sym}${Number(amount || 0).toLocaleString()}`;
   };
 
   const formatDate = (dateStr) => {

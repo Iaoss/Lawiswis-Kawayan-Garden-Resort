@@ -3,7 +3,7 @@ import PageLayout from '../components/PageLayout';
 import { useSettings, DEFAULT_SETTINGS } from '../context/SettingsContext';
 
 const ACCENT_COLORS = [
-  { label: 'Lime',    value: '#c8f06e' },
+  { label: 'Lime',    value: '#9cb56f' },
   { label: 'Teal',   value: '#5eead4' },
   { label: 'Blue',   value: '#60a5fa' },
   { label: 'Purple', value: '#c084fc' },
@@ -21,7 +21,7 @@ function Toggle({ value, onChange }) {
       <div style={{
         position: 'absolute', top: 3, left: value ? 23 : 3,
         width: 18, height: 18, borderRadius: '50%',
-        background: value ? 'var(--accent, #c8f06e)' : '#fff',
+        background: value ? 'var(--accent, #9cb56f)' : '#fff',
         boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
         transition: 'left 0.2s',
       }} />
@@ -131,7 +131,7 @@ export default function Settings() {
               Reset Defaults
             </button>
             <button onClick={handleSave}
-              style={{ padding: '8px 20px', border: 'none', borderRadius: 10, background: '#1a3a1a', color: 'var(--accent, #c8f06e)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', transition: 'opacity 0.15s' }}>
+              style={{ padding: '8px 20px', border: 'none', borderRadius: 10, background: '#1a3a1a', color: 'var(--accent, #9cb56f)', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', transition: 'opacity 0.15s' }}>
               {saved ? '✓ Saved!' : 'Save Changes'}
             </button>
           </div>
@@ -345,7 +345,7 @@ export default function Settings() {
         {saved && (
           <div style={{
             position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
-            background: '#1a3a1a', color: 'var(--accent, #c8f06e)',
+            background: '#1a3a1a', color: 'var(--accent, #9cb56f)',
             borderRadius: 14, padding: '13px 28px', fontSize: 13, fontWeight: 700,
             boxShadow: '0 8px 24px rgba(0,0,0,0.18)', zIndex: 9999,
             display: 'flex', alignItems: 'center', gap: 8,

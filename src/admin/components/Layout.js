@@ -1,28 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, db } from '../../firebase/firebase';
 import { collection, doc, getDoc, query, orderBy, onSnapshot, where } from 'firebase/firestore';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
-
-const C = {
-  sidebar:      '#1c1c1c',
-  sidebarBorder:'#282827',
-  bg:           '#020b09',
-  active:       '#c8f06e',
-  activeText:   '#0a1a0a',
-  navText:      '#8a8a7a',
-  navHover:     '#282827',
-  accentDark:   '#9ab83a',
-  topbar:       '#1c1c1c',
-  topbarBorder: '#282827',
-  text:         '#e8e8d8',
-  muted:        '#5a5a4a',
-  badge:        '#ef4444',
-  card:         '#1c1c1c',
-  border:       '#282827',
-};
+import logo from './logo-mark.png';
 
 // ── Animation helpers for expandable icon buttons ───────────
 const expandTransition = { type: 'spring', bounce: 0, duration: 0.4 };
@@ -38,7 +21,7 @@ const labelVariants = {
   exit:    { width: 0, opacity: 0 },
 };
 
-// ── Reusable expandable icon button (Settings / Chat) ───────
+// ── Reusable expandable icon button (Dark mode / Settings / Chat) ───
 function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
   const [hover, setHover] = useState(false);
   const BORDER = dark ? '#383837' : '#e5e7eb';
@@ -104,6 +87,9 @@ function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
 }
 
 // ── Nav structure ────────────────────────────────────────────
+// Settings and Cancellation are intentionally not here:
+// Settings is reachable from the topbar button, and Cancellation
+// is now a tab inside the Settings page.
 const navItems = [
   { label: 'Dashboard',      path: '/admin/dashboard',    icon: 'ti-layout-dashboard' },
   { label: 'Room Management',path: '/admin/rooms',         icon: 'ti-bed' },
@@ -114,23 +100,61 @@ const navItems = [
   { label: 'Customers',      path: '/admin/customers',     icon: 'ti-users' },
   { label: 'History',        path: '/admin/history',       icon: 'ti-clock' },
   { label: 'Reports',        path: '/admin/reports',       icon: 'ti-chart-bar' },
-  { label: 'Users',          path: '/admin/users',         icon: 'ti-settings' },
+  { label: 'Users',          path: '/admin/users',         icon: 'ti-user-cog' },
   { label: 'Feedback & QR',  path: '/admin/feedback',      icon: 'ti-star' },
-  { label: 'Cancellation',   path: '/admin/cancellation',  icon: 'ti-file-x' },
-  { label: 'Settings',       path: '/admin/settings',      icon: 'ti-adjustments' },
 ];
+
+// Pages that still exist but are not in the sidebar — used for the topbar title.
+const EXTRA_LABELS = {
+  '/admin/settings':     'Settings',
+  '/admin/messages':     'Messages',
+  '/admin/cancellation': 'Cancellation',
+};
+
+// ── Read state for notifications ─────────────────────────────
+// Navigation here is a full page reload, so "already seen" has to survive
+// the reload — otherwise the badge and the chime come back on every page.
+const READ_KEY = 'lkgr_read_notifications';
+
+function loadReadIds() {
+  try {
+    const raw = localStorage.getItem(READ_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveReadIds(ids) {
+  try { localStorage.setItem(READ_KEY, JSON.stringify(ids)); } catch {}
+}
+
+const clockTime = (seconds) => seconds
+  ? new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  : 'Just now';
 
 // ── Notification Bell ────────────────────────────────────────
 function NotificationBell({ dark, accent, soundAlerts }) {
   const [open, setOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [unread, setUnread] = useState(0);
-  const prevNotificationIdsRef = useRef([]);
-  const firstSnapshotRef = useRef(true);
+  const [feeds, setFeeds] = useState({ res: [], pay: [], msg: [] });
+  const [ready, setReady] = useState(false);
+  const [readIds, setReadIds] = useState(loadReadIds);
+
+  const firedRef  = useRef({ res: false, pay: false, msg: false });
+  const seededRef = useRef(false);
+  const knownRef  = useRef(new Set());
+  const dotRef    = useRef(new Set());
 
   const ACCENT      = accent || '#c8f06e';
   const PANEL_BG    = dark ? '#1c1c1c' : '#ffffff';
   const BORDER      = dark ? '#282827' : '#e5e7eb';
+  const TEXT        = dark ? '#e8e8d8' : '#111827';
+  const MUTED       = dark ? '#5a5a4a' : '#9ca3af';
+  const FAINT       = dark ? '#3a3a2a' : '#c9c9c9';
+  const ROW_A       = dark ? '#1c1c1c' : '#ffffff';
+  const ROW_B       = dark ? '#202020' : '#f9fafb';
+  const ROW_HOVER   = dark ? '#282827' : '#f3f4f6';
+  const ICON_BG     = dark ? '#282827' : '#f3f4f6';
+  const BTN_BG      = dark ? '#282827' : '#f3f4f6';
+  const BTN_BORDER  = dark ? '#383837' : '#e5e7eb';
 
   const playSound = () => {
     try {
@@ -145,91 +169,130 @@ function NotificationBell({ dark, accent, soundAlerts }) {
       gain.connect(ctx.destination);
       oscillator.start(ctx.currentTime);
       oscillator.stop(ctx.currentTime + 0.18);
-    } catch (error) {
-      // Browser may block auto-play if user has not interacted yet.
+    } catch {
+      // Browser blocks audio until the user has interacted with the page.
     }
   };
 
+  // Three independent listeners. The previous version nested them, so the
+  // inner listeners were recreated on every outer snapshot and never
+  // unsubscribed — which is part of why the chime fired repeatedly.
   useEffect(() => {
-    const currentIds = notifications.map(n => n.id);
-    if (firstSnapshotRef.current) {
-      firstSnapshotRef.current = false;
-      prevNotificationIdsRef.current = currentIds;
+    const markFired = (key) => {
+      firedRef.current[key] = true;
+      if (firedRef.current.res && firedRef.current.pay && firedRef.current.msg) setReady(true);
+    };
+
+    const unsubRes = onSnapshot(
+      query(collection(db, 'reservations'), where('type', '==', 'online')),
+      (snap) => {
+        const res = snap.docs
+          .filter(d => d.data().status === 'pending')
+          .sort((a, b) => (b.data().createdAt?.seconds || 0) - (a.data().createdAt?.seconds || 0))
+          .slice(0, 5)
+          .map(d => ({
+            id: `res_${d.id}`, icon: 'ti-calendar-plus',
+            message: `New booking from ${d.data().guestName || 'Guest'}`,
+            sub: `Room ${d.data().roomNumber || '—'} · ${d.data().checkIn || ''}`,
+            time: clockTime(d.data().createdAt?.seconds),
+            path: '/admin/reservations',
+          }));
+        setFeeds(prev => ({ ...prev, res }));
+        markFired('res');
+      }
+    );
+
+    const unsubPay = onSnapshot(
+      query(
+        collection(db, 'reservations'),
+        where('type', '==', 'online'),
+        where('paymentStatus', '==', 'paid'),
+        orderBy('createdAt', 'desc')
+      ),
+      (snap) => {
+        const pay = snap.docs.slice(0, 5).map(d => ({
+          id: `pay_${d.id}`, icon: 'ti-cash',
+          message: `Payment received from ${d.data().guestName || 'Guest'}`,
+          sub: `Room ${d.data().roomNumber || '—'} · ₱${Number(d.data().totalAmount || 0).toLocaleString()}`,
+          time: clockTime(d.data().createdAt?.seconds),
+          path: '/admin/payments',
+        }));
+        setFeeds(prev => ({ ...prev, pay }));
+        markFired('pay');
+      }
+    );
+
+    const unsubMsg = onSnapshot(
+      query(collection(db, 'conversations'), where('unread', '==', true)),
+      (snap) => {
+        const msg = snap.docs.slice(0, 3).map(d => ({
+          id: `msg_${d.id}`, icon: 'ti-message-circle-2',
+          message: `New message from ${d.data().guestName || 'Guest'}`,
+          sub: d.data().lastMessage || 'New message',
+          time: clockTime(d.data().lastMessageAt?.seconds),
+          path: '/admin/messages',
+        }));
+        setFeeds(prev => ({ ...prev, msg }));
+        markFired('msg');
+      }
+    );
+
+    return () => { unsubRes(); unsubPay(); unsubMsg(); };
+  }, []);
+
+  const notifications = useMemo(
+    () => [...feeds.res, ...feeds.pay, ...feeds.msg].slice(0, 10),
+    [feeds]
+  );
+
+  const unread = notifications.filter(n => !readIds.includes(n.id)).length;
+
+  // Chime only for items that arrive after the first full load and that
+  // have not already been read. Nothing plays on mount or on navigation.
+  useEffect(() => {
+    if (!ready) return;
+    const ids = notifications.map(n => n.id);
+
+    if (!seededRef.current) {
+      seededRef.current = true;
+      knownRef.current = new Set(ids);
       return;
     }
 
-    if (soundAlerts && currentIds.some(id => !prevNotificationIdsRef.current.includes(id))) {
-      playSound();
-    }
-    prevNotificationIdsRef.current = currentIds;
-  }, [notifications, soundAlerts]);
-  const TEXT        = dark ? '#e8e8d8' : '#111827';
-  const MUTED       = dark ? '#5a5a4a' : '#9ca3af';
-  const FAINT       = dark ? '#3a3a2a' : '#c9c9c9';
-  const ROW_A       = dark ? '#1c1c1c' : '#ffffff';
-  const ROW_B       = dark ? '#202020' : '#f9fafb';
-  const ROW_HOVER   = dark ? '#282827' : '#f3f4f6';
-  const ICON_BG     = dark ? '#282827' : '#f3f4f6';
-  const BTN_BG      = dark ? '#282827' : '#f3f4f6';
-  const BTN_BORDER  = dark ? '#383837' : '#e5e7eb';
+    const fresh = ids.filter(id => !knownRef.current.has(id) && !readIds.includes(id));
+    ids.forEach(id => knownRef.current.add(id));
+    if (fresh.length > 0 && soundAlerts) playSound();
+  }, [ready, notifications, readIds, soundAlerts]);
 
-  useEffect(() => {
-    const resQuery = query(collection(db, 'reservations'), where('type', '==', 'online'));
-    const unsubRes = onSnapshot(resQuery, (resSnap) => {
-      const resNotifs = resSnap.docs
-        .filter(d => d.data().status === 'pending')
-        .sort((a, b) => (b.data().createdAt?.seconds || 0) - (a.data().createdAt?.seconds || 0))
-        .slice(0, 5)
-        .map(d => ({
-          id: `res_${d.id}`, type: 'reservation', icon: '📋',
-          message: `New booking from ${d.data().guestName || 'Guest'}`,
-          sub: `Room ${d.data().roomNumber || '—'} · ${d.data().checkIn || ''}`,
-          time: d.data().createdAt?.seconds
-            ? new Date(d.data().createdAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            : 'Just now',
-          path: '/admin/reservations',
-        }));
-
-      const payQuery = query(collection(db, 'reservations'), where('type', '==', 'online'), where('paymentStatus', '==', 'paid'), orderBy('createdAt', 'desc'));
-      const unsubPay = onSnapshot(payQuery, (paySnap) => {
-        const payNotifs = paySnap.docs.slice(0, 5).map(d => ({
-          id: `pay_${d.id}`, type: 'payment', icon: '💰',
-          message: `Payment received from ${d.data().guestName || 'Guest'}`,
-          sub: `Room ${d.data().roomNumber || '—'} · ₱${Number(d.data().totalAmount || 0).toLocaleString()}`,
-          time: d.data().createdAt?.seconds
-            ? new Date(d.data().createdAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            : 'Just now',
-          path: '/admin/payments',
-        }));
-
-        const unsubMsg = onSnapshot(
-          query(collection(db, 'conversations'), where('unread', '==', true)),
-          (msgSnap) => {
-            const msgNotifs = msgSnap.docs.slice(0, 3).map(d => ({
-              id: `msg_${d.id}`, type: 'message', icon: '💬',
-              message: `New message from ${d.data().guestName || 'Guest'}`,
-              sub: d.data().lastMessage || 'New message',
-              time: d.data().lastMessageAt?.seconds
-                ? new Date(d.data().lastMessageAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                : 'Just now',
-              path: '/admin/messages',
-            }));
-            const all = [...resNotifs, ...payNotifs, ...msgNotifs].slice(0, 10);
-            setNotifications(all);
-            setUnread(all.length);
-          }
-        );
-        return () => unsubMsg();
-      });
-      return () => unsubPay();
+  const markRead = (ids) => {
+    setReadIds(prev => {
+      const next = Array.from(new Set([...prev, ...ids])).slice(-300);
+      saveReadIds(next);
+      return next;
     });
-    return () => unsubRes();
-  }, []);
+  };
+
+  const toggleOpen = () => {
+    const next = !open;
+    if (next) {
+      // Keep showing which ones were new while the panel is open,
+      // but clear the badge as soon as they have been seen.
+      dotRef.current = new Set(notifications.filter(n => !readIds.includes(n.id)).map(n => n.id));
+      markRead(notifications.map(n => n.id));
+    }
+    setOpen(next);
+  };
+
+  const openItem = (n) => {
+    markRead([n.id]);
+    setOpen(false);
+    window.location.href = n.path;
+  };
 
   return (
     <div style={{ position: 'relative' }}>
       <motion.button
-        onClick={() => setOpen(p => !p)}
+        onClick={toggleOpen}
         variants={btnVariants}
         initial="rest"
         whileHover="hover"
@@ -279,11 +342,9 @@ function NotificationBell({ dark, accent, soundAlerts }) {
             boxShadow: dark ? '0 20px 60px rgba(0,0,0,0.5)' : '0 20px 60px rgba(0,0,0,0.15)', zIndex: 200,
           }}>
             <div style={{ padding: '14px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ fontWeight: '700', fontSize: '14px', color: TEXT, fontFamily: "'Poppins', sans-serif" }}>
-                🔔 Notifications
-                {unread > 0 && (
-                  <span style={{ background: '#ef4444', color: '#fff', borderRadius: '999px', fontSize: '10px', padding: '1px 7px', marginLeft: '6px' }}>{unread}</span>
-                )}
+              <div style={{ fontWeight: '700', fontSize: '14px', color: TEXT, fontFamily: "'Poppins', sans-serif", display: 'flex', alignItems: 'center', gap: '7px' }}>
+                <i className="ti ti-bell" style={{ fontSize: '15px' }} />
+                Notifications
               </div>
               <span style={{ fontSize: '11px', color: ACCENT, fontWeight: '600', cursor: 'pointer' }} onClick={() => setOpen(false)}>Close</span>
             </div>
@@ -291,39 +352,44 @@ function NotificationBell({ dark, accent, soundAlerts }) {
             <div style={{ maxHeight: '360px', overflowY: 'auto' }}>
               {notifications.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px', color: MUTED, fontSize: '12px' }}>
-                  <div style={{ fontSize: '28px', marginBottom: '8px' }}>🔔</div>No new notifications
+                  <i className="ti ti-bell-off" style={{ fontSize: '26px', display: 'block', marginBottom: '8px' }} />
+                  Nothing new right now
                 </div>
-              ) : notifications.map((n, i) => (
-                <div key={n.id} onClick={() => { setOpen(false); window.location.href = n.path; }}
-                  style={{
-                    padding: '12px 16px', borderBottom: `1px solid ${BORDER}`,
-                    cursor: 'pointer', background: i % 2 === 0 ? ROW_A : ROW_B,
-                    display: 'flex', gap: '12px', alignItems: 'flex-start',
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = ROW_HOVER}
-                  onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? ROW_A : ROW_B}
-                >
-                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: ICON_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
-                    {n.icon}
+              ) : notifications.map((n, i) => {
+                const isNew = dotRef.current.has(n.id);
+                return (
+                  <div key={n.id} onClick={() => openItem(n)}
+                    style={{
+                      padding: '12px 16px', borderBottom: `1px solid ${BORDER}`,
+                      cursor: 'pointer', background: i % 2 === 0 ? ROW_A : ROW_B,
+                      display: 'flex', gap: '12px', alignItems: 'flex-start',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = ROW_HOVER}
+                    onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? ROW_A : ROW_B}
+                  >
+                    <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: ICON_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <i className={`ti ${n.icon}`} style={{ fontSize: '17px', color: TEXT }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT }}>{n.message}</div>
+                      <div style={{ fontSize: '11px', color: MUTED, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.sub}</div>
+                      <div style={{ fontSize: '10px', color: FAINT, marginTop: '3px' }}>{n.time}</div>
+                    </div>
+                    {isNew && <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: ACCENT, flexShrink: 0, marginTop: '4px' }} />}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT }}>{n.message}</div>
-                    <div style={{ fontSize: '11px', color: MUTED, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.sub}</div>
-                    <div style={{ fontSize: '10px', color: FAINT, marginTop: '3px' }}>{n.time}</div>
-                  </div>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: ACCENT, flexShrink: 0, marginTop: '4px' }} />
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div style={{ padding: '12px 16px', borderTop: `1px solid ${BORDER}`, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
               {[
-                { label: '📋 Bookings', path: '/admin/reservations', bg: 'rgba(200,240,110,0.1)', color: '#8fb83a' },
-                { label: '💰 Payments', path: '/admin/payments',     bg: 'rgba(251,191,36,0.1)',  color: '#d97706' },
-                { label: '💬 Messages', path: '/admin/messages',     bg: 'rgba(167,139,250,0.1)', color: '#7c5ce0' },
+                { label: 'Bookings', icon: 'ti-calendar-event',   path: '/admin/reservations', bg: 'rgba(200,240,110,0.1)', color: '#8fb83a' },
+                { label: 'Payments', icon: 'ti-credit-card',      path: '/admin/payments',     bg: 'rgba(251,191,36,0.1)',  color: '#d97706' },
+                { label: 'Messages', icon: 'ti-message-circle-2', path: '/admin/messages',     bg: 'rgba(167,139,250,0.1)', color: '#7c5ce0' },
               ].map(b => (
                 <button key={b.label} onClick={() => { setOpen(false); window.location.href = b.path; }}
-                  style={{ background: b.bg, color: b.color, border: `1px solid ${b.color}22`, borderRadius: '8px', padding: '10px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                  style={{ background: b.bg, color: b.color, border: `1px solid ${b.color}22`, borderRadius: '8px', padding: '10px 6px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                  <i className={`ti ${b.icon}`} style={{ fontSize: '13px' }} />
                   {b.label}
                 </button>
               ))}
@@ -337,7 +403,7 @@ function NotificationBell({ dark, accent, soundAlerts }) {
 
 // ── Main Layout ──────────────────────────────────────────────
 export default function Layout({ children }) {
-  const { settings } = useSettings();
+  const { settings, updateSetting } = useSettings();
   const [adminName, setAdminName] = useState('');
   const [adminRole, setAdminRole] = useState('');
   const [unreadCount, setUnreadCount] = useState(0);
@@ -346,19 +412,14 @@ export default function Layout({ children }) {
 
   const dark = settings?.darkMode;
 
-  // Sidebar always starts collapsed to an icon rail and expands automatically
-  // while the mouse is over it, matching the reference hover-to-expand sidebar.
-  const [hovered, setHovered] = useState(false);
-  const collapsed = !hovered;
+  const collapsed = false;
 
-  // When dark mode is OFF use clean light theme, when ON use the new dark palette
   const SIDEBAR_BG   = dark ? '#1c1c1c'  : '#ffffff';
   const SIDEBAR_TEXT = dark ? '#e8e8d8'  : '#111827';
   const TOPBAR_BG    = dark ? '#1c1c1c'  : '#ffffff';
   const BG           = dark ? '#020b09'  : '#f4f6f4';
   const BORDER       = dark ? '#282827'  : '#f0f0f0';
   const NAV_TEXT     = dark ? '#8a8a7a'  : '#6b7280';
-  const NAV_HOVER    = dark ? '#282827'  : '#f3f4f6';
   const ACCENT       = settings?.accentColor || '#c8f06e';
   const ACCENT_TEXT  = '#0a1a0a';
   const MUTED        = dark ? '#5a5a4a'  : '#9ca3af';
@@ -400,7 +461,8 @@ export default function Layout({ children }) {
     ? adminName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : 'A';
 
-  const currentLabel = navItems.find(n => n.path === current)?.label || 'Dashboard';
+  const currentLabel =
+    navItems.find(n => n.path === current)?.label || EXTRA_LABELS[current] || 'Dashboard';
 
   const navButtonStyle = (isActive) => ({
     width: '100%', display: 'flex', alignItems: 'center',
@@ -413,18 +475,14 @@ export default function Layout({ children }) {
     background: isActive ? ACCENT : 'transparent',
     color: isActive ? ACCENT_TEXT : NAV_TEXT,
     fontWeight: isActive ? '600' : '400',
-    transition: 'all 0.15s', textAlign: 'left',
+    textAlign: 'left',
   });
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', fontFamily: "'Poppins', sans-serif", background: BG }}>
 
       {/* ── Sidebar ── */}
-      <motion.aside
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        animate={{ width: sidebarWidth }}
-        transition={{ duration: 0.2, ease: 'easeInOut' }}
+      <aside
         style={{
         minHeight: '100vh',
         background: SIDEBAR_BG,
@@ -443,31 +501,16 @@ export default function Layout({ children }) {
           gap: '10px', borderBottom: `1px solid ${BORDER}`,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-            <svg width="26" height="34" viewBox="0 0 36 44" fill="none" style={{ flexShrink: 0 }}>
-              {/* dirty white bamboo logo */}
-              <rect x="4"  y="0"  width="5"  height="44" rx="2.5" fill="#d4d4c4"/>
-              <rect x="4"  y="8"  width="8"  height="3"  rx="1.5" fill="#d4d4c4" opacity="0.6"/>
-              <rect x="4"  y="20" width="10" height="3"  rx="1.5" fill="#d4d4c4" opacity="0.6"/>
-              <rect x="4"  y="32" width="7"  height="3"  rx="1.5" fill="#d4d4c4" opacity="0.6"/>
-              <rect x="14" y="4"  width="5"  height="40" rx="2.5" fill="#d4d4c4" opacity="0.8"/>
-              <rect x="14" y="12" width="9"  height="3"  rx="1.5" fill="#d4d4c4" opacity="0.5"/>
-              <rect x="14" y="24" width="11" height="3"  rx="1.5" fill="#d4d4c4" opacity="0.5"/>
-              <rect x="25" y="2"  width="4"  height="38" rx="2"   fill="#d4d4c4" opacity="0.6"/>
-              <rect x="25" y="14" width="8"  height="2.5" rx="1.25" fill="#d4d4c4" opacity="0.4"/>
-              <rect x="25" y="26" width="9"  height="2.5" rx="1.25" fill="#d4d4c4" opacity="0.4"/>
-            </svg>
-            <motion.div
-              animate={{
-                display: collapsed ? 'none' : 'block',
-                opacity: collapsed ? 0 : 1,
-              }}
-              transition={{ duration: 0.15 }}
-              style={{ minWidth: 0, whiteSpace: 'nowrap' }}
-            >
+            <img
+              src={logo}
+              alt="Lawiswis Kawayan Garden Resort"
+              style={{ width: '28px', height: '34px', borderRadius: '6px', objectFit: 'cover', flexShrink: 0, display: 'block' }}
+            />
+            {!collapsed && <div style={{ minWidth: 0, whiteSpace: 'nowrap' }}>
               <div style={{ color: dark ? '#d4d4c4' : '#111827', fontWeight: '700', fontSize: '12px', lineHeight: 1.2 }}>Lawiswis Kawayan</div>
               <div style={{ color: dark ? '#c8f06e' : '#8fb83a', fontSize: '8.5px', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: '600' }}>Garden Resort</div>
               <div style={{ color: MUTED, fontSize: '8px', marginTop: '1px' }}>HuaPro Admin</div>
-            </motion.div>
+            </div>}
           </div>
         </div>
 
@@ -480,20 +523,9 @@ export default function Layout({ children }) {
                 onClick={() => window.location.href = item.path}
                 title={collapsed ? item.label : ''}
                 style={navButtonStyle(isActive)}
-                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = NAV_HOVER; }}
-                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
               >
                 <i className={`ti ${item.icon}`} style={{ fontSize: '16px', flexShrink: 0, color: isActive ? ACCENT_TEXT : NAV_TEXT }} />
-                <motion.span
-                  animate={{
-                    display: collapsed ? 'none' : 'inline-block',
-                    opacity: collapsed ? 0 : 1,
-                  }}
-                  transition={{ duration: 0.15 }}
-                  style={{ flex: 1, whiteSpace: 'nowrap', textAlign: 'left' }}
-                >
-                  {item.label}
-                </motion.span>
+                {!collapsed && <span style={{ flex: 1, whiteSpace: 'nowrap', textAlign: 'left' }}>{item.label}</span>}
               </button>
             );
           })}
@@ -511,17 +543,10 @@ export default function Layout({ children }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontWeight: '700', fontSize: '12px', color: ACCENT_TEXT, flexShrink: 0,
               }}>{initials}</div>
-              <motion.div
-                animate={{
-                  display: collapsed ? 'none' : 'block',
-                  opacity: collapsed ? 0 : 1,
-                }}
-                transition={{ duration: 0.15 }}
-                style={{ minWidth: 0 }}
-              >
+              <div style={{ minWidth: 0 }}>
                 <div style={{ color: SIDEBAR_TEXT, fontSize: '12px', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{adminName || 'Admin'}</div>
                 <div style={{ color: MUTED, fontSize: '10px', textTransform: 'capitalize' }}>{adminRole}</div>
-              </motion.div>
+              </div>
             </div>
           )}
           <button onClick={handleLogout} style={{
@@ -532,28 +557,17 @@ export default function Layout({ children }) {
             fontFamily: "'Poppins', sans-serif", cursor: 'pointer', fontWeight: '500',
             display: 'flex', alignItems: 'center',
             justifyContent: collapsed ? 'center' : 'flex-start',
-            gap: '6px', transition: 'background 0.12s',
+            gap: '6px',
           }}
-            onMouseEnter={e => e.currentTarget.style.background = NAV_HOVER}
-            onMouseLeave={e => e.currentTarget.style.background = dark ? '#282827' : '#fff'}
           >
             <i className="ti ti-logout" style={{ fontSize: '14px' }} />
-            <motion.span
-              animate={{
-                display: collapsed ? 'none' : 'inline-block',
-                opacity: collapsed ? 0 : 1,
-              }}
-              transition={{ duration: 0.15 }}
-              style={{ whiteSpace: 'nowrap' }}
-            >
-              Sign out
-            </motion.span>
+            {!collapsed && <span style={{ whiteSpace: 'nowrap' }}>Sign out</span>}
           </button>
         </div>
-      </motion.aside>
+      </aside>
 
       {/* ── Main area ── */}
-      <div style={{ marginLeft: sidebarWidth, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', transition: 'margin-left 0.2s' }}>
+      <div style={{ marginLeft: sidebarWidth, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
 
         {/* Topbar */}
         <header style={{
@@ -570,6 +584,13 @@ export default function Layout({ children }) {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <ExpandableIconButton
+              icon={dark ? 'ti-sun' : 'ti-moon'}
+              label={dark ? 'Light' : 'Dark'}
+              dark={dark}
+              onClick={() => updateSetting('darkMode', !dark)}
+            />
+
             <ExpandableIconButton
               icon="ti-settings"
               label="Settings"

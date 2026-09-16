@@ -17,7 +17,7 @@ export default function Reservations() {
   const ROWLINE  = dark ? '#242422' : '#f3f4f6';
   const TEXT     = dark ? '#f0f0f0' : '#111827';
   const MUTED    = dark ? '#9ca3af' : '#6b7280';
-  const ACCENT   = settings?.accentColor || '#c8f06e';
+  const ACCENT   = settings?.accentColor || '#9cb56f';
   const ACCENT_TEXT = '#0a1a0a';
 
   // ── Role detection (based on route; swap for real auth/role context if available) ──
@@ -39,24 +39,23 @@ export default function Reservations() {
 
   useEffect(() => { fetchReservations(); }, []);
 
-  const updateStatus = async (id, status) => {
-    const reservation = reservations.find(r => r.id === id);
-    await updateDoc(doc(db, 'reservations', id), { status });
+const updateStatus = async (id, status) => {
+  const reservation = reservations.find(r => r.id === id);
+  await updateDoc(doc(db, 'reservations', id), { status });
 
-    if (reservation?.roomId) {
-      try {
-        if (status === 'checked-in') {
-          await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'occupied' });
-        } else if (status === 'checked-out' || status === 'cancelled') {
-          await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
-        }
-      } catch (roomErr) {
-        console.warn('Room status update skipped:', roomErr.message);
+  if (reservation?.roomId) {
+    try {
+      if (status === 'checked-in') {
+        await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'occupied' });
+      } else if (status === 'checked-out' || status === 'cancelled' || status === 'confirmed' || status === 'pending') {
+        await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
       }
+    } catch (roomErr) {
+      console.warn('Room status update skipped:', roomErr.message);
     }
-    fetchReservations();
-  };
-
+  }
+  fetchReservations();
+};
   // ── Cancellation request flow (receptionist requests, admin approves/denies) ──
   const requestCancellation = async (id, reason) => {
     await updateDoc(doc(db, 'reservations', id), {

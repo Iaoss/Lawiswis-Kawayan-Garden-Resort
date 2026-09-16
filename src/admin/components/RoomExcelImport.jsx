@@ -2,21 +2,7 @@ import React, { useState, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
-
-const C = {
-  dark:       '#1a3a1a',
-  accent:     '#c8f06e',
-  accentSoft: '#f0f7e6',
-  border:     '#e5e7eb',
-  muted:      '#9ca3af',
-  text:       '#111827',
-  error:      '#ef4444',
-  errorBg:    '#fef2f2',
-  warn:       '#f59e0b',
-  warnBg:     '#fffbeb',
-  success:    '#22c55e',
-  successBg:  '#f0fdf4',
-};
+import { useSettings } from './SettingsContext';
 
 // Expected columns in the Excel file
 const REQUIRED_COLS = ['roomNumber', 'type', 'price', 'capacity', 'status'];
@@ -25,6 +11,14 @@ const ALL_COLS = [...REQUIRED_COLS, ...OPTIONAL_COLS];
 
 const STATUS_OPTIONS = ['available', 'occupied', 'maintenance', 'not ready', 'vacant'];
 const TYPE_OPTIONS   = ['Standard', 'Deluxe', 'Suite', 'Family', 'Single', 'Double', 'Twin'];
+
+// Given any-case input, return the canonically-cased Type from TYPE_OPTIONS
+// (e.g. "deluxe" / "DELUXE" / "Deluxe" all resolve to "Deluxe"). Falls back
+// to the raw value if nothing matches, so validation can still flag it.
+function normalizeType(rawType) {
+  const match = TYPE_OPTIONS.find(t => t.toLowerCase() === String(rawType).trim().toLowerCase());
+  return match || String(rawType).trim();
+}
 
 function Badge({ color, bg, children }) {
   return (
@@ -36,7 +30,7 @@ function Badge({ color, bg, children }) {
   );
 }
 
-function DownloadTemplate() {
+function DownloadTemplate({ darkBtnBg, accent }) {
   const handleDownload = () => {
     const wb = XLSX.utils.book_new();
     const sampleData = [
@@ -54,7 +48,7 @@ function DownloadTemplate() {
   return (
     <button onClick={handleDownload} style={{
       display: 'inline-flex', alignItems: 'center', gap: '6px',
-      background: C.dark, color: C.accent,
+      background: darkBtnBg, color: accent,
       border: 'none', borderRadius: '8px',
       padding: '8px 16px', fontSize: '12px', fontWeight: '600',
       cursor: 'pointer', fontFamily: "'Poppins', sans-serif",
@@ -64,19 +58,58 @@ function DownloadTemplate() {
   );
 }
 
-function validateRow(row, idx) {
+function validateRow(row) {
   const errors = [];
   if (!row.roomNumber) errors.push('Room number is required');
-  if (!row.type) errors.push('Type is required');
+
+  if (!row.type) {
+    errors.push('Type is required');
+  } else if (!TYPE_OPTIONS.some(t => t.toLowerCase() === String(row.type).toLowerCase())) {
+    errors.push(`Type must be one of: ${TYPE_OPTIONS.join(', ')} (any capitalization is fine)`);
+  }
+
   if (!row.price || isNaN(Number(row.price))) errors.push('Price must be a number');
   if (!row.capacity || isNaN(Number(row.capacity))) errors.push('Capacity must be a number');
-  if (!row.status) errors.push('Status is required');
-  if (row.status && !STATUS_OPTIONS.includes(String(row.status).toLowerCase()))
+
+  if (!row.status) {
+    errors.push('Status is required');
+  } else if (!STATUS_OPTIONS.includes(String(row.status).toLowerCase())) {
     errors.push(`Status must be one of: ${STATUS_OPTIONS.join(', ')}`);
+  }
+
   return errors;
 }
 
 export default function RoomExcelImport({ onImportComplete }) {
+  const { settings } = useSettings();
+  const dark = settings?.darkMode;
+
+  // ── Theme tokens (mirrors the rest of the admin panel's light/dark palette) ──
+  const ACCENT       = settings?.accentColor || '#9cb56f';
+  const ACCENT_TEXT  = '#0a1a0a';
+  const DARKBTN_BG   = dark ? '#282827' : '#1a3a1a';
+  const CARD         = dark ? '#1c1c1c' : '#ffffff';
+  const CARD2        = dark ? '#282827' : '#f9fafb';
+  const GUIDE_BG      = dark ? 'rgba(200,240,110,0.08)' : '#f0f7e6';
+  const BORDER        = dark ? '#2a2a28' : '#e5e7eb';
+  const CELL_BORDER   = dark ? '#242422' : '#f3f4f6';
+  const TEXT          = dark ? '#f0f0f0' : '#111827';
+  const MUTED         = dark ? '#9ca3af' : '#9ca3af';
+  const ROW_ALT        = dark ? '#202020' : '#fafafa';
+  const DROPZONE_BG    = dark ? '#141414' : '#fafafa';
+  const DROPZONE_HOVER = dark ? 'rgba(200,240,110,0.06)' : '#f0f7e6';
+
+  const ERROR         = '#ef4444';
+  const ERROR_BG       = dark ? 'rgba(239,68,68,0.12)' : '#fef2f2';
+  const ERROR_BORDER   = dark ? 'rgba(239,68,68,0.35)' : '#fecaca';
+  const WARN           = '#f59e0b';
+  const WARN_TEXT       = dark ? '#fbbf24' : '#92400e';
+  const WARN_BG        = dark ? 'rgba(245,158,11,0.12)' : '#fffbeb';
+  const WARN_BORDER     = dark ? 'rgba(245,158,11,0.35)' : '#fde68a';
+  const SUCCESS        = dark ? '#4ade80' : '#22c55e';
+  const SUCCESS_BG      = dark ? 'rgba(34,197,94,0.12)' : '#f0fdf4';
+  const SUCCESS_BORDER  = dark ? 'rgba(34,197,94,0.35)' : '#bbf7d0';
+
   const [step, setStep]           = useState('idle'); // idle | preview | importing | done
   const [rows, setRows]           = useState([]);
   const [rowErrors, setRowErrors] = useState({});
@@ -106,7 +139,7 @@ export default function RoomExcelImport({ onImportComplete }) {
       // Validate each row
       const errs = {};
       normalized.forEach((row, i) => {
-        const e = validateRow(row, i);
+        const e = validateRow(row);
         if (e.length) errs[i] = e;
       });
 
@@ -142,7 +175,9 @@ export default function RoomExcelImport({ onImportComplete }) {
 
         await addDoc(collection(db, 'rooms'), {
           roomNumber:  row.roomNumber,
-          type:        row.type,
+          // Normalized to canonical Title Case regardless of how it was typed
+          // in the spreadsheet, so category matching elsewhere never breaks.
+          type:        normalizeType(row.type),
           price:       Number(row.price),
           capacity:    Number(row.capacity),
           status:      String(row.status).toLowerCase(),
@@ -180,28 +215,43 @@ export default function RoomExcelImport({ onImportComplete }) {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
         <div>
-          <h2 style={{ fontSize: '18px', fontWeight: '700', color: C.text, margin: 0 }}>Import Rooms from Excel</h2>
-          <p style={{ fontSize: '12px', color: C.muted, margin: '4px 0 0' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: '700', color: TEXT, margin: 0 }}>Import Rooms from Excel</h2>
+          <p style={{ fontSize: '12px', color: MUTED, margin: '4px 0 0' }}>
             Upload an .xlsx file to bulk-add rooms. Duplicates are skipped automatically.
           </p>
         </div>
-        <DownloadTemplate />
+        <DownloadTemplate darkBtnBg={DARKBTN_BG} accent={ACCENT} />
       </div>
 
       {/* Column guide */}
-      <div style={{ background: C.accentSoft, borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', fontSize: '11px' }}>
-        <div style={{ fontWeight: '600', color: C.dark, marginBottom: '6px' }}>📋 Expected Columns</div>
+      <div style={{ background: GUIDE_BG, borderRadius: '10px', padding: '12px 16px', marginBottom: '12px', fontSize: '11px' }}>
+        <div style={{ fontWeight: '600', color: dark ? ACCENT : DARKBTN_BG, marginBottom: '6px' }}>📋 Expected Columns</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           {REQUIRED_COLS.map(c => (
-            <span key={c} style={{ background: C.dark, color: C.accent, borderRadius: '6px', padding: '2px 8px', fontWeight: '600' }}>{c} *</span>
+            <span key={c} style={{ background: DARKBTN_BG, color: ACCENT, borderRadius: '6px', padding: '2px 8px', fontWeight: '600' }}>{c} *</span>
           ))}
           {OPTIONAL_COLS.map(c => (
-            <span key={c} style={{ background: '#e5e7eb', color: '#374151', borderRadius: '6px', padding: '2px 8px' }}>{c}</span>
+            <span key={c} style={{ background: CARD2, color: dark ? '#c7c7c0' : '#374151', borderRadius: '6px', padding: '2px 8px' }}>{c}</span>
           ))}
         </div>
-        <div style={{ color: C.muted, marginTop: '6px' }}>
-          Status values: <strong>vacant · available · occupied · maintenance · not ready</strong>
+        <div style={{ color: MUTED, marginTop: '6px' }}>
+          Status values: <strong style={{ color: TEXT }}>vacant · available · occupied · maintenance · not ready</strong>
+        </div>
+      </div>
 
+      {/* Capitalization rules */}
+      <div style={{ background: GUIDE_BG, borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', fontSize: '11px' }}>
+        <div style={{ fontWeight: '600', color: dark ? ACCENT : DARKBTN_BG, marginBottom: '6px' }}>🔤 Capitalization Rules</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', color: MUTED }}>
+          <div>
+            <strong style={{ color: TEXT }}>Type</strong> — capitalization doesn't matter. <em>deluxe</em>, <em>Deluxe</em>, and <em>DELUXE</em> all work and are automatically saved as <strong style={{ color: TEXT }}>Deluxe</strong>. Must match one of: {TYPE_OPTIONS.join(', ')}.
+          </div>
+          <div>
+            <strong style={{ color: TEXT }}>Status</strong> — also not case-sensitive. Always saved in lowercase automatically.
+          </div>
+          <div>
+            <strong style={{ color: TEXT }}>Room Number, Amenities, Description</strong> — saved exactly as typed, so capitalize these however you want guests to see them.
+          </div>
         </div>
       </div>
 
@@ -213,24 +263,24 @@ export default function RoomExcelImport({ onImportComplete }) {
           onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
           onClick={() => fileRef.current.click()}
           style={{
-            border: `2px dashed ${dragOver ? C.dark : C.border}`,
+            border: `2px dashed ${dragOver ? DARKBTN_BG : BORDER}`,
             borderRadius: '14px',
             padding: '48px',
             textAlign: 'center',
             cursor: 'pointer',
-            background: dragOver ? C.accentSoft : '#fafafa',
+            background: dragOver ? DROPZONE_HOVER : DROPZONE_BG,
             transition: 'all 0.2s',
           }}
         >
           <div style={{ fontSize: '40px', marginBottom: '12px' }}>📂</div>
-          <div style={{ fontWeight: '600', fontSize: '14px', color: C.text, marginBottom: '4px' }}>
+          <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '4px' }}>
             Drop your Excel file here
           </div>
-          <div style={{ fontSize: '12px', color: C.muted, marginBottom: '16px' }}>
+          <div style={{ fontSize: '12px', color: MUTED, marginBottom: '16px' }}>
             or click to browse — .xlsx, .xls, .csv supported
           </div>
           <span style={{
-            background: C.dark, color: C.accent,
+            background: DARKBTN_BG, color: ACCENT,
             borderRadius: '8px', padding: '8px 20px',
             fontSize: '12px', fontWeight: '600',
           }}>
@@ -247,57 +297,57 @@ export default function RoomExcelImport({ onImportComplete }) {
         <div>
           {/* Summary bar */}
           <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
-            <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: '10px', padding: '12px 20px', flex: 1, minWidth: '120px' }}>
-              <div style={{ fontSize: '22px', fontWeight: '700', color: C.text }}>{rows.length}</div>
-              <div style={{ fontSize: '11px', color: C.muted }}>Total rows</div>
+            <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px 20px', flex: 1, minWidth: '120px' }}>
+              <div style={{ fontSize: '22px', fontWeight: '700', color: TEXT }}>{rows.length}</div>
+              <div style={{ fontSize: '11px', color: MUTED }}>Total rows</div>
             </div>
-            <div style={{ background: C.successBg, border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px 20px', flex: 1, minWidth: '120px' }}>
-              <div style={{ fontSize: '22px', fontWeight: '700', color: C.success }}>{validCount}</div>
-              <div style={{ fontSize: '11px', color: C.muted }}>Ready to import</div>
+            <div style={{ background: SUCCESS_BG, border: `1px solid ${SUCCESS_BORDER}`, borderRadius: '10px', padding: '12px 20px', flex: 1, minWidth: '120px' }}>
+              <div style={{ fontSize: '22px', fontWeight: '700', color: SUCCESS }}>{validCount}</div>
+              <div style={{ fontSize: '11px', color: MUTED }}>Ready to import</div>
             </div>
-            <div style={{ background: C.errorBg, border: '1px solid #fecaca', borderRadius: '10px', padding: '12px 20px', flex: 1, minWidth: '120px' }}>
-              <div style={{ fontSize: '22px', fontWeight: '700', color: C.error }}>{invalidCount}</div>
-              <div style={{ fontSize: '11px', color: C.muted }}>Rows with errors</div>
+            <div style={{ background: ERROR_BG, border: `1px solid ${ERROR_BORDER}`, borderRadius: '10px', padding: '12px 20px', flex: 1, minWidth: '120px' }}>
+              <div style={{ fontSize: '22px', fontWeight: '700', color: ERROR }}>{invalidCount}</div>
+              <div style={{ fontSize: '11px', color: MUTED }}>Rows with errors</div>
             </div>
-            <div style={{ background: '#f9fafb', border: `1px solid ${C.border}`, borderRadius: '10px', padding: '12px 20px', flex: 1, minWidth: '160px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px 20px', flex: 1, minWidth: '160px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ fontSize: '20px' }}>📄</div>
               <div>
-                <div style={{ fontSize: '12px', fontWeight: '600', color: C.text, wordBreak: 'break-all' }}>{fileName}</div>
-                <div style={{ fontSize: '10px', color: C.muted }}>Uploaded file</div>
+                <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT, wordBreak: 'break-all' }}>{fileName}</div>
+                <div style={{ fontSize: '10px', color: MUTED }}>Uploaded file</div>
               </div>
             </div>
           </div>
 
           {/* Table */}
-          <div style={{ background: '#fff', border: `1px solid ${C.border}`, borderRadius: '12px', overflow: 'hidden', marginBottom: '16px' }}>
+          <div style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '12px', overflow: 'hidden', marginBottom: '16px' }}>
             <div style={{ overflowX: 'auto', maxHeight: '380px', overflowY: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                 <thead>
-                  <tr style={{ background: '#f9fafb', position: 'sticky', top: 0, zIndex: 1 }}>
-                    <th style={{ padding: '10px 12px', textAlign: 'left', color: C.muted, fontWeight: '600', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>#</th>
+                  <tr style={{ background: CARD2, position: 'sticky', top: 0, zIndex: 1 }}>
+                    <th style={{ padding: '10px 12px', textAlign: 'left', color: MUTED, fontWeight: '600', borderBottom: `1px solid ${BORDER}`, whiteSpace: 'nowrap' }}>#</th>
                     {ALL_COLS.map(c => (
-                      <th key={c} style={{ padding: '10px 12px', textAlign: 'left', color: C.muted, fontWeight: '600', borderBottom: `1px solid ${C.border}`, whiteSpace: 'nowrap' }}>
+                      <th key={c} style={{ padding: '10px 12px', textAlign: 'left', color: MUTED, fontWeight: '600', borderBottom: `1px solid ${BORDER}`, whiteSpace: 'nowrap' }}>
                         {c}{REQUIRED_COLS.includes(c) ? ' *' : ''}
                       </th>
                     ))}
-                    <th style={{ padding: '10px 12px', textAlign: 'left', color: C.muted, fontWeight: '600', borderBottom: `1px solid ${C.border}` }}>Status</th>
+                    <th style={{ padding: '10px 12px', textAlign: 'left', color: MUTED, fontWeight: '600', borderBottom: `1px solid ${BORDER}` }}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, i) => {
                     const errs = rowErrors[i];
                     return (
-                      <tr key={i} style={{ background: errs ? C.errorBg : (i % 2 === 0 ? '#fff' : '#fafafa') }}>
-                        <td style={{ padding: '9px 12px', color: C.muted, borderBottom: `1px solid #f3f4f6` }}>{i + 1}</td>
+                      <tr key={i} style={{ background: errs ? ERROR_BG : (i % 2 === 0 ? CARD : ROW_ALT) }}>
+                        <td style={{ padding: '9px 12px', color: MUTED, borderBottom: `1px solid ${CELL_BORDER}` }}>{i + 1}</td>
                         {ALL_COLS.map(c => (
-                          <td key={c} style={{ padding: '9px 12px', color: C.text, borderBottom: `1px solid #f3f4f6`, whiteSpace: 'nowrap', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {row[c] || <span style={{ color: C.muted }}>—</span>}
+                          <td key={c} style={{ padding: '9px 12px', color: TEXT, borderBottom: `1px solid ${CELL_BORDER}`, whiteSpace: 'nowrap', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {row[c] || <span style={{ color: MUTED }}>—</span>}
                           </td>
                         ))}
-                        <td style={{ padding: '9px 12px', borderBottom: `1px solid #f3f4f6` }}>
+                        <td style={{ padding: '9px 12px', borderBottom: `1px solid ${CELL_BORDER}` }}>
                           {errs
-                            ? <Badge color={C.error} bg={C.errorBg}>⚠ {errs[0]}</Badge>
-                            : <Badge color={C.success} bg={C.successBg}>✓ Valid</Badge>
+                            ? <Badge color={ERROR} bg={ERROR_BG}>⚠ {errs[0]}</Badge>
+                            : <Badge color={SUCCESS} bg={SUCCESS_BG}>✓ Valid</Badge>
                           }
                         </td>
                       </tr>
@@ -309,7 +359,7 @@ export default function RoomExcelImport({ onImportComplete }) {
           </div>
 
           {invalidCount > 0 && (
-            <div style={{ background: C.warnBg, border: '1px solid #fde68a', borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', fontSize: '12px', color: '#92400e' }}>
+            <div style={{ background: WARN_BG, border: `1px solid ${WARN_BORDER}`, borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', fontSize: '12px', color: WARN_TEXT }}>
               ⚠ <strong>{invalidCount} row{invalidCount > 1 ? 's' : ''}</strong> have errors and will be skipped during import. Fix the Excel file and re-upload to include them.
             </div>
           )}
@@ -317,8 +367,8 @@ export default function RoomExcelImport({ onImportComplete }) {
           {/* Actions */}
           <div style={{ display: 'flex', gap: '10px' }}>
             <button onClick={reset} style={{
-              padding: '10px 20px', borderRadius: '8px', border: `1px solid ${C.border}`,
-              background: '#fff', color: C.text, fontSize: '13px', fontWeight: '500',
+              padding: '10px 20px', borderRadius: '8px', border: `1px solid ${BORDER}`,
+              background: CARD, color: TEXT, fontSize: '13px', fontWeight: '500',
               cursor: 'pointer', fontFamily: "'Poppins', sans-serif",
             }}>
               ← Back
@@ -328,8 +378,8 @@ export default function RoomExcelImport({ onImportComplete }) {
               disabled={validCount === 0}
               style={{
                 padding: '10px 24px', borderRadius: '8px', border: 'none',
-                background: validCount === 0 ? '#e5e7eb' : C.dark,
-                color: validCount === 0 ? C.muted : C.accent,
+                background: validCount === 0 ? BORDER : DARKBTN_BG,
+                color: validCount === 0 ? MUTED : ACCENT,
                 fontSize: '13px', fontWeight: '700',
                 cursor: validCount === 0 ? 'not-allowed' : 'pointer',
                 fontFamily: "'Poppins', sans-serif",
@@ -344,46 +394,46 @@ export default function RoomExcelImport({ onImportComplete }) {
       {step === 'importing' && (
         <div style={{ textAlign: 'center', padding: '60px 20px' }}>
           <div style={{ fontSize: '40px', marginBottom: '16px' }}>⏳</div>
-          <div style={{ fontWeight: '700', fontSize: '16px', color: C.text, marginBottom: '8px' }}>
+          <div style={{ fontWeight: '700', fontSize: '16px', color: TEXT, marginBottom: '8px' }}>
             Importing rooms...
           </div>
-          <div style={{ fontSize: '12px', color: C.muted, marginBottom: '24px' }}>
+          <div style={{ fontSize: '12px', color: MUTED, marginBottom: '24px' }}>
             Please don't close this page.
           </div>
-          <div style={{ background: '#e5e7eb', borderRadius: '999px', height: '8px', maxWidth: '320px', margin: '0 auto' }}>
+          <div style={{ background: BORDER, borderRadius: '999px', height: '8px', maxWidth: '320px', margin: '0 auto' }}>
             <div style={{
-              background: C.dark, height: '8px', borderRadius: '999px',
+              background: DARKBTN_BG, height: '8px', borderRadius: '999px',
               width: `${progress}%`, transition: 'width 0.3s ease',
             }} />
           </div>
-          <div style={{ fontSize: '13px', fontWeight: '600', color: C.dark, marginTop: '10px' }}>{progress}%</div>
+          <div style={{ fontSize: '13px', fontWeight: '600', color: dark ? ACCENT : DARKBTN_BG, marginTop: '10px' }}>{progress}%</div>
         </div>
       )}
 
       {/* STEP: done */}
       {step === 'done' && (
         <div style={{ textAlign: 'center', padding: '48px 20px' }}>
-          <div style={{ width: '64px', height: '64px', background: C.accentSoft, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '28px' }}>✅</div>
-          <div style={{ fontWeight: '700', fontSize: '18px', color: C.text, marginBottom: '6px' }}>Import Complete</div>
-          <div style={{ fontSize: '12px', color: C.muted, marginBottom: '28px' }}>Here's a summary of what happened:</div>
+          <div style={{ width: '64px', height: '64px', background: GUIDE_BG, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '28px' }}>✅</div>
+          <div style={{ fontWeight: '700', fontSize: '18px', color: TEXT, marginBottom: '6px' }}>Import Complete</div>
+          <div style={{ fontSize: '12px', color: MUTED, marginBottom: '28px' }}>Here's a summary of what happened:</div>
 
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginBottom: '28px', flexWrap: 'wrap' }}>
-            <div style={{ background: C.successBg, border: '1px solid #bbf7d0', borderRadius: '12px', padding: '16px 28px' }}>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: C.success }}>{results.success}</div>
-              <div style={{ fontSize: '11px', color: C.muted }}>Rooms added</div>
+            <div style={{ background: SUCCESS_BG, border: `1px solid ${SUCCESS_BORDER}`, borderRadius: '12px', padding: '16px 28px' }}>
+              <div style={{ fontSize: '28px', fontWeight: '700', color: SUCCESS }}>{results.success}</div>
+              <div style={{ fontSize: '11px', color: MUTED }}>Rooms added</div>
             </div>
-            <div style={{ background: C.warnBg, border: '1px solid #fde68a', borderRadius: '12px', padding: '16px 28px' }}>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: C.warn }}>{results.skipped}</div>
-              <div style={{ fontSize: '11px', color: C.muted }}>Duplicates skipped</div>
+            <div style={{ background: WARN_BG, border: `1px solid ${WARN_BORDER}`, borderRadius: '12px', padding: '16px 28px' }}>
+              <div style={{ fontSize: '28px', fontWeight: '700', color: WARN }}>{results.skipped}</div>
+              <div style={{ fontSize: '11px', color: MUTED }}>Duplicates skipped</div>
             </div>
-            <div style={{ background: C.errorBg, border: '1px solid #fecaca', borderRadius: '12px', padding: '16px 28px' }}>
-              <div style={{ fontSize: '28px', fontWeight: '700', color: C.error }}>{results.failed}</div>
-              <div style={{ fontSize: '11px', color: C.muted }}>Failed</div>
+            <div style={{ background: ERROR_BG, border: `1px solid ${ERROR_BORDER}`, borderRadius: '12px', padding: '16px 28px' }}>
+              <div style={{ fontSize: '28px', fontWeight: '700', color: ERROR }}>{results.failed}</div>
+              <div style={{ fontSize: '11px', color: MUTED }}>Failed</div>
             </div>
           </div>
 
           <button onClick={reset} style={{
-            background: C.dark, color: C.accent, border: 'none',
+            background: DARKBTN_BG, color: ACCENT, border: 'none',
             borderRadius: '10px', padding: '12px 28px',
             fontSize: '13px', fontWeight: '700',
             cursor: 'pointer', fontFamily: "'Poppins', sans-serif",

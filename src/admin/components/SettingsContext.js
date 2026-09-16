@@ -2,11 +2,11 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const STORAGE_KEY = 'lkgr_admin_settings';
 
-const DEFAULT_SETTINGS = {
+export const DEFAULT_SETTINGS = {
   darkMode: false,
   compactSidebar: false,
   fontSize: 'medium',
-  accentColor: '#c8f06e',
+  accentColor: '#9cb56f',
   language: 'en',
   timezone: 'Asia/Manila',
   currency: 'PHP',
@@ -17,6 +17,8 @@ const DEFAULT_SETTINGS = {
   autoLogout: '30',
   showRevenue: true,
   showOccupancy: true,
+  showReservations: true,
+  showChart: true,
   twoFactor: false,
   sessionTimeout: true,
 };
@@ -32,6 +34,12 @@ const SettingsContext = createContext(null);
 
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState(load);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+  useEffect(() => {
+    setSettings(load());
+    setSettingsLoaded(true);
+  }, []);
 
   const updateSetting = (key, value) => {
     setSettings(prev => {
@@ -42,11 +50,12 @@ export function SettingsProvider({ children }) {
   };
 
   const saveAll = (newSettings) => {
-    setSettings(newSettings);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newSettings));
+    const next = { ...DEFAULT_SETTINGS, ...newSettings };
+    setSettings(next);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };
 
-  const reset = () => {
+  const resetAll = () => {
     setSettings(DEFAULT_SETTINGS);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
   };
@@ -135,8 +144,9 @@ export function SettingsProvider({ children }) {
 
   return (
     <SettingsContext.Provider value={{
-      settings, updateSetting, saveAll, reset,
+      settings, updateSetting, saveAll, resetAll,
       formatCurrency, formatDate, formatDateTime,
+      settingsLoaded,
     }}>
       {children}
     </SettingsContext.Provider>

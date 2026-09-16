@@ -8,7 +8,7 @@ export default function Feedback() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
 
-  const ACCENT      = settings?.accentColor || '#c8f06e';
+  const ACCENT      = settings?.accentColor || '#9cb56f';
   const ACCENT_TEXT = '#0a1a0a';
   const ACCENT_TEXT_MUTED = 'rgba(10,26,10,0.65)';
   const BG      = dark ? '#020b09' : '#f4f6f4';

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useMotionValue, useTransform, animate } from 'framer-motion';
 import { db } from '../../firebase/firebase';
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
@@ -7,7 +7,7 @@ import RoomExcelImport from '../components/RoomExcelImport';
 import { useSettings } from '../components/SettingsContext';
 import { ROOM_TYPES, ROOM_TYPE_CATEGORY_MAP, normalizeRoomType } from '../utils/roomCatalog';
 
-const LIME  = '#c8f06e';
+const LIME  = '#9cb56f';
 const DARK  = '#0a1a0a';
 
 const ROOM_META = {
@@ -22,13 +22,57 @@ const ROOM_META = {
 
 const TYPE_CATEGORY_MAP = ROOM_TYPE_CATEGORY_MAP;
 
+// Real room photos from lawiswiskawayanresort.com/our-rooms, keyed by room
+// name (lowercased) so they match whatever the roomNumber/name field holds.
+const ROOM_IMAGES = {
+  himbing:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Himbing-01-1400x700-1.jpeg',
+  tahimik:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tahimik-02-1400x700-1.jpeg',
+  minamahal:  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/MInamahal-01-1400x700-1.jpeg',
+  bituin:     'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Bituin-02-1400x700-2.jpeg',
+  dilag:      'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Dilag-03-1400x700-1.jpeg',
+  tadhana:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tadhana-02-1400x700-1.jpeg',
+  hirang:     'https://lawiswiskawayanresort.com/wp-content/uploads/2020/04/Hirang-02-1400x700-1.jpeg',
+  panaginip:  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Panaginip-05.jpeg',
+  aruga:      'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Aruga-02-1400x700-1.jpeg',
+  giliw:      'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Giliw-01-1400x700-1.jpeg',
+  lambingan:  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Lambingan-01-1400x700-1.jpeg',
+  irog:       'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Irog-01-1400x700-1.jpeg',
+  'pag-ibig': 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Pag-ibig-04-1400x700-1.jpeg',
+  kalinga:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Kalinga-02-1400x700-1.jpeg',
+  ugoy:       'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Ugoy-02-1400x700-1.jpeg',
+  aliwalas:   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Aliwalas-02-1400x700-1.jpeg',
+  ginhawa:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Ginhawa-03-1400x700-1.jpeg',
+  iglipan:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Iglipan-05-1400x700-1.jpeg',
+  panatag:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Panatag-01-1400x700-1.jpeg',
+  payapa:     'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Payapa-01-1400x700-1.jpeg',
+  hiwaga:     'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Hiwaga-02-1400x700-1.jpeg',
+  simoy:      'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Simoy-01-1400x700-1.jpeg',
+  ligaya:     'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Ligaya-01-1400x700-1.jpeg',
+  hapag:      'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Hapag-06-1400x700-1.jpeg',
+  dalisay:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Dalisay-05-1400x700-1.jpeg',
+  halimuyak:  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Halimuyak-04-1400x700-1.jpeg',
+  paraiso:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Paraiso-03-1400x700-1.jpeg',
+  'main villa': 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Main-Villa-08-1400x700-1.jpeg',
+};
+
+// Looks up a room photo by name — falls back to null (bed icon) if the
+// room's name/number doesn't match one of the resort's real room names.
+function getRoomImage(name) {
+  if (!name) return null;
+  return ROOM_IMAGES[name.trim().toLowerCase()] || null;
+}
+
 const badgeColors = {
-  vacant:      { bg: 'rgba(200,240,110,0.12)', color: '#c8f06e' },
-  available:   { bg: 'rgba(200,240,110,0.12)', color: '#c8f06e' },
+  vacant:      { bg: 'rgba(200,240,110,0.12)', color: '#9cb56f' },
+  available:   { bg: 'rgba(200,240,110,0.12)', color: '#9cb56f' },
   occupied:    { bg: 'rgba(248,113,113,0.12)', color: '#f87171' },
   cleaning:    { bg: 'rgba(251,191,36,0.12)',  color: '#fbbf24' },
   maintenance: { bg: 'rgba(148,163,184,0.12)', color: '#94a3b8' },
 };
+
+// Statuses that are actively "in progress" get a soft pulsing dot instead
+// of a static one — a quick, low-key way to draw the eye without being loud.
+const PULSING_STATUSES = new Set(['occupied', 'cleaning']);
 
 const badgeLabel = (s) => ({ vacant: 'Available', occupied: 'Occupied', cleaning: 'Cleaning', maintenance: 'Maintenance', available: 'Available' })[s] || s;
 
@@ -38,11 +82,42 @@ const CheckIcon = () => (
   </div>
 );
 
+// Small pulsing/status dot used inside badges.
+const StatusDot = ({ color, pulse }) => (
+  <motion.span
+    animate={pulse ? { opacity: [1, 0.35, 1] } : {}}
+    transition={pulse ? { duration: 1.6, repeat: Infinity, ease: 'easeInOut' } : {}}
+    style={{ width: 6, height: 6, borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }}
+  />
+);
+
+// Counts up from 0 to `value` whenever value changes, instead of just
+// popping in — makes the stat row feel alive on load and on refresh.
+function AnimatedNumber({ value }) {
+  const mv = useMotionValue(0);
+  const [display, setDisplay] = useState(0);
+  useEffect(() => {
+    const controls = animate(mv, value, {
+      duration: 0.6,
+      ease: 'easeOut',
+      onUpdate: (v) => setDisplay(Math.round(v)),
+    });
+    return () => controls.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return <>{display}</>;
+}
+
 // ── Motion variants ──────────────────────────────────────────
 const panelVariants = {
   hidden:  { opacity: 0, height: 0 },
   visible: { opacity: 1, height: 'auto', transition: { duration: 0.25, ease: 'easeOut' } },
   exit:    { opacity: 0, height: 0, transition: { duration: 0.2, ease: 'easeIn' } },
+};
+
+const headerVariants = {
+  hidden: { opacity: 0, y: -8 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: 'easeOut' } },
 };
 
 const statCardVariants = {
@@ -60,6 +135,24 @@ const roomCardVariants = {
     transition: { delay: Math.min(i, 10) * 0.035, duration: 0.32, ease: 'easeOut' },
   }),
   exit: { opacity: 0, scale: 0.97, transition: { duration: 0.15 } },
+};
+
+const backdropVariants = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1 },
+  exit: { opacity: 0 },
+};
+
+const modalVariants = {
+  hidden: { opacity: 0, scale: 0.94, y: 8 },
+  visible: { opacity: 1, scale: 1, y: 0, transition: { duration: 0.2, ease: 'easeOut' } },
+  exit: { opacity: 0, scale: 0.96, y: 6, transition: { duration: 0.15 } },
+};
+
+const chipVariants = {
+  hidden:  { opacity: 0, scale: 0.9, width: 0, marginLeft: 0 },
+  visible: { opacity: 1, scale: 1, width: 'auto', marginLeft: 8, transition: { duration: 0.2, ease: 'easeOut' } },
+  exit:    { opacity: 0, scale: 0.9, width: 0, marginLeft: 0, transition: { duration: 0.15, ease: 'easeIn' } },
 };
 
 export default function RoomManagement() {
@@ -82,7 +175,9 @@ export default function RoomManagement() {
   const [activeRoom, setActiveRoom] = useState(null);
   const [search, setSearch]         = useState('');
   const [filterType, setFilterType] = useState('');
+  const [statusFilter, setStatusFilter] = useState(''); // '', 'available', 'occupied', 'maintenance'
   const [form, setForm] = useState({ roomNumber: '', type: '', price: '', status: 'vacant', amenities: '', description: '' });
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
   const fetchRooms = async () => {
     const snapshot = await getDocs(collection(db, 'rooms'));
@@ -106,19 +201,75 @@ export default function RoomManagement() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Delete this room?')) {
-      await deleteDoc(doc(db, 'rooms', id));
-      setActiveRoom(null); fetchRooms();
+  const requestDelete = (id) => setConfirmDeleteId(id);
+
+  const confirmDelete = async () => {
+    if (!confirmDeleteId) return;
+    await deleteDoc(doc(db, 'rooms', confirmDeleteId));
+    setActiveRoom(null);
+    setConfirmDeleteId(null);
+    fetchRooms();
+  };
+
+  // ── Stat-card filter wiring ──────────────────────────────────
+  const statCards = [
+    { label: 'Total',       value: rooms.length,                                                         color: TEXT,      icon: 'ti-building',        filterKind: 'all',      filterValue: '' },
+    { label: 'Available',   value: rooms.filter(r => ['vacant','available'].includes(r.status)).length,  color: LIME,      icon: 'ti-circle-check',    filterKind: 'status',   filterValue: 'available' },
+    { label: 'Occupied',    value: rooms.filter(r => r.status === 'occupied').length,                    color: '#f87171', icon: 'ti-door',            filterKind: 'status',   filterValue: 'occupied' },
+    { label: 'Maintenance', value: rooms.filter(r => r.status === 'maintenance').length,                 color: '#94a3b8', icon: 'ti-tool',            filterKind: 'status',   filterValue: 'maintenance' },
+    { label: 'Standard',    value: rooms.filter(r => r.type === 'Standard').length,                      color: '#60a5fa', icon: 'ti-bed',             filterKind: 'roomType', filterValue: 'Standard' },
+    { label: 'Deluxe',      value: rooms.filter(r => r.type === 'Deluxe').length,                        color: '#a78bfa', icon: 'ti-star',            filterKind: 'roomType', filterValue: 'Deluxe' },
+    { label: 'Family Room', value: rooms.filter(r => r.type === 'FamilyRoom').length,                    color: '#fbbf24', icon: 'ti-users',           filterKind: 'roomType', filterValue: 'FamilyRoom' },
+    { label: 'Jr. Suite',   value: rooms.filter(r => r.type === 'JuniorSuite4').length,                  color: '#34d399', icon: 'ti-sofa',            filterKind: 'roomType', filterValue: 'JuniorSuite4' },
+    { label: 'Family Suite',value: rooms.filter(r => r.type === 'FamilySuite').length,                   color: '#2dd4bf', icon: 'ti-home',            filterKind: 'roomType', filterValue: 'FamilySuite' },
+    { label: 'Presidential',value: rooms.filter(r => r.type === 'PresidentialSuite').length,              color: '#f472b6', icon: 'ti-crown',           filterKind: 'roomType', filterValue: 'PresidentialSuite' },
+    { label: 'Main Villa',  value: rooms.filter(r => r.type === 'MainVilla').length,                     color: '#fb923c', icon: 'ti-building-castle', filterKind: 'roomType', filterValue: 'MainVilla' },
+  ];
+
+  const handleStatClick = (card) => {
+    if (card.filterKind === 'all') {
+      setFilterType(''); setStatusFilter('');
+      return;
+    }
+    if (card.filterKind === 'status') {
+      setStatusFilter(prev => (prev === card.filterValue ? '' : card.filterValue));
+      setFilterType('');
+    } else if (card.filterKind === 'roomType') {
+      setFilterType(prev => (prev === card.filterValue ? '' : card.filterValue));
+      setStatusFilter('');
     }
   };
 
+  const isCardActive = (card) => {
+    if (card.filterKind === 'all') return !filterType && !statusFilter;
+    if (card.filterKind === 'status') return statusFilter === card.filterValue;
+    if (card.filterKind === 'roomType') return filterType === card.filterValue;
+    return false;
+  };
+
+  const clearAllFilters = () => { setFilterType(''); setStatusFilter(''); };
+
+  // Human-readable label for whichever filter is currently active, used by the chip.
+  const activeFilterLabel = statusFilter
+    ? `Status: ${badgeLabel(statusFilter === 'available' ? 'vacant' : statusFilter)}`
+    : filterType
+      ? `Type: ${filterType}`
+      : '';
+
   const filtered = rooms.filter(r => {
     const normalizedType = normalizeRoomType(r.type);
-    return (
-      (r.roomNumber?.toLowerCase().includes(search.toLowerCase()) || r.type?.toLowerCase().includes(search.toLowerCase()) || normalizedType?.toLowerCase().includes(search.toLowerCase())) &&
-      (filterType ? normalizedType === filterType || r.type === filterType : true)
+    const matchesSearch = (
+      r.roomNumber?.toLowerCase().includes(search.toLowerCase()) ||
+      r.type?.toLowerCase().includes(search.toLowerCase()) ||
+      normalizedType?.toLowerCase().includes(search.toLowerCase())
     );
+    const matchesType = filterType ? (normalizedType === filterType || r.type === filterType) : true;
+    const matchesStatus = statusFilter === 'available'
+      ? ['vacant', 'available'].includes(r.status)
+      : statusFilter
+        ? r.status === statusFilter
+        : true;
+    return matchesSearch && matchesType && matchesStatus;
   });
 
   const meta = activeRoom ? (ROOM_META[activeRoom.type] || {}) : {};
@@ -133,23 +284,19 @@ export default function RoomManagement() {
     background: INPUT_BG, color: TEXT, boxSizing: 'border-box',
   };
 
-  const statCards = [
-    { label: 'Total',       value: rooms.length,                                                         color: TEXT },
-    { label: 'Available',   value: rooms.filter(r => ['vacant','available'].includes(r.status)).length,  color: LIME },
-    { label: 'Occupied',    value: rooms.filter(r => r.status === 'occupied').length,                    color: '#f87171' },
-    { label: 'Maintenance', value: rooms.filter(r => r.status === 'maintenance').length,                 color: '#94a3b8' },
-    { label: 'Standard',    value: rooms.filter(r => r.type === 'Standard').length,                      color: '#60a5fa' },
-    { label: 'Deluxe',      value: rooms.filter(r => r.type === 'Deluxe').length,                        color: '#a78bfa' },
-    { label: 'Family Room', value: rooms.filter(r => r.type === 'FamilyRoom').length,                    color: '#fbbf24' },
-    { label: 'Jr. Suite',   value: rooms.filter(r => r.type === 'JuniorSuite4').length,                  color: '#34d399' },
-    { label: 'Family Suite',value: rooms.filter(r => r.type === 'FamilySuite').length,                   color: '#2dd4bf' },
-    { label: 'Presidential',value: rooms.filter(r => r.type === 'PresidentialSuite').length,              color: '#f472b6' },
-    { label: 'Main Villa',  value: rooms.filter(r => r.type === 'MainVilla').length,                     color: '#fb923c' },
-  ];
+  const deleteTargetRoom = rooms.find(r => r.id === confirmDeleteId);
 
   return (
     <PageLayout>
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: 20 }}>
+
+        {/* ── Page header ── */}
+        <motion.div variants={headerVariants} initial="hidden" animate="visible" style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: TEXT }}>Room Management</div>
+          <div style={{ fontSize: 12, color: SUBTEXT, marginTop: 2 }}>
+            {rooms.length} room{rooms.length === 1 ? '' : 's'} total · manage inventory, pricing and availability
+          </div>
+        </motion.div>
 
         {/* ── Add/Edit Form ── */}
         <AnimatePresence initial={false}>
@@ -161,7 +308,7 @@ export default function RoomManagement() {
               exit="exit"
               style={{ overflow: 'hidden' }}
             >
-              <div style={{ background: CARD, borderRadius: 18, padding: '20px 22px', border: `1px solid ${BORDER}`, marginBottom: 16, boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : 'none' }}>
+              <div style={{ background: CARD, borderRadius: 18, padding: '20px 22px', border: `1px solid ${BORDER}`, marginBottom: 16, boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : '0 2px 12px rgba(0,0,0,0.04)' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 16 }}>
                   {editRoom ? '✏️ Edit Room' : '➕ Add New Room'}
                 </div>
@@ -250,18 +397,58 @@ export default function RoomManagement() {
         </AnimatePresence>
 
         {/* ── Top Bar ── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+        <motion.div
+          variants={headerVariants} initial="hidden" animate="visible"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap',
+            background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 10,
+          }}
+        >
           <div style={{ position: 'relative', flex: 1, minWidth: 160 }}>
             <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: MUTED }} />
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search room name, type..."
               style={{ ...inputStyle, paddingLeft: 32, borderRadius: 10, height: 36 }} />
           </div>
-          <select value={filterType} onChange={e => setFilterType(e.target.value)}
+          <select value={filterType} onChange={e => { setFilterType(e.target.value); setStatusFilter(''); }}
             style={{ ...inputStyle, width: 'auto', borderRadius: 10, height: 36, paddingRight: 28 }}>
             <option value="">All Types</option>
             {ROOM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
+
+          {/* Active filter chip — shows whichever stat-card filter (status or type) is applied */}
+          <AnimatePresence>
+            {activeFilterLabel && (
+              <motion.div
+                variants={chipVariants}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  background: 'rgba(200,240,110,0.12)', color: LIME,
+                  border: `1px solid ${dark ? 'rgba(200,240,110,0.35)' : 'rgba(156,181,111,0.4)'}`,
+                  borderRadius: 20, padding: '6px 8px 6px 12px',
+                  fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', height: 36, boxSizing: 'border-box',
+                }}
+              >
+                <i className="ti ti-filter" style={{ fontSize: 12 }} />
+                {activeFilterLabel}
+                <button
+                  onClick={clearAllFilters}
+                  aria-label="Clear filter"
+                  style={{
+                    background: 'rgba(0,0,0,0.08)', border: 'none', borderRadius: '50%',
+                    width: 16, height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', color: LIME, fontSize: 10, lineHeight: 1, padding: 0,
+                  }}
+                >
+                  ✕
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
             onClick={() => { setShowImport(p => !p); setShowForm(false); setEditRoom(null); }}
             style={{
@@ -278,23 +465,38 @@ export default function RoomManagement() {
             style={{ padding: '7px 16px', background: LIME, border: 'none', borderRadius: 10, color: DARK, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', height: 36 }}>
             + Add Room
           </motion.button>
-        </div>
+        </motion.div>
 
-        {/* ── Stats Row ── */}
+        {/* ── Stats Row (clickable filters) ── */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-          {statCards.map((s, i) => (
-            <motion.div key={s.label}
-              custom={i}
-              variants={statCardVariants}
-              initial="hidden"
-              animate="visible"
-              whileHover={{ y: -2, borderColor: dark ? '#3a3a2a' : '#d1d5db' }}
-              style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 14px', flex: 1, minWidth: 70 }}
-            >
-              <div style={{ fontSize: 18, fontWeight: 700, color: s.color }}>{s.value}</div>
-              <div style={{ fontSize: 9, color: MUTED, marginTop: 2 }}>{s.label}</div>
-            </motion.div>
-          ))}
+          {statCards.map((s, i) => {
+            const active = isCardActive(s);
+            return (
+              <motion.div key={s.label}
+                custom={i}
+                variants={statCardVariants}
+                initial="hidden"
+                animate="visible"
+                whileHover={{ y: -3, borderColor: dark ? '#3a3a2a' : '#d1d5db', boxShadow: dark ? '0 6px 16px rgba(0,0,0,0.3)' : '0 6px 16px rgba(0,0,0,0.06)' }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => handleStatClick(s)}
+                title={s.filterKind === 'all' ? 'Show all rooms' : `Filter: ${s.label}`}
+                style={{
+                  background: active ? (dark ? '#1e2e1e' : '#f0fdf0') : CARD,
+                  border: active ? `1px solid ${s.color}` : `1px solid ${BORDER}`,
+                  borderRadius: 10, padding: '10px 14px', flex: 1, minWidth: 78,
+                  borderLeft: `3px solid ${s.color}`,
+                  cursor: 'pointer', userSelect: 'none',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <i className={`ti ${s.icon}`} style={{ fontSize: 12, color: s.color }} />
+                  <div style={{ fontSize: 18, fontWeight: 700, color: s.color }}><AnimatedNumber value={s.value} /></div>
+                </div>
+                <div style={{ fontSize: 9, color: MUTED, marginTop: 2 }}>{s.label}</div>
+              </motion.div>
+            );
+          })}
         </div>
 
         {/* ── Main Grid ── */}
@@ -303,7 +505,16 @@ export default function RoomManagement() {
           {/* Room List */}
           <div>
             {filtered.length === 0 ? (
-              <div style={{ textAlign: 'center', color: MUTED, padding: '48px 0', fontSize: 13 }}>No rooms found.</div>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ textAlign: 'center', color: MUTED, padding: '48px 0', fontSize: 13 }}>
+                <motion.div
+                  animate={{ y: [0, -6, 0] }}
+                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+                  style={{ marginBottom: 8 }}
+                >
+                  <i className="ti ti-bed-off" style={{ fontSize: 34, color: MUTED }} />
+                </motion.div>
+                No rooms found.
+              </motion.div>
             ) : (
               <AnimatePresence initial={false}>
                 {filtered.map((room, i) => {
@@ -329,14 +540,19 @@ export default function RoomManagement() {
                         boxShadow: isActive && dark ? `0 0 20px rgba(200,240,110,0.08)` : 'none',
                       }}
                     >
-                      {/* Room icon */}
+                      {/* Room photo — falls back to the bed icon if this room's
+                          name doesn't match one of the resort's real rooms. */}
                       <div style={{
                         width: 90, height: 72, borderRadius: 10,
-                        background: dark ? '#282827' : '#f8faf8',
+                        background: getRoomImage(room.roomNumber)
+                          ? `url(${getRoomImage(room.roomNumber)}) center/cover no-repeat`
+                          : (dark ? '#282827' : '#f8faf8'),
                         border: `1px solid ${BORDER}`,
                         flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
                       }}>
-                        <i className="ti ti-bed" style={{ fontSize: 32, color: dark ? LIME : '#4a7c59' }} />
+                        {!getRoomImage(room.roomNumber) && (
+                          <i className="ti ti-bed" style={{ fontSize: 32, color: dark ? LIME : '#4a7c59' }} />
+                        )}
                       </div>
 
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -344,7 +560,8 @@ export default function RoomManagement() {
                           <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>{room.roomNumber}</span>
                           <span style={{ fontSize: 11, color: MUTED }}>·</span>
                           <span style={{ fontSize: 12, color: SUBTEXT }}>{room.type}</span>
-                          <span style={{ background: badge.bg, color: badge.color, padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600 }}>
+                          <span style={{ background: badge.bg, color: badge.color, padding: '2px 8px 2px 6px', borderRadius: 20, fontSize: 10, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                            <StatusDot color={badge.color} pulse={PULSING_STATUSES.has(room.status)} />
                             {badgeLabel(room.status)}
                           </span>
                           {room.source === 'excel_import' && (
@@ -393,7 +610,7 @@ export default function RoomManagement() {
                   border: `1px solid ${BORDER}`,
                   padding: 18, display: 'flex', flexDirection: 'column', gap: 12,
                   position: 'sticky', top: 20,
-                  boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : 'none',
+                  boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : '0 4px 20px rgba(0,0,0,0.05)',
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -410,22 +627,33 @@ export default function RoomManagement() {
                     <span style={{
                       background: (badgeColors[activeRoom.status] || badgeColors.maintenance).bg,
                       color: (badgeColors[activeRoom.status] || badgeColors.maintenance).color,
-                      padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
-                    }}>{badgeLabel(activeRoom.status)}</span>
+                      padding: '2px 8px 2px 6px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                      display: 'inline-flex', alignItems: 'center', gap: 5,
+                    }}>
+                      <StatusDot
+                        color={(badgeColors[activeRoom.status] || badgeColors.maintenance).color}
+                        pulse={PULSING_STATUSES.has(activeRoom.status)}
+                      />
+                      {badgeLabel(activeRoom.status)}
+                    </span>
                   </div>
                   <div style={{ fontSize: 11, color: dark ? '#89D7B7' : '#428475', fontWeight: 500 }}>
                     {activeRoom.type} · {TYPE_CATEGORY_MAP[activeRoom.type] || ''}
                   </div>
                 </div>
 
-                {/* Room image placeholder */}
+                {/* Room photo — falls back to the bed icon if unmatched. */}
                 <div style={{
                   width: '100%', height: 130, borderRadius: 12,
-                  background: dark ? '#282827' : '#f8faf8',
+                  background: getRoomImage(activeRoom.roomNumber)
+                    ? `url(${getRoomImage(activeRoom.roomNumber)}) center/cover no-repeat`
+                    : (dark ? '#282827' : '#f8faf8'),
                   border: `1px solid ${BORDER}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <i className="ti ti-bed" style={{ fontSize: 52, color: dark ? LIME : '#4a7c59' }} />
+                  {!getRoomImage(activeRoom.roomNumber) && (
+                    <i className="ti ti-bed" style={{ fontSize: 52, color: dark ? LIME : '#4a7c59' }} />
+                  )}
                 </div>
 
                 {/* Size / Bed / Guests */}
@@ -482,7 +710,7 @@ export default function RoomManagement() {
                 </div>
 
                 <motion.button whileHover={{ scale: 1.02, background: 'rgba(248,113,113,0.15)' }} whileTap={{ scale: 0.98 }}
-                  onClick={() => handleDelete(activeRoom.id)}
+                  onClick={() => requestDelete(activeRoom.id)}
                   style={{
                     width: '100%', padding: 9,
                     border: '1px solid rgba(248,113,113,0.3)',
@@ -497,6 +725,57 @@ export default function RoomManagement() {
             )}
           </AnimatePresence>
         </div>
+
+        {/* ── Delete confirmation modal ── */}
+        <AnimatePresence>
+          {confirmDeleteId && (
+            <motion.div
+              variants={backdropVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              onClick={() => setConfirmDeleteId(null)}
+              style={{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300,
+              }}
+            >
+              <motion.div
+                variants={modalVariants}
+                initial="hidden" animate="visible" exit="exit"
+                onClick={e => e.stopPropagation()}
+                style={{
+                  background: CARD, borderRadius: 16, border: `1px solid ${BORDER}`,
+                  padding: 22, width: 320, boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(248,113,113,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <i className="ti ti-trash" style={{ fontSize: 17, color: '#f87171' }} />
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: TEXT }}>Delete room?</div>
+                </div>
+                <div style={{ fontSize: 12, color: SUBTEXT, lineHeight: 1.6, marginBottom: 18 }}>
+                  {deleteTargetRoom
+                    ? <>This will permanently remove <strong style={{ color: TEXT }}>{deleteTargetRoom.roomNumber}</strong> from your room list. This can't be undone.</>
+                    : 'This will permanently remove this room. This can\'t be undone.'}
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                    onClick={() => setConfirmDeleteId(null)}
+                    style={{ flex: 1, padding: 9, background: HOVER, border: `1px solid ${BORDER}`, borderRadius: 9, color: SUBTEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+                    Cancel
+                  </motion.button>
+                  <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                    onClick={confirmDelete}
+                    style={{ flex: 1, padding: 9, background: '#f87171', border: 'none', borderRadius: 9, color: '#fff', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}>
+                    Delete
+                  </motion.button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </PageLayout>
   );

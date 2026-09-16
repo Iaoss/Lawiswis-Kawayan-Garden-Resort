@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 
-const ACCENT = '#c8f06e';
+const ACCENT = '#9cb56f';
 const DARK   = '#1A312C';
 const CARD   = '#ffffff';
 const MUTED  = '#9ca3af';

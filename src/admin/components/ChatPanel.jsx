@@ -5,7 +5,7 @@ import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, u
 const PANEL_WIDTH = 400;
 
 export default function ChatPanel({ dark, accent, open, onClose }) {
-  const ACCENT      = accent || '#c8f06e';
+  const ACCENT      = accent || '#9cb56f';
   const ACCENT_TEXT = '#0a1a0a';
   const PANEL_BG  = dark ? '#1c1c1c' : '#ffffff';
   const CARD2     = dark ? '#282827' : '#f9fafb';

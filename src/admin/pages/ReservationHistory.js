@@ -9,7 +9,7 @@ export default function ReservationHistory() {
   const dark = settings?.darkMode;
 
   // ── Theme tokens (mirrors PageLayout's light/dark palette) ──
-  const ACCENT      = settings?.accentColor || '#c8f06e';
+  const ACCENT      = settings?.accentColor || '#9cb56f';
   const ACCENT_TEXT = '#0a1a0a';
   const BG      = dark ? '#020b09' : '#f4f6f4';
   const CARD    = dark ? '#1c1c1c' : '#ffffff';

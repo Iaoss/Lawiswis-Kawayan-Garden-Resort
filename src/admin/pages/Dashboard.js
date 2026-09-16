@@ -27,7 +27,7 @@ const reservationsData = [
 ];
 const platformData = [
   { name: 'Direct Booking', value: 61, color: '#89D7B7' },
-  { name: 'Booking.com',    value: 12, color: '#c8f06e' },
+  { name: 'Booking.com',    value: 12, color: '#9cb56f' },
   { name: 'Agoda',          value: 11, color: '#60a5fa' },
   { name: 'Airbnb',         value: 9,  color: '#f472b6' },
   { name: 'Hotels.com',     value: 5,  color: '#fb923c' },
@@ -58,11 +58,13 @@ const cardGradients = [
 
 // Blob color sets for the animated-gradient effect behind each stat card.
 const statBlobColors = [
-  ['#89D7B7', '#6ee7b7', '#34d399'], // New Bookings — teal/green
-  ['#60a5fa', '#93c5fd', '#3b82f6'], // Check-In — blue
-  ['#fb923c', '#f87171', '#fbbf24'], // Check-Out — orange/amber
-  ['#c8f06e', '#a3e635', '#84cc16'], // Total Revenue — lime
+  ['#dff8ee', '#b6ecd5', '#8cdec0'], // New Bookings — mint
+  ['#e8f2ff', '#bfdcff', '#9fc8f8'], // Check-In — blue
+  ['#fff5e9', '#ffe4ca', '#ffd2b0'], // Check-Out — peach
+  ['#f3f8e3', '#dff0b6', '#c9e38e'], // Total Revenue — lime
 ];
+
+const statCardBackgrounds = ['#effbf5', '#eef6ff', '#fff8f0', '#f6fbe9'];
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -173,7 +175,7 @@ export default function AdminDashboard() {
   const BORDER   = dark ? '#282827' : '#e8ebe8';
   const TEXT     = dark ? '#f0f0f0' : '#111827';
   const MUTED    = dark ? '#6b7280' : '#9ca3af';
-  const LIME     = '#c8f06e';
+  const LIME     = '#9cb56f';
   const TEAL     = '#89D7B7';
 
   const [stats, setStats] = useState({
@@ -418,11 +420,9 @@ export default function AdminDashboard() {
             <div key={c.label} style={{
               position: 'relative', overflow: 'hidden',
               borderRadius: '16px', padding: '20px',
-              background: dark
-                ? `linear-gradient(135deg, ${cardGradients[i].from}, ${cardGradients[i].to})`
-                : '#ffffff',
-              border: dark ? 'none' : '1px solid #e8ebe8',
-              boxShadow: dark ? `0 8px 32px ${cardGradients[i].from}44` : 'none',
+              background: dark ? `linear-gradient(135deg, ${cardGradients[i].from}, ${cardGradients[i].to})` : statCardBackgrounds[i],
+              border: dark ? 'none' : '1px solid #e6ebe7',
+              boxShadow: dark ? `0 8px 32px ${cardGradients[i].from}44` : '0 2px 8px rgba(30, 50, 40, 0.03)',
             }}>
               <AnimatedGradient colors={statBlobColors[i]} speed={0.06} blur="medium" dark={dark} />
 
