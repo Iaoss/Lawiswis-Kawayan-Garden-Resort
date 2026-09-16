@@ -4,7 +4,13 @@ export async function createPayMongoCheckout({ reservationId, guestName, guestEm
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ reservationId, guestName, guestEmail, description, amount }),
   });
-  const data = await res.json();
+  const responseText = await res.text();
+  let data;
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    throw new Error(`Payment service returned invalid data (${res.status})`);
+  }
   if (!res.ok) throw new Error(data.error || 'Failed to start payment');
   return data; // { checkoutUrl, checkoutSessionId }
 }

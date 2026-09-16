@@ -3,10 +3,6 @@
 // Vercel serverless function. Runs server-side only — this is the one
 // place your PayMongo SECRET key is allowed to exist. Never put it in
 // any file under /src, never prefix it with VITE_.
-//
-// Called by the frontend (guest checkout AND staff Billing page) with
-// { reservationId, guestName, guestEmail, description, amount }.
-// Returns { checkoutUrl } — redirect the browser there.
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -24,7 +20,6 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'PayMongo secret key is not configured' });
   }
 
-  // PayMongo amounts are in centavos (smallest currency unit).
   const amountInCentavos = Math.round(Number(amount) * 100);
   const siteUrl = process.env.PUBLIC_SITE_URL || `https://${req.headers.host}`;
 
@@ -46,14 +41,12 @@ export default async function handler(req, res) {
             show_description: true,
             show_line_items: true,
             description: description || `Reservation ${reservationId}`,
-            line_items: [
-              {
-                currency: 'PHP',
-                amount: amountInCentavos,
-                name: description || 'Reservation payment',
-                quantity: 1,
-              },
-            ],
+            line_items: [{
+              currency: 'PHP',
+              amount: amountInCentavos,
+              name: description || 'Reservation payment',
+              quantity: 1,
+            }],
             payment_method_types: ['card', 'gcash', 'paymaya', 'grab_pay'],
             success_url: `${siteUrl}/payment/success?reservationId=${reservationId}`,
             cancel_url: `${siteUrl}/payment/cancelled?reservationId=${reservationId}`,
@@ -63,7 +56,14 @@ export default async function handler(req, res) {
       }),
     });
 
-    const json = await response.json();
+    const responseText = await response.text();
+    let json;
+    try {
+      json = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      console.error('PayMongo returned invalid JSON:', responseText);
+      return res.status(502).json({ error: 'PayMongo returned an invalid response' });
+    }
 
     if (!response.ok) {
       console.error('PayMongo error:', json);
@@ -73,6 +73,10 @@ export default async function handler(req, res) {
     }
 
     const session = json.data;
+    if (!session?.attributes?.checkout_url) {
+      return res.status(502).json({ error: 'PayMongo did not return a checkout URL' });
+    }
+
     return res.status(200).json({
       checkoutUrl: session.attributes.checkout_url,
       checkoutSessionId: session.id,
