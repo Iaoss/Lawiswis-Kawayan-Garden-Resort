@@ -69,8 +69,8 @@ function App() {
           <Route path="/book/:roomId" element={<BookRoom />} />
           <Route path="/about" element={<About />} />
           <Route path="/contact" element={<Contact />} />
-          <Route path="/feedback" element={<FeedbackForm />} />
         </Route>
+        <Route path="/feedback" element={<FeedbackForm />} />
         <Route path="/chat" element={<GuestChat />} />
 
         {/* Fallback */}
