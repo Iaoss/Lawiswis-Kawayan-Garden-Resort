@@ -1,12 +1,21 @@
 // api/paymongo-webhook.js
 //
 // Register this URL (https://yourdomain.com/api/paymongo-webhook) in the
-// PayMongo dashboard, subscribed to the `checkout_session.payment.paid`
-// event. PayMongo signs every request; we verify that signature before
-// trusting anything in the body, then use the Firebase ADMIN SDK (not
-// the client SDK) to mark the reservation paid — admin writes bypass
-// your Firestore security rules, which is correct here since there is
-// no signed-in user making this request, PayMongo is.
+// PayMongo dashboard, subscribed to at least:
+//   - payment.paid
+//   - payment.failed
+//   - checkout_session.payment.paid  (if you use Checkout Sessions)
+//
+// PayMongo signs every request; we verify that signature before trusting
+// anything in the body, then use the Firebase ADMIN SDK (not the client
+// SDK) to mark the reservation paid/failed — admin writes bypass your
+// Firestore security rules, which is correct here since there is no
+// signed-in user making this request, PayMongo is.
+//
+// IMPORTANT: PayMongo can send different event *shapes* depending on
+// which event type fires. `payment.paid` delivers the Payment object
+// directly. `checkout_session.payment.paid` delivers a Checkout Session
+// object that wraps a payments[] array. Both are handled below.
 
 import crypto from 'crypto';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
@@ -50,6 +59,40 @@ function getAdminApp() {
   });
 }
 
+// Normalizes both event shapes into one common object so the rest of
+// the handler doesn't need to care which event type triggered it.
+function extractPaymentInfo(eventType, resource) {
+  if (eventType === 'payment.paid' || eventType === 'payment.failed') {
+    // `resource` IS the Payment object directly.
+    return {
+      reservationId: resource.attributes.metadata?.reservationId || null,
+      amountPaid: (resource.attributes.amount || 0) / 100,
+      paymentMethod: resource.attributes.source?.type || 'unknown',
+      paymentId: resource.id,
+      checkoutSessionId: resource.attributes.metadata?.checkoutSessionId || null,
+      failureReason: resource.attributes.failed_at
+        ? (resource.attributes.last_payment_error?.failed_message || 'Payment failed')
+        : null,
+    };
+  }
+
+  if (eventType === 'checkout_session.payment.paid') {
+    // `resource` IS a Checkout Session wrapping a payments[] array.
+    const session = resource;
+    const payment = session.attributes.payments?.[0];
+    return {
+      reservationId: session.attributes.metadata?.reservationId || null,
+      amountPaid: (payment?.attributes?.amount || 0) / 100,
+      paymentMethod: payment?.attributes?.source?.type || 'unknown',
+      paymentId: payment?.id || null,
+      checkoutSessionId: session.id,
+      failureReason: null,
+    };
+  }
+
+  return null;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
@@ -73,41 +116,73 @@ export default async function handler(req, res) {
 
   const event = JSON.parse(rawBody);
   const eventType = event.data?.attributes?.type;
+  const resource = event.data?.attributes?.data;
 
-  if (eventType === 'checkout_session.payment.paid') {
-    const session = event.data.attributes.data;
-    const reservationId = session.attributes.metadata?.reservationId;
-    const paidCents = session.attributes.payments?.[0]?.attributes?.amount || 0;
-    const amountPaid = paidCents / 100;
-    const paymentMethod = session.attributes.payments?.[0]?.attributes?.source?.type || 'unknown';
+  console.log('PayMongo webhook received:', eventType, event.data?.id);
 
-    if (reservationId) {
-      const app = getAdminApp();
-      const db = getFirestore(app);
+  try {
+    const info = extractPaymentInfo(eventType, resource);
 
-      await db.collection('reservations').doc(reservationId).update({
+    if (!info) {
+      // Event type we don't care about — acknowledge so PayMongo
+      // doesn't keep retrying it.
+      return res.status(200).json({ received: true, ignored: eventType });
+    }
+
+    if (!info.reservationId) {
+      console.warn('No reservationId in metadata for event', eventType, event.data?.id);
+      return res.status(200).json({ received: true, warning: 'no reservationId' });
+    }
+
+    const app = getAdminApp();
+    const db = getFirestore(app);
+
+    if (eventType === 'payment.paid' || eventType === 'checkout_session.payment.paid') {
+      console.log('Marking reservation paid:', info.reservationId, info.amountPaid);
+
+      await db.collection('reservations').doc(info.reservationId).update({
         paymentStatus: 'paid',
-        amountPaid: FieldValue.increment(amountPaid),
+        amountPaid: FieldValue.increment(info.amountPaid),
       });
 
       await db.collection('payments').add({
-        reservationId,
-        amount: amountPaid,
-        method: paymentMethod,
+        reservationId: info.reservationId,
+        amount: info.amountPaid,
+        method: info.paymentMethod,
         provider: 'paymongo',
-        checkoutSessionId: session.id,
+        checkoutSessionId: info.checkoutSessionId,
+        paymentId: info.paymentId,
         createdAt: FieldValue.serverTimestamp(),
       });
 
       await db.collection('activities').add({
         title: 'PayMongo payment received',
-        sub: `₱${amountPaid.toLocaleString()} via ${paymentMethod} — reservation ${reservationId}`,
+        sub: `₱${info.amountPaid.toLocaleString()} via ${info.paymentMethod} — reservation ${info.reservationId}`,
         timestamp: FieldValue.serverTimestamp(),
       });
     }
-  }
 
-  // Always 200 once verified, even for event types we ignore —
-  // otherwise PayMongo will keep retrying delivery.
-  return res.status(200).json({ received: true });
+    if (eventType === 'payment.failed') {
+      console.log('Marking reservation payment failed:', info.reservationId);
+
+      await db.collection('reservations').doc(info.reservationId).update({
+        paymentStatus: 'failed',
+      });
+
+      await db.collection('activities').add({
+        title: 'PayMongo payment failed',
+        sub: `${info.failureReason || 'Payment failed'} — reservation ${info.reservationId}`,
+        timestamp: FieldValue.serverTimestamp(),
+      });
+    }
+
+    // Always 200 once verified and processed — otherwise PayMongo will
+    // keep retrying delivery.
+    return res.status(200).json({ received: true });
+  } catch (err) {
+    console.error('Webhook handler error:', err);
+    // Return 500 so PayMongo retries — this was likely a transient
+    // Firestore or code error, not a bad payload.
+    return res.status(500).json({ error: 'Internal error' });
+  }
 }
