@@ -2,8 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, getDocs, updateDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
+import { useSettings } from '../components/SettingsContext';
 
 export default function BookingTransactions() {
+  const { settings } = useSettings();
+  const dark = settings?.darkMode;
   const [reservations, setReservations] = useState([]);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
@@ -50,23 +53,35 @@ export default function BookingTransactions() {
   );
 
   const statusStyle = (s) => {
-    const map = { paid: { bg: '#dcfce7', color: '#16a34a' }, partial: { bg: '#fef9c3', color: '#a16207' }, pending: { bg: '#fee2e2', color: '#dc2626' } };
-    return map[s] || { bg: '#f3f4f6', color: '#6b7280' };
+    const map = dark
+      ? { paid: { bg: 'rgba(34,197,94,0.16)', color: '#86efac' }, partial: { bg: 'rgba(234,179,8,0.16)', color: '#fde047' }, pending: { bg: 'rgba(239,68,68,0.16)', color: '#fca5a5' } }
+      : { paid: { bg: '#dcfce7', color: '#16a34a' }, partial: { bg: '#fef9c3', color: '#a16207' }, pending: { bg: '#fee2e2', color: '#dc2626' } };
+    return map[s] || { bg: dark ? '#282827' : '#f3f4f6', color: dark ? '#d1d5db' : '#6b7280' };
   };
 
+  const BG = dark ? '#020b09' : '#f4f6f4';
+  const CARD = dark ? '#1c1c1c' : '#fff';
+  const CARD_ALT = dark ? '#282827' : '#f9fafb';
+  const BORDER = dark ? '#2a2a28' : '#e5e7eb';
+  const BORDER_FAINT = dark ? '#242422' : '#f3f4f6';
+  const TEXT = dark ? '#f0f0f0' : '#111827';
+  const SUBTEXT = dark ? '#c7c7c0' : '#6b7280';
+  const MUTED = '#9ca3af';
+  const GREEN = dark ? '#86efac' : '#16a34a';
+  const RED = dark ? '#fca5a5' : '#dc2626';
   const S = {
-    card: { background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', fontFamily: "'Poppins', sans-serif" },
-    th: { textAlign: 'left', fontSize: '11px', color: '#9ca3af', fontWeight: '500', padding: '12px 16px', borderBottom: '1px solid #f3f4f6' },
-    td: { padding: '12px 16px', fontSize: '12px', color: '#111', borderBottom: '1px solid #f9fafb', verticalAlign: 'middle' },
+    card: { background: CARD, borderRadius: '16px', border: `1px solid ${BORDER}`, fontFamily: "'Poppins', sans-serif" },
+    th: { textAlign: 'left', fontSize: '11px', color: MUTED, fontWeight: '500', padding: '12px 16px', borderBottom: `1px solid ${BORDER_FAINT}` },
+    td: { padding: '12px 16px', fontSize: '12px', color: TEXT, borderBottom: `1px solid ${BORDER_FAINT}`, verticalAlign: 'middle' },
   };
 
   return (
     <PageLayout>
-      <div style={{ fontFamily: "'Poppins', sans-serif" }}>
-        <h2 style={{ fontSize: '20px', fontWeight: '700', color: '#111', marginBottom: '20px' }}>Booking Transactions</h2>
+      <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '20px' }}>
+        <h2 style={{ fontSize: '20px', fontWeight: '700', color: TEXT, marginBottom: '20px' }}>Booking Transactions</h2>
 
         {success && (
-          <div style={{ background: '#dcfce7', color: '#16a34a', padding: '12px 16px', borderRadius: '10px', marginBottom: '16px', fontSize: '13px', fontWeight: '500' }}>
+          <div style={{ background: dark ? 'rgba(34,197,94,0.16)' : '#dcfce7', color: GREEN, padding: '12px 16px', borderRadius: '10px', marginBottom: '16px', fontSize: '13px', fontWeight: '500' }}>
             ✅ {success}
           </div>
         )}
@@ -74,10 +89,10 @@ export default function BookingTransactions() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '20px' }}>
           {/* Reservations Table */}
           <div style={S.card}>
-            <div style={{ padding: '16px', borderBottom: '1px solid #f3f4f6' }}>
+            <div style={{ padding: '16px', borderBottom: `1px solid ${BORDER_FAINT}` }}>
               <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search by guest or room..."
-                style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px 14px', fontSize: '12px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                style={{ width: '100%', border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '10px 14px', fontSize: '12px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: CARD_ALT, color: TEXT }} />
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -92,22 +107,22 @@ export default function BookingTransactions() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#9ca3af', fontSize: '12px' }}>No transactions found.</td></tr>
+                  <tr><td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: MUTED, fontSize: '12px' }}>No transactions found.</td></tr>
                 ) : (
                   filtered.map(r => {
                     const bal = totalBalance(r);
                     const st = statusStyle(r.paymentStatus);
                     return (
                       <tr key={r.id} onClick={() => { setSelected(r); setSuccess(''); }}
-                        style={{ cursor: 'pointer', background: selected?.id === r.id ? '#f9fafb' : 'transparent', borderLeft: selected?.id === r.id ? '3px solid #d4f550' : '3px solid transparent' }}>
+                        style={{ cursor: 'pointer', background: selected?.id === r.id ? CARD_ALT : 'transparent', borderLeft: selected?.id === r.id ? '3px solid #d4f550' : '3px solid transparent' }}>
                         <td style={S.td}>
                           <div style={{ fontWeight: '600' }}>{r.guestName}</div>
-                          <div style={{ fontSize: '10px', color: '#9ca3af' }}>{r.phone}</div>
+                          <div style={{ fontSize: '10px', color: MUTED }}>{r.phone}</div>
                         </td>
                         <td style={S.td}>Room {r.roomNumber}</td>
                         <td style={S.td}>₱{Number(r.totalAmount || 0).toLocaleString()}</td>
-                        <td style={{ ...S.td, color: '#16a34a', fontWeight: '600' }}>₱{totalPaid(r).toLocaleString()}</td>
-                        <td style={{ ...S.td, color: bal > 0 ? '#dc2626' : '#16a34a', fontWeight: '600' }}>₱{bal.toLocaleString()}</td>
+                        <td style={{ ...S.td, color: GREEN, fontWeight: '600' }}>₱{totalPaid(r).toLocaleString()}</td>
+                        <td style={{ ...S.td, color: bal > 0 ? RED : GREEN, fontWeight: '600' }}>₱{bal.toLocaleString()}</td>
                         <td style={S.td}>
                           <span style={{ background: st.bg, color: st.color, padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '600', textTransform: 'capitalize' }}>
                             {r.paymentStatus || 'pending'}
@@ -124,29 +139,29 @@ export default function BookingTransactions() {
           {/* Payment Panel */}
           <div>
             {!selected ? (
-              <div style={{ ...S.card, padding: '40px', textAlign: 'center', color: '#9ca3af', fontSize: '13px' }}>
+              <div style={{ ...S.card, padding: '40px', textAlign: 'center', color: MUTED, fontSize: '13px' }}>
                 Select a reservation to process payment
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 {/* Summary */}
                 <div style={{ ...S.card, padding: '20px' }}>
-                  <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '14px' }}>{selected.guestName}</div>
-                  <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '4px' }}>Room {selected.roomNumber} · {selected.checkIn} → {selected.checkOut}</div>
-                  <div style={{ borderTop: '1px solid #f3f4f6', marginTop: '14px', paddingTop: '14px' }}>
+                  <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '14px' }}>{selected.guestName}</div>
+                  <div style={{ fontSize: '12px', color: SUBTEXT, marginBottom: '4px' }}>Room {selected.roomNumber} · {selected.checkIn} → {selected.checkOut}</div>
+                  <div style={{ borderTop: `1px solid ${BORDER_FAINT}`, marginTop: '14px', paddingTop: '14px' }}>
                     {[
                       { label: 'Total Amount', value: `₱${Number(selected.totalAmount || 0).toLocaleString()}` },
                       { label: 'Extra Charges', value: `₱${Number(selected.extraCharges || 0).toLocaleString()}` },
-                      { label: 'Amount Paid', value: `₱${totalPaid(selected).toLocaleString()}`, color: '#16a34a' },
+                      { label: 'Amount Paid', value: `₱${totalPaid(selected).toLocaleString()}`, color: GREEN },
                     ].map(row => (
                       <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '12px' }}>
-                        <span style={{ color: '#6b7280' }}>{row.label}</span>
-                        <span style={{ fontWeight: '600', color: row.color || '#111' }}>{row.value}</span>
+                        <span style={{ color: SUBTEXT }}>{row.label}</span>
+                        <span style={{ fontWeight: '600', color: row.color || TEXT }}>{row.value}</span>
                       </div>
                     ))}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: '700', borderTop: '1px solid #f3f4f6', paddingTop: '10px', marginTop: '4px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: '700', borderTop: `1px solid ${BORDER_FAINT}`, paddingTop: '10px', marginTop: '4px', color: TEXT }}>
                       <span>Balance Due</span>
-                      <span style={{ color: totalBalance(selected) > 0 ? '#dc2626' : '#16a34a' }}>
+                      <span style={{ color: totalBalance(selected) > 0 ? RED : GREEN }}>
                         ₱{totalBalance(selected).toLocaleString()}
                       </span>
                     </div>
@@ -155,17 +170,17 @@ export default function BookingTransactions() {
 
                 {/* Payment form */}
                 <div style={{ ...S.card, padding: '20px' }}>
-                  <div style={{ fontWeight: '600', fontSize: '13px', color: '#111', marginBottom: '14px' }}>Accept Payment</div>
+                  <div style={{ fontWeight: '600', fontSize: '13px', color: TEXT, marginBottom: '14px' }}>Accept Payment</div>
                   <div style={{ marginBottom: '10px' }}>
-                    <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Amount</label>
+                    <label style={{ fontSize: '11px', color: SUBTEXT, display: 'block', marginBottom: '4px' }}>Amount</label>
                     <input type="number" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)}
                       placeholder="Enter amount"
-                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                      style={{ width: '100%', border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: CARD_ALT, color: TEXT }} />
                   </div>
                   <div style={{ marginBottom: '14px' }}>
-                    <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Method</label>
+                    <label style={{ fontSize: '11px', color: SUBTEXT, display: 'block', marginBottom: '4px' }}>Method</label>
                     <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}
-                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
+                      style={{ width: '100%', border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '10px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: CARD_ALT, color: TEXT }}>
                       <option value="cash">Cash</option>
                       <option value="gcash">GCash</option>
                       <option value="card">Card</option>
