@@ -1,10 +1,78 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../../firebase/firebase';
 import { doc, getDoc, addDoc, updateDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { createPayMongoCheckout } from '../../lib/paymongo';
+import { FALLBACK_ROOM_IMAGES, getRoomImage } from '../components/clientTheme';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
 const LIGHT = '#f0f7f0';
+
+// Small inline icons (no emojis) -----------------------------------------
+
+function IconBed({ size = 48, color = 'rgba(255,255,255,0.85)' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M2 18v-6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v6" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M2 18v2M22 18v2" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M4 10V7a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v3" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="7" cy="8" r="1.2" stroke={color} strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+function IconWarning({ size = 40, color = '#9ca3af' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="12" cy="12" r="9" stroke={color} strokeWidth="1.6" />
+      <path d="M12 8v5" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="12" cy="16" r="0.9" fill={color} />
+    </svg>
+  );
+}
+
+function IconCheck({ size = 32, color = DARK }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M5 13l4 4L19 7" stroke={color} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconLock({ size = 12, color = '#9ca3af' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ verticalAlign: 'middle', marginRight: '4px' }}>
+      <rect x="5" y="11" width="14" height="9" rx="2" stroke={color} strokeWidth="1.8" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function IconCard({ size = 16, color = '#111' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '6px', verticalAlign: 'middle' }}>
+      <rect x="2" y="5" width="20" height="14" rx="2" stroke={color} strokeWidth="1.6" />
+      <path d="M2 10h20" stroke={color} strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+function IconCash({ size = 16, color = '#111' }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '6px', verticalAlign: 'middle' }}>
+      <rect x="2" y="6" width="20" height="12" rx="2" stroke={color} strokeWidth="1.6" />
+      <circle cx="12" cy="12" r="3" stroke={color} strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+const WALLETS = [
+  { id: 'gcash', label: 'GCash' },
+  { id: 'maya', label: 'Maya' },
+  { id: 'grabpay', label: 'GrabPay' },
+];
+
+// --------------------------------------------------------------------------
 
 export default function BookRoom() {
   const today = new Date().toISOString().split('T')[0];
@@ -16,6 +84,15 @@ export default function BookRoom() {
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [bookingRef, setBookingRef] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+
+  // Preview-only state — used when /api/create-checkout-session can't be
+  // reached (e.g. running `npm start` locally instead of `vercel dev`).
+  // Nothing entered here is ever sent anywhere; it exists purely so the
+  // payment step can be reviewed visually during development.
+  const [previewMode, setPreviewMode] = useState(false);
+  const [previewMethod, setPreviewMethod] = useState('gcash'); // 'gcash' | 'maya' | 'grabpay' | 'card'
+  const [previewReservationRef, setPreviewReservationRef] = useState('');
 
   const [form, setForm] = useState({
     guestName: '',
@@ -27,19 +104,19 @@ export default function BookRoom() {
     adults: 1,
     children: 0,
     notes: '',
-    paymentMethod: 'gcash',
+    paymentMethod: 'online', // 'online' (card / e-wallet via PayMongo) | 'cash' (pay at resort)
   });
 
   const [totalAmount, setTotalAmount] = useState(0);
   const [nights, setNights] = useState(0);
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchRoom = async () => {
       const snap = await getDoc(doc(db, 'rooms', roomId));
       if (snap.exists()) setRoom({ id: snap.id, ...snap.data() });
       setLoading(false);
     };
-    fetch();
+    fetchRoom();
   }, [roomId]);
 
   useEffect(() => {
@@ -54,32 +131,79 @@ export default function BookRoom() {
     e.preventDefault();
     if (!room) return;
     if (nights <= 0) return alert('Please select valid check-in and check-out dates.');
+
     setSubmitting(true);
+    setErrorMsg('');
+    setPreviewMode(false);
+
     try {
       const ref = await addDoc(collection(db, 'reservations'), {
         ...form,
-   roomId: room.id,
-  roomNumber: room.roomNumber,
-  roomType: room.type,
-  totalAmount,
-  nights,
-  type: 'online',
-  status: 'pending',
-  paymentStatus: 'pending',
-  createdAt: serverTimestamp(),
-});
+        roomId: room.id,
+        roomNumber: room.roomNumber,
+        roomType: room.type,
+        totalAmount,
+        nights,
+        type: 'online',
+        status: 'pending',
+        paymentStatus: 'pending',
+        createdAt: serverTimestamp(),
+      });
 
-await updateDoc(doc(db, 'rooms', room.id), {
-  status: 'occupied',
-});
+      await updateDoc(doc(db, 'rooms', room.id), {
+        status: 'occupied',
+      });
 
-setBookingRef(ref.id.slice(0, 8).toUpperCase());
-setSuccess(true);   
+      const ref8 = ref.id.slice(0, 8).toUpperCase();
+      setBookingRef(ref8);
+
+      if (form.paymentMethod === 'online') {
+        // Hand off to PayMongo's hosted checkout page. It presents the
+        // actual card entry form / e-wallet QR codes (GCash, Maya,
+        // GrabPay) — we never handle card numbers or QR generation
+        // ourselves. Once paid, PayMongo redirects the guest back to
+        // /payment/success, and the webhook marks the reservation paid
+        // in the background.
+        const { checkoutUrl } = await createPayMongoCheckout({
+          reservationId: ref.id,
+          guestName: form.guestName,
+          guestEmail: form.email,
+          description: `Room ${room.roomNumber} (${room.type}) — ${nights} night${nights !== 1 ? 's' : ''}`,
+          amount: totalAmount,
+        });
+        window.location.href = checkoutUrl;
+        return; // navigating away
+      }
+
+      // Cash / pay-at-resort: no online payment step needed.
+      setSuccess(true);
     } catch (err) {
-      alert('Something went wrong. Please try again.');
+      console.error(err);
+
+      const isLocalDev = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
+      if (form.paymentMethod === 'online' && isLocalDev) {
+        // Most likely cause: running `npm start` instead of `vercel dev`,
+        // so /api/create-checkout-session isn't being served at all.
+        // Show a visual-only preview instead of a dead-end error.
+        setPreviewReservationRef(bookingRef || 'PREVIEW');
+        setPreviewMode(true);
+      } else {
+        setErrorMsg(
+          form.paymentMethod === 'online'
+            ? 'Your reservation was saved, but we could not start the online payment. Please try again, or choose "Pay at Resort".'
+            : 'Something went wrong. Please try again.'
+        );
+      }
     }
     setSubmitting(false);
   };
+
+  const handleSimulatePreviewPayment = () => {
+    setPreviewMode(false);
+    setSuccess(true);
+  };
+
   if (loading) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Poppins', sans-serif", color: '#9ca3af', padding: '0 20px' }}>
       Loading room details...
@@ -89,7 +213,7 @@ setSuccess(true);
   if (!room) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Poppins', sans-serif", padding: '0 20px' }}>
       <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: '48px', marginBottom: '16px' }}>😕</div>
+        <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'center' }}><IconWarning /></div>
         <div style={{ fontWeight: '600', color: '#111' }}>Room not found</div>
         <button onClick={() => window.location.href = '/rooms'}
           style={{ marginTop: '16px', background: ACCENT, color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 24px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
@@ -102,7 +226,9 @@ setSuccess(true);
   if (success) return (
     <div style={{ minHeight: '100vh', background: LIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Poppins', sans-serif", padding: '40px' }}>
       <div style={{ background: '#fff', borderRadius: '20px', padding: '50px', textAlign: 'center', maxWidth: '480px', width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.08)' }}>
-        <div style={{ width: '70px', height: '70px', background: '#d4f550', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', fontSize: '32px' }}>✓</div>
+        <div style={{ width: '70px', height: '70px', background: '#d4f550', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+          <IconCheck />
+        </div>
         <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#111', marginBottom: '10px' }}>Booking Confirmed!</h2>
         <p style={{ color: '#6b7280', fontSize: '13px', marginBottom: '24px' }}>
           Thank you, <strong>{form.guestName}</strong>! Your reservation has been submitted successfully.
@@ -144,26 +270,25 @@ setSuccess(true);
     <div style={{ fontFamily: "'Poppins', sans-serif", background: '#f9fafb', minHeight: '100vh', padding: '0 20px' }}>
       {/* Navbar */}
       <nav className="responsive-nav" style={{ background: DARK, padding: '0 20px', justifyContent: 'space-between', height: '64px' }}>
-<div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => window.location.href = '/home'}>
-  {/* Bamboo icon */}
-  <svg width="36" height="44" viewBox="0 0 36 44" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="4" y="0" width="5" height="44" rx="2.5" fill="rgba(255,255,255,0.9)"/>
-    <rect x="4" y="8" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.7)"/>
-    <rect x="4" y="20" width="10" height="3" rx="1.5" fill="rgba(255,255,255,0.7)"/>
-    <rect x="4" y="32" width="7" height="3" rx="1.5" fill="rgba(255,255,255,0.7)"/>
-    <rect x="14" y="4" width="5" height="40" rx="2.5" fill="rgba(255,255,255,0.75)"/>
-    <rect x="14" y="12" width="9" height="3" rx="1.5" fill="rgba(255,255,255,0.6)"/>
-    <rect x="14" y="24" width="11" height="3" rx="1.5" fill="rgba(255,255,255,0.6)"/>
-    <rect x="14" y="36" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.6)"/>
-    <rect x="25" y="2" width="4" height="38" rx="2" fill="rgba(255,255,255,0.6)"/>
-    <rect x="25" y="14" width="8" height="2.5" rx="1.25" fill="rgba(255,255,255,0.5)"/>
-    <rect x="25" y="26" width="9" height="2.5" rx="1.25" fill="rgba(255,255,255,0.5)"/>
-  </svg>
-  <div>
-    <div style={{ color: '#fff', fontWeight: '700', fontSize: '18px', lineHeight: 1.1, fontFamily: 'Georgia, serif', letterSpacing: '0.5px' }}>Lawiswis Kawayan</div>
-    <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '10px', letterSpacing: '1.5px', textTransform: 'uppercase', fontFamily: 'Georgia, serif' }}>Garden Resort</div>
-  </div>
-</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => window.location.href = '/home'}>
+          <svg width="36" height="44" viewBox="0 0 36 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="4" y="0" width="5" height="44" rx="2.5" fill="rgba(255,255,255,0.9)"/>
+            <rect x="4" y="8" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.7)"/>
+            <rect x="4" y="20" width="10" height="3" rx="1.5" fill="rgba(255,255,255,0.7)"/>
+            <rect x="4" y="32" width="7" height="3" rx="1.5" fill="rgba(255,255,255,0.7)"/>
+            <rect x="14" y="4" width="5" height="40" rx="2.5" fill="rgba(255,255,255,0.75)"/>
+            <rect x="14" y="12" width="9" height="3" rx="1.5" fill="rgba(255,255,255,0.6)"/>
+            <rect x="14" y="24" width="11" height="3" rx="1.5" fill="rgba(255,255,255,0.6)"/>
+            <rect x="14" y="36" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.6)"/>
+            <rect x="25" y="2" width="4" height="38" rx="2" fill="rgba(255,255,255,0.6)"/>
+            <rect x="25" y="14" width="8" height="2.5" rx="1.25" fill="rgba(255,255,255,0.5)"/>
+            <rect x="25" y="26" width="9" height="2.5" rx="1.25" fill="rgba(255,255,255,0.5)"/>
+          </svg>
+          <div>
+            <div style={{ color: '#fff', fontWeight: '700', fontSize: '18px', lineHeight: 1.1, fontFamily: 'Georgia, serif', letterSpacing: '0.5px' }}>Lawiswis Kawayan</div>
+            <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '10px', letterSpacing: '1.5px', textTransform: 'uppercase', fontFamily: 'Georgia, serif' }}>Garden Resort</div>
+          </div>
+        </div>
         <div style={{ display: 'flex', gap: '16px' }}>
           <button onClick={() => window.location.href = '/rooms'}
             style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.3)', color: '#fff', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
@@ -210,6 +335,11 @@ setSuccess(true);
                   </div>
                 ))}
               </div>
+              {form.paymentMethod === 'online' && !form.email && (
+                <div style={{ marginTop: '10px', fontSize: '11px', color: '#9ca3af' }}>
+                  Tip: add an email address to receive your payment receipt.
+                </div>
+              )}
             </div>
 
             {/* Stay Details */}
@@ -222,14 +352,14 @@ setSuccess(true);
                 <div>
                   <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Check-in Date *</label>
                   <input required type="date" value={form.checkIn} onChange={e => setForm({ ...form, checkIn: e.target.value })}
-  min={today}
-  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                    min={today}
+                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
                 </div>
                 <div>
                   <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Check-out Date *</label>
                   <input required type="date" value={form.checkOut} onChange={e => setForm({ ...form, checkOut: e.target.value })}
-  min={form.checkIn || today}
-  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                    min={form.checkIn || today}
+                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
                 </div>
                 <div>
                   <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Adults</label>
@@ -256,83 +386,151 @@ setSuccess(true);
             </div>
 
             {/* Payment Method */}
-{/* Payment Method */}
-<div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '20px' }}>
-  <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-    <span style={{ width: '24px', height: '24px', background: '#1A312C', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#89D7B7', fontWeight: '700' }}>3</span>
-    Payment Method
-  </div>
-  <div className="responsive-grid-2" style={{ gap: '10px', marginBottom: '16px' }}>
-    {[
-      { value: 'gcash', label: '💙 GCash' },
-      { value: 'card', label: '💳 Credit/Debit Card' },
-      { value: 'bank', label: '🏦 Bank Transfer' },
-      { value: 'cash', label: '💵 Pay at Resort' },
-    ].map(m => (
-      <button key={m.value} type="button" onClick={() => setForm({ ...form, paymentMethod: m.value })}
-        style={{ padding: '12px', borderRadius: '10px', border: form.paymentMethod === m.value ? '2px solid #428475' : '1px solid #e5e7eb', background: form.paymentMethod === m.value ? '#FFF4E1' : '#fff', fontSize: '13px', fontWeight: '500', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: '#111' }}>
-        {m.label}
-      </button>
-    ))}
-  </div>
+            <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '20px' }}>
+              <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>3</span>
+                Payment Method
+              </div>
 
-  {form.paymentMethod === 'gcash' && (
-    <div style={{ background: '#f0f9ff', borderRadius: '12px', padding: '20px', border: '1px solid #bae6fd', textAlign: 'center' }}>
-      <div style={{ fontWeight: '700', fontSize: '14px', color: '#0369a1', marginBottom: '12px' }}>💙 GCash Payment Details</div>
-      <img
-        src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=00020101021226490012PH.GLOBE.GCASH01110917811233252040000530363654063500.005802PH5918LAWISWIS+KAWAYAN6007BULACAN63043B47"
-        alt="GCash QR"
-        style={{ borderRadius: '10px', marginBottom: '12px', border: '4px solid #fff', boxShadow: '0 4px 14px rgba(0,0,0,0.1)' }}
-      />
-      <div style={{ fontSize: '13px', color: '#0369a1', fontWeight: '600' }}>GCash Number</div>
-      <div style={{ fontSize: '22px', fontWeight: '800', color: '#111', marginBottom: '4px', letterSpacing: '1px' }}>0917 811 2332</div>
-      <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px' }}>Account Name: <strong>Lawiswis Kawayan Garden Resort</strong></div>
-      <div style={{ background: '#fff', borderRadius: '8px', padding: '10px', fontSize: '11px', color: '#6b7280' }}>
-        📸 Send screenshot of payment to <strong>info@lawiswiskawayanresort.com</strong> or via our chat after paying
-      </div>
-    </div>
-  )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+                <button type="button" onClick={() => setForm({ ...form, paymentMethod: 'online' })}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '14px 16px', borderRadius: '10px',
+                    border: form.paymentMethod === 'online' ? `2px solid ${ACCENT}` : '1px solid #e5e7eb',
+                    background: form.paymentMethod === 'online' ? LIGHT : '#fff',
+                    fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+                    fontFamily: "'Poppins', sans-serif", color: '#111', textAlign: 'left',
+                  }}>
+                  <span style={{ display: 'flex', alignItems: 'center' }}>
+                    <IconCard />
+                    Pay Online — Card, GCash, Maya, or GrabPay
+                  </span>
+                  {form.paymentMethod === 'online' && <IconCheck size={16} color={ACCENT} />}
+                </button>
 
-  {form.paymentMethod === 'bank' && (
-    <div style={{ background: '#f0fdf4', borderRadius: '12px', padding: '20px', border: '1px solid #bbf7d0' }}>
-      <div style={{ fontWeight: '700', fontSize: '14px', color: '#15803d', marginBottom: '14px', textAlign: 'center' }}>🏦 Bank Transfer Details</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '12px' }}>
-        {[
-          { bank: 'BDO', account: '1234 5678 9012' },
-          { bank: 'BPI', account: '9876 5432 1098' },
-          { bank: 'Metrobank', account: '5555 6666 7777' },
-          { bank: 'UnionBank', account: '1111 2222 3333' },
-        ].map(b => (
-          <div key={b.bank} style={{ background: '#fff', borderRadius: '10px', padding: '12px 16px', border: '1px solid #d1fae5', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ fontWeight: '700', fontSize: '13px', color: '#15803d' }}>{b.bank}</div>
-            <div style={{ fontSize: '14px', fontWeight: '600', color: '#111', letterSpacing: '1px' }}>{b.account}</div>
-          </div>
-        ))}
-      </div>
-      <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '4px' }}>Account Name: <strong>Lawiswis Kawayan Garden Resort Corp.</strong></div>
-      <div style={{ background: '#fff', borderRadius: '8px', padding: '10px', fontSize: '11px', color: '#6b7280', textAlign: 'center', marginTop: '8px' }}>
-        📧 Send proof of payment to <strong>info@lawiswiskawayanresort.com</strong><br />
-        Use your <strong>Booking Reference</strong> as transfer reference/note
-      </div>
-    </div>
-  )}
+                <button type="button" onClick={() => setForm({ ...form, paymentMethod: 'cash' })}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '14px 16px', borderRadius: '10px',
+                    border: form.paymentMethod === 'cash' ? `2px solid ${ACCENT}` : '1px solid #e5e7eb',
+                    background: form.paymentMethod === 'cash' ? LIGHT : '#fff',
+                    fontSize: '13px', fontWeight: '600', cursor: 'pointer',
+                    fontFamily: "'Poppins', sans-serif", color: '#111', textAlign: 'left',
+                  }}>
+                  <span style={{ display: 'flex', alignItems: 'center' }}>
+                    <IconCash />
+                    Pay at Resort — Cash on Arrival
+                  </span>
+                  {form.paymentMethod === 'cash' && <IconCheck size={16} color={ACCENT} />}
+                </button>
+              </div>
 
-  {form.paymentMethod === 'card' && (
-    <div style={{ background: '#faf5ff', borderRadius: '12px', padding: '16px', border: '1px solid #e9d5ff', textAlign: 'center', fontSize: '13px', color: '#7c3aed' }}>
-      💳 Card payment will be processed at the resort upon check-in.
-    </div>
-  )}
+              {form.paymentMethod === 'online' && (
+                <div style={{ background: LIGHT, borderRadius: '12px', padding: '16px', fontSize: '12px', color: '#374151', lineHeight: '1.6' }}>
+                  You'll be redirected to our secure payment page to complete your payment
+                  of <strong>₱{totalAmount.toLocaleString()}</strong>. Card details, GCash,
+                  Maya, and GrabPay options are all handled there — nothing is stored on our site.
+                </div>
+              )}
 
-  {form.paymentMethod === 'cash' && (
-    <div style={{ background: '#fffbeb', borderRadius: '12px', padding: '16px', border: '1px solid #fde68a', textAlign: 'center', fontSize: '13px', color: '#a16207' }}>
-      💵 Please prepare exact amount upon arrival at the resort.
-    </div>
-  )}
-</div>
+              {form.paymentMethod === 'cash' && (
+                <div style={{ background: '#fffbeb', borderRadius: '12px', padding: '16px', border: '1px solid #fde68a', fontSize: '12px', color: '#a16207' }}>
+                  Please prepare the exact amount (₱{totalAmount.toLocaleString()}) upon arrival at the resort.
+                </div>
+              )}
+
+              {previewMode && (
+                <div style={{ marginTop: '14px', border: '1px dashed #d1d5db', borderRadius: '12px', padding: '18px', background: '#fafafa' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                    <span style={{ background: '#fef3c7', color: '#92400e', fontSize: '10px', fontWeight: '700', padding: '3px 8px', borderRadius: '999px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Preview Mode
+                    </span>
+                    <span style={{ fontSize: '11px', color: '#6b7280' }}>
+                      /api/create-checkout-session isn't reachable — this is a visual mockup only, nothing here is submitted anywhere.
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                    {WALLETS.map(w => (
+                      <button key={w.id} type="button" onClick={() => setPreviewMethod(w.id)}
+                        style={{
+                          padding: '8px 14px', borderRadius: '8px',
+                          border: previewMethod === w.id ? `2px solid ${ACCENT}` : '1px solid #e5e7eb',
+                          background: previewMethod === w.id ? '#fff' : '#f3f4f6',
+                          fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: '#111',
+                        }}>
+                        {w.label}
+                      </button>
+                    ))}
+                    <button type="button" onClick={() => setPreviewMethod('card')}
+                      style={{
+                        padding: '8px 14px', borderRadius: '8px',
+                        border: previewMethod === 'card' ? `2px solid ${ACCENT}` : '1px solid #e5e7eb',
+                        background: previewMethod === 'card' ? '#fff' : '#f3f4f6',
+                        fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: '#111',
+                      }}>
+                      Card
+                    </button>
+                  </div>
+
+                  {previewMethod !== 'card' ? (
+                    <div style={{ textAlign: 'center' }}>
+                      <img
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=PREVIEW-${previewMethod.toUpperCase()}-${previewReservationRef}`}
+                        alt={`${previewMethod} QR placeholder`}
+                        style={{ borderRadius: '10px', border: '4px solid #fff', boxShadow: '0 4px 14px rgba(0,0,0,0.08)', marginBottom: '10px' }}
+                      />
+                      <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                        Placeholder {WALLETS.find(w => w.id === previewMethod)?.label} QR — the real checkout
+                        page generates this live with your actual PayMongo account details.
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ maxWidth: '320px', margin: '0 auto' }}>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Card Number</label>
+                      <input disabled placeholder="4242 4242 4242 4242"
+                        style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', marginBottom: '10px', fontFamily: "'Poppins', sans-serif", background: '#f9fafb', boxSizing: 'border-box' }} />
+                      <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Expiry</label>
+                          <input disabled placeholder="MM/YY"
+                            style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", background: '#f9fafb', boxSizing: 'border-box' }} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>CVV</label>
+                          <input disabled placeholder="123"
+                            style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", background: '#f9fafb', boxSizing: 'border-box' }} />
+                        </div>
+                      </div>
+                      <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Cardholder Name</label>
+                      <input disabled placeholder={form.guestName || 'Juan dela Cruz'}
+                        style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", background: '#f9fafb', boxSizing: 'border-box' }} />
+                      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px' }}>
+                        Fields are disabled — real card entry happens on PayMongo's hosted page, never on your own site.
+                      </div>
+                    </div>
+                  )}
+
+                  <button type="button" onClick={handleSimulatePreviewPayment}
+                    style={{ width: '100%', marginTop: '18px', background: DARK, color: '#d4f550', border: 'none', borderRadius: '10px', padding: '12px', fontSize: '13px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                    Simulate Successful Payment (preview only)
+                  </button>
+                </div>
+              )}
+
+              {errorMsg && (
+                <div style={{ marginTop: '12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', padding: '12px 14px', fontSize: '12px', color: '#b91c1c' }}>
+                  {errorMsg}
+                </div>
+              )}
+            </div>
 
             <button type="submit" disabled={submitting}
               style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting ? 0.7 : 1 }}>
-              {submitting ? 'Submitting...' : 'Confirm Booking →'}
+              {submitting
+                ? (form.paymentMethod === 'online' ? 'Redirecting to payment...' : 'Submitting...')
+                : (form.paymentMethod === 'online' ? 'Continue to Payment →' : 'Confirm Booking →')}
             </button>
           </form>
         </div>
@@ -340,8 +538,17 @@ setSuccess(true);
         {/* Room Summary */}
         <div>
           <div className="sticky-summary" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', position: 'sticky', top: '20px' }}>
-            <div style={{ height: '180px', background: `linear-gradient(135deg, ${DARK}, #2d5a2d)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '64px' }}>
-              🛏
+            <div style={{ height: '180px', background: `linear-gradient(135deg, ${DARK}, #2d5a2d)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <img
+                src={getRoomImage(room.roomNumber) || FALLBACK_ROOM_IMAGES[0]}
+                alt={`Room ${room.roomNumber}`}
+                onError={(event) => {
+                  event.currentTarget.style.display = 'none';
+                  event.currentTarget.nextElementSibling.style.display = 'block';
+                }}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              />
+              <span style={{ display: 'none' }}><IconBed size={56} /></span>
             </div>
             <div style={{ padding: '20px' }}>
               <div style={{ fontSize: '11px', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>{room.type}</div>
@@ -377,7 +584,7 @@ setSuccess(true);
               )}
 
               <div style={{ marginTop: '16px', fontSize: '11px', color: '#9ca3af', textAlign: 'center', lineHeight: '1.7' }}>
-                🔒 Secure booking · Free cancellation applies based on policy
+                <IconLock />Secure booking · Free cancellation applies based on policy
               </div>
             </div>
           </div>
