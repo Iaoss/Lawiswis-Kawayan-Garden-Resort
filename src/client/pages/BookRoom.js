@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../../firebase/firebase';
-import { doc, getDoc, addDoc, updateDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { createPayMongoCheckout } from '../../lib/paymongo';
-import { FALLBACK_ROOM_IMAGES, getRoomImage } from '../components/clientTheme';
+import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -105,6 +105,7 @@ export default function BookRoom() {
     children: 0,
     notes: '',
     paymentMethod: 'online', // 'online' (card / e-wallet via PayMongo) | 'cash' (pay at resort)
+    website: '', // honeypot — real guests leave this blank; see hidden field below
   });
 
   const [totalAmount, setTotalAmount] = useState(0);
@@ -137,24 +138,42 @@ export default function BookRoom() {
     setPreviewMode(false);
 
     try {
-      const ref = await addDoc(collection(db, 'reservations'), {
-        ...form,
-        roomId: room.id,
-        roomNumber: room.roomNumber,
-        roomType: room.type,
-        totalAmount,
-        nights,
-        type: 'online',
-        status: 'pending',
-        paymentStatus: 'pending',
-        createdAt: serverTimestamp(),
+      // Reservation creation now happens server-side (see
+      // /api/create-reservation.js). That endpoint runs the honeypot check,
+      // per-email rate limiting, and a date-overlap check against existing
+      // reservations for this room — none of which can be trusted if done
+      // only in the browser, since a bot can skip your page's JS entirely
+      // and call this same endpoint directly. The server is the one place
+      // these checks actually hold.
+      const response = await fetch('/api/create-reservation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: room.id,
+          guestName: form.guestName,
+          email: form.email,
+          phone: form.phone,
+          address: form.address,
+          checkIn: form.checkIn,
+          checkOut: form.checkOut,
+          adults: form.adults,
+          children: form.children,
+          notes: form.notes,
+          paymentMethod: form.paymentMethod,
+          website: form.website,
+        }),
       });
 
-      await updateDoc(doc(db, 'rooms', room.id), {
-        status: 'occupied',
-      });
+      const data = await response.json();
 
-      const ref8 = ref.id.slice(0, 8).toUpperCase();
+      if (!response.ok) {
+        setErrorMsg(data.error || 'Something went wrong. Please try again.');
+        setSubmitting(false);
+        return;
+      }
+
+      const { reservationId } = data;
+      const ref8 = reservationId.slice(0, 8).toUpperCase();
       setBookingRef(ref8);
 
       if (form.paymentMethod === 'online') {
@@ -165,7 +184,7 @@ export default function BookRoom() {
         // /payment/success, and the webhook marks the reservation paid
         // in the background.
         const { checkoutUrl } = await createPayMongoCheckout({
-          reservationId: ref.id,
+          reservationId,
           guestName: form.guestName,
           guestEmail: form.email,
           description: `Room ${room.roomNumber} (${room.type}) — ${nights} night${nights !== 1 ? 's' : ''}`,
@@ -184,14 +203,15 @@ export default function BookRoom() {
 
       if (form.paymentMethod === 'online' && isLocalDev) {
         // Most likely cause: running `npm start` instead of `vercel dev`,
-        // so /api/create-checkout-session isn't being served at all.
-        // Show a visual-only preview instead of a dead-end error.
+        // so /api/create-checkout-session (or /api/create-reservation)
+        // isn't being served at all. Show a visual-only preview instead
+        // of a dead-end error.
         setPreviewReservationRef(bookingRef || 'PREVIEW');
         setPreviewMode(true);
       } else {
         setErrorMsg(
           form.paymentMethod === 'online'
-            ? 'Your reservation was saved, but we could not start the online payment. Please try again, or choose "Pay at Resort".'
+            ? 'Your reservation could not be started. Please try again, or choose "Pay at Resort".'
             : 'Something went wrong. Please try again.'
         );
       }
@@ -335,6 +355,24 @@ export default function BookRoom() {
                   </div>
                 ))}
               </div>
+
+              {/* Honeypot field — invisible to real guests (off-screen, no
+                  tab focus). Basic bots that auto-fill every input on a
+                  form will populate this; the API rejects the submission
+                  when it sees a value here. Real guests never notice it. */}
+              <div style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', overflow: 'hidden' }} aria-hidden="true">
+                <label htmlFor="website">Leave this field blank</label>
+                <input
+                  type="text"
+                  id="website"
+                  name="website"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  value={form.website}
+                  onChange={e => setForm({ ...form, website: e.target.value })}
+                />
+              </div>
+
               {form.paymentMethod === 'online' && !form.email && (
                 <div style={{ marginTop: '10px', fontSize: '11px', color: '#9ca3af' }}>
                   Tip: add an email address to receive your payment receipt.
@@ -540,7 +578,7 @@ export default function BookRoom() {
           <div className="sticky-summary" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', position: 'sticky', top: '20px' }}>
             <div style={{ height: '180px', background: `linear-gradient(135deg, ${DARK}, #2d5a2d)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <img
-                src={getRoomImage(room.roomNumber) || FALLBACK_ROOM_IMAGES[0]}
+                src={resolveRoomImage(room) || FALLBACK_ROOM_IMAGES[0]}
                 alt={`Room ${room.roomNumber}`}
                 onError={(event) => {
                   event.currentTarget.style.display = 'none';

@@ -6,7 +6,27 @@ import PageLayout from '../components/PageLayout';
 import RoomExcelImport from '../components/RoomExcelImport';
 import { useSettings } from '../components/SettingsContext';
 import { ROOM_TYPES, ROOM_TYPE_CATEGORY_MAP, normalizeRoomType } from '../utils/roomCatalog';
-import { getRoomImage } from '../../client/components/clientTheme';
+import { resolveRoomImage } from '../../client/components/clientTheme';
+
+// ── Cloudinary config ────────────────────────────────────────
+// Fill these in from your Cloudinary dashboard (cloudinary.com → Dashboard for
+// cloud name; Settings → Upload → Upload presets for the unsigned preset name).
+const CLOUDINARY_CLOUD_NAME = 'x17b4eux';
+const CLOUDINARY_UPLOAD_PRESET = 'w8sfwf9b';
+
+const uploadToCloudinary = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+
+  const res = await fetch(
+    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+    { method: 'POST', body: formData }
+  );
+  if (!res.ok) throw new Error('Cloudinary upload failed');
+  const data = await res.json();
+  return data.secure_url;
+};
 
 const LIME  = '#9cb56f';
 const DARK  = '#0a1a0a';
@@ -31,8 +51,6 @@ const badgeColors = {
   maintenance: { bg: 'rgba(148,163,184,0.12)', color: '#94a3b8' },
 };
 
-// Statuses that are actively "in progress" get a soft pulsing dot instead
-// of a static one — a quick, low-key way to draw the eye without being loud.
 const PULSING_STATUSES = new Set(['occupied', 'cleaning']);
 
 const badgeLabel = (s) => ({ vacant: 'Available', occupied: 'Occupied', cleaning: 'Cleaning', maintenance: 'Maintenance', available: 'Available' })[s] || s;
@@ -43,7 +61,6 @@ const CheckIcon = () => (
   </div>
 );
 
-// Small pulsing/status dot used inside badges.
 const StatusDot = ({ color, pulse }) => (
   <motion.span
     animate={pulse ? { opacity: [1, 0.35, 1] } : {}}
@@ -52,8 +69,6 @@ const StatusDot = ({ color, pulse }) => (
   />
 );
 
-// Counts up from 0 to `value` whenever value changes, instead of just
-// popping in — makes the stat row feel alive on load and on refresh.
 function AnimatedNumber({ value }) {
   const mv = useMotionValue(0);
   const [display, setDisplay] = useState(0);
@@ -69,7 +84,6 @@ function AnimatedNumber({ value }) {
   return <>{display}</>;
 }
 
-// ── Motion variants ──────────────────────────────────────────
 const panelVariants = {
   hidden:  { opacity: 0, height: 0 },
   visible: { opacity: 1, height: 'auto', transition: { duration: 0.25, ease: 'easeOut' } },
@@ -116,6 +130,8 @@ const chipVariants = {
   exit:    { opacity: 0, scale: 0.9, width: 0, marginLeft: 0, transition: { duration: 0.15, ease: 'easeIn' } },
 };
 
+const emptyForm = { roomNumber: '', type: '', price: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
+
 export default function RoomManagement() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
@@ -136,9 +152,16 @@ export default function RoomManagement() {
   const [activeRoom, setActiveRoom] = useState(null);
   const [search, setSearch]         = useState('');
   const [filterType, setFilterType] = useState('');
-  const [statusFilter, setStatusFilter] = useState(''); // '', 'available', 'occupied', 'maintenance'
-  const [form, setForm] = useState({ roomNumber: '', type: '', price: '', status: 'vacant', amenities: '', description: '' });
+  const [statusFilter, setStatusFilter] = useState('');
+  const [form, setForm] = useState(emptyForm);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+
+  // ── Image upload state ──────────────────────────────────────
+  const [imageFile, setImageFile]       = useState(null);   // newly picked File, not yet uploaded
+  const [imagePreview, setImagePreview] = useState('');     // local object URL for the picked file
+  const [removeImage, setRemoveImage]   = useState(false);  // user asked to clear the current image
+  const [uploading, setUploading]       = useState(false);
+  const [uploadError, setUploadError]   = useState('');
 
   const fetchRooms = async () => {
     const snapshot = await getDocs(collection(db, 'rooms'));
@@ -149,16 +172,70 @@ export default function RoomManagement() {
 
   useEffect(() => { fetchRooms(); }, []);
 
+  useEffect(() => {
+    return () => { if (imagePreview) URL.revokeObjectURL(imagePreview); };
+  }, [imagePreview]);
+
+  const resetImageState = () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImageFile(null);
+    setImagePreview('');
+    setRemoveImage(false);
+    setUploadError('');
+  };
+
+  const handleImageSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setRemoveImage(false);
+    setUploadError('');
+  };
+
+  const handleRemoveImageClick = () => {
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImageFile(null);
+    setImagePreview('');
+    setRemoveImage(true);
+  };
+
   const handleSubmit = async () => {
     if (!form.roomNumber || !form.type || !form.price) return;
-    if (editRoom) await updateDoc(doc(db, 'rooms', editRoom.id), form);
-    else await addDoc(collection(db, 'rooms'), form);
-    setForm({ roomNumber: '', type: '', price: '', status: 'vacant', amenities: '', description: '' });
-    setShowForm(false); setEditRoom(null); fetchRooms();
+
+    let imageUrl = form.imageUrl || '';
+
+    try {
+      if (imageFile) {
+        setUploading(true);
+        setUploadError('');
+        imageUrl = await uploadToCloudinary(imageFile);
+        setUploading(false);
+      } else if (removeImage) {
+        // Just clear the field — we don't delete from Cloudinary here since
+        // unsigned uploads can't delete without server-side signing. The old
+        // file just sits unused on Cloudinary's free tier, no cost impact.
+        imageUrl = '';
+      }
+
+      const payload = { ...form, imageUrl };
+      if (editRoom) await updateDoc(doc(db, 'rooms', editRoom.id), payload);
+      else await addDoc(collection(db, 'rooms'), payload);
+
+      setForm(emptyForm);
+      resetImageState();
+      setShowForm(false); setEditRoom(null); fetchRooms();
+    } catch (err) {
+      setUploading(false);
+      console.error('Failed to save room:', err);
+      setUploadError('Image upload failed. Please check your connection and try again.');
+    }
   };
 
   const handleEdit = (room) => {
-    setEditRoom(room); setForm(room); setShowForm(true); setShowImport(false);
+    setEditRoom(room); setForm({ ...emptyForm, ...room }); setShowForm(true); setShowImport(false);
+    resetImageState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -172,7 +249,6 @@ export default function RoomManagement() {
     fetchRooms();
   };
 
-  // ── Stat-card filter wiring ──────────────────────────────────
   const statCards = [
     { label: 'Total',       value: rooms.length,                                                         color: TEXT,      icon: 'ti-building',        filterKind: 'all',      filterValue: '' },
     { label: 'Available',   value: rooms.filter(r => ['vacant','available'].includes(r.status)).length,  color: LIME,      icon: 'ti-circle-check',    filterKind: 'status',   filterValue: 'available' },
@@ -210,7 +286,6 @@ export default function RoomManagement() {
 
   const clearAllFilters = () => { setFilterType(''); setStatusFilter(''); };
 
-  // Human-readable label for whichever filter is currently active, used by the chip.
   const activeFilterLabel = statusFilter
     ? `Status: ${badgeLabel(statusFilter === 'available' ? 'vacant' : statusFilter)}`
     : filterType
@@ -246,6 +321,8 @@ export default function RoomManagement() {
   };
 
   const deleteTargetRoom = rooms.find(r => r.id === confirmDeleteId);
+
+  const formImagePreviewSrc = imagePreview || (removeImage ? '' : form.imageUrl);
 
   return (
     <PageLayout>
@@ -302,12 +379,53 @@ export default function RoomManagement() {
                       <option value="maintenance">Maintenance</option>
                     </select>
                   </div>
+
+                  {/* ── Room Photo: upload / replace / remove (via Cloudinary) ── */}
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Room Photo
+                    </label>
+                    <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                      <div style={{
+                        width: 160, height: 100, borderRadius: 10, flexShrink: 0,
+                        border: `1px solid ${BORDER}`, overflow: 'hidden',
+                        background: formImagePreviewSrc ? `url(${formImagePreviewSrc}) center/cover no-repeat` : (dark ? '#282827' : '#f8faf8'),
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {!formImagePreviewSrc && <i className="ti ti-photo" style={{ fontSize: 26, color: MUTED }} />}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <input type="file" accept="image/*" onChange={handleImageSelect}
+                          style={{ fontSize: 11, color: SUBTEXT, fontFamily: 'inherit' }} />
+                        {formImagePreviewSrc && (
+                          <button type="button" onClick={handleRemoveImageClick}
+                            style={{
+                              padding: '6px 12px', background: 'rgba(248,113,113,0.08)',
+                              border: '1px solid rgba(248,113,113,0.3)', borderRadius: 8,
+                              color: '#f87171', fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                              fontFamily: 'inherit', width: 'fit-content',
+                            }}>
+                            ✕ Remove Photo
+                          </button>
+                        )}
+                        {uploading && <div style={{ fontSize: 11, color: MUTED }}>Uploading image…</div>}
+                        {uploadError && <div style={{ fontSize: 11, color: '#f87171' }}>{uploadError}</div>}
+                        {!formImagePreviewSrc && !uploading && (
+                          <div style={{ fontSize: 10, color: MUTED, maxWidth: 260 }}>
+                            No photo uploaded yet — the resort's default photo for this room name will be used if one exists.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
                   <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
-                    <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleSubmit}
-                      style={{ padding: '9px 22px', background: LIME, border: 'none', borderRadius: 8, color: DARK, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                      {editRoom ? 'Update Room' : 'Save Room'}
+                    <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={uploading}
+                      style={{ padding: '9px 22px', background: LIME, border: 'none', borderRadius: 8, color: DARK, fontSize: 12, fontWeight: 700, cursor: uploading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: uploading ? 0.7 : 1 }}>
+                      {uploading ? 'Uploading…' : (editRoom ? 'Update Room' : 'Save Room')}
                     </motion.button>
-                    <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => { setShowForm(false); setEditRoom(null); }}
+                    <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                      onClick={() => { setShowForm(false); setEditRoom(null); setForm(emptyForm); resetImageState(); }}
                       style={{ padding: '9px 22px', background: HOVER, border: `1px solid ${BORDER}`, borderRadius: 8, color: SUBTEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
                       Cancel
                     </motion.button>
@@ -377,7 +495,6 @@ export default function RoomManagement() {
             {ROOM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
 
-          {/* Active filter chip — shows whichever stat-card filter (status or type) is applied */}
           <AnimatePresence>
             {activeFilterLabel && (
               <motion.div
@@ -422,7 +539,7 @@ export default function RoomManagement() {
             <i className="ti ti-file-spreadsheet" style={{ fontSize: 14 }} />Import Excel
           </motion.button>
           <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-            onClick={() => { setShowForm(true); setShowImport(false); setEditRoom(null); setForm({ roomNumber: '', type: '', price: '', status: 'vacant', amenities: '', description: '' }); }}
+            onClick={() => { setShowForm(true); setShowImport(false); setEditRoom(null); setForm(emptyForm); resetImageState(); }}
             style={{ padding: '7px 16px', background: LIME, border: 'none', borderRadius: 10, color: DARK, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', height: 36 }}>
             + Add Room
           </motion.button>
@@ -482,6 +599,7 @@ export default function RoomManagement() {
                   const m = ROOM_META[room.type] || {};
                   const badge = badgeColors[room.status] || badgeColors.maintenance;
                   const isActive = activeRoom?.id === room.id;
+                  const photoUrl = resolveRoomImage(room);
                   return (
                     <motion.div key={room.id}
                       layout
@@ -501,17 +619,15 @@ export default function RoomManagement() {
                         boxShadow: isActive && dark ? `0 0 20px rgba(200,240,110,0.08)` : 'none',
                       }}
                     >
-                      {/* Room photo — falls back to the bed icon if this room's
-                          name doesn't match one of the resort's real rooms. */}
                       <div style={{
                         width: 90, height: 72, borderRadius: 10,
-                        background: getRoomImage(room.roomNumber)
-                          ? `url(${getRoomImage(room.roomNumber)}) center/cover no-repeat`
+                        background: photoUrl
+                          ? `url(${photoUrl}) center/cover no-repeat`
                           : (dark ? '#282827' : '#f8faf8'),
                         border: `1px solid ${BORDER}`,
                         flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
                       }}>
-                        {!getRoomImage(room.roomNumber) && (
+                        {!photoUrl && (
                           <i className="ti ti-bed" style={{ fontSize: 32, color: dark ? LIME : '#4a7c59' }} />
                         )}
                       </div>
@@ -603,21 +719,19 @@ export default function RoomManagement() {
                   </div>
                 </div>
 
-                {/* Room photo — falls back to the bed icon if unmatched. */}
                 <div style={{
                   width: '100%', height: 130, borderRadius: 12,
-                  background: getRoomImage(activeRoom.roomNumber)
-                    ? `url(${getRoomImage(activeRoom.roomNumber)}) center/cover no-repeat`
+                  background: resolveRoomImage(activeRoom)
+                    ? `url(${resolveRoomImage(activeRoom)}) center/cover no-repeat`
                     : (dark ? '#282827' : '#f8faf8'),
                   border: `1px solid ${BORDER}`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {!getRoomImage(activeRoom.roomNumber) && (
+                  {!resolveRoomImage(activeRoom) && (
                     <i className="ti ti-bed" style={{ fontSize: 52, color: dark ? LIME : '#4a7c59' }} />
                   )}
                 </div>
 
-                {/* Size / Bed / Guests */}
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                   {[['ti-ruler', meta.size], ['ti-bed', meta.bed], ['ti-users', meta.guests]].map(([icon, val]) => val && (
                     <span key={icon} style={{ fontSize: 11, color: SUBTEXT, display: 'flex', alignItems: 'center', gap: 4 }}>
