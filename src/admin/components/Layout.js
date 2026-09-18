@@ -102,6 +102,7 @@ const navItems = [
   { label: 'Reports',        path: '/admin/reports',       icon: 'ti-chart-bar' },
   { label: 'Users',          path: '/admin/users',         icon: 'ti-user-cog' },
   { label: 'Feedback & QR',  path: '/admin/feedback',      icon: 'ti-star' },
+  { label: 'News Management',path: '/admin/news',           icon: 'ti-news' },
 ];
 
 // Pages that still exist but are not in the sidebar — used for the topbar title.

@@ -25,6 +25,7 @@ import FeedbackForm from './client/pages/FeedbackForm';
 import ClientLayout from './client/components/ClientLayout';
 import BookingTransactions from './admin/pages/BookingTransactions';
 import Settings from './admin/pages/Settings';
+import NewsManagement from './admin/pages/NewsManagement.js';
 
 function App() {
   return (
@@ -72,6 +73,7 @@ function App() {
         </Route>
         <Route path="/feedback" element={<FeedbackForm />} />
         <Route path="/chat" element={<GuestChat />} />
+        <Route path="/admin/news" element={<NewsManagement />} />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" />} />

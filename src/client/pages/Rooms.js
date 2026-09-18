@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
-import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS, FALLBACK_ROOM_IMAGES, getRoomImage } from '../components/clientTheme';
+import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS, FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';import OccupancyBadge from '../components/OccupancyBadge';
 
 const isAvailable = room => room.status === 'vacant' || room.status === 'available';
 
@@ -34,7 +34,13 @@ export default function Rooms() {
         <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
           <div style={{ color: MOSS, font: `600 11px ${SANS}`, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: '14px' }}>Accommodations</div>
           <h1 style={{ color: INK, font: `500 clamp(40px, 6vw, 72px)/1.02 ${SERIF}`, margin: '0 0 18px', maxWidth: '650px' }}>A room for the way you want to stay.</h1>
-          <p style={{ color: '#6b6a5c', font: `14px/1.8 ${SANS}`, maxWidth: '500px', margin: 0 }}>{checkIn && checkOut ? `Showing rooms for ${checkIn} to ${checkOut}.` : 'Sleep beneath the bamboo canopy, with room to gather, rest, and breathe.'}</p>
+          <p style={{ color: '#6b6a5c', font: `14px/1.8 ${SANS}`, maxWidth: '500px', margin: '0 0 20px' }}>{checkIn && checkOut ? `Showing rooms for ${checkIn} to ${checkOut}.` : 'Sleep beneath the bamboo canopy, with room to gather, rest, and breathe.'}</p>
+          {/* Resort-wide occupancy signal — uses the guest's searched dates
+              if they came in with checkIn/checkOut in the URL, otherwise
+              defaults to the coming week. Gives a heads-up on how busy
+              shared facilities (pools, common areas) are likely to be,
+              without exposing exact room counts. */}
+          <OccupancyBadge startDate={checkIn || undefined} endDate={checkOut || undefined} style={{ fontFamily: SANS }} />
         </div>
       </section>
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '48px 24px 100px' }}>
@@ -48,8 +54,7 @@ export default function Rooms() {
         </div>
         {loading ? <div style={{ padding: '70px 0', textAlign: 'center', color: MOSS, font: `14px ${SANS}` }}>Gathering the available rooms...</div> : filtered.length === 0 ? <div style={{ padding: '70px 0', textAlign: 'center', color: '#777363', font: `14px ${SANS}` }}>No rooms match those filters.</div> : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '22px' }}>
           {filtered.map((room, index) => {
-            const photo = getRoomImage(room.roomNumber) || FALLBACK_ROOM_IMAGES[index % FALLBACK_ROOM_IMAGES.length];
-            const roomAvailable = isAvailable(room);
+const photo = resolveRoomImage(room) || FALLBACK_ROOM_IMAGES[index % FALLBACK_ROOM_IMAGES.length];            const roomAvailable = isAvailable(room);
             const amenities = String(room.amenities || 'Air conditioning, Wi-Fi, Hot shower').split(',').slice(0, 3);
             return <article key={room.id} style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: '4px', overflow: 'hidden', transition: 'transform .25s, box-shadow .25s' }} onMouseEnter={event => { event.currentTarget.style.transform = 'translateY(-5px)'; event.currentTarget.style.boxShadow = '0 18px 40px rgba(35,42,27,.13)'; }} onMouseLeave={event => { event.currentTarget.style.transform = 'translateY(0)'; event.currentTarget.style.boxShadow = 'none'; }}>
               <div style={{ height: '210px', position: 'relative', overflow: 'hidden' }}><img src={photo} alt={`Room ${room.roomNumber}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /><div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 45%, rgba(20,25,15,.66))' }} /><span style={{ position: 'absolute', left: '16px', bottom: '14px', color: '#fff', font: `500 22px ${SERIF}` }}>Room {room.roomNumber}</span><span style={{ position: 'absolute', right: '14px', top: '14px', background: roomAvailable ? CREAM : 'rgba(35,42,27,.78)', color: roomAvailable ? FOREST : '#fff', padding: '5px 9px', borderRadius: '3px', font: `600 10px ${SANS}`, textTransform: 'uppercase' }}>{roomAvailable ? 'Available' : room.status}</span></div>

@@ -11,7 +11,7 @@
 //   GET /api/occupancy                          → next 7 days (listing page banner)
 //   GET /api/occupancy?startDate=...&endDate=... → a specific stay (booking page)
 
-import { adminDb } from '../lib/firebaseAdmin';
+import { adminDb } from '../src/lib/firebaseAdmin';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 

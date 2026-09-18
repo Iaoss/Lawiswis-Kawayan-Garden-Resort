@@ -88,7 +88,7 @@ export default function ChatWidget() {
   return (
     <div style={{ position: 'fixed', right: '22px', bottom: '22px', zIndex: 9999, fontFamily: "'Poppins', sans-serif" }}>
       {open ? (
-        <div style={{ width: '320px', maxWidth: 'calc(100vw - 32px)', background: '#fff', borderRadius: '24px', boxShadow: '0 30px 80px rgba(0,0,0,0.18)', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: '420px', minWidth: '280px' }}>
+        <div style={{ width: '320px', maxWidth: 'calc(100vw - 32px)', height: 'min(620px, calc(100dvh - 44px))', maxHeight: 'calc(100dvh - 44px)', background: '#fff', borderRadius: '24px', boxShadow: '0 30px 80px rgba(0,0,0,0.18)', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: '280px' }}>
           <div style={{ background: DARK, color: '#fff', padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
             <div>
               <div style={{ fontWeight: '800', fontSize: '15px' }}>Lawiswis Support</div>
@@ -100,9 +100,9 @@ export default function ChatWidget() {
             </button>
           </div>
 
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: LIGHT }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: LIGHT }}>
             {!started ? (
-              <form onSubmit={startChat} style={{ padding: '18px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <form onSubmit={startChat} style={{ padding: '18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
                 <div style={{ textAlign: 'center' }}>
                   <div style={{ fontSize: '28px', marginBottom: '8px' }}>💬</div>
                   <div style={{ fontSize: '14px', fontWeight: '700', color: '#111', marginBottom: '4px' }}>Start a conversation</div>

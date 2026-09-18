@@ -3,6 +3,7 @@ import { db } from '../../firebase/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
+import OccupancyBadge from '../components/OccupancyBadge';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -93,6 +94,8 @@ export default function BookRoom() {
   const [previewMode, setPreviewMode] = useState(false);
   const [previewMethod, setPreviewMethod] = useState('gcash'); // 'gcash' | 'maya' | 'grabpay' | 'card'
   const [previewReservationRef, setPreviewReservationRef] = useState('');
+  const [termsRead, setTermsRead] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
 
   const [form, setForm] = useState({
     guestName: '',
@@ -132,6 +135,7 @@ export default function BookRoom() {
     e.preventDefault();
     if (!room) return;
     if (nights <= 0) return alert('Please select valid check-in and check-out dates.');
+    if (!termsRead || !termsAccepted) return alert('Please read the full Terms and Agreement and confirm that you agree before continuing.');
 
     setSubmitting(true);
     setErrorMsg('');
@@ -414,6 +418,12 @@ export default function BookRoom() {
                   </select>
                 </div>
               </div>
+              {form.checkIn && form.checkOut && nights > 0 && (
+                <div style={{ marginTop: '14px' }}>
+                  <OccupancyBadge startDate={form.checkIn} endDate={form.checkOut} />
+                </div>
+              )}
+
               <div style={{ marginTop: '14px' }}>
                 <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Special Requests</label>
                 <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
@@ -564,8 +574,39 @@ export default function BookRoom() {
               )}
             </div>
 
-            <button type="submit" disabled={submitting}
-              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting ? 0.7 : 1 }}>
+            {/* Terms gate: the guest must scroll through the agreement before accepting it. */}
+            <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '20px' }}>
+              <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '12px' }}>Terms and Agreement</div>
+              <div
+                onScroll={event => {
+                  const element = event.currentTarget;
+                  if (element.scrollTop + element.clientHeight >= element.scrollHeight - 8) setTermsRead(true);
+                }}
+                style={{ height: '170px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px', color: '#4b5563', fontSize: '12px', lineHeight: '1.7', background: '#fafafa' }}
+              >
+                <p style={{ marginTop: 0 }}><strong>1. Reservation details.</strong> The guest confirms that the information supplied in this booking is accurate and complete. The reservation is subject to room availability and resort confirmation.</p>
+                <p><strong>2. Check-in and check-out.</strong> Check-in is at 2:00 PM and check-out is at 12:00 NN unless the resort confirms another arrangement. Valid identification may be requested at check-in.</p>
+                <p><strong>3. Payment.</strong> Online payments are processed by our secure payment provider. Pay-at-resort bookings must be paid upon arrival according to the amount shown in the reservation summary.</p>
+                <p><strong>4. Cancellation.</strong> Cancellation fees and refunds follow the resort cancellation policy applicable to the selected booking dates.</p>
+                <p><strong>5. Guest conduct.</strong> Guests agree to follow resort rules, respect other guests, and accept responsibility for damage or loss caused by their party.</p>
+                <p><strong>6. Privacy and information use.</strong> The resort collects the information provided in this form, including your name, contact details, address, stay dates, guest count, and requests, to process your reservation, communicate about your stay, provide support, and meet operational or legal requirements. We do not sell this information.</p>
+                <p><strong>7. Payment privacy.</strong> Card and e-wallet payment details are entered and processed through the secure payment provider&apos;s hosted checkout. The resort does not store your full card number, security code, or e-wallet credentials. We may receive payment status, transaction references, and limited payment details needed to confirm and reconcile your booking.</p>
+                <p style={{ marginBottom: 0 }}><strong>8. Agreement.</strong> By checking the box below, the guest confirms they have read and agree to these terms, the privacy practices above, and the resort&apos;s applicable policies.</p>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '9px', marginTop: '14px', color: termsRead ? '#374151' : '#9ca3af', fontSize: '12px', lineHeight: '1.5', cursor: termsRead ? 'pointer' : 'not-allowed' }}>
+                <input
+                  type="checkbox"
+                  checked={termsAccepted}
+                  disabled={!termsRead}
+                  onChange={event => setTermsAccepted(event.target.checked)}
+                  style={{ marginTop: '2px', accentColor: ACCENT }}
+                />
+                <span>{termsRead ? 'I have read and agree to the Terms and Agreement.' : 'Scroll to the end of the agreement to enable acceptance.'}</span>
+              </label>
+            </div>
+
+            <button type="submit" disabled={submitting || !termsAccepted}
+              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted ? 0.7 : 1 }}>
               {submitting
                 ? (form.paymentMethod === 'online' ? 'Redirecting to payment...' : 'Submitting...')
                 : (form.paymentMethod === 'online' ? 'Continue to Payment →' : 'Confirm Booking →')}

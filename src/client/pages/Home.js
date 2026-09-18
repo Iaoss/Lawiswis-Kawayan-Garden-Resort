@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { db } from '../../firebase/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit } from 'firebase/firestore';
+import OccupancyBadge from '../components/OccupancyBadge';
 
 /* ─────────────────────────────────────────────
    BRAND PALETTE — pulled from the Lawiswis Kawayan
@@ -46,6 +47,13 @@ const roomPhotos = [
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tahimik-02-1400x700-1.jpeg',
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/MInamahal-01-1400x700-1.jpeg',
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Panaginip-05.jpeg',
+];
+
+/* Fallback news photography, cycled when Firestore articles don't carry images */
+const newsFallbackPhotos = [
+  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/11/image-wide-post.jpg',
+  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/11/349573106_214182444757352_8525037380621928322_n.jpg',
+  'https://lawiswiskawayanresort.com/wp-content/uploads/2020/01/Pavillion-Featured.jpg',
 ];
 
 /* ─────────────────────────────────────────────
@@ -257,18 +265,13 @@ const builtFor = [
   { img: photos.ligaya, title: 'Ligaya Suite', sub: 'Family suite for 4' },
 ];
 
-const newsPosts = [
-  { img: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/11/image-wide-post.jpg', cat: 'News', title: 'The Power of Connection: Building Stronger Teams through Nature Retreats' },
-  { img: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/11/349573106_214182444757352_8525037380621928322_n.jpg', cat: 'News', title: 'Physical Well-Being and the Benefits of an Active Lifestyle' },
-  { img: 'https://lawiswiskawayanresort.com/wp-content/uploads/2020/01/Pavillion-Featured.jpg', cat: 'News', title: 'Prioritizing Mental Health in the Workplace' },
-];
-
 /* ─────────────────────────────────────────────
    MAIN HOME COMPONENT
 ───────────────────────────────────────────── */
 export default function Home() {
   const [rooms, setRooms] = useState([]);
-  const [scrolled, setScrolled] = useState(false);
+  const [newsArticles, setNewsArticles] = useState([]);
+  const [newsError, setNewsError] = useState('');
   const [scrollY, setScrollY] = useState(0);
   const [heroIn, setHeroIn] = useState(false);
   const reduceMotionRef = useRef(false);
@@ -297,7 +300,26 @@ export default function Home() {
     };
     fetchRooms();
 
-    const handleScroll = () => { setScrolled(window.scrollY > 80); setScrollY(window.scrollY); };
+    const fetchNews = async () => {
+      try {
+        const newsQuery = query(
+          collection(db, 'news'),
+          where('status', '==', 'published'),
+          limit(3)
+        );
+        const snap = await getDocs(newsQuery);
+        const articles = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
+        setNewsArticles(articles);
+        setNewsError('');
+      } catch (err) {
+        console.error('Failed to load news:', err);
+        setNewsError('News is temporarily unavailable. Please check the Firestore news read rule.');
+      }
+    };
+    fetchNews();
+
+    const handleScroll = () => setScrollY(window.scrollY);
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
@@ -326,11 +348,11 @@ export default function Home() {
 
       {/* STICKY NAVBAR */}
       <nav className="responsive-nav" style={{
-        background: scrolled ? FOREST : 'transparent',
+        background: FOREST,
         padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         height: '76px', position: 'sticky', top: 0, zIndex: 100,
         transition: 'background 0.3s, box-shadow 0.3s',
-        boxShadow: scrolled ? '0 2px 20px rgba(0,0,0,0.2)' : 'none',
+        boxShadow: '0 2px 20px rgba(0,0,0,0.2)',
       }}>
         <img
           src={photos.logoWide} alt="Lawiswis Kawayan Garden Resort"
@@ -399,6 +421,7 @@ export default function Home() {
             }}>
               An 18-year-old garden hideaway with 32 cozy rooms, quiet pools, and bamboo-shaded grounds — where work and play sit comfortably side by side.
             </p>
+            <OccupancyBadge style={{ marginBottom: '24px', background: 'rgba(255,255,255,0.92)' }} />
             <div style={{
               display: 'flex', flexWrap: 'wrap', gap: '14px',
               opacity: heroIn ? 1 : 0, transform: heroIn ? 'translateY(0)' : 'translateY(18px)',
@@ -620,22 +643,33 @@ export default function Home() {
               <div style={{ fontSize: '11px', color: MOSS, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '12px', fontFamily: SANS }}>Latest News</div>
               <h2 style={{ fontSize: '32px', fontWeight: '500', color: INK, fontFamily: SERIF }}>From the Resort</h2>
             </div>
+            <a href="https://lawiswiskawayanresort.com/" target="_blank" rel="noopener noreferrer"
+              style={{ background: 'transparent', color: FOREST, border: `1.5px solid ${FOREST}`, borderRadius: '3px', padding: '12px 24px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', cursor: 'pointer', fontFamily: SANS, textDecoration: 'none' }}>
+              VISIT OUR WEBSITE
+            </a>
           </div>
         </Reveal>
-        <div className="responsive-grid-3" style={{ gap: '24px' }}>
-          {newsPosts.map(b => (
-            <div key={b.title} style={{ background: PAPER, borderRadius: '6px', overflow: 'hidden', border: `1px solid ${LINE}`, cursor: 'pointer' }}>
-              <div style={{ height: '170px', overflow: 'hidden' }}>
-                <img src={b.img} alt={b.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              </div>
-              <div style={{ padding: '18px' }}>
-                <span style={{ background: CREAM, color: FOREST, fontSize: '9.5px', fontWeight: '600', letterSpacing: '0.05em', padding: '4px 10px', borderRadius: '3px', fontFamily: SANS }}>{b.cat}</span>
-                <div style={{ fontWeight: '500', fontSize: '14px', color: INK, lineHeight: 1.5, margin: '12px 0', fontFamily: SERIF }}>{b.title}</div>
-                <span style={{ fontSize: '11.5px', color: BRASS, fontWeight: '600', fontFamily: SANS }}>Read More →</span>
-              </div>
-            </div>
-          ))}
-        </div>
+        {newsError ? (
+          <div style={{ textAlign: 'center', padding: '70px', background: CREAM, borderRadius: '6px', color: '#8b8977', fontFamily: SANS, fontSize: '13px' }}>{newsError}</div>
+        ) : newsArticles.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '70px', background: CREAM, borderRadius: '6px', color: '#8b8977', fontFamily: SANS, fontSize: '13px' }}>No news posted right now — check back soon.</div>
+        ) : (
+          <div className="responsive-grid-3" style={{ gap: '24px' }}>
+            {newsArticles.map((b, i) => (
+              <a key={b.id} href={b.externalLink || 'https://lawiswiskawayanresort.com/'} target="_blank" rel="noopener noreferrer"
+                style={{ background: PAPER, borderRadius: '6px', overflow: 'hidden', border: `1px solid ${LINE}`, cursor: 'pointer', display: 'block', textDecoration: 'none', color: 'inherit' }}>
+                <div style={{ height: '170px', overflow: 'hidden' }}>
+                  <img src={b.imageUrl || newsFallbackPhotos[i % newsFallbackPhotos.length]} alt={b.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                </div>
+                <div style={{ padding: '18px' }}>
+                  <span style={{ background: CREAM, color: FOREST, fontSize: '9.5px', fontWeight: '600', letterSpacing: '0.05em', padding: '4px 10px', borderRadius: '3px', fontFamily: SANS }}>{b.category || 'News'}</span>
+                  <div style={{ fontWeight: '500', fontSize: '14px', color: INK, lineHeight: 1.5, margin: '12px 0', fontFamily: SERIF }}>{b.title}</div>
+                  <span style={{ fontSize: '11.5px', color: BRASS, fontWeight: '600', fontFamily: SANS }}>Read More →</span>
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* NEWSLETTER */}
