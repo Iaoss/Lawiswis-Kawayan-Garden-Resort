@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../../firebase/firebase';
-import { collection, getDocs, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, getDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 
@@ -30,9 +30,47 @@ export default function Reservations() {
   const [page,   setPage]               = useState(1);
   const perPage = 10;
 
+  const releaseExpiredRooms = async (data) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const expired = data.filter(r => {
+      if (!r.checkOut || ['checked-out', 'cancelled'].includes(r.status)) return false;
+      const checkOut = new Date(`${r.checkOut}T00:00:00`);
+      return !isNaN(checkOut.getTime()) && checkOut < today;
+    });
+
+    await Promise.all(expired.map(async reservation => {
+      await updateDoc(doc(db, 'reservations', reservation.id), { status: 'checked-out' });
+      if (reservation.roomId) {
+        try {
+          const roomRef = doc(db, 'rooms', reservation.roomId);
+          const roomSnap = await getDoc(roomRef);
+          if (roomSnap.exists() && roomSnap.data().status === 'occupied') {
+            await updateDoc(roomRef, { status: 'vacant' });
+          }
+        } catch (roomErr) {
+          console.warn('Expired room release skipped:', roomErr.message);
+        }
+      }
+    }));
+
+    return expired.map(r => ({ ...r, status: 'checked-out' }));
+  };
+
   const fetchReservations = async () => {
     const snap = await getDocs(collection(db, 'reservations'));
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    let data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (isAdmin) {
+      const expired = data.filter(r => {
+        if (!r.checkOut || ['checked-out', 'cancelled'].includes(r.status)) return false;
+        const checkOut = new Date(`${r.checkOut}T00:00:00`);
+        return !isNaN(checkOut.getTime()) && checkOut < new Date(new Date().setHours(0, 0, 0, 0));
+      });
+      if (expired.length) {
+        await releaseExpiredRooms(data);
+        data = data.map(r => expired.some(item => item.id === r.id) ? { ...r, status: 'checked-out' } : r);
+      }
+    }
     data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
     setReservations(data);
   };

@@ -135,6 +135,7 @@ const emptyForm = { roomNumber: '', type: '', price: '', status: 'vacant', ameni
 export default function RoomManagement() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
+  const isReceptionist = window.location.pathname.startsWith('/receptionist');
 
   const BG      = dark ? '#020b09' : '#f9fafb';
   const CARD    = dark ? '#1c1c1c' : '#ffffff';
@@ -203,6 +204,7 @@ export default function RoomManagement() {
 
   const handleSubmit = async () => {
     if (!form.roomNumber || !form.type || !form.price) return;
+    if (isReceptionist && !editRoom) return;
 
     let imageUrl = form.imageUrl || '';
 
@@ -234,15 +236,19 @@ export default function RoomManagement() {
   };
 
   const handleEdit = (room) => {
+    if (isReceptionist) return;
     setEditRoom(room); setForm({ ...emptyForm, ...room }); setShowForm(true); setShowImport(false);
     resetImageState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const requestDelete = (id) => setConfirmDeleteId(id);
+  const requestDelete = (id) => {
+    if (isReceptionist) return;
+    setConfirmDeleteId(id);
+  };
 
   const confirmDelete = async () => {
-    if (!confirmDeleteId) return;
+    if (isReceptionist || !confirmDeleteId) return;
     await deleteDoc(doc(db, 'rooms', confirmDeleteId));
     setActiveRoom(null);
     setConfirmDeleteId(null);
@@ -527,22 +533,26 @@ export default function RoomManagement() {
             )}
           </AnimatePresence>
 
-          <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-            onClick={() => { setShowImport(p => !p); setShowForm(false); setEditRoom(null); }}
-            style={{
-              padding: '7px 14px', border: `1px solid ${showImport ? LIME : BORDER}`,
-              borderRadius: 10, background: showImport ? 'rgba(200,240,110,0.12)' : INPUT_BG,
-              color: showImport ? LIME : SUBTEXT,
-              fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-              display: 'flex', alignItems: 'center', gap: 5, height: 36,
-            }}>
-            <i className="ti ti-file-spreadsheet" style={{ fontSize: 14 }} />Import Excel
-          </motion.button>
-          <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-            onClick={() => { setShowForm(true); setShowImport(false); setEditRoom(null); setForm(emptyForm); resetImageState(); }}
-            style={{ padding: '7px 16px', background: LIME, border: 'none', borderRadius: 10, color: DARK, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', height: 36 }}>
-            + Add Room
-          </motion.button>
+          {!isReceptionist && (
+            <>
+              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                onClick={() => { setShowImport(p => !p); setShowForm(false); setEditRoom(null); }}
+                style={{
+                  padding: '7px 14px', border: `1px solid ${showImport ? LIME : BORDER}`,
+                  borderRadius: 10, background: showImport ? 'rgba(200,240,110,0.12)' : INPUT_BG,
+                  color: showImport ? LIME : SUBTEXT,
+                  fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                  display: 'flex', alignItems: 'center', gap: 5, height: 36,
+                }}>
+                <i className="ti ti-file-spreadsheet" style={{ fontSize: 14 }} />Import Excel
+              </motion.button>
+              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                onClick={() => { setShowForm(true); setShowImport(false); setEditRoom(null); setForm(emptyForm); resetImageState(); }}
+                style={{ padding: '7px 16px', background: LIME, border: 'none', borderRadius: 10, color: DARK, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', height: 36 }}>
+                + Add Room
+              </motion.button>
+            </>
+          )}
         </motion.div>
 
         {/* ── Stats Row (clickable filters) ── */}
@@ -692,10 +702,12 @@ export default function RoomManagement() {
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: 11, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Room Detail</span>
-                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleEdit(activeRoom)}
-                    style={{ padding: '5px 14px', background: LIME, border: 'none', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', color: DARK }}>
-                    Edit
-                  </motion.button>
+                  {!isReceptionist && (
+                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => handleEdit(activeRoom)}
+                      style={{ padding: '5px 14px', background: LIME, border: 'none', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', color: DARK }}>
+                      Edit
+                    </motion.button>
+                  )}
                 </div>
 
                 <div>
@@ -784,18 +796,20 @@ export default function RoomManagement() {
                   </div>
                 </div>
 
-                <motion.button whileHover={{ scale: 1.02, background: 'rgba(248,113,113,0.15)' }} whileTap={{ scale: 0.98 }}
-                  onClick={() => requestDelete(activeRoom.id)}
-                  style={{
-                    width: '100%', padding: 9,
-                    border: '1px solid rgba(248,113,113,0.3)',
-                    borderRadius: 10, background: 'rgba(248,113,113,0.08)',
-                    fontSize: 11, color: '#f87171', cursor: 'pointer', fontFamily: 'inherit',
-                    fontWeight: 600,
-                  }}
-                >
-                  🗑 Delete Room
-                </motion.button>
+                {!isReceptionist && (
+                  <motion.button whileHover={{ scale: 1.02, background: 'rgba(248,113,113,0.15)' }} whileTap={{ scale: 0.98 }}
+                    onClick={() => requestDelete(activeRoom.id)}
+                    style={{
+                      width: '100%', padding: 9,
+                      border: '1px solid rgba(248,113,113,0.3)',
+                      borderRadius: 10, background: 'rgba(248,113,113,0.08)',
+                      fontSize: 11, color: '#f87171', cursor: 'pointer', fontFamily: 'inherit',
+                      fontWeight: 600,
+                    }}
+                  >
+                    🗑 Delete Room
+                  </motion.button>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
@@ -803,7 +817,7 @@ export default function RoomManagement() {
 
         {/* ── Delete confirmation modal ── */}
         <AnimatePresence>
-          {confirmDeleteId && (
+          {!isReceptionist && confirmDeleteId && (
             <motion.div
               variants={backdropVariants}
               initial="hidden"

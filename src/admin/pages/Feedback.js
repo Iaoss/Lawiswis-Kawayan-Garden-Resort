@@ -71,6 +71,7 @@ export default function Feedback() {
   const filtered = feedbacks.filter(f => {
     if (filter === 'negative') return rate(f) <= 2 && rate(f) > 0;
     if (filter === 'positive') return rate(f) >= 4;
+    if (filter === 'neutral') return rate(f) === 3;
     if (filter === 'unread')   return !f.read;
     return true;
   });
@@ -230,19 +231,25 @@ export default function Feedback() {
 
         {/* filters */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
-          {['all', 'positive', 'negative', 'unread'].map(f => (
-            <button key={f} onClick={() => setFilter(f)}
+          {[
+            { value: 'all', label: 'All' },
+            { value: 'positive', label: 'Positive' },
+            { value: 'neutral', label: 'Neutral' },
+            { value: 'negative', label: 'Negative' },
+            { value: 'unread', label: 'Unread' },
+          ].map(({ value, label }) => (
+            <button key={value} onClick={() => setFilter(value)}
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '8px 16px', borderRadius: '10px', fontSize: '12px', fontWeight: '500',
-                border: filter === f ? 'none' : `1px solid ${BORDER}`,
-                background: filter === f ? ACCENT : CARD,
-                color: filter === f ? ACCENT_TEXT : SUBTEXT,
-                cursor: 'pointer', fontFamily: "'Poppins', sans-serif", textTransform: 'capitalize',
+                border: filter === value ? 'none' : `1px solid ${BORDER}`,
+                background: filter === value ? ACCENT : CARD,
+                color: filter === value ? ACCENT_TEXT : SUBTEXT,
+                cursor: 'pointer', fontFamily: "'Poppins', sans-serif",
               }}>
-              {f}
-              {f === 'unread' && unreadCount > 0 && (
-                <span className="fb-dot" style={{ width: '6px', height: '6px', borderRadius: '50%', background: filter === f ? ACCENT_TEXT : NEGATIVE_BAR }} />
+              {label}
+              {value === 'unread' && unreadCount > 0 && (
+                <span className="fb-dot" style={{ width: '6px', height: '6px', borderRadius: '50%', background: filter === value ? ACCENT_TEXT : NEGATIVE_BAR }} />
               )}
             </button>
           ))}

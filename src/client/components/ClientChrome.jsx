@@ -1,7 +1,41 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BRASS, FOREST, FOREST_DEEP, PAPER, SANS, LINE } from './clientTheme';
 
 const logo = 'https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png';
+
+function NavDropdown({ label, items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const close = event => {
+      if (ref.current && !ref.current.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(value => !value)}
+        style={{ background: 'none', border: 'none', color: '#fff', font: `500 11px ${SANS}`, letterSpacing: '0.08em', cursor: 'pointer', padding: '8px 0', display: 'flex', alignItems: 'center', gap: 5 }}
+      >
+        {label} <span style={{ fontSize: 9, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>▾</span>
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 14px)', left: 0, background: PAPER, borderRadius: 4, padding: '6px 0', minWidth: 220, boxShadow: '0 20px 50px rgba(0,0,0,0.25)', zIndex: 200, border: `1px solid ${LINE}` }}>
+          {items.map(item => (
+            <button key={item.label} onClick={() => { window.location.href = item.path; setOpen(false); }}
+              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '11px 18px', border: 0, background: 'transparent', color: '#22261B', font: `12.5px ${SANS}`, cursor: 'pointer' }}>
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ClientChrome({ children }) {
   const path = window.location.pathname;
@@ -25,15 +59,29 @@ export default function ClientChrome({ children }) {
         <span>402 Brgy. Buguion, Calumpit, Bulacan</span>
         <span>0917 811 2332 &nbsp; · &nbsp; info@lawiswiskawayanresort.com</span>
       </div>
-      <header style={{ background: FOREST, minHeight: '72px', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '24px', position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 4px 20px rgba(35,42,27,0.16)' }}>
+      <header style={{ background: FOREST, minHeight: '76px', padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '24px', position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 4px 20px rgba(35,42,27,0.16)' }}>
         <img src={logo} alt="Lawiswis Kawayan Garden Resort" onClick={() => { window.location.href = '/home'; }} style={{ width: '178px', maxWidth: '42vw', cursor: 'pointer', filter: 'brightness(0) invert(1)' }} />
-        <nav style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
+        <nav style={{ display: 'flex', gap: '30px', alignItems: 'center' }}>
           {link('HOME', '/home')}
-          {link('ROOMS', '/rooms')}
-          {link('ABOUT', '/about')}
-          {link('CONTACT', '/contact')}
+          {link('OUR AMENITIES', '/about')}
+          <NavDropdown label="OUR STORY" items={[
+            { label: 'About Us', path: '/about' },
+            { label: 'Certifications & Awards', path: '/about' },
+            { label: 'Contact Us', path: '/contact' },
+          ]} />
+          <NavDropdown label="OUR ROOMS" items={[
+            { label: 'Regular Rooms', path: '/rooms' },
+            { label: 'Suite Rooms', path: '/rooms' },
+          ]} />
+          <NavDropdown label="CUSTOMER CARE" items={[
+            { label: 'FAQs', path: '/contact' },
+            { label: 'Safety Guidelines', path: '/contact' },
+            { label: 'Health and Wellness', path: '/contact' },
+            { label: 'Cancellation Policy', path: '/contact' },
+            { label: 'Privacy Policy', path: '/contact' },
+          ]} />
         </nav>
-        <button onClick={() => { window.location.href = '/rooms'; }} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 18px', font: `600 10px ${SANS}`, letterSpacing: '0.08em', cursor: 'pointer', whiteSpace: 'nowrap' }}>BOOK YOUR STAY</button>
+        <button onClick={() => { window.location.href = '/rooms'; }} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: 'pointer', whiteSpace: 'nowrap' }}>BOOK YOUR STAY</button>
       </header>
       <main>{children}</main>
       <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>

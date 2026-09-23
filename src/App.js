@@ -26,6 +26,7 @@ import ClientLayout from './client/components/ClientLayout';
 import BookingTransactions from './admin/pages/BookingTransactions';
 import Settings from './admin/pages/Settings';
 import NewsManagement from './admin/pages/NewsManagement.js';
+import Email from './admin/pages/Email.js';
 
 function App() {
   return (
@@ -49,6 +50,7 @@ function App() {
         <Route path="/admin/cancellation" element={<CancellationPolicy />} />
         <Route path="/admin/messages" element={<Messages />} />
         <Route path="/admin/settings" element={<Settings />} />
+        <Route path="/admin/email" element={<Email />} />
 
         {/* Receptionist */}
         <Route path="/receptionist/dashboard" element={<ReceptionistDashboard />} />

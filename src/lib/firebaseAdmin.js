@@ -1,4 +1,4 @@
-// lib/firebaseAdmin.js
+// src/lib/firebaseAdmin.js
 //
 // Server-side Firebase Admin SDK setup. Used only inside /api serverless
 // functions — never import this from client-side React code.
@@ -22,11 +22,12 @@
 //   env vars (the private_key will contain literal "\n" sequences; paste it
 //   exactly as-is, the code below converts them back to real newlines).
 
-import admin from 'firebase-admin';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
+if (!getApps().length) {
+  initializeApp({
+    credential: cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
       privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
@@ -34,6 +35,5 @@ if (!admin.apps.length) {
   });
 }
 
-export const adminDb = admin.firestore();
-export const FieldValue = admin.firestore.FieldValue;
-
+export const adminDb = getFirestore();
+export { FieldValue };xc 

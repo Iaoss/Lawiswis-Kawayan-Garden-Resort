@@ -181,6 +181,9 @@ export default function Billing() {
   const handleCheckout = async () => {
     if (totalBalance(selected) > 0) return alert('Guest still has a balance. Settle it before checkout.');
     await updateDoc(doc(db, 'reservations', selected.id), { status: 'checked-out' });
+    if (selected.roomId) {
+      await updateDoc(doc(db, 'rooms', selected.roomId), { status: 'vacant' });
+    }
     setSelected(null);
     fetchReservations();
     setSuccess('Guest checked out.');

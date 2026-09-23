@@ -23,7 +23,8 @@
 // staff-managed operational state (e.g. "maintenance", "cleaning") in the
 // admin dashboard — not flipped automatically per booking.
 
-import { adminDb, FieldValue } from '../lib/firebaseAdmin';
+import { adminDb, FieldValue } from '../src/lib/firebaseAdmin';
+import { sendReservationPendingEmail } from './email';
 
 const MAX_RESERVATIONS_PER_EMAIL_PER_DAY = 3;
 
@@ -159,6 +160,31 @@ export default async function handler(req, res) {
       paymentStatus: 'pending',
       createdAt: FieldValue.serverTimestamp(),
     });
+
+    // ---- 7. Send the "reservation received" email --------------------------
+    // Wrapped separately so an email-sending failure (bad API key, Resend
+    // outage, etc.) never breaks the actual booking — the guest still gets
+    // their reservation even if this email doesn't go out. Errors are
+    // logged so you can spot delivery problems in Vercel's function logs.
+    try {
+      const bookingRef = docRef.id.slice(0, 8).toUpperCase();
+      await sendReservationPendingEmail(
+        {
+          guestName,
+          email,
+          roomNumber: room.roomNumber,
+          roomType: room.type,
+          checkIn,
+          checkOut,
+          totalAmount,
+          nights,
+          paymentMethod,
+        },
+        bookingRef
+      );
+    } catch (emailErr) {
+      console.error('Failed to send reservation-received email:', emailErr);
+    }
 
     return res.status(200).json({ reservationId: docRef.id, totalAmount, nights });
   } catch (err) {

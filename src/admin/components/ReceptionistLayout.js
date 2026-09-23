@@ -48,13 +48,13 @@ function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
 
 const navItems = [
   { label: 'Dashboard', path: '/receptionist/dashboard', icon: 'ti-layout-dashboard' },
-  { label: 'Online Reservations', path: '/receptionist/reservations', icon: 'ti-calendar-event' },
-  { label: 'Walk-in Reservation', path: '/receptionist/walkin', icon: 'ti-walk' },
+  { label: 'Reservations', path: '/receptionist/reservations', icon: 'ti-calendar-event' },
+  { label: 'Walk-in', path: '/receptionist/walkin', icon: 'ti-walk' },
   { label: 'Room Management', path: '/receptionist/rooms', icon: 'ti-bed' },
   { label: 'Booking Transactions', path: '/receptionist/transactions', icon: 'ti-credit-card' },
   { label: 'Billing', path: '/receptionist/billing', icon: 'ti-receipt' },
-  { label: 'Customer Management', path: '/receptionist/customers', icon: 'ti-users' },
-  { label: 'Reservation History', path: '/receptionist/history', icon: 'ti-clock' },
+  { label: 'Customers', path: '/receptionist/customers', icon: 'ti-users' },
+  { label: 'History', path: '/receptionist/history', icon: 'ti-clock' },
   { label: 'Cancellation', path: '/receptionist/cancellation', icon: 'ti-file-x' },
   { label: 'Messages', path: '/receptionist/messages', icon: 'ti-message-circle-2' },
 ];

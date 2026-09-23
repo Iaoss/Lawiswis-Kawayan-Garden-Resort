@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { auth, db } from '../../firebase/firebase';
 import { collection, doc, getDoc, query, orderBy, onSnapshot, where } from 'firebase/firestore';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
@@ -7,39 +6,22 @@ import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
 import logo from './logo-mark.png';
 
-// ── Animation helpers for expandable icon buttons ───────────
-const expandTransition = { type: 'spring', bounce: 0, duration: 0.4 };
-
-const btnVariants = {
-  rest:  { paddingLeft: 10, paddingRight: 10, gap: 0 },
-  hover: { paddingLeft: 14, paddingRight: 14, gap: 8 },
-};
-
-const labelVariants = {
-  initial: { width: 0, opacity: 0 },
-  animate: { width: 'auto', opacity: 1 },
-  exit:    { width: 0, opacity: 0 },
-};
-
-// ── Reusable expandable icon button (Dark mode / Settings / Chat) ───
+// ── Reusable fixed-size icon button (Dark mode / Settings / Chat) ───
 function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
-  const [hover, setHover] = useState(false);
   const BORDER = dark ? '#383837' : '#e5e7eb';
   const BG     = dark ? '#282827' : '#f3f4f6';
   const TEXT   = dark ? '#e8e8d8' : '#111827';
 
   return (
-    <motion.button
+    <button
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      variants={btnVariants}
-      initial="rest"
-      animate={hover ? 'hover' : 'rest'}
-      transition={expandTransition}
+      aria-label={label}
+      title={label}
       style={{
         position: 'relative',
+        width: '40px',
         height: '38px',
+        flexShrink: 0,
         borderRadius: '10px',
         border: `1px solid ${BORDER}`,
         background: BG,
@@ -51,26 +33,6 @@ function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
       }}
     >
       <i className={`ti ${icon}`} style={{ fontSize: '17px', color: TEXT, flexShrink: 0 }} />
-      <AnimatePresence initial={false}>
-        {hover && (
-          <motion.span
-            variants={labelVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            transition={expandTransition}
-            style={{
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-              fontSize: '12px',
-              fontWeight: 600,
-              color: TEXT,
-            }}
-          >
-            {label}
-          </motion.span>
-        )}
-      </AnimatePresence>
 
       {badge > 0 && (
         <div style={{
@@ -82,7 +44,7 @@ function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
           {badge > 9 ? '9+' : badge}
         </div>
       )}
-    </motion.button>
+    </button>
   );
 }
 
@@ -98,6 +60,7 @@ const navItems = [
   { label: 'Billing',        path: '/admin/billing',       icon: 'ti-receipt' },
   { label: 'Payments',       path: '/admin/payments',      icon: 'ti-credit-card' },
   { label: 'Customers',      path: '/admin/customers',     icon: 'ti-users' },
+  { label: 'Email', path: '/admin/email', icon: 'ti-mail' },
   { label: 'History',        path: '/admin/history',       icon: 'ti-clock' },
   { label: 'Reports',        path: '/admin/reports',       icon: 'ti-chart-bar' },
   { label: 'Users',          path: '/admin/users',         icon: 'ti-user-cog' },
@@ -292,16 +255,15 @@ function NotificationBell({ dark, accent, soundAlerts }) {
 
   return (
     <div style={{ position: 'relative' }}>
-      <motion.button
+      <button
         onClick={toggleOpen}
-        variants={btnVariants}
-        initial="rest"
-        whileHover="hover"
-        animate="rest"
-        transition={expandTransition}
+        aria-label="Alerts"
+        title="Alerts"
         style={{
           position: 'relative',
+          width: '40px',
           height: '38px',
+          flexShrink: 0,
           borderRadius: '10px',
           border: `1px solid ${BTN_BORDER}`,
           background: BTN_BG,
@@ -310,18 +272,6 @@ function NotificationBell({ dark, accent, soundAlerts }) {
         }}
       >
         <i className="ti ti-bell" style={{ fontSize: '18px', color: TEXT, flexShrink: 0 }} />
-        <AnimatePresence initial={false}>
-          <motion.span
-            variants={labelVariants}
-            initial="initial"
-            whileHover="animate"
-            exit="exit"
-            transition={expandTransition}
-            style={{ overflow: 'hidden', whiteSpace: 'nowrap', fontSize: '12px', fontWeight: 600, color: TEXT }}
-          >
-            Alerts
-          </motion.span>
-        </AnimatePresence>
         {unread > 0 && (
           <div style={{
             position: 'absolute', top: '-5px', right: '-5px',
@@ -332,7 +282,7 @@ function NotificationBell({ dark, accent, soundAlerts }) {
             {unread > 9 ? '9+' : unread}
           </div>
         )}
-      </motion.button>
+      </button>
 
       {open && (
         <>
@@ -408,6 +358,7 @@ export default function Layout({ children }) {
   const [adminName, setAdminName] = useState('');
   const [adminRole, setAdminRole] = useState('');
   const [unreadCount, setUnreadCount] = useState(0);
+  const [emailUnread, setEmailUnread] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
   const current = window.location.pathname;
 
@@ -453,7 +404,17 @@ export default function Layout({ children }) {
     const msgsQuery = query(collection(db, 'conversations'), where('unread', '==', true));
     const unsubMsgs = onSnapshot(msgsQuery, snap => setUnreadCount(snap.size));
 
-    return () => { unsubscribe(); unsubMsgs(); };
+    const unsubMail = onSnapshot(
+      query(collection(db, 'emails'), where('folder', '==', 'inbox'), where('read', '==', false)),
+      (snap) => setEmailUnread(snap.size),
+      () => {} // ignore errors until the Firestore rules are set
+    );
+
+    return () => {
+      unsubscribe();
+      unsubMsgs();
+      unsubMail();
+    };
   }, []);
 
   const handleLogout = async () => { await signOut(auth); window.location.href = '/'; };
@@ -527,6 +488,11 @@ export default function Layout({ children }) {
               >
                 <i className={`ti ${item.icon}`} style={{ fontSize: '16px', flexShrink: 0, color: isActive ? ACCENT_TEXT : NAV_TEXT }} />
                 {!collapsed && <span style={{ flex: 1, whiteSpace: 'nowrap', textAlign: 'left' }}>{item.label}</span>}
+                {item.path === '/admin/email' && emailUnread > 0 && (
+                  <span style={{ background: '#ef4444', color: '#fff', borderRadius: '10px', fontSize: '10px', fontWeight: '700', padding: '1px 7px' }}>
+                    {emailUnread}
+                  </span>
+                )}
               </button>
             );
           })}
