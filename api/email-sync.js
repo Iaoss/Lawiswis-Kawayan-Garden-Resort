@@ -102,6 +102,18 @@ export default async function handler(req, res) {
   const staff = await verifyStaff(req);
   if (!staff) return res.status(401).json({ error: 'Not authorized.' });
 
+  if (!adminDb) {
+    return res.status(500).json({
+      error: 'Firebase Admin is not configured. Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY in Vercel.',
+    });
+  }
+
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
+    return res.status(500).json({
+      error: 'Gmail IMAP credentials are missing. Set GMAIL_USER and GMAIL_APP_PASSWORD in Vercel.',
+    });
+  }
+
   const client = new ImapFlow({
     host: 'imap.gmail.com',
     port: 993,
@@ -115,7 +127,11 @@ export default async function handler(req, res) {
 
     // Find the Sent folder by its role, so it works whatever Gmail's language.
     const boxes = await client.list();
-    const sentPath = boxes.find((b) => b.specialUse === '\\Sent')?.path || '[Gmail]/Sent Mail';
+    const sentPath = boxes.find((b) => b.specialUse === '\\Sent' || b.path?.toLowerCase().endsWith('/sent'))?.path || '[Gmail]/Sent Mail';
+
+    if (!sentPath) {
+      return res.status(500).json({ error: 'No Gmail Sent folder was found. Verify the Gmail account and IMAP access.' });
+    }
 
     const inbox = await syncFolder(client, 'INBOX', 'inbox');
     const sent = await syncFolder(client, sentPath, 'sent');
@@ -123,7 +139,9 @@ export default async function handler(req, res) {
     return res.status(200).json({ added: inbox + sent });
   } catch (err) {
     console.error('email-sync error:', err);
-    return res.status(500).json({ error: 'Could not sync Gmail. Check IMAP is enabled and the App Password is valid.' });
+    return res.status(500).json({
+      error: 'Could not sync Gmail. Check IMAP is enabled, the App Password is valid, and the Gmail account can access the Inbox/Sent folders.',
+    });
   } finally {
     try { await client.logout(); } catch {}
   }

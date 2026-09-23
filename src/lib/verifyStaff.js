@@ -12,6 +12,8 @@ import { adminDb } from './firebaseAdmin';
 const ALLOWED_ROLES = ['admin', 'receptionist'];
 
 export async function verifyStaff(req) {
+  if (!adminDb) return null;
+
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return null;
