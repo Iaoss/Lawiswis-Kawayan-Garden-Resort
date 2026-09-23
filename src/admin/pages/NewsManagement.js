@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion';
 import { db } from '../../firebase/firebase';
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from 'firebase/firestore';
@@ -134,7 +134,7 @@ export default function NewsManagement() {
   const [uploading, setUploading]       = useState(false);
   const [uploadError, setUploadError]   = useState('');
 
-  const fetchArticles = async () => {
+  const fetchArticles = useCallback(async () => {
     try {
       const snapshot = await getDocs(collection(db, 'news'));
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -146,9 +146,9 @@ export default function NewsManagement() {
       console.error('Failed to load news:', err);
       setLoadError('News access is not enabled in Firebase. Add read/write permissions for the news collection in Firestore Rules.');
     }
-  };
+  }, [activeArticle]);
 
-  useEffect(() => { fetchArticles(); }, []);
+  useEffect(() => { fetchArticles(); }, [fetchArticles]);
 
   useEffect(() => {
     return () => { if (imagePreview) URL.revokeObjectURL(imagePreview); };

@@ -2,6 +2,7 @@
   "name": "reservation-system",
   "version": "0.1.0",
   "private": true,
+  "proxy": "http://localhost:3001",
   "dependencies": {
     "@tailwindcss/vite": "^4.3.0",
     "@testing-library/dom": "^10.4.1",

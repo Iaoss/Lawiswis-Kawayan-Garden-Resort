@@ -86,7 +86,6 @@ export default function RoomExcelImport({ onImportComplete }) {
 
   // ── Theme tokens (mirrors the rest of the admin panel's light/dark palette) ──
   const ACCENT       = settings?.accentColor || '#9cb56f';
-  const ACCENT_TEXT  = '#0a1a0a';
   const DARKBTN_BG   = dark ? '#282827' : '#1a3a1a';
   const CARD         = dark ? '#1c1c1c' : '#ffffff';
   const CARD2        = dark ? '#282827' : '#f9fafb';

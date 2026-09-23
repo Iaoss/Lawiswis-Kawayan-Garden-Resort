@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence, useMotionValue, useTransform, animate } from 'framer-motion';
+import React, { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion';
 import { db } from '../../firebase/firebase';
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
@@ -164,14 +164,14 @@ export default function RoomManagement() {
   const [uploading, setUploading]       = useState(false);
   const [uploadError, setUploadError]   = useState('');
 
-  const fetchRooms = async () => {
+  const fetchRooms = useCallback(async () => {
     const snapshot = await getDocs(collection(db, 'rooms'));
     const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
     setRooms(data);
     if (data.length && !activeRoom) setActiveRoom(data[0]);
-  };
+  }, [activeRoom]);
 
-  useEffect(() => { fetchRooms(); }, []);
+  useEffect(() => { fetchRooms(); }, [fetchRooms]);
 
   useEffect(() => {
     return () => { if (imagePreview) URL.revokeObjectURL(imagePreview); };

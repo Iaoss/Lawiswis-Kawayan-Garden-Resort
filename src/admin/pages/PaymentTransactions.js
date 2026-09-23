@@ -9,7 +9,6 @@ export default function PaymentTransactions() {
   const dark = settings?.darkMode;
 
   // ── Theme tokens (mirrors PageLayout's light/dark palette) ──
-  const ACCENT      = settings?.accentColor || '#9cb56f';
   const BG      = dark ? '#020b09' : '#f4f6f4';
   const CARD    = dark ? '#1c1c1c' : '#ffffff';
   const CARD2   = dark ? '#282827' : '#f9fafb';

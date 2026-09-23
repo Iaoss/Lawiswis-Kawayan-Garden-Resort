@@ -8,7 +8,6 @@ import PageLayout from '../components/PageLayout';
 
 const ACCENT = '#9cb56f';
 const DARK   = '#1A312C';
-const CARD   = '#ffffff';
 const MUTED  = '#9ca3af';
 
 const DEFAULT_FAQS = [

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../../firebase/firebase';
 import { collection, getDocs, getDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
@@ -30,7 +30,7 @@ export default function Reservations() {
   const [page,   setPage]               = useState(1);
   const perPage = 10;
 
-  const releaseExpiredRooms = async (data) => {
+  const releaseExpiredRooms = useCallback(async (data) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const expired = data.filter(r => {
@@ -55,9 +55,9 @@ export default function Reservations() {
     }));
 
     return expired.map(r => ({ ...r, status: 'checked-out' }));
-  };
+  }, []);
 
-  const fetchReservations = async () => {
+  const fetchReservations = useCallback(async () => {
     const snap = await getDocs(collection(db, 'reservations'));
     let data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (isAdmin) {
@@ -73,9 +73,9 @@ export default function Reservations() {
     }
     data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
     setReservations(data);
-  };
+  }, [isAdmin, releaseExpiredRooms]);
 
-  useEffect(() => { fetchReservations(); }, []);
+  useEffect(() => { fetchReservations(); }, [fetchReservations]);
 
 const updateStatus = async (id, status) => {
   const reservation = reservations.find(r => r.id === id);
