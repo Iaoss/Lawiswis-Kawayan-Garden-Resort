@@ -153,11 +153,13 @@ export default function Billing() {
     setStatusChecking(true);
     setStatusResult('');
     try {
-      const { status, amountPaid } = await checkPayMongoCheckoutStatus(checkoutSessionId);
+      const { status, amountPaid, recorded } = await checkPayMongoCheckoutStatus(checkoutSessionId);
       setStatusResult(status);
       if (status === 'paid') {
-        await creditPayment(amountPaid ?? paymentAmount, 'paymongo');
-        setSuccess(`Confirmed with PayMongo — ${formatCurrency(amountPaid ?? paymentAmount)} recorded.`);
+        await fetchReservations();
+        setSuccess(recorded
+          ? `Confirmed with PayMongo — ${formatCurrency(amountPaid)} recorded.`
+          : `Confirmed with PayMongo — ${formatCurrency(amountPaid)} was already recorded.`);
         setPayLink('');
         setCheckoutSessionId('');
         setPaymentAmount('');

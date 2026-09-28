@@ -29,12 +29,15 @@ export default function Reservations() {
   const [search, setSearch]             = useState('');
   const [page,   setPage]               = useState(1);
   const perPage = 10;
+  const hasOutstandingBalance = (reservation) => Math.round((
+    Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0) - Number(reservation.amountPaid || 0)
+  ) * 100) > 0;
 
   const releaseExpiredRooms = useCallback(async (data) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const expired = data.filter(r => {
-      if (!r.checkOut || ['checked-out', 'cancelled'].includes(r.status)) return false;
+      if (!r.checkOut || hasOutstandingBalance(r) || ['checked-out', 'cancelled'].includes(r.status)) return false;
       const checkOut = new Date(`${r.checkOut}T00:00:00`);
       return !isNaN(checkOut.getTime()) && checkOut < today;
     });
@@ -62,7 +65,7 @@ export default function Reservations() {
     let data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (isAdmin) {
       const expired = data.filter(r => {
-        if (!r.checkOut || ['checked-out', 'cancelled'].includes(r.status)) return false;
+        if (!r.checkOut || hasOutstandingBalance(r) || ['checked-out', 'cancelled'].includes(r.status)) return false;
         const checkOut = new Date(`${r.checkOut}T00:00:00`);
         return !isNaN(checkOut.getTime()) && checkOut < new Date(new Date().setHours(0, 0, 0, 0));
       });
@@ -79,6 +82,10 @@ export default function Reservations() {
 
 const updateStatus = async (id, status) => {
   const reservation = reservations.find(r => r.id === id);
+  if (status === 'checked-out' && reservation && hasOutstandingBalance(reservation)) {
+    alert('The outstanding balance must be paid before checking out this guest.');
+    return;
+  }
   await updateDoc(doc(db, 'reservations', id), { status });
 
   if (reservation?.roomId) {
@@ -294,7 +301,7 @@ const updateStatus = async (id, status) => {
                               <option value="pending">Pending</option>
                               <option value="confirmed">Confirmed</option>
                               <option value="checked-in">Checked-in</option>
-                              <option value="checked-out">Checked-out</option>
+                              <option value="checked-out" disabled={hasOutstandingBalance(r)}>Checked-out</option>
                               <option value="cancelled">Request Cancellation</option>
                             </select>
                           )
@@ -304,7 +311,7 @@ const updateStatus = async (id, status) => {
                             <option value="pending">Pending</option>
                             <option value="confirmed">Confirmed</option>
                             <option value="checked-in">Checked-in</option>
-                            <option value="checked-out">Checked-out</option>
+                            <option value="checked-out" disabled={hasOutstandingBalance(r)}>Checked-out</option>
                             <option value="cancelled">Cancelled</option>
                           </select>
                         )}

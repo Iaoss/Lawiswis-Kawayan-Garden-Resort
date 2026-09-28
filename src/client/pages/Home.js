@@ -10,7 +10,6 @@ import OccupancyBadge from '../components/OccupancyBadge';
    old neon yellow-green.
 ───────────────────────────────────────────── */
 const FOREST      = '#3B4530'; // primary brand green (logo background)
-const FOREST_DEEP = '#232A1B'; // darkest green, footer / scrolled nav
 const MOSS        = '#7C8A5E'; // muted mid-green, icons & secondary UI
 const BRASS       = '#AD8A52'; // warm accent, CTAs & highlights
 const INK         = '#22261B'; // near-black warm text
@@ -55,43 +54,6 @@ const newsFallbackPhotos = [
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/11/349573106_214182444757352_8525037380621928322_n.jpg',
   'https://lawiswiskawayanresort.com/wp-content/uploads/2020/01/Pavillion-Featured.jpg',
 ];
-
-/* ─────────────────────────────────────────────
-   NAV DROPDOWN
-───────────────────────────────────────────── */
-const NavDropdown = ({ label, items }) => {
-  const [open, setOpen] = useState(false);
-  const ref = useRef();
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button
-        onClick={() => setOpen(!open)}
-        style={{ background: 'none', border: 'none', color: '#fff', fontSize: '12px', fontWeight: '500', letterSpacing: '0.04em', cursor: 'pointer', fontFamily: SANS, display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 0' }}>
-        {label} <span style={{ fontSize: '9px', display: 'inline-block', transform: open ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>▾</span>
-      </button>
-      {open && (
-        <div style={{ position: 'absolute', top: 'calc(100% + 14px)', left: 0, background: PAPER, borderRadius: '4px', padding: '6px 0', minWidth: '230px', boxShadow: '0 20px 50px rgba(0,0,0,0.25)', zIndex: 200, border: `1px solid ${LINE}` }}>
-          {items.map(item => (
-            <div key={item.label}
-              onClick={() => { window.location.href = item.path; setOpen(false); }}
-              style={{ padding: '11px 20px', color: INK, fontSize: '12.5px', cursor: 'pointer', fontFamily: SANS }}
-              onMouseEnter={e => e.currentTarget.style.background = CREAM}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-              {item.label}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
 
 /* ─────────────────────────────────────────────
    REVEAL — one quiet fade/rise per section intro
@@ -331,66 +293,6 @@ export default function Home() {
           *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
         }
       `}</style>
-
-      {/* TOP INFO BAR */}
-      <div className="responsive-nav" style={{ background: FOREST_DEEP, padding: '7px 20px', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '18px', fontSize: '10.5px', color: 'rgba(255,255,255,0.75)', fontFamily: SANS }}>
-          <span><i className="ti ti-map-pin" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />402 Brgy. Buguion, Calumpit, Bulacan, PH</span>
-          <span><i className="ti ti-phone" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />0917 811 2332</span>
-          <span><i className="ti ti-mail" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />info@lawiswiskawayanresort.com</span>
-        </div>
-        <div style={{ display: 'flex', gap: '14px', fontSize: '13px', color: 'rgba(255,255,255,0.75)', alignItems: 'center' }}>
-          {['ti-brand-facebook', 'ti-brand-linkedin'].map(ic => (
-            <i key={ic} className={`ti ${ic}`} style={{ cursor: 'pointer' }} />
-          ))}
-        </div>
-      </div>
-
-      {/* STICKY NAVBAR */}
-      <nav className="responsive-nav" style={{
-        background: FOREST,
-        padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        height: '76px', position: 'sticky', top: 0, zIndex: 100,
-        transition: 'background 0.3s, box-shadow 0.3s',
-        boxShadow: '0 2px 20px rgba(0,0,0,0.2)',
-      }}>
-        <img
-          src={photos.logoWide} alt="Lawiswis Kawayan Garden Resort"
-          onClick={() => window.location.href = '/home'}
-          style={{ height: '38px', cursor: 'pointer', filter: 'brightness(0) invert(1)' }}
-        />
-
-        <div style={{ display: 'flex', gap: '30px', alignItems: 'center' }}>
-          {['HOME', 'OUR AMENITIES'].map(label => (
-            <button key={label}
-              onClick={() => window.location.href = label === 'HOME' ? '/home' : '/about'}
-              style={{ background: 'none', border: 'none', color: '#fff', fontSize: '12px', fontWeight: '500', letterSpacing: '0.04em', cursor: 'pointer', fontFamily: SANS }}>
-              {label}
-            </button>
-          ))}
-          <NavDropdown label="OUR STORY" items={[
-            { label: 'About Us', path: '/about' },
-            { label: 'Certifications & Awards', path: '/about' },
-            { label: 'Contact Us', path: '/contact' },
-          ]} />
-          <NavDropdown label="OUR ROOMS" items={[
-            { label: 'Regular Rooms', path: '/rooms' },
-            { label: 'Suite Rooms', path: '/rooms' },
-          ]} />
-          <NavDropdown label="CUSTOMER CARE" items={[
-            { label: 'FAQs', path: '/contact' },
-            { label: 'Safety Guidelines', path: '/contact' },
-            { label: 'Health and Wellness', path: '/contact' },
-            { label: 'Cancellation Policy', path: '/contact' },
-            { label: 'Privacy Policy', path: '/contact' },
-          ]} />
-        </div>
-
-        <button onClick={() => window.location.href = '/rooms'}
-          style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '11px 26px', fontSize: '11.5px', fontWeight: '600', letterSpacing: '0.06em', cursor: 'pointer', fontFamily: SANS }}>
-          BOOK YOUR STAY
-        </button>
-      </nav>
 
       {/* HERO */}
       <div style={{ position: 'relative', height: '92vh', minHeight: '600px', overflow: 'hidden' }}>
@@ -691,42 +593,6 @@ export default function Home() {
           </div>
         </Reveal>
       </div>
-
-      {/* FOOTER */}
-      <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.65)', padding: '64px 20px 30px' }}>
-        <div className="section-container responsive-grid-4" style={{ margin: '0 auto', gap: '40px', marginBottom: '44px' }}>
-          <div>
-            <img src={photos.logoFooter} alt="Lawiswis Kawayan Garden Resort" style={{ height: '80px', marginBottom: '18px' }} />
-            <p style={{ fontSize: '12px', lineHeight: '1.9', maxWidth: '260px', fontFamily: SANS }}>Your serene bamboo garden getaway in Calumpit, Bulacan. Where nature, tradition, and comfort meet.</p>
-            <div style={{ display: 'flex', gap: '10px', marginTop: '18px' }}>
-              {['ti-brand-facebook', 'ti-brand-linkedin'].map(ic => (
-                <div key={ic} style={{ width: '34px', height: '34px', borderRadius: '3px', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                  <i className={`ti ${ic}`} style={{ fontSize: '15px', color: 'rgba(255,255,255,0.8)' }} />
-                </div>
-              ))}
-            </div>
-          </div>
-          {[
-            { title: 'Our Story', links: [{ l: 'About Us', p: '/about' }, { l: 'Certifications & Awards', p: '/about' }, { l: 'Contact Us', p: '/contact' }] },
-            { title: 'Our Rooms', links: [{ l: 'Regular Rooms', p: '/rooms' }, { l: 'Suite Rooms', p: '/rooms' }] },
-            { title: 'Customer Care', links: [{ l: 'FAQs', p: '/contact' }, { l: 'Safety Guidelines', p: '/contact' }, { l: 'Health and Wellness', p: '/contact' }, { l: 'Cancellation Policy', p: '/contact' }, { l: 'Privacy Policy', p: '/contact' }] },
-          ].map(col => (
-            <div key={col.title}>
-              <div style={{ color: '#fff', fontWeight: '500', fontSize: '13px', marginBottom: '18px', fontFamily: SERIF }}>{col.title}</div>
-              {col.links.map((l, i) => (
-                <div key={i} onClick={() => window.location.href = l.p} style={{ fontSize: '12px', marginBottom: '10px', cursor: 'pointer', lineHeight: '1.6', fontFamily: SANS }}>{l.l}</div>
-              ))}
-            </div>
-          ))}
-        </div>
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.12)', paddingTop: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', flexWrap: 'wrap', gap: '10px', fontFamily: SANS }}>
-          <span>© 2026 Lawiswis Kawayan Garden Resort. All rights reserved.</span>
-          <div style={{ display: 'flex', gap: '18px' }}>
-            <span onClick={() => window.location.href = '/contact'} style={{ cursor: 'pointer' }}>Privacy Policy</span>
-            <span onClick={() => window.location.href = '/contact'} style={{ cursor: 'pointer' }}>Terms & Conditions</span>
-          </div>
-        </div>
-      </footer>
 
       <style>{`
         @media (max-width: 900px) {

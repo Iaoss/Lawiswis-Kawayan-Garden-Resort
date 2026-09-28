@@ -5,12 +5,13 @@ import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
 import logo from './logo-mark.png';
+import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
 
-// ── Reusable fixed-size icon button (Dark mode / Settings / Chat) ───
-function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
-  const BORDER = dark ? '#383837' : '#e5e7eb';
-  const BG     = dark ? '#282827' : '#f3f4f6';
-  const TEXT   = dark ? '#e8e8d8' : '#111827';
+// ── Reusable fixed-size icon button (Settings / Chat) ────────
+function ExpandableIconButton({ icon, label, dark, badge = 0, onClick }) {
+  const border = dark ? '#383837' : '#e5e7eb';
+  const background = dark ? '#282827' : '#f3f4f6';
+  const text = dark ? '#e8e8d8' : '#111827';
 
   return (
     <button
@@ -23,8 +24,8 @@ function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
         height: '38px',
         flexShrink: 0,
         borderRadius: '10px',
-        border: `1px solid ${BORDER}`,
-        background: BG,
+        border: `1px solid ${border}`,
+        background,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -32,7 +33,7 @@ function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
         overflow: 'hidden',
       }}
     >
-      <i className={`ti ${icon}`} style={{ fontSize: '17px', color: TEXT, flexShrink: 0 }} />
+      <i className={`ti ${icon}`} style={{ fontSize: '17px', color: text, flexShrink: 0 }} />
 
       {badge > 0 && (
         <div style={{
@@ -551,11 +552,22 @@ export default function Layout({ children }) {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <ExpandableIconButton
-              icon={dark ? 'ti-sun' : 'ti-moon'}
-              label={dark ? 'Light' : 'Dark'}
-              dark={dark}
-              onClick={() => updateSetting('darkMode', !dark)}
+            <AnimatedThemeToggler
+              theme={dark ? 'dark' : 'light'}
+              onThemeChange={(nextTheme) => updateSetting('darkMode', nextTheme === 'dark')}
+              variant="circle"
+              duration={500}
+              aria-label={dark ? 'Light' : 'Dark'}
+              style={{
+                position: 'relative',
+                width: '40px',
+                height: '38px',
+                flexShrink: 0,
+                borderRadius: '10px',
+                border: `1px solid ${dark ? '#383837' : '#e5e7eb'}`,
+                background: dark ? '#282827' : '#f3f4f6',
+                color: dark ? '#e8e8d8' : '#111827',
+              }}
             />
 
             <ExpandableIconButton

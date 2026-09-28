@@ -8,6 +8,9 @@
 // it's actually been paid. This exists so payment confirmation doesn't
 // depend on the webhook firing — front desk can check on demand.
 
+import { adminDb, FieldValue } from '../src/lib/firebaseAdmin';
+import { recordPayMongoPayment } from '../src/lib/recordPayMongoPayment';
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -64,7 +67,26 @@ export default async function handler(req, res) {
       status = 'expired';
     }
 
-    return res.status(200).json({ status, amountPaid });
+    let recorded = false;
+    if (status === 'paid') {
+      const reservationId = attrs.metadata?.reservationId;
+      const paymentId = paidPayment?.id;
+      if (!adminDb || !reservationId || !paymentId || amountPaid === null) {
+        return res.status(502).json({ error: 'PayMongo confirmed payment but it could not be safely reconciled' });
+      }
+
+      const payment = paidPayment.attributes;
+      const result = await recordPayMongoPayment(adminDb, FieldValue, {
+        reservationId,
+        paymentId,
+        checkoutSessionId,
+        amountPaid,
+        paymentMethod: payment.source?.type || 'unknown',
+      });
+      recorded = result.recorded;
+    }
+
+    return res.status(200).json({ status, amountPaid, recorded });
   } catch (err) {
     console.error('checkout-session-status failed:', err);
     return res.status(500).json({ error: 'Failed to check checkout session status' });

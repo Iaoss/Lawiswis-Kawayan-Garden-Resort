@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { useTheme } from 'next-themes';
 import { BRASS, FOREST, FOREST_DEEP, PAPER, SANS, LINE } from './clientTheme';
+import { AnimatedThemeToggler } from './ui/animated-theme-toggler.tsx';
 
 const logo = 'https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png';
 
@@ -38,7 +41,9 @@ function NavDropdown({ label, items }) {
 }
 
 export default function ClientChrome({ children }) {
-  const path = window.location.pathname;
+  const { pathname: path } = useLocation();
+  const { resolvedTheme, setTheme } = useTheme();
+
   useEffect(() => {
     if (document.querySelector('link[data-lk-font]')) return;
     const font = document.createElement('link');
@@ -55,9 +60,15 @@ export default function ClientChrome({ children }) {
 
   return (
     <div style={{ minHeight: '100vh', background: PAPER, color: '#22261B', fontFamily: SANS }}>
-      <div style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.72)', padding: '7px 24px', display: 'flex', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', fontSize: '10px' }}>
-        <span>402 Brgy. Buguion, Calumpit, Bulacan</span>
-        <span>0917 811 2332 &nbsp; · &nbsp; info@lawiswiskawayanresort.com</span>
+      <div style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.72)', padding: '7px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', flexWrap: 'wrap', fontSize: '10px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '18px' }}>
+          <span><i className="ti ti-map-pin" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />402 Brgy. Buguion, Calumpit, Bulacan, PH</span>
+          <span><i className="ti ti-phone" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />0917 811 2332</span>
+          <span><i className="ti ti-mail" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />info@lawiswiskawayanresort.com</span>
+        </div>
+        <div style={{ display: 'flex', gap: '14px', fontSize: '13px', alignItems: 'center' }}>
+          {['ti-brand-facebook', 'ti-brand-linkedin'].map(icon => <i key={icon} className={`ti ${icon}`} style={{ cursor: 'pointer' }} />)}
+        </div>
       </div>
       <header style={{ background: FOREST, minHeight: '76px', padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '24px', position: 'sticky', top: 0, zIndex: 100, boxShadow: '0 4px 20px rgba(35,42,27,0.16)' }}>
         <img src={logo} alt="Lawiswis Kawayan Garden Resort" onClick={() => { window.location.href = '/home'; }} style={{ width: '178px', maxWidth: '42vw', cursor: 'pointer', filter: 'brightness(0) invert(1)' }} />
@@ -81,7 +92,17 @@ export default function ClientChrome({ children }) {
             { label: 'Privacy Policy', path: '/contact' },
           ]} />
         </nav>
-        <button onClick={() => { window.location.href = '/rooms'; }} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: 'pointer', whiteSpace: 'nowrap' }}>BOOK YOUR STAY</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <AnimatedThemeToggler
+            theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+            onThemeChange={setTheme}
+            variant="circle"
+            duration={450}
+            aria-label="Toggle dark mode"
+            className="theme-toggle-button"
+          />
+          <button onClick={() => { window.location.href = '/rooms'; }} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: 'pointer', whiteSpace: 'nowrap' }}>BOOK YOUR STAY</button>
+        </div>
       </header>
       <main>{children}</main>
       <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>

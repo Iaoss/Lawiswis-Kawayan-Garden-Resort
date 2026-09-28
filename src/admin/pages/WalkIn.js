@@ -165,6 +165,7 @@ export default function WalkIn() {
       roomType:   selectedRoom.type,
       category:   selectedCategory?.category,
       totalAmount, nights,
+      amountPaid: form.paymentStatus === 'paid' ? totalAmount : 0,
       type: 'walk-in', status: 'confirmed',
       createdAt: serverTimestamp(),
     });

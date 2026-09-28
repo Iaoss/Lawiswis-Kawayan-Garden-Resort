@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { db } from '../../firebase/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { createPayMongoCheckout } from '../../lib/paymongo';
+import { getDepositPercentage, getOnlinePaymentAmount } from '../../lib/paymentPolicy';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 
@@ -113,6 +114,10 @@ export default function BookRoom() {
 
   const [totalAmount, setTotalAmount] = useState(0);
   const [nights, setNights] = useState(0);
+  const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
+  const paymentChoice = selectedPaymentChoice || (totalAmount < 5000 ? 'full' : 'deposit');
+  const onlinePaymentAmount = totalAmount > 0 ? getOnlinePaymentAmount(totalAmount, paymentChoice) : 0;
+  const depositPercentage = totalAmount < 5000 ? 50 : getDepositPercentage(totalAmount);
 
   useEffect(() => {
     const fetchRoom = async () => {
@@ -192,7 +197,9 @@ export default function BookRoom() {
           guestName: form.guestName,
           guestEmail: form.email,
           description: `Room ${room.roomNumber} (${room.type}) — ${nights} night${nights !== 1 ? 's' : ''}`,
-          amount: totalAmount,
+          amount: onlinePaymentAmount,
+          paymentType: 'booking',
+          paymentChoice,
         });
         window.location.href = checkoutUrl;
         return; // navigating away
@@ -475,11 +482,32 @@ export default function BookRoom() {
               </div>
 
               {form.paymentMethod === 'online' && (
-                <div style={{ background: LIGHT, borderRadius: '12px', padding: '16px', fontSize: '12px', color: '#374151', lineHeight: '1.6' }}>
-                  You'll be redirected to our secure payment page to complete your payment
-                  of <strong>₱{totalAmount.toLocaleString()}</strong>. Card details, GCash,
-                  Maya, and GrabPay options are all handled there — nothing is stored on our site.
-                </div>
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', marginBottom: '12px' }}>
+                    {[
+                      { value: 'full', label: 'Pay in full', amount: totalAmount },
+                      { value: 'deposit', label: totalAmount < 5000 ? 'Optional 50% split' : `${depositPercentage}% deposit`, amount: totalAmount > 0 ? getOnlinePaymentAmount(totalAmount, 'deposit') : 0 },
+                    ].map(option => (
+                      <button key={option.value} type="button" onClick={() => setSelectedPaymentChoice(option.value)}
+                        style={{
+                          display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '4px',
+                          padding: '12px 14px', borderRadius: '10px', textAlign: 'left',
+                          border: paymentChoice === option.value ? `2px solid ${ACCENT}` : '1px solid #e5e7eb',
+                          background: paymentChoice === option.value ? LIGHT : '#fff',
+                          color: '#111', cursor: 'pointer', fontFamily: "'Poppins', sans-serif",
+                        }}>
+                        <span style={{ fontSize: '12px', fontWeight: '600' }}>{option.label}</span>
+                        <span style={{ fontSize: '14px', fontWeight: '700' }}>₱{option.amount.toLocaleString()}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ background: LIGHT, borderRadius: '12px', padding: '16px', fontSize: '12px', color: '#374151', lineHeight: '1.6' }}>
+                    You'll be redirected to PayMongo to pay <strong>₱{onlinePaymentAmount.toLocaleString()}</strong> now.
+                    {' '}Reservation total: <strong>₱{totalAmount.toLocaleString()}</strong>.
+                    {paymentChoice === 'deposit' && <> The remaining balance must be paid before checkout.</>}
+                    {' '}Card, GCash, Maya, and GrabPay payments are processed securely by PayMongo.
+                  </div>
+                </>
               )}
 
               {form.paymentMethod === 'cash' && (

@@ -42,11 +42,9 @@ export function SettingsProvider({ children }) {
   }, []);
 
   const updateSetting = (key, value) => {
-    setSettings(prev => {
-      const next = { ...prev, [key]: value };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
+    const next = { ...settings, [key]: value };
+    setSettings(next);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };
 
   const saveAll = (newSettings) => {

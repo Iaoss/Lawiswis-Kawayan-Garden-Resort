@@ -342,6 +342,7 @@ export default function ReceptionistLayout({ children }) {
   const { settings, updateSetting } = useSettings();
   const [staffName, setStaffName] = useState('');
   const [staffRole, setStaffRole] = useState('');
+  const [staffEmail, setStaffEmail] = useState('');
   const [unreadCount, setUnreadCount] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
   const current = window.location.pathname;
@@ -376,12 +377,14 @@ export default function ReceptionistLayout({ children }) {
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
+        setStaffEmail(user.email || '');
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
           const data = userDoc.data();
           if (data.role !== 'receptionist') window.location.href = '/';
           setStaffName(data.name || 'Receptionist');
           setStaffRole(data.role || 'receptionist');
+          setStaffEmail(user.email || data.email || '');
         }
       } else {
         window.location.href = '/';
@@ -498,6 +501,7 @@ export default function ReceptionistLayout({ children }) {
               <div style={{ minWidth: 0 }}>
                 <div style={{ color: SIDEBAR_TEXT, fontSize: '12px', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{staffName || 'Receptionist'}</div>
                 <div style={{ color: MUTED, fontSize: '10px', textTransform: 'capitalize' }}>{staffRole || 'receptionist'}</div>
+                {staffEmail && <div style={{ color: MUTED, fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '132px' }}>{staffEmail}</div>}
               </div>
             </div>
           )}

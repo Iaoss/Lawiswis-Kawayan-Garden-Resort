@@ -15,53 +15,211 @@ export default function Rooms() {
   const checkOut = params.get('checkOut') || '';
 
   useEffect(() => {
-    getDocs(collection(db, 'rooms')).then(snapshot => {
-      setRooms(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    getDocs(collection(db, 'rooms'))
+      .then((snapshot) => {
+        setRooms(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, []);
 
-  const types = ['all', ...new Set(rooms.map(room => room.type).filter(Boolean))];
-  const filtered = rooms.filter(room => {
+  const types = ['all', ...new Set(rooms.map((room) => room.type).filter(Boolean))];
+  const filtered = rooms.filter((room) => {
     const text = `${room.roomNumber || ''} ${room.type || ''} ${room.amenities || ''}`.toLowerCase();
     return (filter === 'all' || room.type === filter) && (!search || text.includes(search.toLowerCase()));
   });
   const availableCount = rooms.filter(isAvailable).length;
 
   return (
-    <div style={{ background: PAPER, minHeight: '100vh' }}>
-      <section style={{ background: CREAM, padding: '76px 24px 84px', borderBottom: `1px solid ${LINE}` }}>
+    <div style={{ background: PAPER, minHeight: '100vh', color: INK }}>
+      <style>{`
+        .rooms-page-shell * { box-sizing: border-box; }
+        .rooms-hero-grid { display: grid; grid-template-columns: 1.4fr 0.8fr; gap: 28px; align-items: end; }
+        .rooms-tag { letter-spacing: 0.2em; text-transform: uppercase; font-size: 11px; font-weight: 600; }
+        .rooms-filter-chip { border: 1px solid ${LINE}; background: transparent; color: ${FOREST}; padding: 11px 14px; border-radius: 999px; font: 600 11px ${SANS}; cursor: pointer; text-transform: capitalize; transition: all 0.2s ease; }
+        .rooms-filter-chip.active { background: ${FOREST}; color: #fff; border-color: ${FOREST}; }
+        .rooms-card { background: #fff; border: 1px solid ${LINE}; border-radius: 18px; overflow: hidden; transition: transform 0.25s ease, box-shadow 0.25s ease; }
+        .rooms-card:hover { transform: translateY(-4px); box-shadow: 0 18px 40px rgba(35,42,27,.13); }
+        @media (max-width: 900px) {
+          .rooms-hero-grid { grid-template-columns: 1fr; }
+        }
+      `}</style>
+
+      <section
+        style={{
+          position: 'relative',
+          background: `linear-gradient(90deg, rgba(20,25,15,0.76) 0%, rgba(20,25,15,0.48) 40%, rgba(20,25,15,0.62) 100%), url('https://lawiswiskawayanresort.com/wp-content/uploads/2020/01/hero192x-scaled.jpg') center/cover no-repeat`,
+          padding: '120px 24px 64px',
+          borderBottom: `1px solid ${LINE}`,
+        }}
+      >
         <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
-          <div style={{ color: MOSS, font: `600 11px ${SANS}`, letterSpacing: '0.16em', textTransform: 'uppercase', marginBottom: '14px' }}>Accommodations</div>
-          <h1 style={{ color: INK, font: `500 clamp(40px, 6vw, 72px)/1.02 ${SERIF}`, margin: '0 0 18px', maxWidth: '650px' }}>A room for the way you want to stay.</h1>
-          <p style={{ color: '#6b6a5c', font: `14px/1.8 ${SANS}`, maxWidth: '500px', margin: '0 0 20px' }}>{checkIn && checkOut ? `Showing rooms for ${checkIn} to ${checkOut}.` : 'Sleep beneath the bamboo canopy, with room to gather, rest, and breathe.'}</p>
-          {/* Resort-wide occupancy signal — uses the guest's searched dates
-              if they came in with checkIn/checkOut in the URL, otherwise
-              defaults to the coming week. Gives a heads-up on how busy
-              shared facilities (pools, common areas) are likely to be,
-              without exposing exact room counts. */}
-          <OccupancyBadge startDate={checkIn || undefined} endDate={checkOut || undefined} style={{ fontFamily: SANS }} />
+          <div className="rooms-hero-grid">
+            <div style={{ color: '#fff' }}>
+              <div className="rooms-tag" style={{ color: '#e9ddb0', marginBottom: '16px' }}>Accommodations</div>
+              <h1 style={{ margin: '0 0 18px', color: '#fff', font: `500 clamp(40px, 6vw, 72px)/0.96 ${SERIF}`, maxWidth: '680px' }}>
+                A room for the way you want to stay.
+              </h1>
+              <p style={{ margin: '0 0 22px', maxWidth: '560px', color: 'rgba(255,255,255,0.82)', font: `14px/1.8 ${SANS}` }}>
+                {checkIn && checkOut
+                  ? `Showing rooms for ${checkIn} to ${checkOut}.` 
+                  : 'Sleep beneath the bamboo canopy, with room to gather, rest, and breathe.'}
+              </p>
+              <OccupancyBadge startDate={checkIn || undefined} endDate={checkOut || undefined} style={{ fontFamily: SANS, background: 'rgba(255,255,255,0.9)' }} />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
+              <div style={{ width: '100%', maxWidth: '340px', background: 'rgba(247,242,235,0.96)', borderRadius: '18px', padding: '24px 22px', border: `1px solid rgba(35,42,27,0.08)`, boxShadow: '0 20px 50px rgba(20,25,15,0.16)' }}>
+                <div className="rooms-tag" style={{ color: MOSS, marginBottom: '12px' }}>At a glance</div>
+                <div style={{ fontFamily: SERIF, fontSize: '46px', lineHeight: 1, color: FOREST }}>32</div>
+                <div style={{ font: `600 11px ${SANS}`, letterSpacing: '0.12em', color: '#6d675f', textTransform: 'uppercase', marginBottom: '18px' }}>Rooms & suites</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px' }}>
+                  <div>
+                    <div style={{ fontFamily: SERIF, fontSize: '30px', color: FOREST }}>{availableCount}</div>
+                    <div style={{ font: `600 10px ${SANS}`, letterSpacing: '0.12em', color: '#777363', textTransform: 'uppercase' }}>Available</div>
+                  </div>
+                  <div>
+                    <div style={{ fontFamily: SERIF, fontSize: '30px', color: FOREST }}>{rooms.length}</div>
+                    <div style={{ font: `600 10px ${SANS}`, letterSpacing: '0.12em', color: '#777363', textTransform: 'uppercase' }}>Total</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
+
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '48px 24px 100px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', gap: '20px', flexWrap: 'wrap', marginBottom: '30px' }}>
-          <div><div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '0.14em', textTransform: 'uppercase', marginBottom: '8px' }}>Find your fit</div><h2 style={{ color: INK, font: `500 32px ${SERIF}`, margin: 0 }}>Stay a little closer to nature</h2></div>
-          <div style={{ color: '#777363', font: `12px ${SANS}` }}><strong style={{ color: FOREST }}>{availableCount}</strong> available now · {rooms.length} rooms total</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', gap: '20px', flexWrap: 'wrap', marginBottom: '32px' }}>
+          <div>
+            <div className="rooms-tag" style={{ color: BRASS, marginBottom: '8px' }}>Find your fit</div>
+            <h2 style={{ color: INK, margin: 0, font: `500 32px ${SERIF}` }}>Stay a little closer to nature</h2>
+          </div>
+          <div style={{ color: '#777363', font: `12px ${SANS}` }}>
+            <strong style={{ color: FOREST }}>{availableCount}</strong> available now · {rooms.length} rooms total
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '28px' }}>
-          <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by room name or amenity" style={{ flex: '1 1 260px', minWidth: '220px', border: `1px solid ${LINE}`, background: '#fff', padding: '12px 14px', borderRadius: '3px', color: INK, font: `12px ${SANS}`, outline: 'none' }} />
-          {types.map(type => <button key={type} onClick={() => setFilter(type)} style={{ background: filter === type ? FOREST : 'transparent', color: filter === type ? '#fff' : FOREST, border: `1px solid ${filter === type ? FOREST : LINE}`, padding: '11px 14px', borderRadius: '3px', font: `600 11px ${SANS}`, cursor: 'pointer', textTransform: 'capitalize' }}>{type === 'all' ? 'All rooms' : type}</button>)}
+
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '30px' }}>
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search by room name or amenity"
+            style={{
+              flex: '1 1 260px',
+              minWidth: '220px',
+              border: `1px solid ${LINE}`,
+              borderRadius: '999px',
+              background: '#fff',
+              padding: '14px 18px',
+              color: INK,
+              font: `12px ${SANS}`,
+              outline: 'none',
+            }}
+          />
+          {types.map((type) => (
+            <button
+              key={type}
+              onClick={() => setFilter(type)}
+              className={`rooms-filter-chip ${filter === type ? 'active' : ''}`}
+            >
+              {type === 'all' ? 'All rooms' : type}
+            </button>
+          ))}
         </div>
-        {loading ? <div style={{ padding: '70px 0', textAlign: 'center', color: MOSS, font: `14px ${SANS}` }}>Gathering the available rooms...</div> : filtered.length === 0 ? <div style={{ padding: '70px 0', textAlign: 'center', color: '#777363', font: `14px ${SANS}` }}>No rooms match those filters.</div> : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '22px' }}>
-          {filtered.map((room, index) => {
-const photo = resolveRoomImage(room) || FALLBACK_ROOM_IMAGES[index % FALLBACK_ROOM_IMAGES.length];            const roomAvailable = isAvailable(room);
-            const amenities = String(room.amenities || 'Air conditioning, Wi-Fi, Hot shower').split(',').slice(0, 3);
-            return <article key={room.id} style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: '4px', overflow: 'hidden', transition: 'transform .25s, box-shadow .25s' }} onMouseEnter={event => { event.currentTarget.style.transform = 'translateY(-5px)'; event.currentTarget.style.boxShadow = '0 18px 40px rgba(35,42,27,.13)'; }} onMouseLeave={event => { event.currentTarget.style.transform = 'translateY(0)'; event.currentTarget.style.boxShadow = 'none'; }}>
-              <div style={{ height: '210px', position: 'relative', overflow: 'hidden' }}><img src={photo} alt={`Room ${room.roomNumber}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /><div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 45%, rgba(20,25,15,.66))' }} /><span style={{ position: 'absolute', left: '16px', bottom: '14px', color: '#fff', font: `500 22px ${SERIF}` }}>Room {room.roomNumber}</span><span style={{ position: 'absolute', right: '14px', top: '14px', background: roomAvailable ? CREAM : 'rgba(35,42,27,.78)', color: roomAvailable ? FOREST : '#fff', padding: '5px 9px', borderRadius: '3px', font: `600 10px ${SANS}`, textTransform: 'uppercase' }}>{roomAvailable ? 'Available' : room.status}</span></div>
-              <div style={{ padding: '20px' }}><div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '8px' }}>{room.type || 'Garden room'}</div><p style={{ color: '#6b6a5c', font: `12px/1.7 ${SANS}`, minHeight: '41px', margin: '0 0 14px' }}>{room.description || 'A comfortable stay surrounded by the quiet rhythm of the garden.'}</p><div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '18px' }}>{amenities.map(amenity => <span key={amenity} style={{ background: CREAM, color: FOREST, padding: '5px 8px', font: `10px ${SANS}` }}>{amenity.trim()}</span>)}</div><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${LINE}`, paddingTop: '16px' }}><span style={{ color: INK, font: `600 20px ${SERIF}` }}>₱{Number(room.price || 0).toLocaleString()}<small style={{ color: '#8d8877', font: `10px ${SANS}` }}> / night</small></span><button disabled={!roomAvailable} onClick={() => { window.location.href = `/book/${room.id}${checkIn ? `?checkIn=${checkIn}&checkOut=${checkOut}` : ''}`; }} style={{ background: roomAvailable ? FOREST : '#e5e1d4', color: roomAvailable ? '#fff' : '#989382', border: 0, borderRadius: '3px', padding: '11px 14px', font: `600 11px ${SANS}`, cursor: roomAvailable ? 'pointer' : 'not-allowed' }}>{roomAvailable ? 'Book room →' : 'Unavailable'}</button></div></div>
-            </article>;
-          })}
-        </div>}
+
+        {loading ? (
+          <div style={{ padding: '70px 0', textAlign: 'center', color: MOSS, font: `14px ${SANS}` }}>
+            Gathering the available rooms...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: '70px 0', textAlign: 'center', color: '#777363', font: `14px ${SANS}` }}>
+            No rooms match those filters.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '24px' }}>
+            {filtered.map((room, index) => {
+              const photo = resolveRoomImage(room) || FALLBACK_ROOM_IMAGES[index % FALLBACK_ROOM_IMAGES.length];
+              const roomAvailable = isAvailable(room);
+              const amenities = String(room.amenities || 'Air conditioning, Wi-Fi, Hot shower')
+                .split(',')
+                .slice(0, 3);
+
+              return (
+                <article key={room.id} className="rooms-card">
+                  <div style={{ height: '220px', position: 'relative', overflow: 'hidden' }}>
+                    <img src={photo} alt={`Room ${room.roomNumber}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 45%, rgba(20,25,15,.66))' }} />
+                    <span style={{ position: 'absolute', left: '16px', bottom: '16px', color: '#fff', font: `500 24px ${SERIF}` }}>
+                      Room {room.roomNumber}
+                    </span>
+                    <span
+                      style={{
+                        position: 'absolute',
+                        right: '14px',
+                        top: '14px',
+                        background: roomAvailable ? CREAM : 'rgba(35,42,27,.78)',
+                        color: roomAvailable ? FOREST : '#fff',
+                        padding: '6px 10px',
+                        borderRadius: '999px',
+                        font: `600 10px ${SANS}`,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.1em',
+                      }}
+                    >
+                      {roomAvailable ? 'Available' : room.status}
+                    </span>
+                  </div>
+
+                  <div style={{ padding: '20px' }}>
+                    <div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                      {room.type || 'Garden room'}
+                    </div>
+                    <p style={{ color: '#6b6a5c', font: `12px/1.7 ${SANS}`, minHeight: '41px', margin: '0 0 16px' }}>
+                      {room.description || 'A comfortable stay surrounded by the quiet rhythm of the garden.'}
+                    </p>
+
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '18px' }}>
+                      {amenities.map((amenity) => (
+                        <span key={amenity} style={{ background: CREAM, color: FOREST, padding: '5px 8px', font: `10px ${SANS}`, borderRadius: '3px' }}>
+                          {amenity.trim()}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${LINE}`, paddingTop: '16px' }}>
+                      <span style={{ color: INK, font: `600 20px ${SERIF}` }}>
+                        ₱{Number(room.price || 0).toLocaleString()}
+                        <small style={{ color: '#8d8877', font: `10px ${SANS}` }}> / night</small>
+                      </span>
+
+                      <button
+                        disabled={!roomAvailable}
+                        onClick={() => {
+                          const nextUrl = `/book/${room.id}${checkIn ? `?checkIn=${checkIn}&checkOut=${checkOut}` : ''}`;
+                          window.location.href = nextUrl;
+                        }}
+                        style={{
+                          background: roomAvailable ? FOREST : '#e5e1d4',
+                          color: roomAvailable ? '#fff' : '#989382',
+                          border: 0,
+                          borderRadius: '999px',
+                          padding: '11px 16px',
+                          font: `600 11px ${SANS}`,
+                          cursor: roomAvailable ? 'pointer' : 'not-allowed',
+                          letterSpacing: '0.08em',
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        {roomAvailable ? 'Book room' : 'Unavailable'}
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

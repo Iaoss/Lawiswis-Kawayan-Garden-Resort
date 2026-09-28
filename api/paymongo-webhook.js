@@ -20,6 +20,7 @@
 import crypto from 'crypto';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { recordPayMongoPayment } from '../src/lib/recordPayMongoPayment';
 
 // Signature verification needs the exact raw request body, so the
 // default JSON body-parser has to be turned off for this route.
@@ -138,36 +139,21 @@ export default async function handler(req, res) {
     const db = getFirestore(app);
 
     if (eventType === 'payment.paid' || eventType === 'checkout_session.payment.paid') {
-      console.log('Marking reservation paid:', info.reservationId, info.amountPaid);
-
-      await db.collection('reservations').doc(info.reservationId).update({
-        paymentStatus: 'paid',
-        amountPaid: FieldValue.increment(info.amountPaid),
-      });
-
-      await db.collection('payments').add({
-        reservationId: info.reservationId,
-        amount: info.amountPaid,
-        method: info.paymentMethod,
-        provider: 'paymongo',
-        checkoutSessionId: info.checkoutSessionId,
-        paymentId: info.paymentId,
-        createdAt: FieldValue.serverTimestamp(),
-      });
-
-      await db.collection('activities').add({
-        title: 'PayMongo payment received',
-        sub: `₱${info.amountPaid.toLocaleString()} via ${info.paymentMethod} — reservation ${info.reservationId}`,
-        timestamp: FieldValue.serverTimestamp(),
+      await recordPayMongoPayment(db, FieldValue, {
+        ...info,
+        eventId: event.data?.id,
       });
     }
 
     if (eventType === 'payment.failed') {
       console.log('Marking reservation payment failed:', info.reservationId);
 
-      await db.collection('reservations').doc(info.reservationId).update({
-        paymentStatus: 'failed',
-      });
+      const reservationRef = db.collection('reservations').doc(info.reservationId);
+      const reservationSnap = await reservationRef.get();
+      if (reservationSnap.exists) {
+        const hasPartialPayment = Number(reservationSnap.data().amountPaid || 0) > 0;
+        await reservationRef.update({ paymentStatus: hasPartialPayment ? 'partial' : 'failed' });
+      }
 
       await db.collection('activities').add({
         title: 'PayMongo payment failed',
