@@ -5,6 +5,18 @@ import { collection, addDoc, query, orderBy, onSnapshot, doc, setDoc, serverTime
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
 const LIGHT = '#f9fafb';
+const countWords = value => value.trim() ? value.trim().split(/\s+/).length : 0;
+const limitWords = value => {
+  const matches = [...value.matchAll(/\S+/g)];
+  return matches.length <= 50 ? value : value.slice(0, matches[49].index + matches[49][0].length);
+};
+
+function ChatIcon({ size = 22 }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5z" /></svg>;
+}
+function SendIcon({ size = 18 }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4 20-7Z" /><path d="M22 2 11 13" /></svg>;
+}
 
 export default function ChatWidget() {
   const [open, setOpen] = useState(false);
@@ -62,13 +74,14 @@ export default function ChatWidget() {
     setStarted(true);
     await addDoc(collection(db, 'conversations', id, 'messages'), {
       sender: 'staff',
-      text: `Hello ${guestName}! 👋 Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
+      text: `Hello ${guestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
       createdAt: serverTimestamp(),
     });
   };
 
   const sendMessage = async () => {
     if (!newMsg.trim() || !convId) return;
+    if (countWords(newMsg) > 50) return;
     const text = newMsg;
     setNewMsg('');
     await addDoc(collection(db, 'conversations', convId, 'messages'), {
@@ -103,8 +116,8 @@ export default function ChatWidget() {
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: LIGHT }}>
             {!started ? (
               <form onSubmit={startChat} style={{ padding: '18px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '28px', marginBottom: '8px' }}>💬</div>
+                  <div style={{ textAlign: 'center' }}>
+                  <div style={{ color: ACCENT, marginBottom: '8px' }}><ChatIcon size={28} /></div>
                   <div style={{ fontSize: '14px', fontWeight: '700', color: '#111', marginBottom: '4px' }}>Start a conversation</div>
                   <div style={{ fontSize: '11px', color: '#6b7280' }}>Enter your name to begin chatting.</div>
                 </div>
@@ -147,24 +160,26 @@ export default function ChatWidget() {
                   <div style={{ display: 'flex', gap: '10px' }}>
                     <input
                       value={newMsg}
-                      onChange={e => setNewMsg(e.target.value)}
+                      onChange={e => setNewMsg(limitWords(e.target.value))}
                       onKeyDown={e => e.key === 'Enter' && sendMessage()}
                       placeholder="Type your message..."
-                      style={{ flex: 1, border: '1px solid #e5e7eb', borderRadius: '14px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
+                      aria-describedby="chat-widget-word-count"
+                      style={{ flex: 1, minWidth: 0, border: '1px solid #e5e7eb', borderRadius: '14px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                     />
-                    <button onClick={sendMessage} style={{ width: '48px', height: '48px', borderRadius: '14px', border: 'none', background: DARK, color: '#d4f550', cursor: 'pointer', fontSize: '18px' }}>
-                      ➤
+                    <button onClick={sendMessage} disabled={!newMsg.trim()} aria-label="Send message" style={{ width: '48px', height: '48px', borderRadius: '14px', border: 'none', background: DARK, color: '#d4f550', cursor: newMsg.trim() ? 'pointer' : 'not-allowed', display: 'grid', placeItems: 'center' }}>
+                      <SendIcon />
                     </button>
                   </div>
+                  <div id="chat-widget-word-count" aria-live="polite" style={{ color: '#6b7280', fontSize: '10px', marginTop: '6px' }}>{countWords(newMsg)} words · {50 - countWords(newMsg)} remaining</div>
                 </div>
               </>
             )}
           </div>
         </div>
       ) : (
-        <button onClick={() => setOpen(true)}
+        <button onClick={() => setOpen(true)} aria-label="Open chat"
           style={{ width: '60px', height: '60px', borderRadius: '50%', background: ACCENT, border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.18)', color: '#fff', fontSize: '24px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          💬
+          <ChatIcon size={26} />
         </button>
       )}
     </div>

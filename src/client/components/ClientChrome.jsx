@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { useTheme } from 'next-themes';
 import { BRASS, FOREST, FOREST_DEEP, PAPER, SANS, LINE } from './clientTheme';
-import { AnimatedThemeToggler } from './ui/animated-theme-toggler.tsx';
 
 const logo = 'https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png';
 
@@ -42,9 +40,10 @@ function NavDropdown({ label, items }) {
 
 export default function ClientChrome({ children }) {
   const { pathname: path } = useLocation();
-  const { resolvedTheme, setTheme } = useTheme();
 
   useEffect(() => {
+    document.documentElement.classList.remove('dark');
+    document.documentElement.style.colorScheme = 'light';
     if (document.querySelector('link[data-lk-font]')) return;
     const font = document.createElement('link');
     font.href = 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap';
@@ -93,14 +92,6 @@ export default function ClientChrome({ children }) {
           ]} />
         </nav>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <AnimatedThemeToggler
-            theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
-            onThemeChange={setTheme}
-            variant="circle"
-            duration={450}
-            aria-label="Toggle dark mode"
-            className="theme-toggle-button"
-          />
           <button onClick={() => { window.location.href = '/rooms'; }} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: 'pointer', whiteSpace: 'nowrap' }}>BOOK YOUR STAY</button>
         </div>
       </header>

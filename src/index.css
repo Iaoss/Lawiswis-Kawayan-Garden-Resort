@@ -17,8 +17,8 @@
   z-index: 0;
 }
 
-html.dark {
-  color-scheme: dark;
+:root {
+  color-scheme: light;
 }
 
 body {

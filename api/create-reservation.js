@@ -23,10 +23,72 @@
 // staff-managed operational state (e.g. "maintenance", "cleaning") in the
 // admin dashboard — not flipped automatically per booking.
 
+import crypto from 'crypto';
 import { adminDb, FieldValue } from '../src/lib/firebaseAdmin';
 import { sendReservationPendingEmail } from './email';
 
 const MAX_RESERVATIONS_PER_EMAIL_PER_DAY = 3;
+const MAX_BOOKING_ATTEMPTS = 3;
+const ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
+
+function dateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function addMonthsClamped(date, months) {
+  const result = new Date(date.getFullYear(), date.getMonth() + months, 1);
+  result.setDate(Math.min(date.getDate(), new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate()));
+  return result;
+}
+
+function getClientIp(req) {
+  const forwarded = req.headers['x-forwarded-for'];
+  return (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim()
+    || req.socket?.remoteAddress
+    || 'unknown';
+}
+
+function hash(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+async function consumeBookingAttempt(sessionId, ipAddress) {
+  const identifiers = [
+    `session-${hash(sessionId || ipAddress)}`,
+    `ip-${hash(ipAddress)}`,
+  ];
+  const refs = [...new Set(identifiers)].map(id => adminDb.collection('bookingAttemptLimits').doc(id));
+  const now = Date.now();
+
+  return adminDb.runTransaction(async transaction => {
+    const snapshots = await Promise.all(refs.map(ref => transaction.get(ref)));
+    const states = snapshots.map(snapshot => snapshot.exists ? snapshot.data() : {});
+    const activeLocks = states.map(state => Number(state.lockedUntil || 0)).filter(until => until > now);
+    if (activeLocks.length) {
+      return { allowed: false, retryAfter: Math.max(...activeLocks) };
+    }
+
+    const activeStates = states.map(state => (
+      now - Number(state.windowStartedAt || 0) >= ATTEMPT_WINDOW_MS ? {} : state
+    ));
+    if (activeStates.some(state => Number(state.attempts || 0) >= MAX_BOOKING_ATTEMPTS)) {
+      const retryAfter = now + ATTEMPT_WINDOW_MS;
+      refs.forEach(ref => transaction.set(ref, { attempts: MAX_BOOKING_ATTEMPTS, windowStartedAt: now, lockedUntil: retryAfter }));
+      return { allowed: false, retryAfter };
+    }
+
+    refs.forEach((ref, index) => {
+      const state = activeStates[index];
+      const windowExpired = !state.windowStartedAt;
+      transaction.set(ref, {
+        attempts: windowExpired ? 1 : Number(state.attempts || 0) + 1,
+        windowStartedAt: windowExpired ? now : Number(state.windowStartedAt || now),
+        lockedUntil: 0,
+      });
+    });
+    return { allowed: true };
+  });
+}
 
 function datesOverlap(aStart, aEnd, bStart, bEnd) {
   // Two date ranges overlap if one starts before the other ends, both ways.
@@ -52,6 +114,7 @@ export default async function handler(req, res) {
       children,
       notes,
       paymentMethod,
+      sessionId,
       website, // honeypot field — real guests never fill this in
     } = req.body || {};
 
@@ -68,21 +131,35 @@ export default async function handler(req, res) {
       });
     }
 
+    // Count each genuine booking request, including malformed submissions.
+    const attempt = await consumeBookingAttempt(sessionId, getClientIp(req));
+    if (!attempt.allowed) {
+      return res.status(429).json({
+        error: 'Booking is temporarily locked after 3 attempts. Please try again in about an hour.',
+        retryAfter: attempt.retryAfter,
+      });
+    }
+
     // ---- 2. Basic validation -------------------------------------------
     if (!roomId || !guestName || !email || !phone || !checkIn || !checkOut || !paymentMethod) {
       return res.status(400).json({ error: 'Please fill in all required fields.' });
     }
 
-    const checkInDate = new Date(checkIn);
-    const checkOutDate = new Date(checkOut);
-    if (isNaN(checkInDate.getTime()) || isNaN(checkOutDate.getTime()) || checkOutDate <= checkInDate) {
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    const checkInDate = new Date(`${checkIn}T00:00:00`);
+    const checkOutDate = new Date(`${checkOut}T00:00:00`);
+    if (!datePattern.test(checkIn) || !datePattern.test(checkOut)
+      || isNaN(checkInDate.getTime()) || isNaN(checkOutDate.getTime())
+      || dateKey(checkInDate) !== checkIn || dateKey(checkOutDate) !== checkOut
+      || checkOut <= checkIn) {
       return res.status(400).json({ error: 'Please select a valid check-in and check-out date.' });
     }
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    if (checkInDate < today) {
-      return res.status(400).json({ error: 'Check-in date cannot be in the past.' });
+    const maxBookingDate = dateKey(addMonthsClamped(today, 2));
+    if (checkIn < dateKey(today) || checkOut > maxBookingDate) {
+      return res.status(400).json({ error: `Choose check-in and check-out dates from today through ${maxBookingDate}.` });
     }
 
     // ---- 3. Rate limiting by email --------------------------------------

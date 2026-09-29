@@ -21,6 +21,7 @@ import crypto from 'crypto';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { recordPayMongoPayment } from '../src/lib/recordPayMongoPayment';
+import { sendPaymentConfirmedEmail } from './email';
 
 // Signature verification needs the exact raw request body, so the
 // default JSON body-parser has to be turned off for this route.
@@ -139,10 +140,20 @@ export default async function handler(req, res) {
     const db = getFirestore(app);
 
     if (eventType === 'payment.paid' || eventType === 'checkout_session.payment.paid') {
-      await recordPayMongoPayment(db, FieldValue, {
+      const result = await recordPayMongoPayment(db, FieldValue, {
         ...info,
         eventId: event.data?.id,
       });
+      if (result.recorded) {
+        try {
+          const reservationSnap = await db.collection('reservations').doc(info.reservationId).get();
+          if (reservationSnap.exists) {
+            await sendPaymentConfirmedEmail(reservationSnap.data(), info.reservationId.slice(0, 8).toUpperCase());
+          }
+        } catch (emailErr) {
+          console.error('Failed to send PayMongo payment receipt:', emailErr);
+        }
+      }
     }
 
     if (eventType === 'payment.failed') {

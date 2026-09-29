@@ -59,6 +59,7 @@ export async function sendReservationPendingEmail(reservation, bookingRef) {
         ${moneyRow('Total', `₱${Number(totalAmount).toLocaleString()}`, true)}
       </table>
       <p>${statusNote}</p>
+      <p>Your official booking receipt and confirmation details will be sent to the email address provided.</p>
       <p style="color:#9ca3af; font-size:12px;">If you have any questions, just reply to this email or contact us directly.</p>
     </div>
   `;
@@ -67,20 +68,23 @@ export async function sendReservationPendingEmail(reservation, bookingRef) {
 }
 
 export async function sendPaymentConfirmedEmail(reservation, bookingRef) {
-  const { guestName, email, roomNumber, roomType, checkIn, checkOut, totalAmount, nights } = reservation;
+  const { guestName, email, roomNumber, roomType, checkIn, checkOut, totalAmount, nights, amountPaid, paymentStatus } = reservation;
 
-  const subject = `Booking confirmed — #${bookingRef}`;
+  const isFullyPaid = paymentStatus === 'paid';
+  const subject = `${isFullyPaid ? 'Booking confirmed' : 'Payment received'} — #${bookingRef}`;
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; color:#1f2937;">
-      <h2 style="color:#1a3a1a;">You're all set, ${guestName}!</h2>
-      <p>Your reservation for <strong>Room ${roomNumber} (${roomType})</strong> is now <strong>confirmed</strong>.</p>
+      <h2 style="color:#1a3a1a;">${isFullyPaid ? `You're all set, ${guestName}!` : `Payment received, ${guestName}.`}</h2>
+      <p>Your reservation for <strong>Room ${roomNumber} (${roomType})</strong> ${isFullyPaid ? 'is confirmed.' : 'has a payment recorded. The remaining balance, if any, is due before checkout.'}</p>
       <table style="width:100%; font-size:14px; margin: 16px 0; border-collapse:collapse;">
         ${moneyRow('Booking Reference', `#${bookingRef}`)}
         ${moneyRow('Check-in', checkIn)}
         ${moneyRow('Check-out', checkOut)}
         ${moneyRow('Nights', nights)}
-        ${moneyRow('Total Paid', `₱${Number(totalAmount).toLocaleString()}`, true)}
+        ${moneyRow('Amount Paid', `₱${Number(amountPaid || totalAmount).toLocaleString()}`, true)}
+        ${!isFullyPaid ? moneyRow('Reservation Total', `₱${Number(totalAmount).toLocaleString()}`) : ''}
       </table>
+      <p>Your official booking receipt and confirmation details will be sent to the email address provided.</p>
       <p>We look forward to welcoming you. See you soon!</p>
     </div>
   `;

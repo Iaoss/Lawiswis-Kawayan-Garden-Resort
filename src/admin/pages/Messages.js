@@ -27,8 +27,8 @@ const DEFAULT_FAQS = [
   { id: 'f14', category: 'Rooms',         question: 'Is breakfast included?',         answer: 'Breakfast is not automatically included but can be arranged. Please let us know your preference when booking.' },
   { id: 'f15', category: 'General',       question: 'Do you allow pets?',             answer: 'We appreciate your love for pets, however we do not allow pets inside the resort premises to ensure comfort for all guests.' },
   { id: 'f16', category: 'General',       question: 'Is there parking available?',    answer: 'Yes, we have free on-site parking available for all guests throughout their stay.' },
-  { id: 'f17', category: 'General',       question: 'Thank you message',              answer: "Thank you for reaching out to Lawiswis Kawayan Garden Resort! 🌿 We're happy to assist you. Is there anything else you'd like to know?" },
-  { id: 'f18', category: 'General',       question: 'Greeting message',               answer: "Hello! Welcome to Lawiswis Kawayan Garden Resort! 🎋 How can we assist you today? Feel free to ask us anything about your stay." },
+  { id: 'f17', category: 'General',       question: 'Thank you message',              answer: "Thank you for reaching out to Lawiswis Kawayan Garden Resort! We're happy to assist you. Is there anything else you'd like to know?" },
+  { id: 'f18', category: 'General',       question: 'Greeting message',               answer: 'Hello! Welcome to Lawiswis Kawayan Garden Resort. How can we assist you today? Feel free to ask us anything about your stay.' },
 ];
 
 const CATEGORIES = ['All', 'Check-in/out', 'Booking', 'Payment', 'Cancellation', 'Amenities', 'Location', 'Rooms', 'General'];
@@ -208,7 +208,7 @@ export default function Messages() {
         <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {!selected ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: MUTED }}>
-              <div style={{ fontSize: '48px', marginBottom: '14px' }}>💬</div>
+              <i className="ti ti-message-circle-2" aria-hidden="true" style={{ fontSize: '42px', marginBottom: '14px' }} />
               <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>Select a conversation</div>
               <div style={{ fontSize: '12px' }}>Choose a guest from the list to start chatting</div>
             </div>
@@ -336,18 +336,18 @@ export default function Messages() {
                             <button onClick={() => handleFAQSelect(faq)}
                               title="Edit in input"
                               style={{ padding: '5px 10px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '7px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', color: '#428475', fontFamily: "'Poppins', sans-serif" }}>
-                              ✏️ Edit
+                              <i className="ti ti-pencil" aria-hidden="true" /> Edit
                             </button>
                             <button onClick={() => handleSendFAQ(faq)}
                               title="Send immediately"
                               style={{ padding: '5px 10px', background: DARK, border: 'none', borderRadius: '7px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', color: ACCENT, fontFamily: "'Poppins', sans-serif" }}>
-                              Send ➤
+                              <i className="ti ti-send" aria-hidden="true" /> Send
                             </button>
                             {!DEFAULT_FAQS.find(d => d.id === faq.id) && (
                               <button onClick={() => handleDeleteFAQ(faq)}
                                 title="Delete"
                                 style={{ padding: '5px 8px', background: '#fff', border: '1px solid #fee2e2', borderRadius: '7px', fontSize: '10px', cursor: 'pointer', color: '#ef4444', fontFamily: "'Poppins', sans-serif" }}>
-                                🗑
+                                <i className="ti ti-trash" aria-hidden="true" />
                               </button>
                             )}
                           </div>
@@ -362,7 +362,7 @@ export default function Messages() {
               <div style={{ flex: 1, overflowY: 'auto', padding: '18px', display: 'flex', flexDirection: 'column', gap: '10px', background: '#fafafa' }}>
                 {messages.length === 0 && (
                   <div style={{ textAlign: 'center', color: MUTED, fontSize: '12px', padding: '30px' }}>
-                    No messages yet. Say hello! 👋
+                    No messages yet. Say hello!
                   </div>
                 )}
                 {messages.map(m => (
@@ -394,12 +394,12 @@ export default function Messages() {
               {!showFAQ && (
                 <div style={{ padding: '6px 16px 0', display: 'flex', gap: '6px', overflowX: 'auto', borderTop: '1px solid #f3f4f6' }}>
                   {[
-                    { label: '👋 Greeting',     faq: faqs.find(f => f.id === 'f18') },
-                    { label: '🕐 Check-in',     faq: faqs.find(f => f.id === 'f1') },
-                    { label: '💳 Payment',      faq: faqs.find(f => f.id === 'f5') },
-                    { label: '🚫 Cancellation', faq: faqs.find(f => f.id === 'f7') },
-                    { label: '📍 Location',     faq: faqs.find(f => f.id === 'f11') },
-                    { label: '🙏 Thank you',    faq: faqs.find(f => f.id === 'f17') },
+                    { label: 'Greeting',     faq: faqs.find(f => f.id === 'f18') },
+                    { label: 'Check-in',     faq: faqs.find(f => f.id === 'f1') },
+                    { label: 'Payment',      faq: faqs.find(f => f.id === 'f5') },
+                    { label: 'Cancellation', faq: faqs.find(f => f.id === 'f7') },
+                    { label: 'Location',     faq: faqs.find(f => f.id === 'f11') },
+                    { label: 'Thank you',    faq: faqs.find(f => f.id === 'f17') },
                   ].filter(s => s.faq).map(s => (
                     <button key={s.label}
                       onClick={() => handleFAQSelect(s.faq)}
@@ -409,7 +409,7 @@ export default function Messages() {
                   ))}
                   <button onClick={() => setShowFAQ(true)}
                     style={{ padding: '5px 12px', background: DARK, border: 'none', borderRadius: '20px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', color: ACCENT, fontFamily: "'Poppins', sans-serif", flexShrink: 0 }}>
-                    ⚡ More
+                    <i className="ti ti-bolt" aria-hidden="true" /> More
                   </button>
                 </div>
               )}
@@ -422,7 +422,7 @@ export default function Messages() {
                   style={{ flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 16px', fontSize: '13px', outline: 'none', fontFamily: "'Poppins', sans-serif", color: '#111', background: '#f9fafb' }} />
                 <button onClick={() => sendMessage()}
                   style={{ background: DARK, border: 'none', borderRadius: '10px', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
-                  <span style={{ color: ACCENT, fontSize: '18px' }}>➤</span>
+                  <i className="ti ti-send" aria-hidden="true" style={{ color: ACCENT, fontSize: '18px' }} />
                 </button>
               </div>
             </>

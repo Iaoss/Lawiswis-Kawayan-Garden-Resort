@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../../firebase/firebase';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 export default function Login() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -18,16 +21,23 @@ export default function Login() {
       const uid = userCredential.user.uid;
       const userDoc = await getDoc(doc(db, 'users', uid));
       if (userDoc.exists()) {
-        const role = userDoc.data().role;
-        console.log('User role:', role);
-        if (role === 'admin') {
-          window.location.href = '/admin/dashboard';
-        } else if (role === 'receptionist') {
-          window.location.href = '/receptionist/dashboard'; // ← fixed path
+        const userData = userDoc.data();
+        const role = String(userData.role || '').trim().toLowerCase();
+        const status = String(userData.status || 'active').trim().toLowerCase();
+        if (status === 'inactive' || !['admin', 'receptionist'].includes(role)) {
+          await signOut(auth);
+          setError('This account does not have active staff access.');
         } else {
-          setError('Unknown role: ' + role);
+          const requestedPath = location.state?.from?.pathname || '';
+          const permittedPrefix = role === 'admin' ? '/admin/' : '/receptionist/';
+          const destination = requestedPath.startsWith(permittedPrefix)
+            ? requestedPath
+            : role === 'admin' ? '/admin/dashboard' : '/receptionist/dashboard';
+          navigate(destination, { replace: true });
         }
+
       } else {
+        await signOut(auth);
         setError('User not found in system.');
       }
     } catch (err) {

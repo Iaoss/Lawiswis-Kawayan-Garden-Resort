@@ -9,6 +9,23 @@ import OccupancyBadge from '../components/OccupancyBadge';
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
 const LIGHT = '#f0f7f0';
+const RECEIPT_NOTICE = 'Your official booking receipt and confirmation details will be sent to the email address provided.';
+
+const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const addMonths = (date, months) => {
+  const result = new Date(date.getFullYear(), date.getMonth() + months, 1);
+  result.setDate(Math.min(date.getDate(), new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate()));
+  return result;
+};
+
+function getBookingSessionId() {
+  let sessionId = sessionStorage.getItem('lk_booking_session');
+  if (!sessionId) {
+    sessionId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    sessionStorage.setItem('lk_booking_session', sessionId);
+  }
+  return sessionId;
+}
 
 // Small inline icons (no emojis) -----------------------------------------
 
@@ -77,9 +94,12 @@ const WALLETS = [
 // --------------------------------------------------------------------------
 
 export default function BookRoom() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = formatDate(new Date());
+  const maximumBookingDate = formatDate(addMonths(new Date(), 2));
   const roomId = window.location.pathname.split('/').pop();
   const params = new URLSearchParams(window.location.search);
+  const [sessionId] = useState(getBookingSessionId);
+  const [lockedUntil, setLockedUntil] = useState(() => Number(sessionStorage.getItem('lk_booking_locked_until') || 0));
 
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -111,6 +131,10 @@ export default function BookRoom() {
     paymentMethod: 'online', // 'online' (card / e-wallet via PayMongo) | 'cash' (pay at resort)
     website: '', // honeypot — real guests leave this blank; see hidden field below
   });
+  const datesValid = Boolean(form.checkIn && form.checkOut
+    && form.checkIn >= today && form.checkOut > form.checkIn
+    && form.checkIn <= maximumBookingDate && form.checkOut <= maximumBookingDate);
+  const bookingLocked = lockedUntil > Date.now();
 
   const [totalAmount, setTotalAmount] = useState(0);
   const [nights, setNights] = useState(0);
@@ -136,10 +160,26 @@ export default function BookRoom() {
     }
   }, [room, form.checkIn, form.checkOut]);
 
+  useEffect(() => {
+    if (!lockedUntil) return undefined;
+    const remaining = lockedUntil - Date.now();
+    if (remaining <= 0) {
+      sessionStorage.removeItem('lk_booking_locked_until');
+      setLockedUntil(0);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      sessionStorage.removeItem('lk_booking_locked_until');
+      setLockedUntil(0);
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [lockedUntil]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!room) return;
-    if (nights <= 0) return alert('Please select valid check-in and check-out dates.');
+    if (bookingLocked) return;
+    if (!datesValid || nights <= 0) return alert('Please choose valid stay dates from the availability calendar first.');
     if (!termsRead || !termsAccepted) return alert('Please read the full Terms and Agreement and confirm that you agree before continuing.');
 
     setSubmitting(true);
@@ -169,6 +209,7 @@ export default function BookRoom() {
           children: form.children,
           notes: form.notes,
           paymentMethod: form.paymentMethod,
+          sessionId,
           website: form.website,
         }),
       });
@@ -177,6 +218,10 @@ export default function BookRoom() {
 
       if (!response.ok) {
         setErrorMsg(data.error || 'Something went wrong. Please try again.');
+        if (response.status === 429 && data.retryAfter) {
+          sessionStorage.setItem('lk_booking_locked_until', String(data.retryAfter));
+          setLockedUntil(data.retryAfter);
+        }
         setSubmitting(false);
         return;
       }
@@ -254,6 +299,16 @@ export default function BookRoom() {
     </div>
   );
 
+  if (!datesValid) return (
+    <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'grid', placeItems: 'center', padding: '24px', fontFamily: "'Poppins', sans-serif" }}>
+      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', padding: '32px', textAlign: 'center', maxWidth: '440px' }}>
+        <h1 style={{ color: '#111', fontSize: '20px', margin: '0 0 10px' }}>Choose stay dates first</h1>
+        <p style={{ color: '#6b7280', fontSize: '13px', lineHeight: 1.6 }}>Select available check-in and check-out dates before continuing to this room.</p>
+        <button onClick={() => { window.location.href = '/rooms'; }} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
+      </div>
+    </div>
+  );
+
   if (success) return (
     <div style={{ minHeight: '100vh', background: LIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Poppins', sans-serif", padding: '40px' }}>
       <div style={{ background: '#fff', borderRadius: '20px', padding: '50px', textAlign: 'center', maxWidth: '480px', width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.08)' }}>
@@ -264,6 +319,7 @@ export default function BookRoom() {
         <p style={{ color: '#6b7280', fontSize: '13px', marginBottom: '24px' }}>
           Thank you, <strong>{form.guestName}</strong>! Your reservation has been submitted successfully.
         </p>
+        <p role="status" style={{ color: '#355a42', background: LIGHT, borderRadius: '8px', padding: '12px', fontSize: '12px', lineHeight: 1.6, marginBottom: '18px' }}>{RECEIPT_NOTICE}</p>
         <div style={{ background: LIGHT, borderRadius: '12px', padding: '20px', marginBottom: '24px', textAlign: 'left' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}>
             <span style={{ color: '#6b7280' }}>Booking Reference</span>
@@ -287,7 +343,7 @@ export default function BookRoom() {
           </div>
         </div>
         <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '20px' }}>
-          Our team will contact you shortly to confirm your booking. Please keep your booking reference.
+          Please keep your booking reference for your records.
         </p>
         <button onClick={() => window.location.href = '/rooms'}
           style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '12px', padding: '14px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
@@ -354,7 +410,7 @@ export default function BookRoom() {
                 {[
                   { label: 'Full Name *', key: 'guestName', placeholder: 'Juan dela Cruz', type: 'text', required: true },
                   { label: 'Phone Number *', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: true },
-                  { label: 'Email Address', key: 'email', placeholder: 'juan@email.com', type: 'email', required: false },
+                  { label: 'Email Address *', key: 'email', placeholder: 'juan@email.com', type: 'email', required: true },
                   { label: 'Address', key: 'address', placeholder: 'City, Province', type: 'text', required: false },
                 ].map(f => (
                   <div key={f.key}>
@@ -384,11 +440,6 @@ export default function BookRoom() {
                 />
               </div>
 
-              {form.paymentMethod === 'online' && !form.email && (
-                <div style={{ marginTop: '10px', fontSize: '11px', color: '#9ca3af' }}>
-                  Tip: add an email address to receive your payment receipt.
-                </div>
-              )}
             </div>
 
             {/* Stay Details */}
@@ -398,17 +449,9 @@ export default function BookRoom() {
                 Stay Details
               </div>
               <div className="responsive-grid-2" style={{ gap: '14px' }}>
-                <div>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Check-in Date *</label>
-                  <input required type="date" value={form.checkIn} onChange={e => setForm({ ...form, checkIn: e.target.value })}
-                    min={today}
-                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Check-out Date *</label>
-                  <input required type="date" value={form.checkOut} onChange={e => setForm({ ...form, checkOut: e.target.value })}
-                    min={form.checkIn || today}
-                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                <div style={{ gridColumn: '1 / -1', background: LIGHT, padding: '14px', borderRadius: '8px', color: '#355a42', fontSize: '13px' }}>
+                  <strong>Check-in:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> <strong>Check-out:</strong> {form.checkOut}
+                  <button type="button" onClick={() => { window.location.href = '/rooms'; }} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Edit dates</button>
                 </div>
                 <div>
                   <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Adults</label>
@@ -515,6 +558,8 @@ export default function BookRoom() {
                   Please prepare the exact amount (₱{totalAmount.toLocaleString()}) upon arrival at the resort.
                 </div>
               )}
+
+              <p style={{ margin: '12px 0 0', color: '#355a42', fontSize: '12px', lineHeight: 1.6 }}>{RECEIPT_NOTICE}</p>
 
               {previewMode && (
                 <div style={{ marginTop: '14px', border: '1px dashed #d1d5db', borderRadius: '12px', padding: '18px', background: '#fafafa' }}>
@@ -633,9 +678,14 @@ export default function BookRoom() {
               </label>
             </div>
 
-            <button type="submit" disabled={submitting || !termsAccepted}
-              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted ? 0.7 : 1 }}>
-              {submitting
+            {(bookingLocked || errorMsg) && (
+              <div role="alert" style={{ marginBottom: '12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', color: '#b91c1c' }}>
+                {bookingLocked ? 'Booking is temporarily locked after 3 attempts. Please try again when the one-hour lock expires.' : errorMsg}
+              </div>
+            )}
+            <button type="submit" disabled={submitting || !termsAccepted || bookingLocked}
+              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted || bookingLocked ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted || bookingLocked ? 0.7 : 1 }}>
+              {bookingLocked ? 'Booking temporarily locked' : submitting
                 ? (form.paymentMethod === 'online' ? 'Redirecting to payment...' : 'Submitting...')
                 : (form.paymentMethod === 'online' ? 'Continue to Payment →' : 'Confirm Booking →')}
             </button>
