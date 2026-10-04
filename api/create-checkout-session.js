@@ -4,7 +4,7 @@
 // place your PayMongo SECRET key is allowed to exist. Never put it in
 // any file under /src, never prefix it with VITE_.
 
-import { adminDb } from '../src/lib/firebaseAdmin';
+import { adminDb } from '../lib/firebaseAdmin';
 import { getOnlinePaymentAmount } from '../src/lib/paymentPolicy';
 
 export default async function handler(req, res) {

@@ -21,9 +21,9 @@
 // staff-managed operational state (e.g. "maintenance", "cleaning") in the
 // admin dashboard — not flipped automatically per booking.
 
-import { adminDb, FieldValue } from '../src/lib/firebaseAdmin';
-import { sendReservationPendingEmail } from './email';
-import { evaluatePromo, normalizePromoCode } from '../src/lib/promoPolicy';
+import { adminDb, FieldValue } from '../lib/firebaseAdmin';
+import { sendReservationPendingEmail } from '../lib/email';
+import { evaluatePromo, normalizePromoCode } from '../lib/promoPolicy';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;

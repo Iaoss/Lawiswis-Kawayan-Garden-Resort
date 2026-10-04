@@ -8,7 +8,7 @@
 //   body: { to, cc?, subject, text, inReplyTo?, references? }
 
 import nodemailer from 'nodemailer';
-import { verifyStaff } from '../src/lib/verifyStaff';
+import { verifyStaff } from '../lib/verifyStaff';
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',

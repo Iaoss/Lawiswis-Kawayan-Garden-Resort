@@ -1,6 +1,6 @@
-import { adminDb, FieldValue } from '../src/lib/firebaseAdmin';
-import { verifyStaff } from '../src/lib/verifyStaff';
-import { sendPaymentReceipt } from '../src/lib/sendPaymentReceipt';
+import { adminDb, FieldValue } from '../lib/firebaseAdmin';
+import { verifyStaff } from '../lib/verifyStaff';
+import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });

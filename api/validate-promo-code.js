@@ -1,5 +1,5 @@
-import { adminDb } from '../src/lib/firebaseAdmin';
-import { evaluatePromo, normalizePromoCode } from '../src/lib/promoPolicy';
+import { adminDb } from '../lib/firebaseAdmin';
+import { evaluatePromo, normalizePromoCode } from '../lib/promoPolicy';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });

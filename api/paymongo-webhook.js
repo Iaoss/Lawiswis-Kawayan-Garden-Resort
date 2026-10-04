@@ -20,8 +20,8 @@
 import crypto from 'crypto';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { recordPayMongoPayment } from '../src/lib/recordPayMongoPayment';
-import { sendPaymentReceipt } from '../src/lib/sendPaymentReceipt';
+import { recordPayMongoPayment } from '../lib/recordPayMongoPayment';
+import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 
 // Signature verification needs the exact raw request body, so the
 // default JSON body-parser has to be turned off for this route.

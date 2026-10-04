@@ -8,9 +8,9 @@
 // it's actually been paid. This exists so payment confirmation doesn't
 // depend on the webhook firing — front desk can check on demand.
 
-import { adminDb, FieldValue } from '../src/lib/firebaseAdmin';
-import { recordPayMongoPayment } from '../src/lib/recordPayMongoPayment';
-import { sendPaymentReceipt } from '../src/lib/sendPaymentReceipt';
+import { adminDb, FieldValue } from '../lib/firebaseAdmin';
+import { recordPayMongoPayment } from '../lib/recordPayMongoPayment';
+import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {

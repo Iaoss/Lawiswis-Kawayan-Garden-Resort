@@ -12,8 +12,8 @@
 
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import { adminDb, FieldValue } from '../src/lib/firebaseAdmin';
-import { verifyStaff } from '../src/lib/verifyStaff';
+import { adminDb, FieldValue } from '../lib/firebaseAdmin';
+import { verifyStaff } from '../lib/verifyStaff';
 
 const PER_FOLDER = 25;        // newest messages checked per folder per sync
 const MAX_HTML = 400000;      // keep each Firestore doc safely under 1 MB

@@ -13,8 +13,8 @@
 //   POST /api/send-confirmation-email
 //   body: { "reservationId": "abc123" }
 
-import { adminDb } from '../src/lib/firebaseAdmin';
-import { sendPaymentConfirmedEmail } from './email';
+import { adminDb } from '../lib/firebaseAdmin';
+import { sendPaymentConfirmedEmail } from '../lib/email';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
