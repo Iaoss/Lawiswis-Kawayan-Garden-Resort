@@ -38,6 +38,68 @@ function moneyRow(label, value, bold = false) {
     </tr>`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[character]));
+}
+
+export async function sendReservationConfirmationEmail(reservation, bookingRef) {
+  const guestName = escapeHtml(reservation.guestName || 'Guest');
+  const roomName = escapeHtml(reservation.roomName || `Room ${reservation.roomNumber || ''} (${reservation.roomType || ''})`);
+  const nights = Number(reservation.nights) || Math.ceil((new Date(reservation.checkOut) - new Date(reservation.checkIn)) / 86400000);
+  const subject = `Booking confirmed — #${bookingRef}`;
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
+      <h2 style="color:#1a3a1a;">Your stay is confirmed, ${guestName}.</h2>
+      <p>We look forward to welcoming you to <strong>${roomName}</strong>.</p>
+      <table style="width:100%;font-size:14px;margin:16px 0;border-collapse:collapse;">
+        ${moneyRow('Guest', guestName)}
+        ${moneyRow('Room', roomName)}
+        ${moneyRow('Check-in', escapeHtml(reservation.checkIn))}
+        ${moneyRow('Check-out', escapeHtml(reservation.checkOut))}
+        ${moneyRow('Duration', `${nights} night${nights === 1 ? '' : 's'}`)}
+        ${moneyRow('Booking reference', `#${escapeHtml(bookingRef)}`, true)}
+      </table>
+      <h3 style="font-size:15px;color:#1a3a1a;">Check-in policies</h3>
+      <p>Please bring a valid photo ID and present your booking reference at reception. Check-in and check-out times are subject to the resort's published schedule; contact the resort if you need to confirm your arrival time.</p>
+    </div>`;
+  return transporter.sendMail({ from: FROM_ADDRESS, to: reservation.email || reservation.guestEmail, subject, html });
+}
+
+export async function sendPaymentReceiptEmail(reservation, payment, receiptNumber, balanceRemaining) {
+  const guestName = escapeHtml(reservation.guestName || 'Guest');
+  const paymentDate = payment.createdAt?.toDate
+    ? payment.createdAt.toDate().toLocaleString()
+    : new Date().toLocaleString();
+  const nights = Number(reservation.nights) || 1;
+  const roomTotal = Number(reservation.totalAmount || 0);
+  const nightlyRate = Number(reservation.roomRate || roomTotal / nights);
+  const extraCharges = Number(reservation.extraCharges || 0);
+  const taxes = Number(reservation.taxAmount || 0);
+  const total = roomTotal + extraCharges + taxes;
+  const subject = `Payment receipt ${receiptNumber} — ${guestName}`;
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
+      <h2 style="color:#1a3a1a;">Payment received</h2>
+      <p>Hello ${guestName}, this is your receipt for payment ${escapeHtml(receiptNumber)}.</p>
+      <table style="width:100%;font-size:14px;margin:16px 0;border-collapse:collapse;">
+        ${moneyRow('Receipt number', escapeHtml(receiptNumber))}
+        ${moneyRow('Date of payment', escapeHtml(paymentDate))}
+        ${moneyRow('Payment method', escapeHtml(payment.method || 'Not specified'))}
+        ${moneyRow('Room rate', `₱${nightlyRate.toLocaleString()} × ${nights} night${nights === 1 ? '' : 's'}`)}
+        ${moneyRow('Room charges', `₱${roomTotal.toLocaleString()}`)}
+        ${moneyRow('Extra charges', `₱${extraCharges.toLocaleString()}`)}
+        ${moneyRow('Taxes', `₱${taxes.toLocaleString()}`)}
+        ${moneyRow('Total charges', `₱${total.toLocaleString()}`)}
+        ${moneyRow('Amount paid in this transaction', `₱${Number(payment.amount || 0).toLocaleString()}`, true)}
+        ${moneyRow('Balance remaining', `₱${Math.max(0, balanceRemaining).toLocaleString()}`)}
+      </table>
+      <p style="color:#6b7280;font-size:12px;">Booking reference: #${escapeHtml(reservation.id?.slice(0, 8).toUpperCase() || '')}. This email is your printable HTML receipt.</p>
+    </div>`;
+  return transporter.sendMail({ from: FROM_ADDRESS, to: reservation.email || reservation.guestEmail, subject, html });
+}
+
 export async function sendReservationPendingEmail(reservation, bookingRef) {
   const { guestName, email, roomNumber, roomType, checkIn, checkOut, totalAmount, nights, paymentMethod } = reservation;
 

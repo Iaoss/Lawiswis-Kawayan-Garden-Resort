@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { createPayMongoCheckout } from '../../lib/paymongo';
-import { getDepositPercentage, getOnlinePaymentAmount } from '../../lib/paymentPolicy';
+import { getOnlinePaymentAmount } from '../../lib/paymentPolicy';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 
@@ -17,15 +18,6 @@ const addMonths = (date, months) => {
   result.setDate(Math.min(date.getDate(), new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate()));
   return result;
 };
-
-function getBookingSessionId() {
-  let sessionId = sessionStorage.getItem('lk_booking_session');
-  if (!sessionId) {
-    sessionId = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    sessionStorage.setItem('lk_booking_session', sessionId);
-  }
-  return sessionId;
-}
 
 // Small inline icons (no emojis) -----------------------------------------
 
@@ -76,15 +68,6 @@ function IconCard({ size = 16, color = '#111' }) {
   );
 }
 
-function IconCash({ size = 16, color = '#111' }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: '6px', verticalAlign: 'middle' }}>
-      <rect x="2" y="6" width="20" height="12" rx="2" stroke={color} strokeWidth="1.6" />
-      <circle cx="12" cy="12" r="3" stroke={color} strokeWidth="1.6" />
-    </svg>
-  );
-}
-
 const WALLETS = [
   { id: 'gcash', label: 'GCash' },
   { id: 'maya', label: 'Maya' },
@@ -94,13 +77,11 @@ const WALLETS = [
 // --------------------------------------------------------------------------
 
 export default function BookRoom() {
+  const navigate = useNavigate();
   const today = formatDate(new Date());
   const maximumBookingDate = formatDate(addMonths(new Date(), 2));
   const roomId = window.location.pathname.split('/').pop();
   const params = new URLSearchParams(window.location.search);
-  const [sessionId] = useState(getBookingSessionId);
-  const [lockedUntil, setLockedUntil] = useState(() => Number(sessionStorage.getItem('lk_booking_locked_until') || 0));
-
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -117,6 +98,10 @@ export default function BookRoom() {
   const [previewReservationRef, setPreviewReservationRef] = useState('');
   const [termsRead, setTermsRead] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [promoInput, setPromoInput] = useState('');
+  const [appliedPromo, setAppliedPromo] = useState(null);
+  const [promoFeedback, setPromoFeedback] = useState(null);
+  const [promoChecking, setPromoChecking] = useState(false);
 
   const [form, setForm] = useState({
     guestName: '',
@@ -128,20 +113,21 @@ export default function BookRoom() {
     adults: 1,
     children: 0,
     notes: '',
-    paymentMethod: 'online', // 'online' (card / e-wallet via PayMongo) | 'cash' (pay at resort)
+    paymentMethod: 'online',
     website: '', // honeypot — real guests leave this blank; see hidden field below
   });
   const datesValid = Boolean(form.checkIn && form.checkOut
     && form.checkIn >= today && form.checkOut > form.checkIn
     && form.checkIn <= maximumBookingDate && form.checkOut <= maximumBookingDate);
-  const bookingLocked = lockedUntil > Date.now();
-
   const [totalAmount, setTotalAmount] = useState(0);
   const [nights, setNights] = useState(0);
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
-  const paymentChoice = selectedPaymentChoice || (totalAmount < 5000 ? 'full' : 'deposit');
-  const onlinePaymentAmount = totalAmount > 0 ? getOnlinePaymentAmount(totalAmount, paymentChoice) : 0;
-  const depositPercentage = totalAmount < 5000 ? 50 : getDepositPercentage(totalAmount);
+  const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
+  const discountAmount = activePromo?.discountAmount || 0;
+  const bookingTotal = Math.max(0, totalAmount - discountAmount);
+  const paymentChoice = selectedPaymentChoice || (bookingTotal < 5000 ? 'full' : 'deposit');
+  const onlinePaymentAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, paymentChoice) : 0;
+  const depositPercentage = 25;
 
   useEffect(() => {
     const fetchRoom = async () => {
@@ -161,24 +147,45 @@ export default function BookRoom() {
   }, [room, form.checkIn, form.checkOut]);
 
   useEffect(() => {
-    if (!lockedUntil) return undefined;
-    const remaining = lockedUntil - Date.now();
-    if (remaining <= 0) {
-      sessionStorage.removeItem('lk_booking_locked_until');
-      setLockedUntil(0);
-      return undefined;
+    if (appliedPromo && appliedPromo.subtotal !== totalAmount) {
+      setAppliedPromo(null);
+      setPromoFeedback({ type: 'error', text: 'Stay dates changed. Apply the promo code again.' });
     }
-    const timer = window.setTimeout(() => {
-      sessionStorage.removeItem('lk_booking_locked_until');
-      setLockedUntil(0);
-    }, remaining);
-    return () => window.clearTimeout(timer);
-  }, [lockedUntil]);
+  }, [appliedPromo, totalAmount]);
+
+  const applyPromo = async () => {
+    const code = promoInput.trim().toUpperCase();
+    if (!code || totalAmount <= 0) return;
+    setPromoChecking(true);
+    setPromoFeedback(null);
+    try {
+      const response = await fetch('/api/validate-promo-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, subtotal: totalAmount }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Could not apply this promo code.');
+      setAppliedPromo({ ...result, subtotal: totalAmount });
+      setPromoInput(result.code);
+      setPromoFeedback({ type: 'success', text: `-₱${Number(result.discountAmount).toLocaleString()} (${result.code} applied)` });
+    } catch (error) {
+      setAppliedPromo(null);
+      setPromoFeedback({ type: 'error', text: error.message || 'Could not apply this promo code.' });
+    } finally {
+      setPromoChecking(false);
+    }
+  };
+
+  const removePromo = () => {
+    setAppliedPromo(null);
+    setPromoInput('');
+    setPromoFeedback(null);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!room) return;
-    if (bookingLocked) return;
     if (!datesValid || nights <= 0) return alert('Please choose valid stay dates from the availability calendar first.');
     if (!termsRead || !termsAccepted) return alert('Please read the full Terms and Agreement and confirm that you agree before continuing.');
 
@@ -188,8 +195,8 @@ export default function BookRoom() {
 
     try {
       // Reservation creation now happens server-side (see
-      // /api/create-reservation.js). That endpoint runs the honeypot check,
-      // per-email rate limiting, and a date-overlap check against existing
+      // /api/create-reservation.js). That endpoint runs the honeypot check
+      // and a date-overlap check against existing
       // reservations for this room — none of which can be trusted if done
       // only in the browser, since a bot can skip your page's JS entirely
       // and call this same endpoint directly. The server is the one place
@@ -209,7 +216,7 @@ export default function BookRoom() {
           children: form.children,
           notes: form.notes,
           paymentMethod: form.paymentMethod,
-          sessionId,
+          promoCode: activePromo?.code || '',
           website: form.website,
         }),
       });
@@ -218,10 +225,6 @@ export default function BookRoom() {
 
       if (!response.ok) {
         setErrorMsg(data.error || 'Something went wrong. Please try again.');
-        if (response.status === 429 && data.retryAfter) {
-          sessionStorage.setItem('lk_booking_locked_until', String(data.retryAfter));
-          setLockedUntil(data.retryAfter);
-        }
         setSubmitting(false);
         return;
       }
@@ -230,34 +233,24 @@ export default function BookRoom() {
       const ref8 = reservationId.slice(0, 8).toUpperCase();
       setBookingRef(ref8);
 
-      if (form.paymentMethod === 'online') {
-        // Hand off to PayMongo's hosted checkout page. It presents the
-        // actual card entry form / e-wallet QR codes (GCash, Maya,
-        // GrabPay) — we never handle card numbers or QR generation
-        // ourselves. Once paid, PayMongo redirects the guest back to
-        // /payment/success, and the webhook marks the reservation paid
-        // in the background.
-        const { checkoutUrl } = await createPayMongoCheckout({
-          reservationId,
-          guestName: form.guestName,
-          guestEmail: form.email,
-          description: `Room ${room.roomNumber} (${room.type}) — ${nights} night${nights !== 1 ? 's' : ''}`,
-          amount: onlinePaymentAmount,
-          paymentType: 'booking',
-          paymentChoice,
-        });
-        window.location.href = checkoutUrl;
-        return; // navigating away
-      }
-
-      // Cash / pay-at-resort: no online payment step needed.
-      setSuccess(true);
+      // PayMongo hosts card and e-wallet checkout; card data never enters this app.
+      const { checkoutUrl } = await createPayMongoCheckout({
+        reservationId,
+        guestName: form.guestName,
+        guestEmail: form.email,
+        description: `Room ${room.roomNumber} (${room.type}) — ${nights} night${nights !== 1 ? 's' : ''}`,
+        amount: onlinePaymentAmount,
+        paymentType: 'booking',
+        paymentChoice,
+      });
+      window.location.href = checkoutUrl;
+      return;
     } catch (err) {
       console.error(err);
 
       const isLocalDev = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
-      if (form.paymentMethod === 'online' && isLocalDev) {
+      if (isLocalDev) {
         // Most likely cause: running `npm start` instead of `vercel dev`,
         // so /api/create-checkout-session (or /api/create-reservation)
         // isn't being served at all. Show a visual-only preview instead
@@ -265,11 +258,7 @@ export default function BookRoom() {
         setPreviewReservationRef(bookingRef || 'PREVIEW');
         setPreviewMode(true);
       } else {
-        setErrorMsg(
-          form.paymentMethod === 'online'
-            ? 'Your reservation could not be started. Please try again, or choose "Pay at Resort".'
-            : 'Something went wrong. Please try again.'
-        );
+        setErrorMsg('Your reservation could not be started. Please try again.');
       }
     }
     setSubmitting(false);
@@ -337,9 +326,13 @@ export default function BookRoom() {
             <span style={{ color: '#6b7280' }}>Check-out</span>
             <span style={{ fontWeight: '600' }}>{form.checkOut}</span>
           </div>
+          {activePromo && <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}><span style={{ color: '#6b7280' }}>Subtotal</span><span style={{ fontWeight: '600' }}>₱{totalAmount.toLocaleString()}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px', color: '#15803d' }}><span>{activePromo.code} discount</span><span>−₱{discountAmount.toLocaleString()}</span></div>
+          </>}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', borderTop: '1px solid #e5e7eb', paddingTop: '10px', marginTop: '10px' }}>
             <span style={{ fontWeight: '600' }}>Total Amount</span>
-            <span style={{ fontWeight: '700', color: ACCENT }}>₱{totalAmount.toLocaleString()}</span>
+            <span style={{ fontWeight: '700', color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
           </div>
         </div>
         <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '20px' }}>
@@ -355,47 +348,10 @@ export default function BookRoom() {
 
   return (
     <div style={{ fontFamily: "'Poppins', sans-serif", background: '#f9fafb', minHeight: '100vh', padding: '0 20px' }}>
-      {/* Navbar */}
-      <nav className="responsive-nav" style={{ background: DARK, padding: '0 20px', justifyContent: 'space-between', height: '64px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }} onClick={() => window.location.href = '/home'}>
-          <svg width="36" height="44" viewBox="0 0 36 44" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="4" y="0" width="5" height="44" rx="2.5" fill="rgba(255,255,255,0.9)"/>
-            <rect x="4" y="8" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.7)"/>
-            <rect x="4" y="20" width="10" height="3" rx="1.5" fill="rgba(255,255,255,0.7)"/>
-            <rect x="4" y="32" width="7" height="3" rx="1.5" fill="rgba(255,255,255,0.7)"/>
-            <rect x="14" y="4" width="5" height="40" rx="2.5" fill="rgba(255,255,255,0.75)"/>
-            <rect x="14" y="12" width="9" height="3" rx="1.5" fill="rgba(255,255,255,0.6)"/>
-            <rect x="14" y="24" width="11" height="3" rx="1.5" fill="rgba(255,255,255,0.6)"/>
-            <rect x="14" y="36" width="8" height="3" rx="1.5" fill="rgba(255,255,255,0.6)"/>
-            <rect x="25" y="2" width="4" height="38" rx="2" fill="rgba(255,255,255,0.6)"/>
-            <rect x="25" y="14" width="8" height="2.5" rx="1.25" fill="rgba(255,255,255,0.5)"/>
-            <rect x="25" y="26" width="9" height="2.5" rx="1.25" fill="rgba(255,255,255,0.5)"/>
-          </svg>
-          <div>
-            <div style={{ color: '#fff', fontWeight: '700', fontSize: '18px', lineHeight: 1.1, fontFamily: 'Georgia, serif', letterSpacing: '0.5px' }}>Lawiswis Kawayan</div>
-            <div style={{ color: 'rgba(255,255,255,0.85)', fontSize: '10px', letterSpacing: '1.5px', textTransform: 'uppercase', fontFamily: 'Georgia, serif' }}>Garden Resort</div>
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: '16px' }}>
-          <button onClick={() => window.location.href = '/rooms'}
-            style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.3)', color: '#fff', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
-            ← Back to Rooms
-          </button>
-        </div>
-      </nav>
-
-      {/* Breadcrumb */}
-      <div style={{ background: '#fff', borderBottom: '1px solid #f3f4f6', padding: '12px 20px', fontSize: '12px', color: '#9ca3af' }}>
-        <span style={{ cursor: 'pointer' }} onClick={() => window.location.href = '/home'}>Home</span>
-        <span style={{ margin: '0 8px' }}>›</span>
-        <span style={{ cursor: 'pointer' }} onClick={() => window.location.href = '/rooms'}>Rooms</span>
-        <span style={{ margin: '0 8px' }}>›</span>
-        <span style={{ color: '#111', fontWeight: '500' }}>Book Room {room.roomNumber}</span>
-      </div>
-
       <div className="section-container two-column-fixed" style={{ margin: '40px auto' }}>
         {/* Booking Form */}
         <div>
+          <button type="button" onClick={() => navigate('/rooms')} style={{ padding: 0, border: 0, background: 'transparent', color: ACCENT, fontSize: '12px', cursor: 'pointer', marginBottom: '14px' }}>← Back to rooms</button>
           <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#111', marginBottom: '6px' }}>Complete Your Booking</h1>
           <p style={{ fontSize: '13px', color: '#9ca3af', marginBottom: '28px' }}>Fill in your details to reserve Room {room.roomNumber}</p>
 
@@ -507,29 +463,14 @@ export default function BookRoom() {
                   {form.paymentMethod === 'online' && <IconCheck size={16} color={ACCENT} />}
                 </button>
 
-                <button type="button" onClick={() => setForm({ ...form, paymentMethod: 'cash' })}
-                  style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '14px 16px', borderRadius: '10px',
-                    border: form.paymentMethod === 'cash' ? `2px solid ${ACCENT}` : '1px solid #e5e7eb',
-                    background: form.paymentMethod === 'cash' ? LIGHT : '#fff',
-                    fontSize: '13px', fontWeight: '600', cursor: 'pointer',
-                    fontFamily: "'Poppins', sans-serif", color: '#111', textAlign: 'left',
-                  }}>
-                  <span style={{ display: 'flex', alignItems: 'center' }}>
-                    <IconCash />
-                    Pay at Resort — Cash on Arrival
-                  </span>
-                  {form.paymentMethod === 'cash' && <IconCheck size={16} color={ACCENT} />}
-                </button>
               </div>
 
               {form.paymentMethod === 'online' && (
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', marginBottom: '12px' }}>
                     {[
-                      { value: 'full', label: 'Pay in full', amount: totalAmount },
-                      { value: 'deposit', label: totalAmount < 5000 ? 'Optional 50% split' : `${depositPercentage}% deposit`, amount: totalAmount > 0 ? getOnlinePaymentAmount(totalAmount, 'deposit') : 0 },
+                      { value: 'full', label: 'Pay in full', amount: bookingTotal },
+                      { value: 'deposit', label: `${depositPercentage}% deposit`, amount: bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, 'deposit') : 0 },
                     ].map(option => (
                       <button key={option.value} type="button" onClick={() => setSelectedPaymentChoice(option.value)}
                         style={{
@@ -546,17 +487,11 @@ export default function BookRoom() {
                   </div>
                   <div style={{ background: LIGHT, borderRadius: '12px', padding: '16px', fontSize: '12px', color: '#374151', lineHeight: '1.6' }}>
                     You'll be redirected to PayMongo to pay <strong>₱{onlinePaymentAmount.toLocaleString()}</strong> now.
-                    {' '}Reservation total: <strong>₱{totalAmount.toLocaleString()}</strong>.
+                    {' '}Reservation total: <strong>₱{bookingTotal.toLocaleString()}</strong>.
                     {paymentChoice === 'deposit' && <> The remaining balance must be paid before checkout.</>}
                     {' '}Card, GCash, Maya, and GrabPay payments are processed securely by PayMongo.
                   </div>
                 </>
-              )}
-
-              {form.paymentMethod === 'cash' && (
-                <div style={{ background: '#fffbeb', borderRadius: '12px', padding: '16px', border: '1px solid #fde68a', fontSize: '12px', color: '#a16207' }}>
-                  Please prepare the exact amount (₱{totalAmount.toLocaleString()}) upon arrival at the resort.
-                </div>
               )}
 
               <p style={{ margin: '12px 0 0', color: '#355a42', fontSize: '12px', lineHeight: 1.6 }}>{RECEIPT_NOTICE}</p>
@@ -659,7 +594,7 @@ export default function BookRoom() {
               >
                 <p style={{ marginTop: 0 }}><strong>1. Reservation details.</strong> The guest confirms that the information supplied in this booking is accurate and complete. The reservation is subject to room availability and resort confirmation.</p>
                 <p><strong>2. Check-in and check-out.</strong> Check-in is at 2:00 PM and check-out is at 12:00 NN unless the resort confirms another arrangement. Valid identification may be requested at check-in.</p>
-                <p><strong>3. Payment.</strong> Online payments are processed by our secure payment provider. Pay-at-resort bookings must be paid upon arrival according to the amount shown in the reservation summary.</p>
+                <p><strong>3. Payment.</strong> Online payments are processed securely by our payment provider. Pay the selected full amount or deposit through the hosted checkout.</p>
                 <p><strong>4. Cancellation.</strong> Cancellation fees and refunds follow the resort cancellation policy applicable to the selected booking dates.</p>
                 <p><strong>5. Guest conduct.</strong> Guests agree to follow resort rules, respect other guests, and accept responsibility for damage or loss caused by their party.</p>
                 <p><strong>6. Privacy and information use.</strong> The resort collects the information provided in this form, including your name, contact details, address, stay dates, guest count, and requests, to process your reservation, communicate about your stay, provide support, and meet operational or legal requirements. We do not sell this information.</p>
@@ -678,16 +613,14 @@ export default function BookRoom() {
               </label>
             </div>
 
-            {(bookingLocked || errorMsg) && (
+            {errorMsg && (
               <div role="alert" style={{ marginBottom: '12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', color: '#b91c1c' }}>
-                {bookingLocked ? 'Booking is temporarily locked after 3 attempts. Please try again when the one-hour lock expires.' : errorMsg}
+                {errorMsg}
               </div>
             )}
-            <button type="submit" disabled={submitting || !termsAccepted || bookingLocked}
-              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted || bookingLocked ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted || bookingLocked ? 0.7 : 1 }}>
-              {bookingLocked ? 'Booking temporarily locked' : submitting
-                ? (form.paymentMethod === 'online' ? 'Redirecting to payment...' : 'Submitting...')
-                : (form.paymentMethod === 'online' ? 'Continue to Payment →' : 'Confirm Booking →')}
+            <button type="submit" disabled={submitting || !termsAccepted}
+              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted ? 0.7 : 1 }}>
+              {submitting ? 'Redirecting to payment...' : 'Continue to Payment →'}
             </button>
           </form>
         </div>
@@ -720,18 +653,32 @@ export default function BookRoom() {
               </div>
 
               <div style={{ borderTop: '1px solid #f3f4f6', paddingTop: '16px' }}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label htmlFor="booking-promo-code" style={{ display: 'block', color: '#374151', fontSize: '12px', fontWeight: '600', marginBottom: '7px' }}>Promo Code</label>
+                  <div style={{ display: 'flex', gap: '7px' }}>
+                    <input id="booking-promo-code" value={promoInput} disabled={Boolean(activePromo)} onChange={event => { setPromoInput(event.target.value.toUpperCase()); setPromoFeedback(null); }}
+                      placeholder="Enter code" maxLength={32} style={{ minWidth: 0, flex: 1, border: '1px solid #d1d5db', borderRadius: '7px', padding: '9px 10px', fontSize: '12px', textTransform: 'uppercase' }} />
+                    {activePromo ? (
+                      <button type="button" onClick={removePromo} style={{ border: '1px solid #d1d5db', background: '#fff', color: '#374151', borderRadius: '7px', padding: '0 11px', fontSize: '11px', cursor: 'pointer' }}>Remove</button>
+                    ) : (
+                      <button type="button" onClick={applyPromo} disabled={promoChecking || !promoInput.trim() || totalAmount <= 0}
+                        style={{ border: 0, background: ACCENT, color: '#fff', borderRadius: '7px', padding: '0 13px', fontSize: '11px', fontWeight: 700, cursor: promoChecking || !promoInput.trim() || totalAmount <= 0 ? 'not-allowed' : 'pointer', opacity: promoChecking || !promoInput.trim() || totalAmount <= 0 ? 0.6 : 1 }}>
+                        {promoChecking ? 'Checking…' : 'Apply'}
+                      </button>
+                    )}
+                  </div>
+                  {promoFeedback && <div role={promoFeedback.type === 'error' ? 'alert' : 'status'} style={{ marginTop: '7px', color: promoFeedback.type === 'success' ? '#15803d' : '#b91c1c', fontSize: '11px' }}>{promoFeedback.text}</div>}
+                </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
-                  <span>₱{Number(room.price).toLocaleString()} × {nights} night{nights !== 1 ? 's' : ''}</span>
-                  <span>₱{(Number(room.price) * nights).toLocaleString()}</span>
+                  <span>Subtotal · ₱{Number(room.price).toLocaleString()} × {nights} night{nights !== 1 ? 's' : ''}</span>
+                  <span>₱{totalAmount.toLocaleString()}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '14px' }}>
-                  <span>Reservation fee</span>
-                  <span style={{ color: ACCENT }}>Free</span>
-                </div>
+                {activePromo && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#15803d', marginBottom: '8px' }}><span>Discount · {activePromo.code}</span><span>−₱{discountAmount.toLocaleString()}</span></div>}
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: '700', color: '#111', borderTop: '1px solid #f3f4f6', paddingTop: '14px' }}>
                   <span>Total</span>
-                  <span style={{ color: ACCENT }}>₱{totalAmount.toLocaleString()}</span>
+                  <span style={{ color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
                 </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today · {paymentChoice === 'full' ? 'full payment' : '25% deposit'}</span><span>₱{onlinePaymentAmount.toLocaleString()}</span></div>
               </div>
 
               {nights > 0 && (

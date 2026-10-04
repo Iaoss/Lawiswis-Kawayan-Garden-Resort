@@ -9,7 +9,7 @@ export async function recordPayMongoPayment(db, FieldValue, payment) {
 
   return db.runTransaction(async (transaction) => {
     const paymentSnap = await transaction.get(paymentRef);
-    if (paymentSnap.exists) return { recorded: false };
+    if (paymentSnap.exists) return { recorded: false, paymentDocumentId: paymentRef.id };
 
     const reservationSnap = await transaction.get(reservationRef);
     if (!reservationSnap.exists) throw new Error('Reservation not found for PayMongo payment');
@@ -40,6 +40,11 @@ export async function recordPayMongoPayment(db, FieldValue, payment) {
       timestamp: FieldValue.serverTimestamp(),
     });
 
-    return { recorded: true, amountPaid: newAmountPaid, paymentStatus: isFullyPaid ? 'paid' : 'partial' };
+    return {
+      recorded: true,
+      paymentDocumentId: paymentRef.id,
+      amountPaid: newAmountPaid,
+      paymentStatus: isFullyPaid ? 'paid' : 'partial',
+    };
   });
 }

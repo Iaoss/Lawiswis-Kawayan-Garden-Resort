@@ -25,6 +25,7 @@ export default function Reservations() {
   const isAdmin = !isReceptionist;
 
   const [reservations, setReservations] = useState([]);
+  const [toast, setToast] = useState(null);
   const [filter, setFilter]             = useState('all');
   const [search, setSearch]             = useState('');
   const [page,   setPage]               = useState(1);
@@ -86,20 +87,39 @@ const updateStatus = async (id, status) => {
     alert('The outstanding balance must be paid before checking out this guest.');
     return;
   }
-  await updateDoc(doc(db, 'reservations', id), { status });
+  try {
+    await updateDoc(doc(db, 'reservations', id), { status });
 
-  if (reservation?.roomId) {
-    try {
-      if (status === 'checked-in') {
-        await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'occupied' });
-      } else if (status === 'checked-out' || status === 'cancelled' || status === 'confirmed' || status === 'pending') {
-        await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
+    if (reservation?.roomId) {
+      try {
+        if (status === 'checked-in') {
+          await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'occupied' });
+        } else if (status === 'checked-out' || status === 'cancelled' || status === 'confirmed' || status === 'pending') {
+          await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
+        }
+      } catch (roomErr) {
+        console.warn('Room status update skipped:', roomErr.message);
       }
-    } catch (roomErr) {
-      console.warn('Room status update skipped:', roomErr.message);
     }
+    if (status === 'confirmed' && reservation?.status !== 'confirmed') {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        const response = await fetch('/api/send-reservation-confirmation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ reservationId: id }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Confirmation email could not be sent.');
+        setToast({ type: 'success', text: result.sent ? 'Booking confirmation email sent.' : result.alreadySent ? 'Booking confirmation email was already sent.' : 'Confirmation email is being sent.' });
+      } catch (emailError) {
+        setToast({ type: 'error', text: emailError.message || 'Confirmation email failed to send.' });
+      }
+    }
+    await fetchReservations();
+  } catch (error) {
+    setToast({ type: 'error', text: error.message || 'Reservation status could not be updated.' });
   }
-  fetchReservations();
 };
   // ── Cancellation request flow (receptionist requests, admin approves/denies) ──
   const requestCancellation = async (id, reason) => {
@@ -179,6 +199,13 @@ const updateStatus = async (id, status) => {
   return (
     <PageLayout>
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '20px' }}>
+
+        {toast && (
+          <div role="status" onClick={() => setToast(null)}
+            style={{ position: 'fixed', top: '18px', right: '18px', zIndex: 1000, maxWidth: '360px', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', background: toast.type === 'error' ? '#fee2e2' : '#dcfce7', color: toast.type === 'error' ? '#991b1b' : '#166534', border: `1px solid ${toast.type === 'error' ? '#fecaca' : '#bbf7d0'}`, boxShadow: '0 4px 14px rgba(0,0,0,0.12)', fontSize: '12px' }}>
+            {toast.text}
+          </div>
+        )}
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>

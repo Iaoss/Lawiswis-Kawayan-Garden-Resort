@@ -10,6 +10,7 @@
 
 import { adminDb, FieldValue } from '../src/lib/firebaseAdmin';
 import { recordPayMongoPayment } from '../src/lib/recordPayMongoPayment';
+import { sendPaymentReceipt } from '../src/lib/sendPaymentReceipt';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -68,6 +69,8 @@ export default async function handler(req, res) {
     }
 
     let recorded = false;
+    let receipt = null;
+    let receiptError = null;
     if (status === 'paid') {
       const reservationId = attrs.metadata?.reservationId;
       const paymentId = paidPayment?.id;
@@ -84,9 +87,15 @@ export default async function handler(req, res) {
         paymentMethod: payment.source?.type || 'unknown',
       });
       recorded = result.recorded;
+      try {
+        receipt = await sendPaymentReceipt(adminDb, FieldValue, result.paymentDocumentId);
+      } catch (emailErr) {
+        receiptError = emailErr.message || 'Payment receipt email failed to send.';
+        console.error('PayMongo payment receipt email failed:', emailErr);
+      }
     }
 
-    return res.status(200).json({ status, amountPaid, recorded });
+    return res.status(200).json({ status, amountPaid, recorded, receipt, receiptError });
   } catch (err) {
     console.error('checkout-session-status failed:', err);
     return res.status(500).json({ error: 'Failed to check checkout session status' });

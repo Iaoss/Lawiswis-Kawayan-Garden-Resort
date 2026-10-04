@@ -24,6 +24,7 @@ export default function ChatWidget() {
   const [newMsg, setNewMsg] = useState('');
   const [guestName, setGuestName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
+  const phoneInvalid = Boolean(guestPhone) && !/^09\d{9}$/.test(guestPhone);
   const [convId, setConvId] = useState(null);
   const [started, setStarted] = useState(false);
   const bottomRef = useRef(null);
@@ -60,7 +61,7 @@ export default function ChatWidget() {
 
   const startChat = async (e) => {
     e.preventDefault();
-    if (!guestName.trim()) return;
+    if (!guestName.trim() || guestName.length > 50 || phoneInvalid) return;
     const id = `guest_${Date.now()}`;
     await setDoc(doc(db, 'conversations', id), {
       guestName,
@@ -124,18 +125,35 @@ export default function ChatWidget() {
                 <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Your Name *</label>
                 <input
                   value={guestName}
-                  onChange={e => setGuestName(e.target.value)}
+                  maxLength={50}
+                  onChange={e => setGuestName(e.target.value.slice(0, 50))}
                   placeholder="Juan dela Cruz"
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                 />
                 <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phone (optional)</label>
                 <input
                   value={guestPhone}
-                  onChange={e => setGuestPhone(e.target.value)}
-                  placeholder="09XX XXX XXXX"
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={11}
+                  onKeyDown={e => {
+                    if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+                    if (!/\d/.test(e.key)) e.preventDefault();
+                  }}
+                  onPaste={e => {
+                    const pasted = e.clipboardData.getData('text');
+                    if (!/^\d+$/.test(pasted)) e.preventDefault();
+                  }}
+                  onChange={e => {
+                    if (/^\d{0,11}$/.test(e.target.value)) setGuestPhone(e.target.value);
+                  }}
+                  placeholder="09XXXXXXXXX"
+                  aria-invalid={phoneInvalid}
+                  aria-describedby={phoneInvalid ? 'chat-phone-error' : undefined}
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                 />
-                <button type="submit" style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '12px', fontSize: '14px', fontWeight: '700', cursor: 'pointer' }}>
+                {phoneInvalid && <div id="chat-phone-error" role="alert" style={{ color: '#b91c1c', fontSize: '12px', marginTop: '-8px' }}>Please enter a valid 11-digit mobile number.</div>}
+                <button type="submit" disabled={!guestName.trim() || phoneInvalid} style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '12px', fontSize: '14px', fontWeight: '700', cursor: !guestName.trim() || phoneInvalid ? 'not-allowed' : 'pointer', opacity: !guestName.trim() || phoneInvalid ? 0.6 : 1 }}>
                   Start Chatting
                 </button>
               </form>

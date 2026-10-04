@@ -1,16 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../../firebase/firebase';
+import { auth, db } from '../../firebase/firebase';
 import { collection, getDocs, updateDoc, doc, addDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { createPayMongoCheckout, checkPayMongoCheckoutStatus } from '../../lib/paymongo';
-
-// NOTE: checkPayMongoCheckoutStatus is a new import. It needs a matching
-// backend function that fetches the checkout session from PayMongo's API
-// (GET /checkout_sessions/{id}) using your secret key server-side, and
-// returns something like { status: 'paid' | 'unpaid' | 'expired', amountPaid }.
-// This exists specifically so payment confirmation doesn't depend on the
-// webhook firing — it asks PayMongo directly, on demand.
 
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
@@ -73,6 +66,18 @@ export default function Billing() {
   const totalPaid = (r) => Number(r.amountPaid || 0);
   const totalBalance = (r) => Number(r.totalAmount || 0) + Number(r.extraCharges || 0) - totalPaid(r);
 
+  const sendReceipt = async (paymentDocumentId) => {
+    const token = await auth.currentUser.getIdToken();
+    const response = await fetch('/api/send-payment-receipt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ paymentDocumentId }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Payment receipt email failed to send.');
+    return result;
+  };
+
   const selectReservation = (r) => {
     setSelected(r);
     setSuccess('');
@@ -102,7 +107,7 @@ export default function Billing() {
       amountPaid: newPaid,
       paymentStatus,
     });
-    await addDoc(collection(db, 'payments'), {
+    const paymentRef = await addDoc(collection(db, 'payments'), {
       reservationId: selected.id,
       guestName: selected.guestName,
       roomNumber: selected.roomNumber,
@@ -110,16 +115,30 @@ export default function Billing() {
       method,
       createdAt: serverTimestamp(),
     });
+    let receipt;
+    let receiptError;
+    try {
+      receipt = await sendReceipt(paymentRef.id);
+    } catch (error) {
+      receiptError = error.message;
+    }
     fetchReservations();
     setSelected(prev => ({ ...prev, amountPaid: newPaid, paymentStatus }));
-    return { newPaid, paymentStatus };
+    return { newPaid, paymentStatus, receipt, receiptError };
   };
 
   const handlePayment = async () => {
     if (!paymentAmount) return;
-    await creditPayment(paymentAmount, selected.paymentMethod || 'cash');
+    const { receipt, receiptError } = await creditPayment(paymentAmount, selected.paymentMethod || 'cash');
     setPaymentAmount('');
-    setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.`);
+    const receiptNotice = receiptError
+      ? ` Receipt email failed: ${receiptError}`
+      : receipt?.sent
+        ? ` Receipt ${receipt.receiptNumber} emailed.`
+        : receipt?.alreadySent
+          ? ' Receipt email was already sent.'
+          : ' Receipt email is being sent.';
+    setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${receiptNotice}`);
   };
 
   const handleGeneratePayMongoLink = async () => {
@@ -132,7 +151,7 @@ export default function Billing() {
       const { checkoutUrl, checkoutSessionId: sessionId } = await createPayMongoCheckout({
         reservationId: selected.id,
         guestName: selected.guestName,
-        guestEmail: selected.guestEmail,
+        guestEmail: selected.email || selected.guestEmail,
         description: `Room ${selected.roomNumber} — ${selected.guestName}`,
         amount: Number(paymentAmount),
       });
@@ -153,13 +172,21 @@ export default function Billing() {
     setStatusChecking(true);
     setStatusResult('');
     try {
-      const { status, amountPaid, recorded } = await checkPayMongoCheckoutStatus(checkoutSessionId);
+      const { status, amountPaid, recorded, receipt, receiptError } = await checkPayMongoCheckoutStatus(checkoutSessionId);
       setStatusResult(status);
       if (status === 'paid') {
         await fetchReservations();
-        setSuccess(recorded
-          ? `Confirmed with PayMongo — ${formatCurrency(amountPaid)} recorded.`
-          : `Confirmed with PayMongo — ${formatCurrency(amountPaid)} was already recorded.`);
+        const paymentNotice = recorded
+          ? `${formatCurrency(amountPaid)} recorded.`
+          : `${formatCurrency(amountPaid)} was already recorded.`;
+        const emailNotice = receiptError
+          ? ` Receipt email failed: ${receiptError}`
+          : receipt?.sent
+            ? ` Receipt ${receipt.receiptNumber} emailed.`
+            : receipt?.alreadySent
+              ? ' Receipt email was already sent.'
+              : ' Receipt email is being sent.';
+        setSuccess(`Confirmed with PayMongo — ${paymentNotice}${emailNotice}`);
         setPayLink('');
         setCheckoutSessionId('');
         setPaymentAmount('');

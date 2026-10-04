@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS, FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
@@ -113,10 +114,11 @@ function decorateRoom(room, index) {
 }
 
 export default function Rooms() {
+  const location = useLocation();
   const [rooms, setRooms] = useState([]);
   const [fullyBookedDates, setFullyBookedDates] = useState([]);
   const [availableRoomIds, setAvailableRoomIds] = useState([]);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(() => new URLSearchParams(window.location.search).get('category') || 'all');
   const [search, setSearch] = useState('');
   const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -137,6 +139,10 @@ export default function Rooms() {
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [checkIn, setCheckIn] = useState(params.get('checkIn') || '');
   const [checkOut, setCheckOut] = useState(params.get('checkOut') || '');
+
+  useEffect(() => {
+    setFilter(new URLSearchParams(location.search).get('category') || 'all');
+  }, [location.search]);
 
   useEffect(() => {
     getDocs(collection(db, 'rooms'))
@@ -212,7 +218,11 @@ export default function Rooms() {
   const visible = allRooms.filter(room => {
     const text = `${room.title} ${room.groupTitle} ${room.description} ${room.amenities.join(' ')}`.toLowerCase();
     const matchesText = !search || text.includes(search.toLowerCase());
-    const matchesGroup = filter === 'all' || room.groupTitle === filter;
+    const roomType = String(room.type || room.groupTitle || '');
+    const matchesGroup = filter === 'all'
+      || room.groupTitle === filter
+      || (filter === 'Regular Rooms' && /^(standard|regular rooms?)$/i.test(roomType))
+      || (filter === 'Suite Rooms' && /(suite|villa)/i.test(roomType));
     const matchesDates = !(onlyAvailable && rangeIsValid) || statusOf(room) === 'available';
     return matchesText && matchesGroup && matchesDates;
   });
@@ -239,7 +249,17 @@ export default function Rooms() {
   const monthLabel = calendarMonth.toLocaleDateString('en', { month: 'long', year: 'numeric' });
 
   const selectDate = dateKey => {
-    if (!checkIn || checkOut || dateKey <= checkIn) {
+    if (!checkIn || checkOut) {
+      setCheckIn(dateKey);
+      setCheckOut('');
+      return;
+    }
+    if (dateKey === checkIn) {
+      setCheckIn('');
+      setCheckOut('');
+      return;
+    }
+    if (dateKey < checkIn) {
       setCheckIn(dateKey);
       setCheckOut('');
       return;
@@ -392,8 +412,7 @@ export default function Rooms() {
               const dateKey = formatDate(date);
               const soldOut = fullyBookedDates.includes(dateKey);
               const outsideWindow = dateKey < todayKey || dateKey > maxDateKey;
-              const beforeCheckOut = Boolean(checkIn && !checkOut && dateKey <= checkIn);
-              const disabled = calendarLoading || calendarError || outsideWindow || soldOut || beforeCheckOut;
+              const disabled = calendarLoading || calendarError || outsideWindow || soldOut;
               const selected = dateKey === checkIn || dateKey === checkOut;
               const inRange = checkIn && checkOut && dateKey > checkIn && dateKey < checkOut;
               return (

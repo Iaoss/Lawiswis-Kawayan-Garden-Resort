@@ -8,9 +8,7 @@
 //
 //   1. Honeypot check      — rejects submissions that filled a field real
 //                             guests never see.
-//   2. Rate limiting       — blocks an email address from flooding the
-//                             system with repeated reservations.
-//   3. Date-overlap check  — prevents two guests from booking the same
+//   2. Date-overlap check  — prevents two guests from booking the same
 //                             room for overlapping dates (the bug that
 //                             used to exist when the client blindly set
 //                             room.status = 'occupied' on every booking,
@@ -23,13 +21,9 @@
 // staff-managed operational state (e.g. "maintenance", "cleaning") in the
 // admin dashboard — not flipped automatically per booking.
 
-import crypto from 'crypto';
 import { adminDb, FieldValue } from '../src/lib/firebaseAdmin';
 import { sendReservationPendingEmail } from './email';
-
-const MAX_RESERVATIONS_PER_EMAIL_PER_DAY = 3;
-const MAX_BOOKING_ATTEMPTS = 3;
-const ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
+import { evaluatePromo, normalizePromoCode } from '../src/lib/promoPolicy';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -39,55 +33,6 @@ function addMonthsClamped(date, months) {
   const result = new Date(date.getFullYear(), date.getMonth() + months, 1);
   result.setDate(Math.min(date.getDate(), new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate()));
   return result;
-}
-
-function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  return (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim()
-    || req.socket?.remoteAddress
-    || 'unknown';
-}
-
-function hash(value) {
-  return crypto.createHash('sha256').update(value).digest('hex');
-}
-
-async function consumeBookingAttempt(sessionId, ipAddress) {
-  const identifiers = [
-    `session-${hash(sessionId || ipAddress)}`,
-    `ip-${hash(ipAddress)}`,
-  ];
-  const refs = [...new Set(identifiers)].map(id => adminDb.collection('bookingAttemptLimits').doc(id));
-  const now = Date.now();
-
-  return adminDb.runTransaction(async transaction => {
-    const snapshots = await Promise.all(refs.map(ref => transaction.get(ref)));
-    const states = snapshots.map(snapshot => snapshot.exists ? snapshot.data() : {});
-    const activeLocks = states.map(state => Number(state.lockedUntil || 0)).filter(until => until > now);
-    if (activeLocks.length) {
-      return { allowed: false, retryAfter: Math.max(...activeLocks) };
-    }
-
-    const activeStates = states.map(state => (
-      now - Number(state.windowStartedAt || 0) >= ATTEMPT_WINDOW_MS ? {} : state
-    ));
-    if (activeStates.some(state => Number(state.attempts || 0) >= MAX_BOOKING_ATTEMPTS)) {
-      const retryAfter = now + ATTEMPT_WINDOW_MS;
-      refs.forEach(ref => transaction.set(ref, { attempts: MAX_BOOKING_ATTEMPTS, windowStartedAt: now, lockedUntil: retryAfter }));
-      return { allowed: false, retryAfter };
-    }
-
-    refs.forEach((ref, index) => {
-      const state = activeStates[index];
-      const windowExpired = !state.windowStartedAt;
-      transaction.set(ref, {
-        attempts: windowExpired ? 1 : Number(state.attempts || 0) + 1,
-        windowStartedAt: windowExpired ? now : Number(state.windowStartedAt || now),
-        lockedUntil: 0,
-      });
-    });
-    return { allowed: true };
-  });
 }
 
 function datesOverlap(aStart, aEnd, bStart, bEnd) {
@@ -114,7 +59,7 @@ export default async function handler(req, res) {
       children,
       notes,
       paymentMethod,
-      sessionId,
+      promoCode: submittedPromoCode,
       website, // honeypot field — real guests never fill this in
     } = req.body || {};
 
@@ -131,18 +76,12 @@ export default async function handler(req, res) {
       });
     }
 
-    // Count each genuine booking request, including malformed submissions.
-    const attempt = await consumeBookingAttempt(sessionId, getClientIp(req));
-    if (!attempt.allowed) {
-      return res.status(429).json({
-        error: 'Booking is temporarily locked after 3 attempts. Please try again in about an hour.',
-        retryAfter: attempt.retryAfter,
-      });
-    }
-
     // ---- 2. Basic validation -------------------------------------------
     if (!roomId || !guestName || !email || !phone || !checkIn || !checkOut || !paymentMethod) {
       return res.status(400).json({ error: 'Please fill in all required fields.' });
+    }
+    if (paymentMethod !== 'online') {
+      return res.status(400).json({ error: 'Reservations must be paid online through PayMongo.' });
     }
 
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
@@ -162,28 +101,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: `Choose check-in and check-out dates from today through ${maxBookingDate}.` });
     }
 
-    // ---- 3. Rate limiting by email --------------------------------------
-    // Equality-only query (no range filter) so this never needs a
-    // composite Firestore index; we filter the last-24h window in code.
     const emailLower = String(email).trim().toLowerCase();
-    const emailSnap = await adminDb
-      .collection('reservations')
-      .where('emailLower', '==', emailLower)
-      .get();
-
-    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-    const recentCount = emailSnap.docs.filter((d) => {
-      const createdAt = d.data().createdAt;
-      return createdAt && createdAt.toMillis() >= oneDayAgo;
-    }).length;
-
-    if (recentCount >= MAX_RESERVATIONS_PER_EMAIL_PER_DAY) {
-      return res.status(429).json({
-        error:
-          'You already have several reservations submitted recently. Please wait for a confirmation email, or contact the resort directly if you need help.',
-      });
-    }
-
     // ---- 4. Confirm the room exists and get its price -------------------
     const roomSnap = await adminDb.collection('rooms').doc(roomId).get();
     if (!roomSnap.exists) {
@@ -215,7 +133,9 @@ export default async function handler(req, res) {
     const nights = Math.ceil((checkOutDate - checkInDate) / (1000 * 60 * 60 * 24));
     const totalAmount = nights * Number(room.price);
 
-    const docRef = await adminDb.collection('reservations').add({
+    const docRef = adminDb.collection('reservations').doc();
+    const promoCode = normalizePromoCode(submittedPromoCode);
+    const reservationData = {
       roomId,
       roomNumber: room.roomNumber,
       roomType: room.type,
@@ -230,13 +150,51 @@ export default async function handler(req, res) {
       children: children || 0,
       notes: notes || '',
       paymentMethod,
-      totalAmount,
+      subtotalAmount: totalAmount,
       nights,
       type: 'online',
       status: 'pending',
       paymentStatus: 'pending',
       createdAt: FieldValue.serverTimestamp(),
-    });
+    };
+    let discountAmount = 0;
+    let discountedTotal = totalAmount;
+
+    if (promoCode) {
+      if (!/^[A-Z0-9_-]{3,32}$/.test(promoCode)) {
+        return res.status(422).json({ error: 'Invalid code' });
+      }
+      const promoRef = adminDb.collection('promoCodes').doc(promoCode);
+      try {
+        await adminDb.runTransaction(async transaction => {
+          const promoSnapshot = await transaction.get(promoRef);
+          const promo = promoSnapshot.exists ? { code: promoSnapshot.id, ...promoSnapshot.data() } : null;
+          const result = evaluatePromo(promo, totalAmount);
+          if (!result.valid) {
+            const error = new Error(result.error);
+            error.promoValidation = true;
+            throw error;
+          }
+          discountAmount = result.discountAmount;
+          discountedTotal = result.totalAmount;
+          transaction.create(docRef, {
+            ...reservationData,
+            totalAmount: discountedTotal,
+            promoCode,
+            promoDiscount: discountAmount,
+          });
+          transaction.update(promoRef, {
+            usageCount: Number(promo.usageCount || 0) + 1,
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        });
+      } catch (error) {
+        if (error.promoValidation) return res.status(422).json({ error: error.message });
+        throw error;
+      }
+    } else {
+      await docRef.create({ ...reservationData, totalAmount, promoCode: '', promoDiscount: 0 });
+    }
 
     // ---- 7. Send the "reservation received" email --------------------------
     // Wrapped separately so an email-sending failure (bad API key, Resend
@@ -253,7 +211,7 @@ export default async function handler(req, res) {
           roomType: room.type,
           checkIn,
           checkOut,
-          totalAmount,
+          totalAmount: discountedTotal,
           nights,
           paymentMethod,
         },
@@ -263,7 +221,7 @@ export default async function handler(req, res) {
       console.error('Failed to send reservation-received email:', emailErr);
     }
 
-    return res.status(200).json({ reservationId: docRef.id, totalAmount, nights });
+    return res.status(200).json({ reservationId: docRef.id, subtotalAmount: totalAmount, discountAmount, totalAmount: discountedTotal, promoCode, nights });
   } catch (err) {
     console.error('create-reservation error:', err);
     return res.status(500).json({ error: 'Something went wrong on our end. Please try again.' });

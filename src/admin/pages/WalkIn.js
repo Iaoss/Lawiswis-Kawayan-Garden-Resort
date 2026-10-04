@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { db } from '../../firebase/firebase';
+import { auth, db } from '../../firebase/firebase';
 import { collection, addDoc, getDocs, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
@@ -159,7 +159,7 @@ export default function WalkIn() {
     e.preventDefault();
     if (!selectedRoom)    return alert('Please select a room.');
     if (totalAmount <= 0) return alert('Check-out must be after check-in.');
-    await addDoc(collection(db, 'reservations'), {
+    const reservationRef = await addDoc(collection(db, 'reservations'), {
       ...form,
       roomNumber: selectedRoom.roomNumber,
       roomType:   selectedRoom.type,
@@ -170,7 +170,31 @@ export default function WalkIn() {
       createdAt: serverTimestamp(),
     });
     await updateDoc(doc(db, 'rooms', form.roomId), { status: 'occupied' });
-    setSuccess(`✅ Reservation created for ${form.guestName}! Room ${selectedRoom.roomNumber} is now occupied.`);
+    let receiptMessage = '';
+    if (form.paymentStatus === 'paid') {
+      try {
+        const paymentRef = await addDoc(collection(db, 'payments'), {
+          reservationId: reservationRef.id,
+          guestName: form.guestName,
+          roomNumber: selectedRoom.roomNumber,
+          amount: totalAmount,
+          method: form.paymentMethod,
+          createdAt: serverTimestamp(),
+        });
+        const token = await auth.currentUser.getIdToken();
+        const response = await fetch('/api/send-payment-receipt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ paymentDocumentId: paymentRef.id }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Receipt email failed to send.');
+        receiptMessage = result.sent ? ' Payment receipt emailed.' : ' Payment receipt was already sent.';
+      } catch (receiptError) {
+        receiptMessage = ` Payment receipt failed: ${receiptError.message || 'email delivery error'}`;
+      }
+    }
+    setSuccess(`Reservation created for ${form.guestName}. Room ${selectedRoom.roomNumber} is now occupied.${receiptMessage}`);
     setForm({ guestName:'', email:'', phone:'', address:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
     setSelectedRoom(null); setSelectedCategory(null);
     setStep(1); setTotalAmount(0); setNights(0);

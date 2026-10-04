@@ -28,6 +28,7 @@ import BookingTransactions from './admin/pages/BookingTransactions';
 import Settings from './admin/pages/Settings';
 import NewsManagement from './admin/pages/NewsManagement.js';
 import Email from './admin/pages/Email.js';
+import PromoCodes from './admin/pages/PromoCodes';
 
 function BookingPaymentResult() {
   const cancelled = window.location.pathname === '/payment/cancelled';
@@ -62,6 +63,7 @@ function App() {
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<RequireStaffRoute allowedRoles={['admin']}><AdminDashboard /></RequireStaffRoute>} />
           <Route path="rooms" element={<RoomManagement />} />
+          <Route path="promos" element={<RequireStaffRoute allowedRoles={['admin']}><PromoCodes /></RequireStaffRoute>} />
           <Route path="walkin" element={<WalkIn />} />
           <Route path="reservations" element={<Reservations />} />
           <Route path="billing" element={<Billing />} />
