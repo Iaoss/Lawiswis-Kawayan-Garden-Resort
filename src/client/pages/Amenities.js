@@ -1,21 +1,29 @@
 import React from 'react';
-import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS } from '../components/clientTheme';
+import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, RESORT_IMAGES, SERIF, SANS } from '../components/clientTheme';
 
 const amenityGroups = [
   {
     title: 'Pools & relaxation',
+    image: RESORT_IMAGES.pool,
+    imageAlt: 'Swimming pool at Lawiswis Kawayan Garden Resort',
     items: ['Adult Swimming Pool', 'Kiddie Pool', 'Bubble Pool', 'Spa', 'Jacuzzi Area'],
   },
   {
     title: 'Garden & gatherings',
+    image: RESORT_IMAGES.garden,
+    imageAlt: 'Garden and villa grounds at Lawiswis Kawayan Garden Resort',
     items: ['Outdoor Garden', 'Art Displays', 'Grass Covered Areas', 'Function Hall', 'Bonfire Area for S’mores'],
   },
   {
     title: 'Food & resort shops',
+    image: RESORT_IMAGES.dining,
+    imageAlt: 'Dining space at Lawiswis Kawayan Garden Resort',
     items: ['Snack Bar', 'Kitchen-on-call', 'Gift/Souvenir Shop', 'Grilling/Samgyupsal Stations'],
   },
   {
     title: 'Activities & entertainment',
+    image: RESORT_IMAGES.spa,
+    imageAlt: 'Spa area at Lawiswis Kawayan Garden Resort',
     items: ['Outdoor Movie Watching', 'KTV Room', 'Billiard Table', 'Street Basketball Court', 'Table Tennis', 'Trampoline', 'Team Building Materials'],
   },
 ];
@@ -23,10 +31,12 @@ const amenityGroups = [
 export default function Amenities() {
   return (
     <div style={{ background: PAPER, minHeight: '100vh' }}>
-      <section style={{ background: FOREST, color: '#fff', padding: '88px 24px' }}>
-        <div style={{ maxWidth: '1100px', width: '100%', margin: '0 auto' }}>
+      <section style={{ minHeight: '340px', position: 'relative', display: 'flex', alignItems: 'center', padding: '72px 24px', overflow: 'hidden' }}>
+        <img src={RESORT_IMAGES.hero} alt="" aria-hidden="true" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+        <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, rgba(20,25,15,.78), rgba(20,25,15,.24))' }} />
+        <div style={{ position: 'relative', maxWidth: '1100px', width: '100%', margin: '0 auto' }}>
           <div style={{ color: '#e7dfc4', font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '14px' }}>Make room for a little of everything</div>
-          <h1 style={{ font: `500 clamp(42px, 6vw, 68px)/1.05 ${SERIF}`, margin: '0 0 18px', maxWidth: '760px' }}>Our Amenities</h1>
+          <h1 style={{ color: '#fff', font: `500 clamp(42px, 6vw, 68px)/1.05 ${SERIF}`, margin: '0 0 18px', maxWidth: '760px' }}>Our Amenities</h1>
           <p style={{ color: 'rgba(255,255,255,.78)', font: `14px/1.8 ${SANS}`, maxWidth: '620px', margin: 0 }}>
             From quiet garden corners to lively group activities, discover the spaces and experiences waiting around Lawiswis Kawayan.
           </p>
@@ -37,15 +47,18 @@ export default function Amenities() {
         <h2 style={{ color: INK, font: `500 clamp(30px, 4vw, 42px) ${SERIF}`, margin: '0 0 34px' }}>Spaces to unwind, gather, and play.</h2>
         <div className="amenities-grid">
           {amenityGroups.map(group => (
-            <section key={group.title} style={{ border: `1px solid ${LINE}`, background: '#fff', padding: '28px' }}>
-              <h3 style={{ color: FOREST, font: `500 24px ${SERIF}`, margin: '0 0 18px' }}>{group.title}</h3>
-              <ul style={{ listStyle: 'none', display: 'grid', gap: '13px', margin: 0, padding: 0 }}>
-                {group.items.map(item => (
-                  <li key={item} style={{ display: 'flex', alignItems: 'baseline', gap: '10px', color: '#5c5a4c', font: `13px/1.6 ${SANS}` }}>
-                    <span aria-hidden="true" style={{ color: BRASS, fontSize: '16px' }}>•</span>{item}
-                  </li>
-                ))}
-              </ul>
+            <section key={group.title} style={{ border: `1px solid ${LINE}`, background: '#fff', overflow: 'hidden' }}>
+              <img src={group.image} alt={group.imageAlt} loading="lazy" style={{ display: 'block', width: '100%', height: '210px', objectFit: 'cover' }} />
+              <div style={{ padding: '24px 28px 28px' }}>
+                <h3 style={{ color: FOREST, font: `500 24px ${SERIF}`, margin: '0 0 18px' }}>{group.title}</h3>
+                <ul style={{ listStyle: 'none', display: 'grid', gap: '13px', margin: 0, padding: 0 }}>
+                  {group.items.map(item => (
+                    <li key={item} style={{ display: 'flex', alignItems: 'baseline', gap: '10px', color: '#5c5a4c', font: `13px/1.6 ${SANS}` }}>
+                      <span aria-hidden="true" style={{ color: BRASS, fontSize: '16px' }}>•</span>{item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </section>
           ))}
         </div>

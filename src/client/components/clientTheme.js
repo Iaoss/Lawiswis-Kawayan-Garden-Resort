@@ -9,6 +9,14 @@ export const LINE = '#E3DDC8';
 export const SERIF = "'Fraunces', 'Times New Roman', serif";
 export const SANS = "'Inter', sans-serif";
 
+export const RESORT_IMAGES = {
+  hero: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/09/About-Lawiswis-Kawayan-scaled-1.jpeg',
+  garden: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Main-Villa-07.jpeg',
+  pool: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/2017-16.jpg',
+  dining: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Hapag-04.jpeg',
+  spa: 'https://lawiswiskawayanresort.com/wp-content/uploads/2020/01/Spa.jpeg',
+};
+
 export const ROOM_IMAGES = {
   himbing: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Himbing-01-1400x700-1.jpeg',
   tahimik: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tahimik-02-1400x700-1.jpeg',

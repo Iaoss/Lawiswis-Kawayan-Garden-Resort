@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { doc, getDoc } from 'firebase/firestore';
@@ -13,11 +13,15 @@ import {
 } from '../../lib/bookingPricing';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
+import { useResortAvailability } from '../components/ResortAvailabilityContext';
+import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
 const LIGHT = '#f0f7f0';
 const RECEIPT_NOTICE = 'Your official booking receipt and confirmation details will be sent to the email address provided.';
+const GUEST_PROFILE_KEY = 'guest_profile';
+const BOOKING_HISTORY_KEY = 'booking_history';
 
 const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const addMonths = (date, months) => {
@@ -25,6 +29,26 @@ const addMonths = (date, months) => {
   result.setDate(Math.min(date.getDate(), new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate()));
   return result;
 };
+
+function readLocalValue(key, fallback) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch (error) {
+    console.error(`Unable to read ${key} from local storage:`, error);
+    return fallback;
+  }
+}
+
+function writeLocalValue(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (error) {
+    console.error(`Unable to save ${key} to local storage:`, error);
+    return false;
+  }
+}
 
 // Small inline icons (no emojis) -----------------------------------------
 
@@ -85,6 +109,7 @@ const WALLETS = [
 
 export default function BookRoom() {
   const navigate = useNavigate();
+  const { available: resortAvailable, reason: unavailableReason, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const today = formatDate(new Date());
   const maximumBookingDate = formatDate(addMonths(new Date(), 2));
   const roomId = window.location.pathname.split('/').pop();
@@ -95,6 +120,7 @@ export default function BookRoom() {
   const [success, setSuccess] = useState(false);
   const [bookingRef, setBookingRef] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [roomLoadError, setRoomLoadError] = useState('');
 
   // Preview-only state — used when /api/create-checkout-session can't be
   // reached (e.g. running `npm start` locally instead of `vercel dev`).
@@ -110,9 +136,13 @@ export default function BookRoom() {
   const [promoFeedback, setPromoFeedback] = useState(null);
   const [promoChecking, setPromoChecking] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
+  const [activeTab, setActiveTab] = useState('book');
+  const [savedProfile, setSavedProfile] = useState(null);
+  const [bookingHistory, setBookingHistory] = useState([]);
 
   const [form, setForm] = useState({
-    guestName: '',
+    firstName: '',
+    lastName: '',
     email: '',
     phone: '',
     address: '',
@@ -129,14 +159,15 @@ export default function BookRoom() {
     paymentMethod: 'online',
     website: '', // honeypot — real guests leave this blank; see hidden field below
   });
+  const guestName = joinGuestName(form.firstName, form.lastName);
   const datesValid = Boolean(form.checkIn && form.checkOut
     && form.checkIn >= today && form.checkOut > form.checkIn
     && form.checkIn <= maximumBookingDate && form.checkOut <= maximumBookingDate);
-  const nights = form.checkIn && form.checkOut
+  const nights = useMemo(() => form.checkIn && form.checkOut
     ? Math.ceil((new Date(`${form.checkOut}T00:00:00`) - new Date(`${form.checkIn}T00:00:00`)) / (1000 * 60 * 60 * 24))
-    : 0;
+    : 0, [form.checkIn, form.checkOut]);
   const stayUnit = form.bookingType === 'daytour' ? 'day' : 'night';
-  const pricing = room && nights > 0
+  const pricing = useMemo(() => room && nights > 0
     ? calculateBookingPrice({
       room,
       bookingType: form.bookingType,
@@ -147,24 +178,62 @@ export default function BookRoom() {
       cottageId: form.cottageId,
       cottageFee: Number(form.cottageFee),
     })
-    : null;
+    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, form.cottageFee]);
   const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
   const discountAmount = activePromo?.discountAmount || 0;
-  const bookingTotal = Math.max(0, totalAmount - discountAmount);
+  const bookingTotal = useMemo(() => Math.max(0, totalAmount - discountAmount), [totalAmount, discountAmount]);
   const paymentChoice = selectedPaymentChoice || (bookingTotal < 5000 ? 'full' : 'deposit');
   const onlinePaymentAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, paymentChoice) : 0;
   const depositPercentage = 25;
+  const depositAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, 'deposit') : 0;
+  const balanceAmount = Math.max(0, bookingTotal - depositAmount);
+  const configuredMaxGuests = Number(room?.maxCapacity ?? room?.maximumCapacity ?? room?.maxGuests);
+  const maxGuests = Number.isInteger(configuredMaxGuests) && configuredMaxGuests > 0
+    ? configuredMaxGuests
+    : null;
+  const baseCapacity = pricing?.baseCapacity || 2;
 
   useEffect(() => {
     const fetchRoom = async () => {
-      const snap = await getDoc(doc(db, 'rooms', roomId));
-      if (snap.exists()) setRoom({ id: snap.id, ...snap.data() });
-      setLoading(false);
+      try {
+        const snap = await getDoc(doc(db, 'rooms', roomId));
+        if (snap.exists()) {
+          setRoom({ id: snap.id, ...snap.data() });
+        } else {
+          setRoomLoadError('This room could not be found. You can still view your saved bookings.');
+        }
+      } catch (error) {
+        console.error('Unable to load the selected room:', error);
+        setRoomLoadError('Room details could not be loaded. Please try again or view your saved bookings.');
+      } finally {
+        setLoading(false);
+      }
     };
     fetchRoom();
   }, [roomId]);
+
+  useEffect(() => {
+    const profile = readLocalValue(GUEST_PROFILE_KEY, null);
+    if (profile && typeof profile === 'object') {
+      const savedName = typeof profile.guestName === 'string'
+        ? splitGuestName(profile.guestName)
+        : {};
+      setSavedProfile(profile);
+      setForm(previous => ({
+        ...previous,
+        firstName: typeof profile.firstName === 'string' ? profile.firstName : savedName.firstName || previous.firstName,
+        lastName: typeof profile.lastName === 'string' ? profile.lastName : savedName.lastName || previous.lastName,
+        phone: typeof profile.phone === 'string' ? profile.phone : previous.phone,
+        email: typeof profile.email === 'string' ? profile.email : previous.email,
+        address: typeof profile.address === 'string' ? profile.address : previous.address,
+      }));
+    }
+
+    const history = readLocalValue(BOOKING_HISTORY_KEY, []);
+    if (Array.isArray(history)) setBookingHistory(history.filter(item => item && typeof item === 'object'));
+  }, []);
 
   useEffect(() => {
     if (appliedPromo && appliedPromo.subtotal !== totalAmount) {
@@ -203,12 +272,50 @@ export default function BookRoom() {
     setPromoFeedback(null);
   };
 
+  const changeGuestCount = (key, value) => {
+    const minimum = key === 'adults' ? 1 : 0;
+    const otherGuestCount = Number(form[key === 'adults' ? 'children' : 'adults']);
+    const upperBound = maxGuests === null ? undefined : Math.max(minimum, maxGuests - otherGuestCount);
+    const parsed = Number(value);
+    const safeValue = Number.isFinite(parsed)
+      ? Math.max(minimum, Math.min(Math.floor(parsed), upperBound ?? Number.MAX_SAFE_INTEGER))
+      : minimum;
+    setForm(previous => ({ ...previous, [key]: safeValue }));
+  };
+
+  const clearSavedProfile = () => {
+    try {
+      window.localStorage.removeItem(GUEST_PROFILE_KEY);
+      setSavedProfile(null);
+      setForm(previous => ({ ...previous, firstName: '', lastName: '', phone: '', email: '', address: '' }));
+      setFieldErrors({});
+    } catch (error) {
+      console.error('Unable to clear the saved guest profile:', error);
+      setErrorMsg('Could not clear the saved profile in this browser.');
+    }
+  };
+
+  const requestRefund = bookingId => {
+    const booking = bookingHistory.find(item => item.bookingId === bookingId);
+    if (!booking || !['Pending', 'Confirmed'].includes(booking.status)) return;
+    if (!window.confirm(`Request cancellation/refund for booking #${booking.bookingId.slice(0, 8).toUpperCase()}? This will mark the request as pending on this device. Contact the resort to confirm the request.`)) return;
+
+    const updatedHistory = bookingHistory.map(item => item.bookingId === bookingId
+      ? { ...item, status: 'Pending Refund' }
+      : item);
+    if (!writeLocalValue(BOOKING_HISTORY_KEY, updatedHistory)) {
+      setErrorMsg('The refund request could not be saved on this device. Please contact the resort directly.');
+      return;
+    }
+    setBookingHistory(updatedHistory);
+  };
+
   const validateField = (key, value) => {
-    if (key === 'guestName') {
+    if (key === 'firstName' || key === 'lastName') {
       const name = String(value || '').trim();
-      return /^[A-Za-z '-]{2,50}$/.test(name)
+      return NAME_PATTERN.test(name)
         ? ''
-        : 'Full Name must contain only letters and spaces (2-50 characters).';
+        : `${key === 'firstName' ? 'First' : 'Last'} name must contain only letters, spaces, hyphens, or apostrophes (2-35 characters).`;
     }
     if (key === 'phone') {
       return /^09\d{9}$/.test(String(value || ''))
@@ -220,30 +327,45 @@ export default function BookRoom() {
 
   const handleGuestFieldChange = (event) => {
     const { name, value } = event.target;
-    const sanitized = name === 'guestName'
-      ? value.replace(/[^a-zA-Z '-]/g, '').slice(0, 50)
+    const isNameField = name === 'firstName' || name === 'lastName';
+    const sanitized = isNameField
+      ? value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'-]/g, '').slice(0, 35)
       : value.replace(/\D/g, '').slice(0, 11);
     setForm(previous => ({ ...previous, [name]: sanitized }));
-    setFieldErrors(previous => ({ ...previous, [name]: '' }));
+    setFieldErrors(previous => ({
+      ...previous,
+      [name]: isNameField && !NAME_ALLOWED_CHARACTERS.test(value)
+        ? 'Numbers and special symbols are not allowed'
+        : '',
+    }));
   };
 
   const handleGuestFieldBlur = (event) => {
     const { name, value } = event.target;
-    const normalized = name === 'guestName' ? value.trim() : value;
+    const normalized = name === 'firstName' || name === 'lastName' ? value.trim() : value;
     if (normalized !== value) setForm(previous => ({ ...previous, [name]: normalized }));
     setFieldErrors(previous => ({ ...previous, [name]: validateField(name, normalized) }));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!resortAvailable || availabilityError) {
+      setErrorMsg(availabilityError || unavailableReason || 'Reservations are temporarily closed.');
+      return;
+    }
     if (!room) return;
     const guestErrors = {
-      guestName: validateField('guestName', form.guestName),
+      firstName: validateField('firstName', form.firstName),
+      lastName: validateField('lastName', form.lastName),
       phone: validateField('phone', form.phone),
     };
     setFieldErrors(guestErrors);
     if (Object.values(guestErrors).some(Boolean)) {
       document.getElementById(Object.keys(guestErrors).find(key => guestErrors[key]))?.focus();
+      return;
+    }
+    if (maxGuests !== null && Number(form.adults) + Number(form.children) > maxGuests) {
+      setErrorMsg(`This room allows up to ${maxGuests} guests.`);
       return;
     }
     if (!datesValid || nights <= 0) return alert('Please choose valid stay dates from the availability calendar first.');
@@ -266,7 +388,9 @@ export default function BookRoom() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId: room.id,
-          guestName: form.guestName,
+          firstName: form.firstName.trim(),
+          lastName: form.lastName.trim(),
+          guestName,
           email: form.email,
           phone: form.phone,
           address: form.address,
@@ -303,11 +427,39 @@ export default function BookRoom() {
       const ref8 = reservationId.slice(0, 8).toUpperCase();
       setBookingRef(ref8);
 
+      const profile = {
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        guestName,
+        phone: form.phone,
+        email: form.email.trim(),
+        address: form.address.trim(),
+      };
+      setSavedProfile(profile);
+      if (!writeLocalValue(GUEST_PROFILE_KEY, profile)) {
+        setErrorMsg('Reservation submitted, but the guest profile could not be saved in this browser.');
+      }
+
+      const historyEntry = {
+        bookingId: reservationId,
+        roomName: `Room ${room.roomNumber} (${room.type})`,
+        checkIn: form.checkIn,
+        checkOut: form.checkOut,
+        totalAmount: Number(data.totalAmount ?? bookingTotal),
+        status: 'Pending',
+        createdAt: new Date().toISOString(),
+      };
+      const updatedHistory = [historyEntry, ...bookingHistory.filter(item => item.bookingId !== reservationId)];
+      setBookingHistory(updatedHistory);
+      if (!writeLocalValue(BOOKING_HISTORY_KEY, updatedHistory)) {
+        setErrorMsg('Reservation submitted, but the booking history could not be saved in this browser.');
+      }
+
       // PayMongo hosts card and e-wallet checkout; card data never enters this app.
       const { checkoutUrl } = await createPayMongoCheckout({
         reservationId,
-        guestName: form.guestName,
-        guestEmail: form.email,
+        guestName: profile.guestName,
+        guestEmail: profile.email,
         description: `Room ${room.roomNumber} (${room.type}) — ${nights} ${stayUnit}${nights !== 1 ? 's' : ''}`,
         amount: onlinePaymentAmount,
         paymentType: 'booking',
@@ -339,31 +491,24 @@ export default function BookRoom() {
     setSuccess(true);
   };
 
-  if (loading) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Poppins', sans-serif", color: '#9ca3af', padding: '0 20px' }}>
-      Loading room details...
+  if (loading && activeTab === 'book') return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px', fontFamily: "'Poppins', sans-serif", color: '#9ca3af', padding: '0 20px' }}>
+      <span>Loading room details...</span>
+      <button type="button" onClick={() => setActiveTab('history')} style={{ border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}>View My Bookings</button>
     </div>
   );
 
-  if (!room) return (
+  if (!room && activeTab === 'book') return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Poppins', sans-serif", padding: '0 20px' }}>
       <div style={{ textAlign: 'center' }}>
         <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'center' }}><IconWarning /></div>
         <div style={{ fontWeight: '600', color: '#111' }}>Room not found</div>
+        {roomLoadError && <p role="alert" style={{ color: '#6b7280', fontSize: '12px', maxWidth: '320px' }}>{roomLoadError}</p>}
+        <button type="button" onClick={() => setActiveTab('history')} style={{ marginTop: '8px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}>View My Bookings</button>
         <button onClick={() => window.location.href = '/rooms'}
           style={{ marginTop: '16px', background: ACCENT, color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 24px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
           Back to Rooms
         </button>
-      </div>
-    </div>
-  );
-
-  if (!datesValid) return (
-    <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'grid', placeItems: 'center', padding: '24px', fontFamily: "'Poppins', sans-serif" }}>
-      <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', padding: '32px', textAlign: 'center', maxWidth: '440px' }}>
-        <h1 style={{ color: '#111', fontSize: '20px', margin: '0 0 10px' }}>Choose stay dates first</h1>
-        <p style={{ color: '#6b7280', fontSize: '13px', lineHeight: 1.6 }}>Select available check-in and check-out dates before continuing to this room.</p>
-        <button onClick={() => { window.location.href = '/rooms'; }} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
       </div>
     </div>
   );
@@ -376,7 +521,7 @@ export default function BookRoom() {
         </div>
         <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#111', marginBottom: '10px' }}>Booking Confirmed!</h2>
         <p style={{ color: '#6b7280', fontSize: '13px', marginBottom: '24px' }}>
-          Thank you, <strong>{form.guestName}</strong>! Your reservation has been submitted successfully.
+          Thank you, <strong>{guestName}</strong>! Your reservation has been submitted successfully.
         </p>
         <p role="status" style={{ color: '#355a42', background: LIGHT, borderRadius: '8px', padding: '12px', fontSize: '12px', lineHeight: 1.6, marginBottom: '18px' }}>{RECEIPT_NOTICE}</p>
         <div style={{ background: LIGHT, borderRadius: '12px', padding: '20px', marginBottom: '24px', textAlign: 'left' }}>
@@ -412,13 +557,70 @@ export default function BookRoom() {
           style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '12px', padding: '14px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
           Browse More Rooms
         </button>
+        <button onClick={() => { setSuccess(false); setActiveTab('history'); }}
+          style={{ width: '100%', marginTop: '10px', background: '#fff', color: DARK, border: `1px solid ${DARK}`, borderRadius: '12px', padding: '14px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+          View My Bookings
+        </button>
       </div>
     </div>
   );
 
   return (
     <div style={{ fontFamily: "'Poppins', sans-serif", background: '#f9fafb', minHeight: '100vh', padding: '0 20px' }}>
-      <div style={{ maxWidth: '720px', width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: '24px', margin: '40px auto', padding: 0 }}>
+      <div style={{ maxWidth: '1180px', width: '100%', boxSizing: 'border-box', margin: '40px auto', padding: 0 }}>
+        <div role="tablist" aria-label="Booking and reservation history" style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e5e7eb', marginBottom: '24px' }}>
+          {[
+            { id: 'book', label: 'Book a Room' },
+            { id: 'history', label: `My Bookings${bookingHistory.length ? ` (${bookingHistory.length})` : ''}` },
+          ].map(tab => (
+            <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}
+              style={{ border: 0, borderBottom: activeTab === tab.id ? `3px solid ${ACCENT}` : '3px solid transparent', background: 'transparent', color: activeTab === tab.id ? DARK : '#6b7280', padding: '12px 16px', fontFamily: "'Poppins', sans-serif", fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {activeTab === 'history' ? (
+          <section style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', padding: '24px' }}>
+            <h1 style={{ color: '#111', fontSize: '22px', margin: '0 0 6px' }}>My Bookings</h1>
+            <p style={{ color: '#6b7280', fontSize: '12px', lineHeight: 1.7, margin: '0 0 20px' }}>This list is stored in this browser only. Cancellation/refund requests are tracked here and must be confirmed with the resort.</p>
+            {errorMsg && <div role="alert" style={{ marginBottom: '16px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px', color: '#b91c1c', fontSize: '12px' }}>{errorMsg}</div>}
+            {bookingHistory.length === 0 ? (
+              <div style={{ padding: '30px 16px', textAlign: 'center', color: '#6b7280', fontSize: '13px' }}>No bookings are saved in this browser yet.</div>
+            ) : (
+              <div style={{ display: 'grid', gap: '12px' }}>
+                {bookingHistory.map(booking => (
+                  <article key={booking.bookingId} style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '18px', display: 'grid', gap: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ color: '#9ca3af', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '.06em' }}>Booking ID</div>
+                        <strong style={{ display: 'block', color: DARK, fontSize: '13px', marginTop: '3px' }}>#{String(booking.bookingId).slice(0, 8).toUpperCase()}</strong>
+                      </div>
+                      <span style={{ borderRadius: '999px', padding: '5px 10px', background: booking.status === 'Pending Refund' ? '#fff7ed' : booking.status === 'Refunded' ? '#f3f4f6' : LIGHT, color: booking.status === 'Pending Refund' ? '#9a3412' : DARK, fontSize: '10px', fontWeight: 700 }}>{booking.status}</span>
+                    </div>
+                    <div className="booking-history-details">
+                      <div><span>Room</span><strong>{booking.roomName}</strong></div>
+                      <div><span>Check-in</span><strong>{booking.checkIn}</strong></div>
+                      <div><span>Check-out</span><strong>{booking.checkOut}</strong></div>
+                      <div><span>Total</span><strong>₱{Number(booking.totalAmount || 0).toLocaleString()}</strong></div>
+                    </div>
+                    {['Pending', 'Confirmed'].includes(booking.status) && (
+                      <button type="button" onClick={() => requestRefund(booking.bookingId)} style={{ justifySelf: 'start', border: '1px solid #b91c1c', borderRadius: '8px', background: '#fff', color: '#b91c1c', padding: '9px 12px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                        Request Refund / Cancel
+                      </button>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : !datesValid ? (
+          <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', padding: '32px', textAlign: 'center', maxWidth: '560px', margin: '0 auto' }}>
+            <h1 style={{ color: '#111', fontSize: '20px', margin: '0 0 10px' }}>Choose stay dates first</h1>
+            <p style={{ color: '#6b7280', fontSize: '13px', lineHeight: 1.6 }}>Select valid available check-in and check-out dates before continuing to this room. You can still view your saved bookings from the tab above.</p>
+            <button onClick={() => navigate('/rooms')} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
+          </div>
+        ) : (
+        <div className="booking-layout">
         {/* Booking Form */}
         <div>
           <button type="button" onClick={() => navigate('/rooms')} style={{ padding: 0, border: 0, background: 'transparent', color: ACCENT, fontSize: '12px', cursor: 'pointer', marginBottom: '14px' }}>← Back to rooms</button>
@@ -434,7 +636,8 @@ export default function BookRoom() {
               </div>
               <div className="responsive-grid-2" style={{ gap: '14px' }}>
                 {[
-                  { label: 'Full Name *', key: 'guestName', placeholder: 'Juan dela Cruz', type: 'text', required: true },
+                  { label: 'First Name *', key: 'firstName', placeholder: 'Juan', type: 'text', required: true },
+                  { label: 'Last Name *', key: 'lastName', placeholder: 'dela Cruz', type: 'text', required: true },
                   { label: 'Phone Number *', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: true },
                   { label: 'Email Address *', key: 'email', placeholder: 'juan@email.com', type: 'email', required: true },
                   { label: 'Address', key: 'address', placeholder: 'City, Province', type: 'text', required: false },
@@ -442,16 +645,29 @@ export default function BookRoom() {
                   <div key={f.key}>
                     <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</label>
                     <input id={f.key} name={f.key} required={f.required} type={f.type} value={form[f.key]}
-                      maxLength={f.key === 'guestName' ? 50 : f.key === 'phone' ? 11 : undefined}
+                      maxLength={['firstName', 'lastName'].includes(f.key) ? 35 : f.key === 'phone' ? 11 : undefined}
                       inputMode={f.key === 'phone' ? 'numeric' : undefined}
-                      onChange={['guestName', 'phone'].includes(f.key) ? handleGuestFieldChange : e => setForm(previous => ({ ...previous, [f.key]: e.target.value }))}
-                      onBlur={['guestName', 'phone'].includes(f.key) ? handleGuestFieldBlur : undefined}
+                      autoComplete={f.key === 'firstName' ? 'given-name' : f.key === 'lastName' ? 'family-name' : f.key === 'phone' ? 'tel' : f.key === 'email' ? 'email' : f.key === 'address' ? 'street-address' : undefined}
+                      pattern={f.key === 'phone' ? '09[0-9]{9}' : undefined}
+                      onChange={['firstName', 'lastName', 'phone'].includes(f.key) ? handleGuestFieldChange : e => setForm(previous => ({ ...previous, [f.key]: e.target.value }))}
+                      onBlur={['firstName', 'lastName', 'phone'].includes(f.key) ? handleGuestFieldBlur : undefined}
                       placeholder={f.placeholder}
                       style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
-                    {fieldErrors[f.key] && <div role="alert" style={{ color: '#b91c1c', fontSize: '11px', marginTop: '5px' }}>{fieldErrors[f.key]}</div>}
+                    {['firstName', 'lastName'].includes(f.key) && (
+                      <div role={fieldErrors[f.key] ? 'alert' : undefined} style={{ color: fieldErrors[f.key] ? '#b91c1c' : '#9ca3af', fontSize: '10px', marginTop: '5px' }}>
+                        {fieldErrors[f.key] || 'Use 2-35 letters, spaces, hyphens, or apostrophes.'}
+                      </div>
+                    )}
+                    {f.key !== 'firstName' && f.key !== 'lastName' && fieldErrors[f.key] && <div role="alert" style={{ color: '#b91c1c', fontSize: '11px', marginTop: '5px' }}>{fieldErrors[f.key]}</div>}
                   </div>
                 ))}
               </div>
+              {savedProfile && (
+                <div style={{ marginTop: '16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', background: LIGHT, color: '#355a42', borderRadius: '999px', padding: '9px 13px', fontSize: '11px' }}>
+                  <span>Welcome back, {savedProfile.guestName || 'guest'}!</span>
+                  <button type="button" onClick={clearSavedProfile} style={{ border: 0, background: 'transparent', padding: 0, color: DARK, font: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}>Not you? Clear / switch</button>
+                </div>
+              )}
 
               {/* Honeypot field — invisible to real guests (off-screen, no
                   tab focus). Basic bots that auto-fill every input on a
@@ -479,9 +695,10 @@ export default function BookRoom() {
                 Stay Details
               </div>
               <div className="responsive-grid-2" style={{ gap: '14px' }}>
-                <div style={{ gridColumn: '1 / -1', background: LIGHT, padding: '14px', borderRadius: '8px', color: '#355a42', fontSize: '13px' }}>
+                <div style={{ gridColumn: '1 / -1', background: resortAvailable ? LIGHT : '#fef2f2', padding: '14px', borderRadius: '8px', color: resortAvailable ? '#355a42' : '#991b1b', fontSize: '13px' }}>
                   <strong>Check-in:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> <strong>Check-out:</strong> {form.checkOut}
-                  <button type="button" onClick={() => { window.location.href = '/rooms'; }} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Edit dates</button>
+                  {resortAvailable && <button type="button" onClick={() => { window.location.href = '/rooms'; }} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Edit dates</button>}
+                  {!resortAvailable && <div style={{ marginTop: 5 }}>{availabilityError || unavailableReason || 'Reservations are temporarily closed.'}</div>}
                 </div>
                 <div>
                   <label htmlFor="booking-type" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Booking Type</label>
@@ -514,20 +731,31 @@ export default function BookRoom() {
                     </select>
                   </div>
                 )}
-                <div>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Adults</label>
-                  <select value={form.adults} onChange={e => setForm(previous => ({ ...previous, adults: Number(e.target.value) }))}
-                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                    {Array.from({ length: 25 }, (_, index) => index + 1).map(n => <option key={n} value={n}>{n} Adult{n > 1 ? 's' : ''}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Children (under 10)</label>
-                  <select value={form.children} onChange={e => setForm(previous => ({ ...previous, children: Number(e.target.value) }))}
-                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                    {Array.from({ length: 26 }, (_, n) => <option key={n} value={n}>{n} {n === 1 ? 'Child' : 'Children'}</option>)}
-                  </select>
-                </div>
+                {[
+                  { key: 'adults', label: 'Adults', min: 1, rate: 800 },
+                  { key: 'children', label: 'Children (under 10)', min: 0, rate: 400 },
+                ].map(guestType => {
+                  const otherCount = Number(form[guestType.key === 'adults' ? 'children' : 'adults']);
+                  const maximum = maxGuests === null ? undefined : Math.max(guestType.min, maxGuests - otherCount);
+                  const count = Number(form[guestType.key]);
+                  return (
+                    <div key={guestType.key}>
+                      <label htmlFor={`${guestType.key}-count`} style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{guestType.label}</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button type="button" aria-label={`Remove one ${guestType.label.toLowerCase()}`} disabled={count <= guestType.min} onClick={() => changeGuestCount(guestType.key, count - 1)}
+                          style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: count <= guestType.min ? 'not-allowed' : 'pointer' }}>−</button>
+                        <input id={`${guestType.key}-count`} type="number" min={guestType.min} max={maximum} value={count} onChange={event => changeGuestCount(guestType.key, event.target.value)}
+                          style={{ minWidth: 0, flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 12px', fontSize: '13px', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                        <button type="button" aria-label={`Add one ${guestType.label.toLowerCase()}`} disabled={maximum !== undefined && count >= maximum} onClick={() => changeGuestCount(guestType.key, count + 1)}
+                          style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: maximum !== undefined && count >= maximum ? 'not-allowed' : 'pointer' }}>+</button>
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: '10px', lineHeight: 1.6, marginTop: '6px' }}>
+                        Base capacity: {baseCapacity} guests · Extra {guestType.key === 'adults' ? 'adult' : 'child'}: ₱{guestType.rate.toLocaleString()} / person / night
+                        {maxGuests !== null && <span> · Maximum occupancy: {maxGuests}</span>}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
               {form.checkIn && form.checkOut && nights > 0 && (
                 <div style={{ marginTop: '14px' }}>
@@ -679,7 +907,7 @@ export default function BookRoom() {
                         </div>
                       </div>
                       <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Cardholder Name</label>
-                      <input disabled placeholder={form.guestName || 'Juan dela Cruz'}
+                      <input disabled placeholder={guestName || 'Juan dela Cruz'}
                         style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '10px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", background: '#f9fafb', boxSizing: 'border-box' }} />
                       <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '8px' }}>
                         Fields are disabled — real card entry happens on PayMongo's hosted page, never on your own site.
@@ -737,16 +965,16 @@ export default function BookRoom() {
                 {errorMsg}
               </div>
             )}
-            <button type="submit" disabled={submitting || !termsAccepted}
-              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted ? 0.7 : 1 }}>
-              {submitting ? 'Redirecting to payment...' : 'Continue to Payment →'}
+            <button type="submit" disabled={submitting || !termsAccepted || !resortAvailable || availabilityLoading || Boolean(availabilityError)}
+              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError ? 0.7 : 1 }}>
+              {availabilityLoading ? 'Checking resort status…' : availabilityError ? 'Booking status unavailable' : !resortAvailable ? 'Reservations temporarily closed' : submitting ? 'Redirecting to payment...' : !termsAccepted ? 'Accept terms to continue' : 'Continue to Payment →'}
             </button>
           </form>
         </div>
 
         {/* Room Summary */}
-        <div>
-          <div className="sticky-summary" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', position: 'sticky', top: '20px' }}>
+        <aside>
+          <div className="sticky-summary" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', position: 'sticky', top: '24px' }}>
             <div style={{ height: '180px', background: `linear-gradient(135deg, ${DARK}, #2d5a2d)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <img
                 src={resolveRoomImage(room) || FALLBACK_ROOM_IMAGES[0]}
@@ -792,20 +1020,28 @@ export default function BookRoom() {
                   <span>Base · ₱{pricing?.baseRate.toLocaleString() || 0} × {nights} {stayUnit}{nights !== 1 ? 's' : ''}</span>
                   <span>₱{((pricing?.baseRate || 0) * nights).toLocaleString()}</span>
                 </div>
-                {pricing?.extraGuests > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
-                  <span>{pricing.extraGuests} extra guest{pricing.extraGuests !== 1 ? 's' : ''}</span>
-                  <span>₱{pricing.extraGuestCharge.toLocaleString()}</span>
+                {pricing?.extraAdults > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                  <span>{pricing.extraAdults} extra adult{pricing.extraAdults !== 1 ? 's' : ''} × ₱{pricing.extraAdultRate.toLocaleString()} × {nights} {stayUnit}{nights !== 1 ? 's' : ''}</span>
+                  <span>₱{(pricing.extraAdults * pricing.extraAdultRate * nights).toLocaleString()}</span>
+                </div>}
+                {pricing?.extraChildren > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                  <span>{pricing.extraChildren} extra child{pricing.extraChildren !== 1 ? 'ren' : ''} × ₱{pricing.extraChildRate.toLocaleString()} × {nights} {stayUnit}{nights !== 1 ? 's' : ''}</span>
+                  <span>₱{(pricing.extraChildren * pricing.extraChildRate * nights).toLocaleString()}</span>
                 </div>}
                 {pricing?.cottageFee > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
                   <span>{COTTAGE_OPTIONS.find(option => option.id === pricing.cottageId)?.label || 'Cottage'}</span>
                   <span>₱{pricing.cottageFee.toLocaleString()}</span>
                 </div>}
                 {activePromo && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#15803d', marginBottom: '8px' }}><span>Discount · {activePromo.code}</span><span>−₱{discountAmount.toLocaleString()}</span></div>}
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                  <span>Subtotal</span><span>₱{totalAmount.toLocaleString()}</span>
+                </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: '700', color: '#111', borderTop: '1px solid #f3f4f6', paddingTop: '14px' }}>
                   <span>Total</span>
                   <span style={{ color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today · {paymentChoice === 'full' ? 'full payment' : '25% deposit'}</span><span>₱{onlinePaymentAmount.toLocaleString()}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today (25% deposit)</span><span>₱{depositAmount.toLocaleString()}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '7px' }}><span>Balance due on arrival</span><span>₱{balanceAmount.toLocaleString()}</span></div>
               </div>
 
               {nights > 0 && (
@@ -819,8 +1055,20 @@ export default function BookRoom() {
               </div>
             </div>
           </div>
+        </aside>
         </div>
+        )}
       </div>
+      <style>{`
+        .booking-layout{display:grid;grid-template-columns:minmax(0,8fr) minmax(300px,5fr);gap:24px;align-items:start}
+        .booking-layout>div{min-width:0}
+        .booking-history-details{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+        .booking-history-details>div{display:grid;gap:4px}
+        .booking-history-details span{color:#9ca3af;font-size:10px}
+        .booking-history-details strong{color:#374151;font-size:12px;overflow-wrap:anywhere}
+        @media(max-width:900px){.booking-layout{grid-template-columns:1fr}.sticky-summary{position:static!important}}
+        @media(max-width:600px){.booking-history-details{grid-template-columns:repeat(2,minmax(0,1fr))}}
+      `}</style>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import OccupancyBadge from '../components/OccupancyBadge';
+import { useResortAvailability } from '../components/ResortAvailabilityContext';
 
 /* ─────────────────────────────────────────────
    BRAND PALETTE — pulled from the Lawiswis Kawayan
@@ -231,12 +232,42 @@ const builtFor = [
    MAIN HOME COMPONENT
 ───────────────────────────────────────────── */
 export default function Home() {
+  const { available: resortAvailable, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
+  const canBook = resortAvailable && !availabilityLoading && !availabilityError;
   const [rooms, setRooms] = useState([]);
   const [newsArticles, setNewsArticles] = useState([]);
   const [newsError, setNewsError] = useState('');
   const [scrollY, setScrollY] = useState(0);
   const [heroIn, setHeroIn] = useState(false);
+  const [newsletterEmail, setNewsletterEmail] = useState('');
+  const [newsletterStatus, setNewsletterStatus] = useState('');
+  const [newsletterError, setNewsletterError] = useState('');
+  const [newsletterSubmitting, setNewsletterSubmitting] = useState(false);
   const reduceMotionRef = useRef(false);
+
+  const subscribeToNewsletter = async event => {
+    event.preventDefault();
+    setNewsletterStatus('');
+    setNewsletterError('');
+    setNewsletterSubmitting(true);
+    try {
+      const response = await fetch('/api/newsletter-subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: newsletterEmail.trim() }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not subscribe. Please try again.');
+      setNewsletterStatus(data.status === 'already-subscribed'
+        ? 'This email is already subscribed to resort updates.'
+        : 'Thank you for subscribing. Resort news will arrive in your inbox.');
+      setNewsletterEmail('');
+    } catch (error) {
+      setNewsletterError(error.message || 'Could not subscribe. Please try again.');
+    } finally {
+      setNewsletterSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     reduceMotionRef.current = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -329,11 +360,11 @@ export default function Home() {
               opacity: heroIn ? 1 : 0, transform: heroIn ? 'translateY(0)' : 'translateY(18px)',
               transition: 'opacity 0.9s cubic-bezier(0.16,1,0.3,1) 340ms, transform 0.9s cubic-bezier(0.16,1,0.3,1) 340ms',
             }}>
-              <button onClick={() => window.location.href = '/rooms'}
-                style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '15px 32px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: 'pointer', fontFamily: SANS, display: 'flex', alignItems: 'center', gap: '10px', transition: 'transform 0.35s cubic-bezier(0.16,1,0.3,1)' }}
+              <button disabled={!canBook} onClick={() => window.location.href = '/rooms'}
+                style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '15px 32px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS, display: 'flex', alignItems: 'center', gap: '10px', transition: 'transform 0.35s cubic-bezier(0.16,1,0.3,1)' }}
                 onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
                 onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
-                BOOK YOUR STAY <span>→</span>
+                {canBook ? <>BOOK YOUR STAY <span>→</span></> : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}
               </button>
               <button onClick={() => window.location.href = '/about-us'}
                 style={{ background: 'transparent', color: '#fff', border: '1.5px solid rgba(255,255,255,0.5)', borderRadius: '3px', padding: '15px 30px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: 'pointer', fontFamily: SANS }}>
@@ -507,9 +538,9 @@ export default function Home() {
                       <span style={{ fontSize: '21px', fontWeight: '600', color: FOREST, fontFamily: SERIF }}>₱{Number(room.price).toLocaleString()}</span>
                       <span style={{ fontSize: '11px', color: '#9b9788', fontFamily: SANS }}> /night</span>
                     </div>
-                    <button onClick={() => window.location.href = `/book/${room.id}`}
-                      style={{ background: FOREST, color: '#fff', border: 'none', borderRadius: '3px', padding: '10px 20px', fontSize: '11.5px', fontWeight: '600', letterSpacing: '0.03em', cursor: 'pointer', fontFamily: SANS }}>
-                      BOOK NOW
+                    <button disabled={!canBook} onClick={() => window.location.href = `/book/${room.id}`}
+                      style={{ background: FOREST, color: '#fff', border: 'none', borderRadius: '3px', padding: '10px 20px', fontSize: '11.5px', fontWeight: '600', letterSpacing: '0.03em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS }}>
+                      {canBook ? 'BOOK NOW' : availabilityLoading ? 'CHECKING' : availabilityError ? 'UNAVAILABLE' : 'CLOSED'}
                     </button>
                   </div>
                 </div>
@@ -530,9 +561,9 @@ export default function Home() {
             <div style={{ fontSize: '11px', color: '#e7dfc4', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '14px', fontFamily: SANS }}>We Can't Wait to Serve You</div>
             <h2 style={{ fontSize: '32px', fontWeight: '500', color: '#fff', fontFamily: SERIF, margin: 0 }}>Ready for Your Bulacan Getaway?</h2>
           </Reveal>
-          <button onClick={() => window.location.href = '/rooms'}
-            style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '16px 34px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: 'pointer', fontFamily: SANS, whiteSpace: 'nowrap' }}>
-            BOOK YOUR STAY →
+          <button disabled={!canBook} onClick={() => window.location.href = '/rooms'}
+            style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '16px 34px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS, whiteSpace: 'nowrap' }}>
+            {canBook ? 'BOOK YOUR STAY →' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}
           </button>
         </div>
       </div>
@@ -581,15 +612,19 @@ export default function Home() {
             <div style={{ fontSize: '11px', color: MOSS, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '12px', fontFamily: SANS }}>Newsletter</div>
             <h2 style={{ fontSize: '28px', fontWeight: '500', color: INK, marginBottom: '12px', fontFamily: SERIF }}>Stay Updated with Our Latest News</h2>
             <p style={{ fontSize: '13px', color: '#6b6a5c', marginBottom: '26px', fontFamily: SANS }}>Resort updates, promos, and stories delivered straight to your inbox.</p>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', maxWidth: '480px', margin: '0 auto' }}>
-              <input type="email" placeholder="Enter your email address"
+            <form onSubmit={subscribeToNewsletter} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', maxWidth: '480px', margin: '0 auto' }}>
+              <label htmlFor="newsletter-email" style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Email address</label>
+              <input id="newsletter-email" name="email" type="email" required maxLength={254} placeholder="Enter your email address" value={newsletterEmail}
+                onChange={event => setNewsletterEmail(event.target.value)}
                 style={{ flex: '1 1 240px', minWidth: '180px', border: `1px solid ${LINE}`, borderRadius: '3px', padding: '13px 16px', fontSize: '13px', outline: 'none', fontFamily: SANS, background: PAPER, transition: 'border-color 0.3s' }}
                 onFocus={e => e.currentTarget.style.borderColor = FOREST}
                 onBlur={e => e.currentTarget.style.borderColor = LINE} />
-              <button style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '13px 26px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.04em', cursor: 'pointer', fontFamily: SANS, whiteSpace: 'nowrap' }}>
-                SUBSCRIBE
+              <button type="submit" disabled={newsletterSubmitting} style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '13px 26px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.04em', cursor: newsletterSubmitting ? 'wait' : 'pointer', opacity: newsletterSubmitting ? 0.7 : 1, fontFamily: SANS, whiteSpace: 'nowrap' }}>
+                {newsletterSubmitting ? 'SUBSCRIBING…' : 'SUBSCRIBE'}
               </button>
-            </div>
+            </form>
+            {newsletterStatus && <p role="status" style={{ margin: '14px auto 0', maxWidth: 480, color: FOREST, font: `12px/1.6 ${SANS}` }}>{newsletterStatus}</p>}
+            {newsletterError && <p role="alert" style={{ margin: '14px auto 0', maxWidth: 480, color: '#b91c1c', font: `12px/1.6 ${SANS}` }}>{newsletterError}</p>}
           </div>
         </Reveal>
       </div>

@@ -5,6 +5,7 @@ import { collection, addDoc, getDocs, serverTimestamp, updateDoc, doc } from 'fi
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
+import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
 
 // Same real room photos used in RoomManagement — keyed by room name/number
 // (lowercased) so the walk-in flow shows the same picture as the rest of
@@ -112,11 +113,13 @@ export default function WalkIn() {
   const [step,             setStep]             = useState(1);
   const [success,          setSuccess]          = useState('');
   const [form, setForm] = useState({
-    guestName: '', email: '', phone: '', address: '',
+    firstName: '', lastName: '', email: '', phone: '', address: '',
     roomId: '', checkIn: '', checkOut: '',
     adults: 1, children: 0,
     paymentMethod: 'cash', paymentStatus: 'paid', notes: '',
   });
+  const [nameErrors, setNameErrors] = useState({});
+  const guestName = joinGuestName(form.firstName, form.lastName);
   const [totalAmount, setTotalAmount] = useState(0);
   const [nights,      setNights]      = useState(0);
 
@@ -159,8 +162,17 @@ export default function WalkIn() {
     e.preventDefault();
     if (!selectedRoom)    return alert('Please select a room.');
     if (totalAmount <= 0) return alert('Check-out must be after check-in.');
+    const errors = {
+      firstName: NAME_PATTERN.test(form.firstName.trim()) ? '' : 'Enter 2-35 valid letters.',
+      lastName: NAME_PATTERN.test(form.lastName.trim()) ? '' : 'Enter 2-35 valid letters.',
+    };
+    setNameErrors(errors);
+    if (Object.values(errors).some(Boolean)) return;
     const reservationRef = await addDoc(collection(db, 'reservations'), {
       ...form,
+      firstName: form.firstName.trim(),
+      lastName: form.lastName.trim(),
+      guestName,
       roomNumber: selectedRoom.roomNumber,
       roomType:   selectedRoom.type,
       category:   selectedCategory?.category,
@@ -175,7 +187,7 @@ export default function WalkIn() {
       try {
         const paymentRef = await addDoc(collection(db, 'payments'), {
           reservationId: reservationRef.id,
-          guestName: form.guestName,
+          guestName,
           roomNumber: selectedRoom.roomNumber,
           amount: totalAmount,
           method: form.paymentMethod,
@@ -194,8 +206,9 @@ export default function WalkIn() {
         receiptMessage = ` Payment receipt failed: ${receiptError.message || 'email delivery error'}`;
       }
     }
-    setSuccess(`Reservation created for ${form.guestName}. Room ${selectedRoom.roomNumber} is now occupied.${receiptMessage}`);
-    setForm({ guestName:'', email:'', phone:'', address:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
+    setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is now occupied.${receiptMessage}`);
+    setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
+    setNameErrors({});
     setSelectedRoom(null); setSelectedCategory(null);
     setStep(1); setTotalAmount(0); setNights(0);
     const snap = await getDocs(collection(db, 'rooms'));
@@ -408,7 +421,8 @@ export default function WalkIn() {
                       <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT, marginBottom: '14px' }}>👤 Guest Details</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                         {[
-                          { lbl: 'Full Name *',    key: 'guestName', ph: 'Juan dela Cruz', req: true },
+                          { lbl: 'First Name *',   key: 'firstName', ph: 'Juan', req: true },
+                          { lbl: 'Last Name *',    key: 'lastName',  ph: 'dela Cruz', req: true },
                           { lbl: 'Phone *',        key: 'phone',     ph: '09XX XXX XXXX',  req: true },
                           { lbl: 'Email',          key: 'email',     ph: 'juan@email.com', type: 'email' },
                           { lbl: 'Address',        key: 'address',   ph: 'City, Province' },
@@ -416,8 +430,28 @@ export default function WalkIn() {
                           <div key={f.key}>
                             <label style={label}>{f.lbl}</label>
                             <input required={f.req} type={f.type || 'text'} value={form[f.key]}
-                              onChange={e => setForm({ ...form, [f.key]: e.target.value })}
+                              maxLength={['firstName', 'lastName'].includes(f.key) ? 35 : undefined}
+                              onChange={e => {
+                                if (['firstName', 'lastName'].includes(f.key)) {
+                                  const raw = e.target.value;
+                                  const clean = raw.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'-]/g, '').slice(0, 35);
+                                  setForm(previous => ({ ...previous, [f.key]: clean }));
+                                  setNameErrors(previous => ({
+                                    ...previous,
+                                    [f.key]: !NAME_ALLOWED_CHARACTERS.test(raw)
+                                      ? 'Numbers and special symbols are not allowed'
+                                      : '',
+                                  }));
+                                } else {
+                                  setForm(previous => ({ ...previous, [f.key]: e.target.value }));
+                                }
+                              }}
                               placeholder={f.ph} style={inp} />
+                            {['firstName', 'lastName'].includes(f.key) && (
+                              <div role={nameErrors[f.key] ? 'alert' : undefined} style={{ color: nameErrors[f.key] ? '#b91c1c' : MUTED, fontSize: '10px', marginTop: 4 }}>
+                                {nameErrors[f.key] || 'Use 2-35 letters, spaces, hyphens, or apostrophes.'}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

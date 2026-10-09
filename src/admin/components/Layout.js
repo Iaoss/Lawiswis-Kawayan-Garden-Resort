@@ -6,6 +6,7 @@ import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
 import logo from './logo-mark.png';
 import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
+import NotificationButton from '../../components/ui/notification-button';
 
 // ── Reusable fixed-size icon button (Settings / Chat) ────────
 function ExpandableIconButton({ icon, label, dark, badge = 0, onClick }) {
@@ -67,6 +68,7 @@ const navItems = [
   { label: 'Reports',        path: '/admin/reports',       icon: 'ti-chart-bar' },
   { label: 'Users',          path: '/admin/users',         icon: 'ti-user-cog' },
   { label: 'Feedback & QR',  path: '/admin/feedback',      icon: 'ti-star' },
+  { label: 'Contact Inquiries', path: '/admin/contact-inquiries', icon: 'ti-inbox' },
   { label: 'News Management',path: '/admin/news',           icon: 'ti-news' },
 ];
 
@@ -74,6 +76,7 @@ const navItems = [
 const EXTRA_LABELS = {
   '/admin/settings':     'Settings',
   '/admin/messages':     'Messages',
+  '/admin/contact-inquiries': 'Contact Inquiries',
   '/admin/cancellation': 'Cancellation',
 };
 
@@ -257,10 +260,12 @@ function NotificationBell({ dark, accent, soundAlerts }) {
 
   return (
     <div style={{ position: 'relative' }}>
-      <button
+      <NotificationButton
         onClick={toggleOpen}
         aria-label="Alerts"
         title="Alerts"
+        count={unread}
+        icon={<i className="ti ti-bell" style={{ fontSize: '18px', color: TEXT, flexShrink: 0 }} />}
         style={{
           position: 'relative',
           width: '40px',
@@ -272,19 +277,16 @@ function NotificationBell({ dark, accent, soundAlerts }) {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer', overflow: 'hidden',
         }}
-      >
-        <i className="ti ti-bell" style={{ fontSize: '18px', color: TEXT, flexShrink: 0 }} />
-        {unread > 0 && (
-          <div style={{
-            position: 'absolute', top: '-5px', right: '-5px',
-            width: '18px', height: '18px', background: '#ef4444',
-            borderRadius: '50%', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', fontSize: '10px', color: '#fff', fontWeight: '700',
-          }}>
-            {unread > 9 ? '9+' : unread}
-          </div>
-        )}
-      </button>
+        badgeStyle={{
+          top: '-5px',
+          right: '-5px',
+          width: '18px',
+          height: '18px',
+          background: '#ef4444',
+          color: '#fff',
+          fontSize: '10px',
+        }}
+      />
 
       {open && (
         <>

@@ -42,6 +42,9 @@ export default function Feedback() {
   const NEGATIVE_BAR = dark ? '#f87171' : '#ef4444';
 
   const [feedbacks, setFeedbacks] = useState([]);
+  const [subscribers, setSubscribers] = useState([]);
+  const [subscriberError, setSubscriberError] = useState('');
+  const [subscriberSaving, setSubscriberSaving] = useState('');
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [copied, setCopied] = useState(false);
@@ -55,6 +58,37 @@ export default function Feedback() {
     }, () => setLoading(false));
     return unsub;
   }, []);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(collection(db, 'newsletterSubscribers'), snapshot => {
+      const items = snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
+      items.sort((a, b) => {
+        const aDate = a.joinedAt?.toMillis?.() || 0;
+        const bDate = b.joinedAt?.toMillis?.() || 0;
+        return bDate - aDate;
+      });
+      setSubscribers(items);
+      setSubscriberError('');
+    }, error => {
+      console.error('Could not load newsletter subscribers:', error);
+      setSubscriberError('Subscriber list could not be loaded. Check newsletterSubscribers Firestore permissions.');
+    });
+    return unsubscribe;
+  }, []);
+
+  const updateSubscriberStatus = async subscriber => {
+    const status = subscriber.status === 'active' ? 'unsubscribed' : 'active';
+    setSubscriberSaving(subscriber.id);
+    setSubscriberError('');
+    try {
+      await updateDoc(doc(db, 'newsletterSubscribers', subscriber.id), { status });
+    } catch (error) {
+      console.error('Could not update newsletter subscription:', error);
+      setSubscriberError('Subscription status could not be updated.');
+    } finally {
+      setSubscriberSaving('');
+    }
+  };
 
   const markRead = (id) => updateDoc(doc(db, 'feedback', id), { read: true });
 
@@ -228,6 +262,48 @@ export default function Feedback() {
             </button>
           </div>
         </div>
+
+        {/* newsletter subscriber list */}
+        <section style={{ ...S.card, marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: TEXT }}>Newsletter subscribers</div>
+              <div style={{ fontSize: 11, color: MUTED, marginTop: 3 }}>
+                {subscribers.filter(subscriber => subscriber.status === 'active').length} active · {subscribers.length} total
+              </div>
+            </div>
+          </div>
+          {subscriberError && <div role="alert" style={{ color: RED, fontSize: 12, marginBottom: 12 }}>{subscriberError}</div>}
+          {subscribers.length === 0 ? (
+            <div style={{ color: MUTED, fontSize: 12, padding: '14px 0' }}>No subscriptions have been recorded yet.</div>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {subscribers.map(subscriber => {
+                const active = subscriber.status === 'active';
+                const joinedAt = subscriber.joinedAt?.toDate?.();
+                return (
+                  <div key={subscriber.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: `1px solid ${BORDER}`, padding: '10px 0' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ color: TEXT, fontSize: 12, overflowWrap: 'anywhere' }}>{subscriber.email}</div>
+                      <div style={{ color: MUTED, fontSize: 10, marginTop: 3 }}>
+                        Joined {joinedAt ? joinedAt.toLocaleDateString() : 'date unavailable'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ color: active ? GREEN : MUTED, background: CARD2, borderRadius: 999, padding: '4px 9px', fontSize: 10, fontWeight: 600 }}>
+                        {active ? 'Active' : 'Unsubscribed'}
+                      </span>
+                      <button type="button" disabled={subscriberSaving === subscriber.id} onClick={() => updateSubscriberStatus(subscriber)}
+                        style={{ color: SUBTEXT, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 7, padding: '5px 9px', fontSize: 10, cursor: subscriberSaving === subscriber.id ? 'wait' : 'pointer' }}>
+                        {subscriberSaving === subscriber.id ? 'Saving…' : active ? 'Unsubscribe' : 'Reactivate'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
 
         {/* filters */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import PageLayout from '../components/PageLayout';
 import { useSettings, DEFAULT_SETTINGS } from '../components/SettingsContext';
+import { auth } from '../../firebase/firebase';
 // Cancellation is a tab here instead of a sidebar page.
 // Adjust the path if your file is named differently.
 import Cancellation from './CancellationPolicy';
@@ -19,6 +20,7 @@ const TABS = [
   { id: 'notifications', label: 'Notifications', icon: 'ti-bell' },
   { id: 'regional',      label: 'Regional',      icon: 'ti-world' },
   { id: 'dashboard',     label: 'Dashboard',     icon: 'ti-layout-dashboard' },
+  { id: 'availability',  label: 'Resort Status', icon: 'ti-building-store' },
   { id: 'cancellation',  label: 'Cancellation',  icon: 'ti-file-x' },
 ];
 
@@ -104,6 +106,31 @@ export default function Settings() {
   const [local, setLocal] = useState({ ...DEFAULT_SETTINGS, ...settings });
   const [saved, setSaved] = useState(false);
   const [activeTab, setActiveTab] = useState('appearance');
+  const [resortAvailable, setResortAvailable] = useState(true);
+  const [availabilityReason, setAvailabilityReason] = useState('');
+  const [availabilityLoading, setAvailabilityLoading] = useState(true);
+  const [availabilitySaving, setAvailabilitySaving] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState('');
+  const [availabilitySaved, setAvailabilitySaved] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/resort-availability')
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Could not load resort status.');
+        if (active) {
+          setResortAvailable(data.available !== false);
+          setAvailabilityReason(data.reason || '');
+        }
+      })
+      .catch(error => {
+        console.error('Unable to load resort availability:', error);
+        if (active) setAvailabilityError(error.message);
+      })
+      .finally(() => { if (active) setAvailabilityLoading(false); });
+    return () => { active = false; };
+  }, []);
 
   // Sync staged state once the per-user settings finish loading from Firestore.
   useEffect(() => {
@@ -145,6 +172,33 @@ export default function Settings() {
     if (window.confirm('Reset all settings to default?')) {
       setLocal({ ...DEFAULT_SETTINGS });
       resetAll();
+    }
+  };
+
+  const saveAvailability = async () => {
+    const user = auth.currentUser;
+    if (!user) {
+      setAvailabilityError('Please sign in again to update resort availability.');
+      return;
+    }
+    setAvailabilitySaving(true);
+    setAvailabilityError('');
+    setAvailabilitySaved(false);
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch('/api/resort-availability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ available: resortAvailable, reason: availabilityReason }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not save resort availability.');
+      setAvailabilitySaved(true);
+    } catch (error) {
+      console.error('Unable to save resort availability:', error);
+      setAvailabilityError(error.message || 'Could not save resort availability.');
+    } finally {
+      setAvailabilitySaving(false);
     }
   };
 
@@ -303,6 +357,38 @@ export default function Settings() {
             <SettingRow t={t} icon="ti-chart-bar" label="Revenue chart" desc="Show the 6-month revenue chart" last>
               <Toggle t={t} value={local.showChart} onChange={v => set('showChart', v)} />
             </SettingRow>
+          </Section>
+        )}
+
+        {activeTab === 'availability' && (
+          <Section title="Resort availability" t={t}>
+            <SettingRow
+              t={t}
+              icon="ti-building-store"
+              label={`Reservations: ${resortAvailable ? 'Open' : 'Unavailable'}`}
+              desc={resortAvailable ? 'Guests can book stays through the website.' : 'Client booking controls will be disabled while the resort is closed.'}
+              last
+            >
+              <Toggle value={resortAvailable} onChange={value => { setResortAvailable(value); setAvailabilitySaved(false); }} t={t} />
+            </SettingRow>
+            <label style={{ display: 'grid', gap: 7, padding: '14px 0', color: t.SUBTEXT, fontSize: 12 }}>
+              Closure reason or visitor message
+              <textarea
+                maxLength={300}
+                value={availabilityReason}
+                onChange={event => { setAvailabilityReason(event.target.value); setAvailabilitySaved(false); }}
+                placeholder="For example: Undergoing private renovation until October 15."
+                style={{ ...selectStyle, minHeight: 80, resize: 'vertical' }}
+              />
+              <span>{availabilityReason.length}/300</span>
+            </label>
+            {availabilityError && <div role="alert" style={{ color: '#b91c1c', fontSize: 12, padding: '8px 0' }}>{availabilityError}</div>}
+            {availabilitySaved && <div role="status" style={{ color: '#15803d', fontSize: 12, padding: '8px 0' }}>Resort availability updated.</div>}
+            {availabilityLoading && <div style={{ color: t.MUTED, fontSize: 12, paddingBottom: 12 }}>Loading current resort status…</div>}
+            <button type="button" onClick={saveAvailability} disabled={availabilitySaving || availabilityLoading}
+              style={{ margin: '4px 0 16px', padding: '9px 16px', border: 0, borderRadius: 9, background: t.ACCENT, color: t.ACCENT_TEXT, fontSize: 12, fontWeight: 700, cursor: availabilitySaving ? 'wait' : 'pointer', opacity: availabilitySaving || availabilityLoading ? 0.65 : 1 }}>
+              {availabilitySaving ? 'Saving…' : 'Save resort status'}
+            </button>
           </Section>
         )}
 

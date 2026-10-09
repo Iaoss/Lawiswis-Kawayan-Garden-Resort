@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'framer-motion';
-import { db } from '../../firebase/firebase';
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { auth, db } from '../../firebase/firebase';
+import { collection, addDoc, getDocs, onSnapshot, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 
@@ -126,6 +126,10 @@ export default function NewsManagement() {
   const [form, setForm] = useState(emptyForm);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [loadError, setLoadError] = useState('');
+  const [subscriberCount, setSubscriberCount] = useState(0);
+  const [notifySubscribers, setNotifySubscribers] = useState(false);
+  const [broadcastError, setBroadcastError] = useState('');
+  const [broadcastSent, setBroadcastSent] = useState(0);
 
   // ── Image upload state ──────────────────────────────────────
   const [imageFile, setImageFile]       = useState(null);
@@ -133,6 +137,15 @@ export default function NewsManagement() {
   const [removeImage, setRemoveImage]   = useState(false);
   const [uploading, setUploading]       = useState(false);
   const [uploadError, setUploadError]   = useState('');
+
+  useEffect(() => onSnapshot(
+    collection(db, 'newsletterSubscribers'),
+    snapshot => setSubscriberCount(snapshot.docs.filter(item => item.data().status === 'active').length),
+    error => {
+      console.error('Could not load active newsletter subscriber count:', error);
+      setBroadcastError('Subscriber count could not be loaded. Broadcast is unavailable until access is restored.');
+    }
+  ), []);
 
   const fetchArticles = useCallback(async () => {
     try {
@@ -181,8 +194,13 @@ export default function NewsManagement() {
 
   const handleSubmit = async () => {
     if (!form.title || !form.category) return;
+    if (notifySubscribers && form.status !== 'published') {
+      setBroadcastError('Publish the article before sending it to subscribers.');
+      return;
+    }
 
     let imageUrl = form.imageUrl || '';
+    let articleId;
 
     try {
       if (imageFile) {
@@ -194,24 +212,54 @@ export default function NewsManagement() {
         imageUrl = '';
       }
 
-      const payload = { ...form, imageUrl };
-      if (editArticle) await updateDoc(doc(db, 'news', editArticle.id), payload);
-      else await addDoc(collection(db, 'news'), payload);
-
-      setForm(emptyForm);
-      resetImageState();
-      setShowForm(false); setEditArticle(null); fetchArticles();
+      const savedArticle = editArticle
+        ? { id: editArticle.id }
+        : await addDoc(collection(db, 'news'), { ...form, imageUrl });
+      articleId = savedArticle.id;
+      if (editArticle) await updateDoc(doc(db, 'news', editArticle.id), { ...form, imageUrl });
     } catch (err) {
       setUploading(false);
       console.error('Failed to save article:', err);
       setUploadError(err?.code === 'permission-denied'
         ? 'Firebase denied this change. Check the news collection rules and your admin sign-in.'
         : 'Could not save the article. Please check your connection and try again.');
+      return;
+    }
+
+    const shouldBroadcast = notifySubscribers && form.status === 'published' && subscriberCount > 0;
+    setForm(emptyForm);
+    resetImageState();
+    setShowForm(false);
+    setEditArticle(null);
+    fetchArticles();
+    setNotifySubscribers(false);
+    setUploadError('');
+    setBroadcastError('');
+    setBroadcastSent(0);
+
+    if (shouldBroadcast) {
+      try {
+        const user = auth.currentUser;
+        if (!user) throw new Error('Article published, but you need to sign in again before sending the newsletter.');
+        const token = await user.getIdToken();
+        const response = await fetch('/api/newsletter-broadcast', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ articleId }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Article published, but subscriber email delivery failed.');
+        setBroadcastSent(Number(result.sent) || 0);
+      } catch (err) {
+        console.error('Newsletter broadcast failed after publishing:', err);
+        setBroadcastError(err.message || 'Article published, but subscriber email delivery failed.');
+      }
     }
   };
 
   const handleEdit = (article) => {
     setEditArticle(article); setForm({ ...emptyForm, ...article }); setShowForm(true);
+    setNotifySubscribers(false); setBroadcastError('');
     resetImageState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -304,6 +352,16 @@ export default function NewsManagement() {
             {articles.length} article{articles.length === 1 ? '' : 's'} total · manage news, promos and announcements
           </div>
         </motion.div>
+        {broadcastSent > 0 && (
+          <div role="status" style={{ marginBottom: 14, padding: '11px 14px', borderRadius: 9, background: 'rgba(34,197,94,0.12)', color: dark ? '#86efac' : '#15803d', fontSize: 12 }}>
+            Newsletter sent to {broadcastSent} active subscriber{broadcastSent === 1 ? '' : 's'}.
+          </div>
+        )}
+        {broadcastError && (
+          <div role="alert" style={{ marginBottom: 14, padding: '11px 14px', borderRadius: 9, background: 'rgba(248,113,113,0.12)', color: '#b91c1c', fontSize: 12 }}>
+            {broadcastError}
+          </div>
+        )}
 
         {loadError && (
           <div style={{ background: dark ? 'rgba(248,113,113,0.12)' : '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: '12px 14px', marginBottom: 16, color: '#b91c1c', fontSize: 12 }}>
@@ -401,13 +459,26 @@ export default function NewsManagement() {
                     </div>
                   </div>
 
+                  <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 10 }}>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, color: SUBTEXT, fontSize: 11, lineHeight: 1.5, cursor: form.status === 'published' && subscriberCount > 0 ? 'pointer' : 'not-allowed' }}>
+                      <input
+                        type="checkbox"
+                        checked={notifySubscribers}
+                        disabled={form.status !== 'published' || subscriberCount === 0}
+                        onChange={event => { setNotifySubscribers(event.target.checked); setBroadcastError(''); setBroadcastSent(0); }}
+                        style={{ marginTop: 2, accentColor: LIME }}
+                      />
+                      <span>Send email notification to all active subscribers ({subscriberCount} subscribers). Only published articles can be sent.</span>
+                    </label>
+                    {form.status === 'published' && subscriberCount === 0 && <div style={{ color: MUTED, fontSize: 10 }}>There are no active subscribers to notify.</div>}
+                  </div>
                   <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
                     <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={uploading}
                       style={{ padding: '9px 22px', background: LIME, border: 'none', borderRadius: 8, color: DARK, fontSize: 12, fontWeight: 700, cursor: uploading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: uploading ? 0.7 : 1 }}>
                       {uploading ? 'Uploading…' : (editArticle ? 'Update Article' : 'Save Article')}
                     </motion.button>
                     <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                      onClick={() => { setShowForm(false); setEditArticle(null); setForm(emptyForm); resetImageState(); }}
+                      onClick={() => { setShowForm(false); setEditArticle(null); setForm(emptyForm); setNotifySubscribers(false); setBroadcastError(''); resetImageState(); }}
                       style={{ padding: '9px 22px', background: HOVER, border: `1px solid ${BORDER}`, borderRadius: 8, color: SUBTEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
                       Cancel
                     </motion.button>

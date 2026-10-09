@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
 import { auth, db } from '../../firebase/firebase';
 import { doc, getDoc, collection, query, orderBy, onSnapshot, where } from 'firebase/firestore';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
 import logo from './logo-mark.png';
+import NotificationButton from '../../components/ui/notification-button';
 
 function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
   const BORDER = dark ? '#383837' : '#e5e7eb';
@@ -241,9 +241,12 @@ function NotificationBell({ dark, accent, soundAlerts }) {
 
   return (
     <div style={{ position: 'relative' }}>
-      <motion.button
+      <NotificationButton
         onClick={toggleOpen}
         aria-label="Alerts"
+        title="Alerts"
+        count={unread}
+        icon={<i className="ti ti-bell" style={{ fontSize: '18px', color: TEXT, flexShrink: 0 }} />}
         style={{
           position: 'relative',
           minWidth: '76px',
@@ -255,20 +258,18 @@ function NotificationBell({ dark, accent, soundAlerts }) {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer', overflow: 'hidden',
         }}
+        badgeStyle={{
+          top: '-5px',
+          right: '-5px',
+          width: '18px',
+          height: '18px',
+          background: '#ef4444',
+          color: '#fff',
+          fontSize: '10px',
+        }}
       >
-        <i className="ti ti-bell" style={{ fontSize: '18px', color: TEXT, flexShrink: 0 }} />
         <span style={{ whiteSpace: 'nowrap', fontSize: '12px', fontWeight: 600, color: TEXT }}>Alerts</span>
-        {unread > 0 && (
-          <div style={{
-            position: 'absolute', top: '-5px', right: '-5px',
-            width: '18px', height: '18px', background: '#ef4444',
-            borderRadius: '50%', display: 'flex', alignItems: 'center',
-            justifyContent: 'center', fontSize: '10px', color: '#fff', fontWeight: '700',
-          }}>
-            {unread > 9 ? '9+' : unread}
-          </div>
-        )}
-      </motion.button>
+      </NotificationButton>
 
       {open && (
         <>

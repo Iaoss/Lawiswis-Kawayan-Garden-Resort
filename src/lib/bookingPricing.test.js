@@ -22,7 +22,7 @@ describe('booking pricing', () => {
     expect(getRoomBaseRate(room, 'overnight')).toEqual({ amount: overnight, baseCapacity: capacity });
   });
 
-  it('adds overnight extras and cottage fees to the stay total', () => {
+  it('charges adult and child overnight extras per night and adds cottage fees', () => {
     expect(calculateBookingPrice({
       room: { type: 'FamilyRoom', baseCapacity: 4, price: 4600 },
       bookingType: 'overnight',
@@ -36,9 +36,13 @@ describe('booking pricing', () => {
       baseCapacity: 4,
       totalGuests: 6,
       extraGuests: 2,
-      extraGuestCharge: 1600,
+      extraAdults: 1,
+      extraChildren: 1,
+      extraAdultRate: 800,
+      extraChildRate: 400,
+      extraGuestCharge: 2400,
       cottageFee: 500,
-      subtotalAmount: 11300,
+      subtotalAmount: 12100,
     });
   });
 
@@ -56,6 +60,24 @@ describe('booking pricing', () => {
       extraGuests: 2,
       extraGuestCharge: 750,
       subtotalAmount: 7250,
+    });
+  });
+
+  it('multiplies daytour extra-adult and extra-child charges by the number of booked days', () => {
+    expect(calculateBookingPrice({
+      room: { name: 'Couple Room', price: 3000 },
+      bookingType: 'daytour',
+      nights: 2,
+      adults: 3,
+      children: 1,
+      tourPeriod: 'day',
+    })).toMatchObject({
+      extraAdults: 1,
+      extraChildren: 1,
+      extraAdultRate: 375,
+      extraChildRate: 275,
+      extraGuestCharge: 1300,
+      subtotalAmount: 5300,
     });
   });
 

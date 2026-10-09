@@ -4,6 +4,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS, FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
+import { useResortAvailability } from '../components/ResortAvailabilityContext';
 
 /* ------------------------------------------------------------------ */
 /* Room catalog copied from lawiswiskawayanresort.com/regular-rooms    */
@@ -115,6 +116,8 @@ function decorateRoom(room, index) {
 
 export default function Rooms() {
   const location = useLocation();
+  const { available: resortAvailable, error: availabilityStatusError, loading: resortStatusLoading } = useResortAvailability();
+  const canBook = resortAvailable && !resortStatusLoading && !availabilityStatusError;
   const [rooms, setRooms] = useState([]);
   const [fullyBookedDates, setFullyBookedDates] = useState([]);
   const [availableRoomIds, setAvailableRoomIds] = useState([]);
@@ -249,6 +252,7 @@ export default function Rooms() {
   const monthLabel = calendarMonth.toLocaleDateString('en', { month: 'long', year: 'numeric' });
 
   const selectDate = dateKey => {
+    if (!canBook) return;
     if (!checkIn || checkOut) {
       setCheckIn(dateKey);
       setCheckOut('');
@@ -277,6 +281,7 @@ export default function Rooms() {
     datesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   const bookRoom = room => {
+    if (!canBook) return;
     if (!rangeIsValid) { goToDates(); return; }
     window.location.href = `/book/${room.id}?checkIn=${checkIn}&checkOut=${checkOut}`;
   };
@@ -291,13 +296,14 @@ export default function Rooms() {
     }
   };
   const bookLabel = room => {
+    if (!canBook) return resortStatusLoading ? 'Checking resort status…' : availabilityStatusError ? 'Booking status unavailable' : 'Reservations temporarily closed';
     const status = statusOf(room);
     if (status === 'unknown') return 'Select dates';
     if (status === 'available') return 'Book room';
     if (status === 'checking') return 'Checking…';
     return 'Unavailable';
   };
-  const bookDisabled = room => ['checking', 'booked', 'error'].includes(statusOf(room));
+  const bookDisabled = room => !canBook || ['checking', 'booked', 'error'].includes(statusOf(room));
 
   const bookButtonStyle = room => {
     const disabled = bookDisabled(room);
@@ -412,7 +418,7 @@ export default function Rooms() {
               const dateKey = formatDate(date);
               const soldOut = fullyBookedDates.includes(dateKey);
               const outsideWindow = dateKey < todayKey || dateKey > maxDateKey;
-              const disabled = calendarLoading || calendarError || outsideWindow || soldOut;
+              const disabled = !canBook || calendarLoading || calendarError || outsideWindow || soldOut;
               const selected = dateKey === checkIn || dateKey === checkOut;
               const inRange = checkIn && checkOut && dateKey > checkIn && dateKey < checkOut;
               return (
@@ -431,7 +437,7 @@ export default function Rooms() {
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', maxWidth: '480px', marginTop: '14px' }}>
             <span role={calendarError ? 'alert' : undefined} style={{ color: calendarError ? '#b91c1c' : '#777363', font: `11px ${SANS}` }}>
-              {calendarError ? 'Availability could not be checked. Refresh to try again.' : 'Crossed-out dates are fully booked.'}
+              {!canBook ? (resortStatusLoading ? 'Checking resort status…' : availabilityStatusError ? 'Booking status could not be checked. Refresh to try again.' : 'Reservations temporarily closed') : calendarError ? 'Availability could not be checked. Refresh to try again.' : 'Crossed-out dates are fully booked.'}
             </span>
             {(checkIn || checkOut) && <button type="button" className="rooms-link" onClick={resetDates}>Clear dates</button>}
           </div>

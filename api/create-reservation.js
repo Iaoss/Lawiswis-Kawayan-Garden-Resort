@@ -23,6 +23,7 @@
 
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendReservationPendingEmail } from '../lib/email';
+import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
 import { evaluatePromo, normalizePromoCode } from '../lib/promoPolicy';
 import {
   calculateBookingPrice,
@@ -56,6 +57,8 @@ export default async function handler(req, res) {
   try {
     const {
       roomId,
+      firstName,
+      lastName,
       guestName,
       email,
       phone,
@@ -89,20 +92,33 @@ export default async function handler(req, res) {
       });
     }
 
+    const availabilitySnap = await adminDb.doc('siteSettings/resortAvailability').get();
+    if (availabilitySnap.exists && availabilitySnap.data().available === false) {
+      const reason = String(availabilitySnap.data().reason || '').trim();
+      return res.status(409).json({
+        error: reason
+          ? `Reservations are temporarily closed. ${reason}`
+          : 'Reservations are temporarily closed. Please contact the resort for updates.',
+      });
+    }
+
     // ---- 2. Basic validation -------------------------------------------
-    if (typeof roomId !== 'string' || typeof guestName !== 'string' || typeof email !== 'string'
+    if (typeof roomId !== 'string' || typeof email !== 'string'
       || typeof phone !== 'string' || typeof checkIn !== 'string' || typeof checkOut !== 'string'
-      || !roomId || !guestName || !email.trim() || !phone || !checkIn || !checkOut || !paymentMethod) {
+      || !roomId || !email.trim() || !phone || !checkIn || !checkOut || !paymentMethod) {
       return res.status(400).json({ error: 'Please fill in all required fields.' });
     }
     if ((address !== undefined && typeof address !== 'string')
       || (notes !== undefined && typeof notes !== 'string')) {
       return res.status(400).json({ error: 'Address and special requests must be text.' });
     }
-    const normalizedGuestName = String(guestName).trim();
-    if (!/^[A-Za-z '-]{2,50}$/.test(normalizedGuestName)) {
-      return res.status(400).json({ error: 'Full Name must contain only letters and spaces (2-50 characters).' });
+    const legacyNameParts = typeof guestName === 'string' ? splitGuestName(guestName) : {};
+    const normalizedFirstName = String(firstName ?? legacyNameParts.firstName ?? '').trim();
+    const normalizedLastName = String(lastName ?? legacyNameParts.lastName ?? '').trim();
+    if (!NAME_PATTERN.test(normalizedFirstName) || !NAME_PATTERN.test(normalizedLastName)) {
+      return res.status(400).json({ error: 'Enter a valid first and last name (2-35 letters each).' });
     }
+    const normalizedGuestName = joinGuestName(normalizedFirstName, normalizedLastName);
     if (!/^09\d{9}$/.test(phone)) {
       return res.status(400).json({ error: 'Please enter a valid 11-digit mobile number.' });
     }
@@ -153,6 +169,10 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'This room could not be found.' });
     }
     const room = roomSnap.data();
+    const maxCapacity = Number(room.maxCapacity ?? room.maximumCapacity ?? room.maxGuests);
+    if (Number.isInteger(maxCapacity) && maxCapacity > 0 && adults + children > maxCapacity) {
+      return res.status(400).json({ error: `This room allows up to ${maxCapacity} guests.` });
+    }
 
     // ---- 5. Date-overlap check against existing reservations ------------
     const roomResSnap = await adminDb
@@ -195,6 +215,8 @@ export default async function handler(req, res) {
       roomNumber: room.roomNumber,
       roomType: room.type,
       guestName: normalizedGuestName,
+      firstName: normalizedFirstName,
+      lastName: normalizedLastName,
       email,
       emailLower,
       phone,

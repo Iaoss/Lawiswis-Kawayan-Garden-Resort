@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BRASS, FOREST, FOREST_DEEP, PAPER, SANS, LINE } from './clientTheme';
+import { useResortAvailability } from './ResortAvailabilityContext';
 
 const logo = 'https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png';
 
@@ -43,6 +44,8 @@ function NavDropdown({ label, items, onNavigate, active }) {
 export default function ClientChrome({ children }) {
   const { pathname: path } = useLocation();
   const navigate = useNavigate();
+  const { available: resortAvailable, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
+  const canBook = resortAvailable && !availabilityLoading;
 
   useEffect(() => {
     document.documentElement.classList.remove('dark');
@@ -95,7 +98,7 @@ export default function ClientChrome({ children }) {
           ]} />
         </nav>
         <div className="client-header-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
-          <button onClick={() => navigate('/rooms')} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: 'pointer', whiteSpace: 'nowrap' }}>BOOK YOUR STAY</button>
+          <button disabled={!canBook} onClick={() => navigate('/rooms')} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, whiteSpace: 'nowrap' }}>{canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}</button>
         </div>
       </header>
       <main>{children}</main>

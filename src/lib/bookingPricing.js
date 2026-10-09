@@ -105,13 +105,11 @@ export function calculateBookingPrice({
   const extraAdults = adults - adultsWithinCapacity;
   const extraChildren = children - childrenWithinCapacity;
   const extraRate = bookingType === 'overnight'
-    ? 800
+    ? { adult: 800, child: 400 }
     : tourPeriod === 'night'
       ? { adult: 475, child: 375 }
       : { adult: 375, child: 275 };
-  const extraGuestCharge = bookingType === 'overnight'
-    ? extraGuests * extraRate
-    : extraAdults * extraRate.adult + extraChildren * extraRate.child;
+  const extraGuestCharge = (extraAdults * extraRate.adult + extraChildren * extraRate.child) * nights;
   const cottage = COTTAGE_OPTIONS.find(option => option.id === cottageId);
   const fee = Number(cottageFee);
 
@@ -126,6 +124,10 @@ export function calculateBookingPrice({
     baseCapacity,
     totalGuests,
     extraGuests,
+    extraAdults,
+    extraChildren,
+    extraAdultRate: extraRate.adult,
+    extraChildRate: extraRate.child,
     extraGuestCharge,
     cottageId,
     cottageFee: fee,

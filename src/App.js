@@ -13,6 +13,7 @@ import ReservationHistory from './admin/pages/ReservationHistory';
 import Reports from './admin/pages/Reports';
 import UserManagement from './admin/pages/UserManagement';
 import Feedback from './admin/pages/Feedback';
+import ContactInquiries from './admin/pages/ContactInquiries';
 import CancellationPolicy from './admin/pages/CancellationPolicy';
 import Messages from './admin/pages/Messages';
 import ReceptionistDashboard from './admin/pages/ReceptionistDashboard';
@@ -76,6 +77,7 @@ function App() {
           <Route path="reports" element={<Reports />} />
           <Route path="users" element={<UserManagement />} />
           <Route path="feedback" element={<Feedback />} />
+          <Route path="contact-inquiries" element={<ContactInquiries />} />
           <Route path="cancellation" element={<CancellationPolicy />} />
           <Route path="messages" element={<Messages />} />
           <Route path="settings" element={<Settings />} />
