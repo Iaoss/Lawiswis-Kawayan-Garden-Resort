@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
-import { ensureGuestAuth } from '../../lib/guestAuth';
+import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -68,7 +68,7 @@ export default function ChatWidget() {
       }
     } catch (error) {
       console.error('Unable to restore saved guest chat details:', error);
-      if (active) setChatError('Chat authentication is unavailable. Please try again shortly.');
+      if (active) setChatError(guestAuthErrorMessage(error));
     }
     };
     restoreGuestSession();
@@ -125,14 +125,6 @@ export default function ChatWidget() {
       createdAt: { seconds: Math.floor(Date.now() / 1000) },
     }]);
     try {
-      localStorage.setItem('huapro_conv', JSON.stringify({
-      id,
-      name: normalizedGuestName,
-      firstName: normalizedFirstName,
-      lastName: normalizedLastName,
-      phone: guestPhone,
-      sessionStarted: true,
-      }));
       const profile = JSON.parse(localStorage.getItem('guest_profile') || '{}');
       localStorage.setItem('guest_profile', JSON.stringify({
         ...profile,
@@ -148,16 +140,6 @@ export default function ChatWidget() {
     try {
       const user = await ensureGuestAuth();
       setOwnerUid(user.uid);
-      setConvId(id);
-      localStorage.setItem('huapro_conv', JSON.stringify({
-        id,
-        name: normalizedGuestName,
-        firstName: normalizedFirstName,
-        lastName: normalizedLastName,
-        phone: guestPhone,
-        ownerUid: user.uid,
-        sessionStarted: true,
-      }));
       await setDoc(doc(db, 'conversations', id), {
         ownerUid: user.uid,
         sessionStarted: true,
@@ -170,9 +152,22 @@ export default function ChatWidget() {
         lastMessageAt: serverTimestamp(),
         unread: true,
       });
+      setConvId(id);
+      localStorage.setItem('huapro_conv', JSON.stringify({
+        id,
+        name: normalizedGuestName,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        phone: guestPhone,
+        ownerUid: user.uid,
+        sessionStarted: true,
+      }));
     } catch (error) {
       console.error('Unable to start guest chat:', error);
-      setChatError('Your chat is open, but we could not connect to the resort team. Please try sending your message again or contact us by phone.');
+      setConvId(null);
+      setStarted(false);
+      setMessages([]);
+      setChatError(guestAuthErrorMessage(error));
     } finally {
       setStartingChat(false);
     }
