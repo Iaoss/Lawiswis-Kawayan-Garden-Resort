@@ -541,7 +541,7 @@ export default function ReceptionistLayout({ children }) {
             <div style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>HuaPro Resort Management System</div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', flexShrink: 0, marginLeft: 'auto' }}>
             <ExpandableIconButton
               icon={dark ? 'ti-sun' : 'ti-moon'}
               label={dark ? 'Light' : 'Dark'}

@@ -4,6 +4,13 @@ import { db } from '../../firebase/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount } from '../../lib/paymentPolicy';
+import {
+  calculateBookingPrice,
+  COTTAGE_OPTIONS,
+  DAYTOUR_TIME_SLOT,
+  NIGHTTOUR_TIME_SLOT,
+  OVERNIGHT_TIME_SLOTS,
+} from '../../lib/bookingPricing';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 
@@ -102,6 +109,7 @@ export default function BookRoom() {
   const [appliedPromo, setAppliedPromo] = useState(null);
   const [promoFeedback, setPromoFeedback] = useState(null);
   const [promoChecking, setPromoChecking] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const [form, setForm] = useState({
     guestName: '',
@@ -112,6 +120,11 @@ export default function BookRoom() {
     checkOut: params.get('checkOut') || '',
     adults: 1,
     children: 0,
+    bookingType: 'overnight',
+    tourPeriod: 'day',
+    overnightTimeSlot: 'morning',
+    cottageId: '',
+    cottageFee: 0,
     notes: '',
     paymentMethod: 'online',
     website: '', // honeypot — real guests leave this blank; see hidden field below
@@ -119,8 +132,23 @@ export default function BookRoom() {
   const datesValid = Boolean(form.checkIn && form.checkOut
     && form.checkIn >= today && form.checkOut > form.checkIn
     && form.checkIn <= maximumBookingDate && form.checkOut <= maximumBookingDate);
-  const [totalAmount, setTotalAmount] = useState(0);
-  const [nights, setNights] = useState(0);
+  const nights = form.checkIn && form.checkOut
+    ? Math.ceil((new Date(`${form.checkOut}T00:00:00`) - new Date(`${form.checkIn}T00:00:00`)) / (1000 * 60 * 60 * 24))
+    : 0;
+  const stayUnit = form.bookingType === 'daytour' ? 'day' : 'night';
+  const pricing = room && nights > 0
+    ? calculateBookingPrice({
+      room,
+      bookingType: form.bookingType,
+      nights,
+      adults: Number(form.adults),
+      children: Number(form.children),
+      tourPeriod: form.tourPeriod,
+      cottageId: form.cottageId,
+      cottageFee: Number(form.cottageFee),
+    })
+    : null;
+  const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
   const discountAmount = activePromo?.discountAmount || 0;
@@ -137,14 +165,6 @@ export default function BookRoom() {
     };
     fetchRoom();
   }, [roomId]);
-
-  useEffect(() => {
-    if (room && form.checkIn && form.checkOut) {
-      const n = Math.ceil((new Date(form.checkOut) - new Date(form.checkIn)) / (1000 * 60 * 60 * 24));
-      setNights(n > 0 ? n : 0);
-      setTotalAmount(n > 0 ? n * Number(room.price) : 0);
-    }
-  }, [room, form.checkIn, form.checkOut]);
 
   useEffect(() => {
     if (appliedPromo && appliedPromo.subtotal !== totalAmount) {
@@ -183,9 +203,49 @@ export default function BookRoom() {
     setPromoFeedback(null);
   };
 
+  const validateField = (key, value) => {
+    if (key === 'guestName') {
+      const name = String(value || '').trim();
+      return /^[A-Za-z '-]{2,50}$/.test(name)
+        ? ''
+        : 'Full Name must contain only letters and spaces (2-50 characters).';
+    }
+    if (key === 'phone') {
+      return /^09\d{9}$/.test(String(value || ''))
+        ? ''
+        : 'Please enter a valid 11-digit mobile number.';
+    }
+    return '';
+  };
+
+  const handleGuestFieldChange = (event) => {
+    const { name, value } = event.target;
+    const sanitized = name === 'guestName'
+      ? value.replace(/[^a-zA-Z '-]/g, '').slice(0, 50)
+      : value.replace(/\D/g, '').slice(0, 11);
+    setForm(previous => ({ ...previous, [name]: sanitized }));
+    setFieldErrors(previous => ({ ...previous, [name]: '' }));
+  };
+
+  const handleGuestFieldBlur = (event) => {
+    const { name, value } = event.target;
+    const normalized = name === 'guestName' ? value.trim() : value;
+    if (normalized !== value) setForm(previous => ({ ...previous, [name]: normalized }));
+    setFieldErrors(previous => ({ ...previous, [name]: validateField(name, normalized) }));
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!room) return;
+    const guestErrors = {
+      guestName: validateField('guestName', form.guestName),
+      phone: validateField('phone', form.phone),
+    };
+    setFieldErrors(guestErrors);
+    if (Object.values(guestErrors).some(Boolean)) {
+      document.getElementById(Object.keys(guestErrors).find(key => guestErrors[key]))?.focus();
+      return;
+    }
     if (!datesValid || nights <= 0) return alert('Please choose valid stay dates from the availability calendar first.');
     if (!termsRead || !termsAccepted) return alert('Please read the full Terms and Agreement and confirm that you agree before continuing.');
 
@@ -212,8 +272,18 @@ export default function BookRoom() {
           address: form.address,
           checkIn: form.checkIn,
           checkOut: form.checkOut,
-          adults: form.adults,
-          children: form.children,
+          checkInTime: form.bookingType === 'daytour'
+            ? (form.tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT.checkIn : DAYTOUR_TIME_SLOT.checkIn)
+            : OVERNIGHT_TIME_SLOTS.find(slot => slot.id === form.overnightTimeSlot).checkIn,
+          checkOutTime: form.bookingType === 'daytour'
+            ? (form.tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT.checkOut : DAYTOUR_TIME_SLOT.checkOut)
+            : OVERNIGHT_TIME_SLOTS.find(slot => slot.id === form.overnightTimeSlot).checkOut,
+          adults: Number(form.adults),
+          children: Number(form.children),
+          bookingType: form.bookingType,
+          tourPeriod: form.tourPeriod,
+          cottageId: form.cottageId,
+          cottageFee: Number(form.cottageFee),
           notes: form.notes,
           paymentMethod: form.paymentMethod,
           promoCode: activePromo?.code || '',
@@ -238,7 +308,7 @@ export default function BookRoom() {
         reservationId,
         guestName: form.guestName,
         guestEmail: form.email,
-        description: `Room ${room.roomNumber} (${room.type}) — ${nights} night${nights !== 1 ? 's' : ''}`,
+        description: `Room ${room.roomNumber} (${room.type}) — ${nights} ${stayUnit}${nights !== 1 ? 's' : ''}`,
         amount: onlinePaymentAmount,
         paymentType: 'booking',
         paymentChoice,
@@ -348,7 +418,7 @@ export default function BookRoom() {
 
   return (
     <div style={{ fontFamily: "'Poppins', sans-serif", background: '#f9fafb', minHeight: '100vh', padding: '0 20px' }}>
-      <div className="section-container two-column-fixed" style={{ margin: '40px auto' }}>
+      <div style={{ maxWidth: '720px', width: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: '24px', margin: '40px auto', padding: 0 }}>
         {/* Booking Form */}
         <div>
           <button type="button" onClick={() => navigate('/rooms')} style={{ padding: 0, border: 0, background: 'transparent', color: ACCENT, fontSize: '12px', cursor: 'pointer', marginBottom: '14px' }}>← Back to rooms</button>
@@ -371,10 +441,14 @@ export default function BookRoom() {
                 ].map(f => (
                   <div key={f.key}>
                     <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</label>
-                    <input required={f.required} type={f.type} value={form[f.key]}
-                      onChange={e => setForm({ ...form, [f.key]: e.target.value })}
+                    <input id={f.key} name={f.key} required={f.required} type={f.type} value={form[f.key]}
+                      maxLength={f.key === 'guestName' ? 50 : f.key === 'phone' ? 11 : undefined}
+                      inputMode={f.key === 'phone' ? 'numeric' : undefined}
+                      onChange={['guestName', 'phone'].includes(f.key) ? handleGuestFieldChange : e => setForm(previous => ({ ...previous, [f.key]: e.target.value }))}
+                      onBlur={['guestName', 'phone'].includes(f.key) ? handleGuestFieldBlur : undefined}
                       placeholder={f.placeholder}
                       style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                    {fieldErrors[f.key] && <div role="alert" style={{ color: '#b91c1c', fontSize: '11px', marginTop: '5px' }}>{fieldErrors[f.key]}</div>}
                   </div>
                 ))}
               </div>
@@ -410,17 +484,48 @@ export default function BookRoom() {
                   <button type="button" onClick={() => { window.location.href = '/rooms'; }} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Edit dates</button>
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Adults</label>
-                  <select value={form.adults} onChange={e => setForm({ ...form, adults: e.target.value })}
+                  <label htmlFor="booking-type" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Booking Type</label>
+                  <select id="booking-type" value={form.bookingType} onChange={e => setForm(previous => ({ ...previous, bookingType: e.target.value }))}
                     style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                    {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n} Adult{n > 1 ? 's' : ''}</option>)}
+                    <option value="overnight">Overnight stay</option>
+                    <option value="daytour">Daytour (8:00 AM–5:00 PM)</option>
+                  </select>
+                </div>
+                {form.bookingType === 'overnight' ? (
+                  <div>
+                    <label htmlFor="overnight-time-slot" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Check-in / Check-out Time</label>
+                    <select id="overnight-time-slot" value={form.overnightTimeSlot} onChange={e => setForm(previous => ({ ...previous, overnightTimeSlot: e.target.value }))}
+                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
+                      {OVERNIGHT_TIME_SLOTS.map(slot => <option key={slot.id} value={slot.id}>{slot.label}</option>)}
+                    </select>
+                  </div>
+                ) : (
+                  <div style={{ alignSelf: 'end', background: LIGHT, color: '#355a42', padding: '12px', borderRadius: '8px', fontSize: '12px' }}>
+                    {form.tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT.label : DAYTOUR_TIME_SLOT.label}
+                  </div>
+                )}
+                {form.bookingType === 'daytour' && (
+                  <div>
+                    <label htmlFor="tour-period" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Swimming Tour</label>
+                    <select id="tour-period" value={form.tourPeriod} onChange={e => setForm(previous => ({ ...previous, tourPeriod: e.target.value }))}
+                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
+                      <option value="day">Day swimming (8:00 AM–5:00 PM)</option>
+                      <option value="night">Night swimming (5:00 PM–10:00 PM / 12:00 MN)</option>
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Adults</label>
+                  <select value={form.adults} onChange={e => setForm(previous => ({ ...previous, adults: Number(e.target.value) }))}
+                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
+                    {Array.from({ length: 25 }, (_, index) => index + 1).map(n => <option key={n} value={n}>{n} Adult{n > 1 ? 's' : ''}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Children</label>
-                  <select value={form.children} onChange={e => setForm({ ...form, children: e.target.value })}
+                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Children (under 10)</label>
+                  <select value={form.children} onChange={e => setForm(previous => ({ ...previous, children: Number(e.target.value) }))}
                     style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                    {[0,1,2,3,4].map(n => <option key={n} value={n}>{n} {n === 1 ? 'Child' : 'Children'}</option>)}
+                    {Array.from({ length: 26 }, (_, n) => <option key={n} value={n}>{n} {n === 1 ? 'Child' : 'Children'}</option>)}
                   </select>
                 </div>
               </div>
@@ -436,6 +541,20 @@ export default function BookRoom() {
                   placeholder="Any special requests or notes..."
                   rows={3}
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
+              </div>
+              <div style={{ marginTop: '14px' }}>
+                <label htmlFor="cottage-selection" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Optional Cottage</label>
+                <select id="cottage-selection" value={`${form.cottageId}:${form.cottageFee}`} onChange={e => {
+                  const [cottageId, fee] = e.target.value.split(':');
+                  setForm(previous => ({ ...previous, cottageId, cottageFee: Number(fee) }));
+                }}
+                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
+                  {COTTAGE_OPTIONS.flatMap(option => option.prices.map(fee => (
+                    <option key={`${option.id}:${fee}`} value={`${option.id}:${fee}`}>
+                      {option.id ? `${option.label} · ₱${fee.toLocaleString()}` : option.label}
+                    </option>
+                  )))}
+                </select>
               </div>
             </div>
 
@@ -670,9 +789,17 @@ export default function BookRoom() {
                   {promoFeedback && <div role={promoFeedback.type === 'error' ? 'alert' : 'status'} style={{ marginTop: '7px', color: promoFeedback.type === 'success' ? '#15803d' : '#b91c1c', fontSize: '11px' }}>{promoFeedback.text}</div>}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
-                  <span>Subtotal · ₱{Number(room.price).toLocaleString()} × {nights} night{nights !== 1 ? 's' : ''}</span>
-                  <span>₱{totalAmount.toLocaleString()}</span>
+                  <span>Base · ₱{pricing?.baseRate.toLocaleString() || 0} × {nights} {stayUnit}{nights !== 1 ? 's' : ''}</span>
+                  <span>₱{((pricing?.baseRate || 0) * nights).toLocaleString()}</span>
                 </div>
+                {pricing?.extraGuests > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                  <span>{pricing.extraGuests} extra guest{pricing.extraGuests !== 1 ? 's' : ''}</span>
+                  <span>₱{pricing.extraGuestCharge.toLocaleString()}</span>
+                </div>}
+                {pricing?.cottageFee > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                  <span>{COTTAGE_OPTIONS.find(option => option.id === pricing.cottageId)?.label || 'Cottage'}</span>
+                  <span>₱{pricing.cottageFee.toLocaleString()}</span>
+                </div>}
                 {activePromo && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#15803d', marginBottom: '8px' }}><span>Discount · {activePromo.code}</span><span>−₱{discountAmount.toLocaleString()}</span></div>}
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: '700', color: '#111', borderTop: '1px solid #f3f4f6', paddingTop: '14px' }}>
                   <span>Total</span>
@@ -683,7 +810,7 @@ export default function BookRoom() {
 
               {nights > 0 && (
                 <div style={{ background: LIGHT, borderRadius: '10px', padding: '12px', marginTop: '14px', fontSize: '12px', color: ACCENT, textAlign: 'center', fontWeight: '600' }}>
-                  {nights} night{nights !== 1 ? 's' : ''} · {form.checkIn} → {form.checkOut}
+                  {nights} {stayUnit}{nights !== 1 ? 's' : ''} · {form.checkIn} → {form.checkOut}
                 </div>
               )}
 

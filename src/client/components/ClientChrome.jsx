@@ -76,25 +76,25 @@ export default function ClientChrome({ children }) {
         <img src={logo} alt="Lawiswis Kawayan Garden Resort" onClick={() => navigate('/home')} style={{ width: '178px', maxWidth: '42vw', cursor: 'pointer', filter: 'brightness(0) invert(1)' }} />
         <nav style={{ display: 'flex', gap: '30px', alignItems: 'center' }}>
           {link('HOME', '/home')}
-          {link('OUR AMENITIES', '/about')}
-          <NavDropdown label="OUR STORY" onNavigate={navigate} active={path === '/about'} items={[
-            { label: 'About Us', path: '/about' },
-            { label: 'Certifications & Awards', path: '/about' },
-            { label: 'Contact Us', path: '/contact' },
+          {link('OUR AMENITIES', '/amenities')}
+          <NavDropdown label="OUR STORY" onNavigate={navigate} active={['/about-us', '/certifications'].includes(path)} items={[
+            { label: 'About Us', path: '/about-us' },
+            { label: 'Certifications & Awards', path: '/certifications' },
           ]} />
           <NavDropdown label="OUR ROOMS" onNavigate={navigate} active={path === '/rooms' || path.startsWith('/book/')} items={[
             { label: 'Regular Rooms', path: '/rooms?category=Regular%20Rooms' },
             { label: 'Suite Rooms', path: '/rooms?category=Suite%20Rooms' },
           ]} />
-          <NavDropdown label="CUSTOMER CARE" onNavigate={navigate} active={path === '/contact'} items={[
-            { label: 'FAQs', path: '/contact#faqs' },
-            { label: 'Safety Guidelines', path: '/contact#safety-guidelines' },
-            { label: 'Health and Wellness', path: '/contact#health-and-wellness' },
-            { label: 'Cancellation Policy', path: '/contact#cancellation-policy' },
-            { label: 'Privacy Policy', path: '/contact#privacy-policy' },
+          <NavDropdown label="CUSTOMER CARE" onNavigate={navigate} active={['/contact-us', '/faqs', '/safety-guidelines', '/health-and-wellness', '/cancellation-policy', '/privacy-policy'].includes(path)} items={[
+            { label: 'Contact Us', path: '/contact-us' },
+            { label: 'FAQs', path: '/faqs' },
+            { label: 'Safety Guidelines', path: '/safety-guidelines' },
+            { label: 'Health and Wellness', path: '/health-and-wellness' },
+            { label: 'Cancellation Policy', path: '/cancellation-policy' },
+            { label: 'Privacy Policy', path: '/privacy-policy' },
           ]} />
         </nav>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div className="client-header-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
           <button onClick={() => navigate('/rooms')} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: 'pointer', whiteSpace: 'nowrap' }}>BOOK YOUR STAY</button>
         </div>
       </header>
@@ -102,7 +102,7 @@ export default function ClientChrome({ children }) {
       <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '34px' }}>
           <div><img src={logo} alt="Lawiswis Kawayan" style={{ width: '180px', filter: 'brightness(0) invert(1)', marginBottom: '16px' }} /><p style={{ maxWidth: '300px', fontSize: '12px', lineHeight: 1.8, margin: 0 }}>A quiet bamboo garden hideaway in Calumpit, Bulacan, where work and play sit comfortably side by side.</p></div>
-          <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>EXPLORE</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/rooms')} style={{ cursor: 'pointer' }}>Our rooms</span><span onClick={() => navigate('/about')} style={{ cursor: 'pointer' }}>Our story</span><span onClick={() => navigate('/contact')} style={{ cursor: 'pointer' }}>Contact us</span></div></div>
+          <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>EXPLORE</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/rooms')} style={{ cursor: 'pointer' }}>Our rooms</span><span onClick={() => navigate('/about-us')} style={{ cursor: 'pointer' }}>Our story</span><span onClick={() => navigate('/amenities')} style={{ cursor: 'pointer' }}>Our amenities</span><span onClick={() => navigate('/contact-us')} style={{ cursor: 'pointer' }}>Contact us</span></div></div>
           <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>VISIT</strong><p style={{ fontSize: '12px', lineHeight: 1.8, marginTop: '14px' }}>Open daily<br />Check-in 2:00 PM<br />Check-out 12:00 NN</p></div>
         </div>
         <div style={{ maxWidth: '1100px', borderTop: `1px solid ${LINE}33`, margin: '30px auto 0', paddingTop: '18px', fontSize: '10px' }}>© 2026 Lawiswis Kawayan Garden Resort</div>
@@ -113,7 +113,8 @@ export default function ClientChrome({ children }) {
         .client-nav-link:focus-visible, .client-dropdown-link:focus-visible { outline: 2px solid ${BRASS}; outline-offset: 3px; }
         .client-dropdown-link { display: block; width: 100%; text-align: left; padding: 11px 18px; border: 0; background: transparent; color: #22261B; font: 12.5px ${SANS}; cursor: pointer; }
         .client-dropdown-link:hover { background: #F4EFE1; color: #22261B; }
-        @media (max-width: 700px) { header { flex-wrap: wrap; padding: 14px 18px !important; } header nav { order: 3; width: 100%; justify-content: space-between; gap: 8px !important; } footer > div:first-child { grid-template-columns: 1fr !important; } }
+        .client-header-actions { margin-left: auto; justify-content: flex-end; }
+        @media (max-width: 700px) { header { flex-wrap: wrap; padding: 14px 18px !important; } header nav { order: 3; width: 100%; justify-content: space-between; gap: 8px !important; } .client-header-actions { margin-left: auto; } footer > div:first-child { grid-template-columns: 1fr !important; } }
       `}</style>
     </div>
   );

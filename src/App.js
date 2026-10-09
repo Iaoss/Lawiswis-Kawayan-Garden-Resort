@@ -22,6 +22,9 @@ import BookRoom from './client/pages/BookRoom';
 import GuestChat from './client/pages/Chat';
 import About from './client/pages/About';
 import Contact from './client/pages/Contact';
+import Amenities from './client/pages/Amenities';
+import Certifications from './client/pages/Certifications';
+import CustomerCarePage from './client/pages/CustomerCarePage';
 import FeedbackForm from './client/pages/FeedbackForm';
 import ClientLayout from './client/components/ClientLayout';
 import BookingTransactions from './admin/pages/BookingTransactions';
@@ -103,8 +106,17 @@ function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/rooms" element={<Rooms />} />
           <Route path="/book/:roomId" element={<BookRoom />} />
-          <Route path="/about" element={<About />} />
-          <Route path="/contact" element={<Contact />} />
+          <Route path="/amenities" element={<Amenities />} />
+          <Route path="/about-us" element={<About />} />
+          <Route path="/certifications" element={<Certifications />} />
+          <Route path="/contact-us" element={<Contact />} />
+          <Route path="/faqs" element={<CustomerCarePage pageKey="faqs" />} />
+          <Route path="/safety-guidelines" element={<CustomerCarePage pageKey="safety-guidelines" />} />
+          <Route path="/health-and-wellness" element={<CustomerCarePage pageKey="health-and-wellness" />} />
+          <Route path="/cancellation-policy" element={<CustomerCarePage pageKey="cancellation-policy" />} />
+          <Route path="/privacy-policy" element={<CustomerCarePage pageKey="privacy-policy" />} />
+          <Route path="/about" element={<Navigate to="/about-us" replace />} />
+          <Route path="/contact" element={<Navigate to="/contact-us" replace />} />
         </Route>
         <Route path="/feedback" element={<FeedbackForm />} />
         <Route path="/chat" element={<GuestChat />} />

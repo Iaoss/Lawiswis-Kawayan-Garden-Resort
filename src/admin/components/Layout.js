@@ -552,7 +552,7 @@ export default function Layout({ children }) {
             <div style={{ fontSize: '11px', color: MUTED }}>HuaPro Resort Management System</div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', flexShrink: 0, marginLeft: 'auto' }}>
             <AnimatedThemeToggler
               theme={dark ? 'dark' : 'light'}
               onThemeChange={(nextTheme) => updateSetting('darkMode', nextTheme === 'dark')}

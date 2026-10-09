@@ -24,6 +24,13 @@
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendReservationPendingEmail } from '../lib/email';
 import { evaluatePromo, normalizePromoCode } from '../lib/promoPolicy';
+import {
+  calculateBookingPrice,
+  COTTAGE_OPTIONS,
+  DAYTOUR_TIME_SLOT,
+  NIGHTTOUR_TIME_SLOT,
+  OVERNIGHT_TIME_SLOTS,
+} from '../src/lib/bookingPricing';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -55,8 +62,14 @@ export default async function handler(req, res) {
       address,
       checkIn,
       checkOut,
+      checkInTime,
+      checkOutTime,
       adults,
       children,
+      bookingType,
+      tourPeriod,
+      cottageId,
+      cottageFee,
       notes,
       paymentMethod,
       promoCode: submittedPromoCode,
@@ -77,8 +90,40 @@ export default async function handler(req, res) {
     }
 
     // ---- 2. Basic validation -------------------------------------------
-    if (!roomId || !guestName || !email || !phone || !checkIn || !checkOut || !paymentMethod) {
+    if (typeof roomId !== 'string' || typeof guestName !== 'string' || typeof email !== 'string'
+      || typeof phone !== 'string' || typeof checkIn !== 'string' || typeof checkOut !== 'string'
+      || !roomId || !guestName || !email.trim() || !phone || !checkIn || !checkOut || !paymentMethod) {
       return res.status(400).json({ error: 'Please fill in all required fields.' });
+    }
+    if ((address !== undefined && typeof address !== 'string')
+      || (notes !== undefined && typeof notes !== 'string')) {
+      return res.status(400).json({ error: 'Address and special requests must be text.' });
+    }
+    const normalizedGuestName = String(guestName).trim();
+    if (!/^[A-Za-z '-]{2,50}$/.test(normalizedGuestName)) {
+      return res.status(400).json({ error: 'Full Name must contain only letters and spaces (2-50 characters).' });
+    }
+    if (!/^09\d{9}$/.test(phone)) {
+      return res.status(400).json({ error: 'Please enter a valid 11-digit mobile number.' });
+    }
+    if (!Number.isInteger(adults) || adults < 1 || !Number.isInteger(children) || children < 0) {
+      return res.status(400).json({ error: 'Guest counts must be whole numbers.' });
+    }
+    if (!['daytour', 'overnight'].includes(bookingType)) {
+      return res.status(400).json({ error: 'Choose a valid booking type.' });
+    }
+    const timeSlot = bookingType === 'daytour'
+      ? (tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT : DAYTOUR_TIME_SLOT)
+      : OVERNIGHT_TIME_SLOTS.find(slot => slot.checkIn === checkInTime && slot.checkOut === checkOutTime);
+    if (!timeSlot || (bookingType === 'daytour' && (checkInTime !== timeSlot.checkIn || checkOutTime !== timeSlot.checkOut))) {
+      return res.status(400).json({ error: 'Choose a valid check-in and check-out time.' });
+    }
+    if (bookingType === 'daytour' && !['day', 'night'].includes(tourPeriod)) {
+      return res.status(400).json({ error: 'Choose a valid swimming tour period.' });
+    }
+    const requestedCottageFee = Number(cottageFee || 0);
+    if (!COTTAGE_OPTIONS.some(option => option.id === (cottageId || '') && option.prices.includes(requestedCottageFee))) {
+      return res.status(400).json({ error: 'Choose a valid cottage rate.' });
     }
     if (paymentMethod !== 'online') {
       return res.status(400).json({ error: 'Reservations must be paid online through PayMongo.' });
@@ -131,7 +176,17 @@ export default async function handler(req, res) {
 
     // ---- 6. Create the reservation ---------------------------------------
     const nights = Math.ceil((checkOutDate - checkInDate) / (1000 * 60 * 60 * 24));
-    const totalAmount = nights * Number(room.price);
+    const pricing = calculateBookingPrice({
+      room,
+      bookingType,
+      nights,
+      adults,
+      children,
+      tourPeriod: bookingType === 'daytour' ? tourPeriod : 'day',
+      cottageId: cottageId || '',
+      cottageFee: requestedCottageFee,
+    });
+    const totalAmount = pricing.subtotalAmount;
 
     const docRef = adminDb.collection('reservations').doc();
     const promoCode = normalizePromoCode(submittedPromoCode);
@@ -139,15 +194,26 @@ export default async function handler(req, res) {
       roomId,
       roomNumber: room.roomNumber,
       roomType: room.type,
-      guestName,
+      guestName: normalizedGuestName,
       email,
       emailLower,
       phone,
       address: address || '',
       checkIn,
       checkOut,
-      adults: adults || 1,
-      children: children || 0,
+      checkInTime: timeSlot.checkIn,
+      checkOutTime: timeSlot.checkOut,
+      adults,
+      children,
+      bookingType,
+      tourPeriod: bookingType === 'daytour' ? tourPeriod : '',
+      baseCapacity: pricing.baseCapacity,
+      baseRate: pricing.baseRate,
+      totalGuests: pricing.totalGuests,
+      extraGuests: pricing.extraGuests,
+      extraGuestCharge: pricing.extraGuestCharge,
+      cottageId: pricing.cottageId,
+      cottageFee: pricing.cottageFee,
       notes: notes || '',
       paymentMethod,
       subtotalAmount: totalAmount,
@@ -205,7 +271,7 @@ export default async function handler(req, res) {
       const bookingRef = docRef.id.slice(0, 8).toUpperCase();
       await sendReservationPendingEmail(
         {
-          guestName,
+          guestName: normalizedGuestName,
           email,
           roomNumber: room.roomNumber,
           roomType: room.type,
@@ -221,7 +287,15 @@ export default async function handler(req, res) {
       console.error('Failed to send reservation-received email:', emailErr);
     }
 
-    return res.status(200).json({ reservationId: docRef.id, subtotalAmount: totalAmount, discountAmount, totalAmount: discountedTotal, promoCode, nights });
+    return res.status(200).json({
+      reservationId: docRef.id,
+      subtotalAmount: totalAmount,
+      discountAmount,
+      totalAmount: discountedTotal,
+      promoCode,
+      nights,
+      pricing,
+    });
   } catch (err) {
     console.error('create-reservation error:', err);
     return res.status(500).json({ error: 'Something went wrong on our end. Please try again.' });

@@ -130,7 +130,17 @@ const chipVariants = {
   exit:    { opacity: 0, scale: 0.9, width: 0, marginLeft: 0, transition: { duration: 0.15, ease: 'easeIn' } },
 };
 
-const emptyForm = { roomNumber: '', type: '', price: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
+const CAPACITY_OPTIONS = {
+  Standard: [2],
+  Deluxe: [2],
+  FamilyRoom: [4, 6],
+  JuniorSuite4: [4],
+  FamilySuite: [4, 6],
+  PresidentialSuite: [8],
+  MainVilla: [20],
+};
+
+const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
 
 export default function RoomManagement() {
   const { settings } = useSettings();
@@ -221,7 +231,7 @@ export default function RoomManagement() {
         imageUrl = '';
       }
 
-      const payload = { ...form, imageUrl };
+      const payload = { ...form, baseCapacity: Number(form.baseCapacity) || '', imageUrl };
       if (editRoom) await updateDoc(doc(db, 'rooms', editRoom.id), payload);
       else await addDoc(collection(db, 'rooms'), payload);
 
@@ -371,9 +381,26 @@ export default function RoomManagement() {
                   ))}
                   <div>
                     <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Room Type</label>
-                    <select style={inputStyle} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+                    <select style={inputStyle} value={form.type} onChange={e => {
+                      const type = e.target.value;
+                      const capacities = CAPACITY_OPTIONS[type] || [];
+                      setForm(previous => ({
+                        ...previous,
+                        type,
+                        baseCapacity: capacities.includes(Number(previous.baseCapacity)) ? previous.baseCapacity : (capacities[0] || ''),
+                      }));
+                    }}>
                       <option value="">Select type</option>
                       {ROOM_TYPES.map(t => <option key={t} value={t}>{t} — {TYPE_CATEGORY_MAP[t]}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Base Guest Capacity</label>
+                    <select style={inputStyle} value={form.baseCapacity || ''} onChange={e => setForm({ ...form, baseCapacity: e.target.value })}>
+                      <option value="">Select capacity</option>
+                      {(CAPACITY_OPTIONS[form.type] || []).map(capacity => (
+                        <option key={capacity} value={capacity}>{capacity} guests</option>
+                      ))}
                     </select>
                   </div>
                   <div>

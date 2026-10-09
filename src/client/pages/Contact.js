@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
@@ -11,16 +10,9 @@ const limitWords = value => {
 };
 
 export default function Contact() {
-  const location = useLocation();
   const [form, setForm] = useState({ name: '', email: '', phone: '', subject: '', message: '' });
   const [sent, setSent] = useState(false);
   const [sending, setSending] = useState(false);
-  useEffect(() => {
-    const id = decodeURIComponent(location.hash.slice(1));
-    if (!id) return undefined;
-    const frame = window.requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-    return () => window.cancelAnimationFrame(frame);
-  }, [location.hash]);
   const update = event => {
     const { name, value } = event.target;
     setForm(previous => ({ ...previous, [name]: name === 'message' ? limitWords(value) : value }));
@@ -39,33 +31,6 @@ export default function Contact() {
 <span id="contact-message-count" aria-live="polite" style={{ color: '#777363', font: `11px ${SANS}`, textTransform: 'none', letterSpacing: 0 }}>{countWords(form.message)} words · {50 - countWords(form.message)} remaining</span>
 </label><button disabled={sending} style={{ background: FOREST, color: '#fff', border: 0, borderRadius: '3px', padding: '14px', font: `600 11px ${SANS}`, letterSpacing: '.08em', cursor: 'pointer' }}>{sending ? 'SENDING...' : 'SEND MESSAGE →'}</button></form></>}</div>
     </div>
-    <section aria-label="Guest information" style={{ maxWidth: '1100px', margin: '0 auto', padding: '0 24px 90px', display: 'grid', gap: '18px' }}>
-      <section id="faqs" style={{ scrollMarginTop: '100px', background: '#fff', border: `1px solid ${LINE}`, padding: '26px' }}>
-        <div style={{ color: BRASS, font: `600 10px ${SANS}`, letterSpacing: '.14em', textTransform: 'uppercase' }}>Guest information</div>
-        <h2 style={{ color: INK, font: `500 30px ${SERIF}`, margin: '8px 0 16px' }}>Frequently asked questions</h2>
-        {[
-          ['When is check-in and check-out?', 'Check-in is at 2:00 PM and check-out is at 12:00 NN. Early check-in or late check-out may be arranged subject to availability.'],
-          ['How do I secure a room booking?', 'Complete the booking form and pay in full or pay the 25% deposit through the secure PayMongo checkout. Keep your booking reference for your records.'],
-          ['What room types are available?', 'The resort offers Regular Rooms, Couple Rooms, Family Rooms, Suites, Presidential Suites, and the Main Villa.'],
-        ].map(([question, answer]) => <details key={question} style={{ borderTop: `1px solid ${LINE}`, padding: '14px 0', color: INK, font: `13px/1.7 ${SANS}` }}><summary style={{ cursor: 'pointer', fontWeight: 600 }}>{question}</summary><p style={{ margin: '8px 0 0', color: '#6b6a5c' }}>{answer}</p></details>)}
-      </section>
-      <section id="safety-guidelines" style={{ scrollMarginTop: '100px', background: '#fff', border: `1px solid ${LINE}`, padding: '26px' }}>
-        <h2 style={{ color: INK, font: `500 26px ${SERIF}`, margin: '0 0 10px' }}>Safety guidelines</h2>
-        <p style={{ margin: 0, color: '#6b6a5c', font: `13px/1.8 ${SANS}` }}>Follow posted facility signs and staff instructions throughout the resort. Children should be supervised by their accompanying adults, especially around pools and water features. Contact the front desk for site-specific guidance during your stay.</p>
-      </section>
-      <section id="health-and-wellness" style={{ scrollMarginTop: '100px', background: '#fff', border: `1px solid ${LINE}`, padding: '26px' }}>
-        <h2 style={{ color: INK, font: `500 26px ${SERIF}`, margin: '0 0 10px' }}>Health and wellness</h2>
-        <p style={{ margin: 0, color: '#6b6a5c', font: `13px/1.8 ${SANS}` }}>Please let the resort team know ahead of arrival about accessibility needs or other arrangements that would help make your stay comfortable. For urgent assistance while on-site, contact the front desk.</p>
-      </section>
-      <section id="cancellation-policy" style={{ scrollMarginTop: '100px', background: '#fff', border: `1px solid ${LINE}`, padding: '26px' }}>
-        <h2 style={{ color: INK, font: `500 26px ${SERIF}`, margin: '0 0 10px' }}>Cancellation policy</h2>
-        <p style={{ margin: 0, color: '#6b6a5c', font: `13px/1.8 ${SANS}` }}>Cancellation fees depend on notice before check-in: 20% more than 7 days before arrival, 50% from 4 to 7 days before arrival, and 100% 3 days or less before arrival. Contact the resort to request a cancellation or clarify how the policy applies to your booking.</p>
-      </section>
-      <section id="privacy-policy" style={{ scrollMarginTop: '100px', background: '#fff', border: `1px solid ${LINE}`, padding: '26px' }}>
-        <h2 style={{ color: INK, font: `500 26px ${SERIF}`, margin: '0 0 10px' }}>Privacy policy</h2>
-        <p style={{ margin: 0, color: '#6b6a5c', font: `13px/1.8 ${SANS}` }}>Information submitted through booking and contact forms is used to manage reservations, communicate with guests, provide support, and meet operational or legal requirements. Card and e-wallet credentials are entered with PayMongo; the resort does not store full card numbers or security codes.</p>
-      </section>
-    </section>
     <style>{`#contact-grid .contact-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } @media (max-width: 700px) { #contact-grid { grid-template-columns: 1fr !important; gap: 36px !important; } #contact-grid .contact-fields { grid-template-columns: 1fr; } }`}</style>
   </div>;
 }

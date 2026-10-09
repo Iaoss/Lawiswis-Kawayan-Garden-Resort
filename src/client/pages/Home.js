@@ -335,7 +335,7 @@ export default function Home() {
                 onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
                 BOOK YOUR STAY <span>→</span>
               </button>
-              <button onClick={() => window.location.href = '/about'}
+              <button onClick={() => window.location.href = '/about-us'}
                 style={{ background: 'transparent', color: '#fff', border: '1.5px solid rgba(255,255,255,0.5)', borderRadius: '3px', padding: '15px 30px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: 'pointer', fontFamily: SANS }}>
                 OUR STORY
               </button>
@@ -391,7 +391,7 @@ export default function Home() {
             Our name, meaning "the murmur of bamboo," comes from a cherished song taught by our founder's late father. Eighteen years on, our 32 rooms still welcome families, corporate teams, and anyone in need of a seamless mix of work and play.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
-            <button onClick={() => window.location.href = '/about'}
+            <button onClick={() => window.location.href = '/about-us'}
               style={{ background: FOREST, color: '#fff', border: 'none', borderRadius: '3px', padding: '13px 28px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.04em', cursor: 'pointer', fontFamily: SANS }}>
               LEARN MORE
             </button>
