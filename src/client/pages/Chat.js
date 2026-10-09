@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
+import { ensureGuestAuth } from '../../lib/guestAuth';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -31,13 +32,21 @@ export default function GuestChat() {
   const validName = name => NAME_PATTERN.test(name.trim())
     && (name.match(/[A-Za-zÀ-ÖØ-öø-ÿ]/g) || []).length >= 2;
   const [nameError, setNameError] = useState('');
+  const [chatError, setChatError] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
   const [convId, setConvId] = useState(null);
+  const [ownerUid, setOwnerUid] = useState(null);
   const [started, setStarted] = useState(false);
   const bottomRef = useRef(null);
 
   // Restore session
   useEffect(() => {
+    let active = true;
+    const restoreGuestSession = async () => {
     try {
+      const user = await ensureGuestAuth();
+      if (!active) return;
+      setOwnerUid(user.uid);
       const profile = JSON.parse(localStorage.getItem('guest_profile') || 'null');
       if (profile && typeof profile === 'object') {
         const names = typeof profile.guestName === 'string' ? splitGuestName(profile.guestName) : {};
@@ -48,15 +57,21 @@ export default function GuestChat() {
       const saved = JSON.parse(localStorage.getItem('huapro_conv') || 'null');
       if (saved?.id) {
         const names = typeof saved.name === 'string' ? splitGuestName(saved.name) : {};
-        setConvId(saved.id);
         setFirstName(saved.firstName || names.firstName || '');
         setLastName(saved.lastName || names.lastName || '');
         setGuestPhone(String(saved.phone || '').replace(/\D/g, '').slice(0, 11));
-        setStarted(true);
+        if (saved.ownerUid === user.uid && saved.sessionStarted === true) {
+          setConvId(saved.id);
+          setStarted(true);
+        }
       }
     } catch (error) {
       console.error('Unable to restore saved guest chat details:', error);
+      if (active) setChatError('Chat authentication is unavailable. Please try again shortly.');
     }
+    };
+    restoreGuestSession();
+    return () => { active = false; };
   }, []);
 
   // Listen for messages
@@ -64,10 +79,18 @@ export default function GuestChat() {
     if (!convId) return;
     const q = query(collection(db, 'conversations', convId, 'messages'), orderBy('createdAt', 'asc'));
     const unsub = onSnapshot(q, snap => {
-      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const loadedMessages = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setMessages(loadedMessages.length ? loadedMessages : [{
+        id: 'welcome',
+        sender: 'system',
+        text: `Hello ${guestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
+      }]);
+    }, error => {
+      console.error('Unable to load guest chat messages:', error);
+      setChatError('We could not load this conversation. Please check your connection and try again.');
     });
     return () => unsub();
-  }, [convId]);
+  }, [convId, guestName]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -75,6 +98,7 @@ export default function GuestChat() {
 
   const startChat = async (e) => {
     e.preventDefault();
+    setChatError('');
     const normalizedFirstName = firstName.trim();
     const normalizedLastName = lastName.trim();
     if (!validName(normalizedFirstName) || !validName(normalizedLastName)) {
@@ -84,16 +108,15 @@ export default function GuestChat() {
     setNameError('');
     const normalizedGuestName = joinGuestName(normalizedFirstName, normalizedLastName);
     const id = `guest_${Date.now()}`;
-    await setDoc(doc(db, 'conversations', id), {
-      guestName: normalizedGuestName,
-      firstName: normalizedFirstName,
-      lastName: normalizedLastName,
-      guestPhone,
-      lastMessage: '',
-      lastMessageAt: serverTimestamp(),
-      unread: true,
-    });
-    localStorage.setItem('huapro_conv', JSON.stringify({ id, name: normalizedGuestName, firstName: normalizedFirstName, lastName: normalizedLastName, phone: guestPhone }));
+    setFirstName(normalizedFirstName);
+    setLastName(normalizedLastName);
+    setMessages([{
+      id: 'welcome',
+      sender: 'system',
+      text: `Hello ${normalizedGuestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
+      createdAt: { seconds: Math.floor(Date.now() / 1000) },
+    }]);
+    setStarted(true);
     try {
       const profile = JSON.parse(localStorage.getItem('guest_profile') || '{}');
       localStorage.setItem('guest_profile', JSON.stringify({
@@ -103,36 +126,67 @@ export default function GuestChat() {
         guestName: normalizedGuestName,
         phone: guestPhone,
       }));
+      const user = await ensureGuestAuth();
+      setOwnerUid(user.uid);
+      setConvId(id);
+      localStorage.setItem('huapro_conv', JSON.stringify({
+        id,
+        name: normalizedGuestName,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        phone: guestPhone,
+        ownerUid: user.uid,
+        sessionStarted: true,
+      }));
+      await setDoc(doc(db, 'conversations', id), {
+        ownerUid: user.uid,
+        sessionStarted: true,
+        guestName: normalizedGuestName,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        phone: guestPhone,
+        guestPhone,
+        lastMessage: '',
+        lastMessageAt: serverTimestamp(),
+        unread: true,
+      });
     } catch (error) {
-      console.error('Unable to save guest chat details:', error);
+      console.error('Unable to start guest chat:', error);
+      setChatError('Your chat is open, but we could not connect to the resort team. Please try sending your message again or contact us by phone.');
     }
-    setConvId(id);
-    setStarted(true);
-    // Send welcome message from system
-    await addDoc(collection(db, 'conversations', id, 'messages'), {
-      sender: 'staff',
-      text: `Hello ${normalizedGuestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
-      createdAt: serverTimestamp(),
-    });
   };
 
   const sendMessage = async () => {
-    if (!newMsg.trim() || !convId) return;
+    if (!newMsg.trim() || sendingMessage) return;
     if (countWords(newMsg) > 50) return;
+    if (!convId || !ownerUid) {
+      setChatError('This chat is not connected yet. Please refresh and try again.');
+      return;
+    }
     const text = newMsg;
-    setNewMsg('');
-    await addDoc(collection(db, 'conversations', convId, 'messages'), {
-      sender: 'guest',
-      text,
-      createdAt: serverTimestamp(),
-    });
-    await setDoc(doc(db, 'conversations', convId), {
-      lastMessage: text,
-      lastMessageAt: serverTimestamp(),
-      unread: true,
-      guestName,
-      guestPhone,
-    }, { merge: true });
+    setSendingMessage(true);
+    setChatError('');
+    try {
+      await addDoc(collection(db, 'conversations', convId, 'messages'), {
+        sender: 'guest',
+        text,
+        createdAt: serverTimestamp(),
+        ownerUid,
+      });
+      await setDoc(doc(db, 'conversations', convId), {
+        lastMessage: text,
+        lastMessageAt: serverTimestamp(),
+        unread: true,
+        guestName,
+        guestPhone,
+      }, { merge: true });
+      setNewMsg('');
+    } catch (error) {
+      console.error('Unable to send guest chat message:', error);
+      setChatError('Your message could not be sent. Please check your connection and try again.');
+    } finally {
+      setSendingMessage(false);
+    }
   };
 
   return (
@@ -154,6 +208,7 @@ export default function GuestChat() {
           <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: '#d4f550', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
             <ResortIcon size={20} />
           </div>
+          {chatError && <div role="alert" style={{ background: '#fef2f2', color: '#991b1b', padding: '12px 18px', fontSize: 12 }}>{chatError}</div>}
           <div>
             <div style={{ fontWeight: '700', fontSize: '15px', color: '#fff' }}>Lawiswis Kawayan Garden Resort Support</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
@@ -214,7 +269,7 @@ export default function GuestChat() {
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px', background: '#fafafa' }}>
               {messages.map(m => (
                 <div key={m.id} style={{ display: 'flex', justifyContent: m.sender === 'guest' ? 'flex-end' : 'flex-start', gap: '8px', alignItems: 'flex-end' }}>
-                  {m.sender === 'staff' && (
+                  {m.sender !== 'guest' && (
                     <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: DARK, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><ResortIcon size={15} /></div>
                   )}
                   <div style={{ maxWidth: '70%' }}>
@@ -259,8 +314,8 @@ export default function GuestChat() {
                 placeholder="Type your message..."
                 aria-describedby="guest-chat-word-count"
                 style={{ flex: 1, minWidth: 0, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 16px', fontSize: '13px', outline: 'none', fontFamily: "'Poppins', sans-serif" }} />
-              <button onClick={sendMessage} disabled={!newMsg.trim()}
-                style={{ background: DARK, border: 'none', borderRadius: '10px', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: newMsg.trim() ? 'pointer' : 'not-allowed', flexShrink: 0 }} aria-label="Send message">
+              <button onClick={sendMessage} disabled={!newMsg.trim() || sendingMessage}
+                style={{ background: DARK, border: 'none', borderRadius: '10px', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: newMsg.trim() && !sendingMessage ? 'pointer' : 'not-allowed', flexShrink: 0 }} aria-label="Send message">
                 <span style={{ color: '#d4f550' }}><SendIcon /></span>
               </button>
               </div>

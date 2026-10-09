@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
+import { ensureGuestAuth } from '../../lib/guestAuth';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -30,13 +31,22 @@ export default function ChatWidget() {
   const validName = name => NAME_PATTERN.test(name.trim())
     && (name.match(/[A-Za-zÀ-ÖØ-öø-ÿ]/g) || []).length >= 2;
   const [nameError, setNameError] = useState('');
+  const [chatError, setChatError] = useState('');
+  const [startingChat, setStartingChat] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
   const phoneInvalid = Boolean(guestPhone) && !/^09\d{9}$/.test(guestPhone);
   const [convId, setConvId] = useState(null);
+  const [ownerUid, setOwnerUid] = useState(null);
   const [started, setStarted] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
+    let active = true;
+    const restoreGuestSession = async () => {
     try {
+      const user = await ensureGuestAuth();
+      if (!active) return;
+      setOwnerUid(user.uid);
       const profile = JSON.parse(localStorage.getItem('guest_profile') || 'null');
       if (profile && typeof profile === 'object') {
         const savedNames = typeof profile.guestName === 'string' ? splitGuestName(profile.guestName) : {};
@@ -48,25 +58,39 @@ export default function ChatWidget() {
       const saved = JSON.parse(localStorage.getItem('huapro_conv') || 'null');
       if (saved?.id) {
         const savedNames = typeof saved.name === 'string' ? splitGuestName(saved.name) : {};
-        setConvId(saved.id);
         setFirstName(saved.firstName || savedNames.firstName || '');
         setLastName(saved.lastName || savedNames.lastName || '');
         setGuestPhone(String(saved.phone || '').replace(/\D/g, '').slice(0, 11));
-        setStarted(true);
+        if (saved.ownerUid === user.uid && saved.sessionStarted === true) {
+          setConvId(saved.id);
+          setStarted(true);
+        }
       }
     } catch (error) {
       console.error('Unable to restore saved guest chat details:', error);
+      if (active) setChatError('Chat authentication is unavailable. Please try again shortly.');
     }
+    };
+    restoreGuestSession();
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
     if (!convId) return;
     const q = query(collection(db, 'conversations', convId, 'messages'), orderBy('createdAt', 'asc'));
     const unsub = onSnapshot(q, snap => {
-      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const loadedMessages = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setMessages(loadedMessages.length ? loadedMessages : [{
+        id: 'welcome',
+        sender: 'system',
+        text: `Hello ${guestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
+      }]);
+    }, error => {
+      console.error('Unable to load guest chat messages:', error);
+      setChatError('We could not load this conversation. Please check your connection and try again.');
     });
     return () => unsub();
-  }, [convId]);
+  }, [convId, guestName]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -80,6 +104,7 @@ export default function ChatWidget() {
 
   const startChat = async (e) => {
     e.preventDefault();
+    setChatError('');
     const normalizedFirstName = firstName.trim();
     const normalizedLastName = lastName.trim();
     if (!validName(normalizedFirstName) || !validName(normalizedLastName) || phoneInvalid) {
@@ -91,23 +116,23 @@ export default function ChatWidget() {
     setLastName(normalizedLastName);
     const normalizedGuestName = joinGuestName(normalizedFirstName, normalizedLastName);
     const id = `guest_${Date.now()}`;
-    await setDoc(doc(db, 'conversations', id), {
-      guestName: normalizedGuestName,
-      firstName: normalizedFirstName,
-      lastName: normalizedLastName,
-      guestPhone,
-      lastMessage: '',
-      lastMessageAt: serverTimestamp(),
-      unread: true,
-    });
-    localStorage.setItem('huapro_conv', JSON.stringify({
+    setStarted(true);
+    setStartingChat(true);
+    setMessages([{
+      id: `${id}_welcome`,
+      sender: 'staff',
+      text: `Hello ${normalizedGuestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
+      createdAt: { seconds: Math.floor(Date.now() / 1000) },
+    }]);
+    try {
+      localStorage.setItem('huapro_conv', JSON.stringify({
       id,
       name: normalizedGuestName,
       firstName: normalizedFirstName,
       lastName: normalizedLastName,
       phone: guestPhone,
-    }));
-    try {
+      sessionStarted: true,
+      }));
       const profile = JSON.parse(localStorage.getItem('guest_profile') || '{}');
       localStorage.setItem('guest_profile', JSON.stringify({
         ...profile,
@@ -118,39 +143,78 @@ export default function ChatWidget() {
       }));
     } catch (error) {
       console.error('Unable to save guest chat details:', error);
+      setChatError('Chat is open, but this browser could not save your guest details.');
     }
-    setConvId(id);
-    setStarted(true);
-    await addDoc(collection(db, 'conversations', id, 'messages'), {
-      sender: 'staff',
-      text: `Hello ${normalizedGuestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
-      createdAt: serverTimestamp(),
-    });
+    try {
+      const user = await ensureGuestAuth();
+      setOwnerUid(user.uid);
+      setConvId(id);
+      localStorage.setItem('huapro_conv', JSON.stringify({
+        id,
+        name: normalizedGuestName,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        phone: guestPhone,
+        ownerUid: user.uid,
+        sessionStarted: true,
+      }));
+      await setDoc(doc(db, 'conversations', id), {
+        ownerUid: user.uid,
+        sessionStarted: true,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        phone: guestPhone,
+        guestName: normalizedGuestName,
+        guestPhone,
+        lastMessage: '',
+        lastMessageAt: serverTimestamp(),
+        unread: true,
+      });
+    } catch (error) {
+      console.error('Unable to start guest chat:', error);
+      setChatError('Your chat is open, but we could not connect to the resort team. Please try sending your message again or contact us by phone.');
+    } finally {
+      setStartingChat(false);
+    }
   };
 
   const sendMessage = async () => {
-    if (!newMsg.trim() || !convId) return;
+    if (!newMsg.trim() || sendingMessage) return;
     if (countWords(newMsg) > 50) return;
+    if (!convId || !ownerUid) {
+      setChatError('This chat is not connected yet. Please refresh and try again.');
+      return;
+    }
     const text = newMsg;
-    setNewMsg('');
-    await addDoc(collection(db, 'conversations', convId, 'messages'), {
-      sender: 'guest',
-      text,
-      createdAt: serverTimestamp(),
-    });
-    await setDoc(doc(db, 'conversations', convId), {
-      lastMessage: text,
-      lastMessageAt: serverTimestamp(),
-      unread: true,
-      guestName,
-      firstName,
-      lastName,
-      guestPhone,
-    }, { merge: true });
+    setSendingMessage(true);
+    setChatError('');
+    try {
+      await addDoc(collection(db, 'conversations', convId, 'messages'), {
+        sender: 'guest',
+        text,
+        ownerUid,
+        createdAt: serverTimestamp(),
+      });
+      await setDoc(doc(db, 'conversations', convId), {
+        lastMessage: text,
+        lastMessageAt: serverTimestamp(),
+        unread: true,
+        guestName,
+        firstName,
+        lastName,
+        guestPhone,
+      }, { merge: true });
+      setNewMsg('');
+    } catch (error) {
+      console.error('Unable to send guest chat message:', error);
+      setChatError('Your message could not be sent. Please check your connection and try again.');
+    } finally {
+      setSendingMessage(false);
+    }
   };
 
   return (
-    <div style={{ position: 'fixed', right: '22px', bottom: '22px', zIndex: 9999, fontFamily: "'Poppins', sans-serif" }}>
+    <div style={{ position: 'fixed', right: '20px', bottom: '20px', zIndex: open ? 1000 : 40, fontFamily: "'Poppins', sans-serif" }}>
       {open ? (
         <div style={{ width: '320px', maxWidth: 'calc(100vw - 32px)', height: 'min(620px, calc(100dvh - 44px))', maxHeight: 'calc(100dvh - 44px)', background: '#fff', borderRadius: '24px', boxShadow: '0 30px 80px rgba(0,0,0,0.18)', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: '280px' }}>
           <div style={{ background: DARK, color: '#fff', padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
@@ -201,6 +265,7 @@ export default function ChatWidget() {
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                 />
                 {nameError && <div role="alert" style={{ color: '#b91c1c', fontSize: '12px', marginTop: '-8px' }}>{nameError}</div>}
+                {chatError && <div role="alert" style={{ color: '#b91c1c', fontSize: '12px' }}>{chatError}</div>}
                 <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phone (optional)</label>
                 <input
                   value={guestPhone}
@@ -224,13 +289,14 @@ export default function ChatWidget() {
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                 />
                 {phoneInvalid && <div id="chat-phone-error" role="alert" style={{ color: '#b91c1c', fontSize: '12px', marginTop: '-8px' }}>Please enter a valid 11-digit mobile number.</div>}
-                <button type="submit" disabled={!validName(firstName) || !validName(lastName) || phoneInvalid} style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '12px', fontSize: '14px', fontWeight: '700', cursor: !validName(firstName) || !validName(lastName) || phoneInvalid ? 'not-allowed' : 'pointer', opacity: !validName(firstName) || !validName(lastName) || phoneInvalid ? 0.6 : 1 }}>
-                  Start Chatting
+                <button type="submit" disabled={!validName(firstName) || !validName(lastName) || phoneInvalid || startingChat} style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '12px', fontSize: '14px', fontWeight: '700', cursor: !validName(firstName) || !validName(lastName) || phoneInvalid || startingChat ? 'not-allowed' : 'pointer', opacity: !validName(firstName) || !validName(lastName) || phoneInvalid || startingChat ? 0.6 : 1 }}>
+                  {startingChat ? 'Connecting…' : 'Start Chatting'}
                 </button>
               </form>
             ) : (
               <>
                 <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {chatError && <div role="alert" style={{ color: '#991b1b', background: '#fef2f2', borderRadius: 8, padding: 10, fontSize: 11 }}>{chatError}</div>}
                   {messages.map(m => (
                     <div key={m.id} style={{ display: 'flex', justifyContent: m.sender === 'guest' ? 'flex-end' : 'flex-start' }}>
                       <div style={{ maxWidth: '78%', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -255,7 +321,7 @@ export default function ChatWidget() {
                       aria-describedby="chat-widget-word-count"
                       style={{ flex: 1, minWidth: 0, border: '1px solid #e5e7eb', borderRadius: '14px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                     />
-                    <button onClick={sendMessage} disabled={!newMsg.trim()} aria-label="Send message" style={{ width: '48px', height: '48px', borderRadius: '14px', border: 'none', background: DARK, color: '#d4f550', cursor: newMsg.trim() ? 'pointer' : 'not-allowed', display: 'grid', placeItems: 'center' }}>
+                    <button onClick={sendMessage} disabled={!newMsg.trim() || sendingMessage} aria-label="Send message" style={{ width: '48px', height: '48px', borderRadius: '14px', border: 'none', background: DARK, color: '#d4f550', cursor: newMsg.trim() && !sendingMessage ? 'pointer' : 'not-allowed', display: 'grid', placeItems: 'center' }}>
                       <SendIcon />
                     </button>
                   </div>

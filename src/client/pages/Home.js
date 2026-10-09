@@ -323,10 +323,25 @@ export default function Home() {
         @media (prefers-reduced-motion: reduce) {
           *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
         }
+        @media (max-width: 700px) {
+          .lk-home-hero { height: auto !important; min-height: 810px !important; }
+          .lk-home-hero-content { align-items: flex-start !important; padding: 52px 22px 126px !important; box-sizing: border-box; }
+          .lk-home-hero-content > div { width: 100%; max-width: 560px !important; }
+          .lk-home-hero h1 { font-size: clamp(42px, 11vw, 56px) !important; margin-top: 0 !important; }
+          .lk-home-hero-ctas { gap: 10px !important; }
+          .lk-home-hero-ctas button { padding: 13px 16px !important; }
+          .lk-home-rating { left: 16px !important; right: auto !important; bottom: 18px !important; padding: 9px 12px !important; }
+          .lk-home-rating > div:first-child { font-size: 16px !important; }
+        }
+        @media (max-width: 390px) {
+          .lk-home-hero { min-height: 850px !important; }
+          .lk-home-hero-content { padding-left: 17px !important; padding-right: 17px !important; }
+          .lk-home-rating { display: none !important; }
+        }
       `}</style>
 
       {/* HERO */}
-      <div style={{ position: 'relative', height: '92vh', minHeight: '600px', overflow: 'hidden' }}>
+      <div className="lk-home-hero" style={{ position: 'relative', height: '92vh', minHeight: '600px', overflow: 'hidden' }}>
         <img src={photos.hero} alt="Lawiswis Kawayan Garden Resort" style={{
           width: '100%', height: '112%', objectFit: 'cover', objectPosition: 'center',
           transform: `translateY(${Math.min(scrollY, 800) * -0.1}px) scale(1.06)`,
@@ -334,7 +349,7 @@ export default function Home() {
         }} />
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(20,25,15,0.55) 0%, rgba(20,25,15,0.35) 45%, rgba(20,25,15,0.7) 100%)' }} />
 
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', padding: '0 60px' }}>
+        <div className="lk-home-hero-content" style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', padding: '0 60px' }}>
           <div style={{ maxWidth: '620px' }}>
             <div style={{
               fontSize: '12px', color: '#e7dfc4', fontWeight: '500', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '18px', fontFamily: SANS,
@@ -359,7 +374,7 @@ export default function Home() {
               display: 'flex', flexWrap: 'wrap', gap: '14px',
               opacity: heroIn ? 1 : 0, transform: heroIn ? 'translateY(0)' : 'translateY(18px)',
               transition: 'opacity 0.9s cubic-bezier(0.16,1,0.3,1) 340ms, transform 0.9s cubic-bezier(0.16,1,0.3,1) 340ms',
-            }}>
+            }} className="lk-home-hero-ctas">
               <button disabled={!canBook} onClick={() => window.location.href = '/rooms'}
                 style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '15px 32px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS, display: 'flex', alignItems: 'center', gap: '10px', transition: 'transform 0.35s cubic-bezier(0.16,1,0.3,1)' }}
                 onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
@@ -378,7 +393,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div style={{
+        <div className="lk-home-rating" style={{
           position: 'absolute', bottom: '36px', right: '60px', background: 'rgba(255,255,255,0.95)', borderRadius: '4px', padding: '14px 20px',
           opacity: heroIn ? 1 : 0, transform: heroIn ? 'translateY(0)' : 'translateY(18px)',
           transition: 'opacity 0.9s cubic-bezier(0.16,1,0.3,1) 460ms, transform 0.9s cubic-bezier(0.16,1,0.3,1) 460ms',

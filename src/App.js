@@ -20,6 +20,7 @@ import ReceptionistDashboard from './admin/pages/ReceptionistDashboard';
 import Home from './client/pages/Home';
 import Rooms from './client/pages/Rooms';
 import BookRoom from './client/pages/BookRoom';
+import BookingHistory from './client/pages/BookingHistory';
 import GuestChat from './client/pages/Chat';
 import About from './client/pages/About';
 import Contact from './client/pages/Contact';
@@ -108,7 +109,7 @@ function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/rooms" element={<Rooms />} />
           <Route path="/book/:roomId" element={<BookRoom />} />
-          <Route path="/my-bookings" element={<BookRoom />} />
+          <Route path="/my-bookings" element={<BookingHistory />} />
           <Route path="/amenities" element={<Amenities />} />
           <Route path="/about-us" element={<About />} />
           <Route path="/certifications" element={<Certifications />} />
