@@ -14,7 +14,14 @@ const handlers = {
 
 export default function handler(req, res) {
   const route = req.query?.route;
-  const endpoint = Array.isArray(route) ? route.join('/') : route;
+  const routePath = Array.isArray(route) ? route.join('/') : route;
+  const requestPath = req.url
+    ? new URL(req.url, `https://${req.headers.host || 'localhost'}`).pathname
+    : '';
+  const endpoint = (routePath || requestPath.replace(/^\/api\//, ''))
+    .split('/')
+    .filter(Boolean)
+    .pop();
   const endpointHandler = handlers[endpoint];
 
   if (!endpointHandler) {
