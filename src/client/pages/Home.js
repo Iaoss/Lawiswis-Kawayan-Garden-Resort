@@ -370,6 +370,10 @@ export default function Home() {
                 style={{ background: 'transparent', color: '#fff', border: '1.5px solid rgba(255,255,255,0.5)', borderRadius: '3px', padding: '15px 30px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: 'pointer', fontFamily: SANS }}>
                 OUR STORY
               </button>
+              <button onClick={() => window.location.href = '/my-bookings'}
+                style={{ background: 'rgba(255,255,255,0.12)', color: '#fff', border: '1px solid rgba(255,255,255,0.6)', borderRadius: '3px', padding: '15px 20px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.035em', cursor: 'pointer', fontFamily: SANS }}>
+                ALREADY BOOKED? VIEW MY BOOKINGS
+              </button>
             </div>
           </div>
         </div>

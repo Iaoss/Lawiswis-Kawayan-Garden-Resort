@@ -3,12 +3,14 @@ import newsletterSubscribe from '../apiHandlers/newsletter-subscribe';
 import newsletterBroadcast from '../apiHandlers/newsletter-broadcast';
 import resortAvailability from '../apiHandlers/resort-availability';
 import occupancy from '../apiHandlers/occupancy';
+import reservationGuestAction from '../apiHandlers/reservation-guest-action';
 
 const handlers = {
   'contact-inquiry': contactInquiry,
   'newsletter-subscribe': newsletterSubscribe,
   'newsletter-broadcast': newsletterBroadcast,
   'resort-availability': resortAvailability,
+  'reservation-guest-action': reservationGuestAction,
   occupancy,
 };
 

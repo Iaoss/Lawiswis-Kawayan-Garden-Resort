@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 
 const HERO_IMAGE =
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/09/About-Lawiswis-Kawayan-scaled-1.jpeg';
@@ -41,7 +42,7 @@ const WORDS = ['', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
 
 /* ------------------------------- component -------------------------------- */
 export default function FeedbackForm() {
-  const [guest, setGuest] = useState({ guestName: '', email: '', roomNumber: '', comment: '' });
+  const [guest, setGuest] = useState({ firstName: '', lastName: '', email: '', roomNumber: '', comment: '' });
   const [scores, setScores] = useState({ ambience: 0, rooms: 0, staff: 0, facilities: 0 });
   const [hover, setHover] = useState({ key: null, value: 0 });
   const [tags, setTags] = useState([]);
@@ -49,6 +50,23 @@ export default function FeedbackForm() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
   const [imgOk, setImgOk] = useState(true);
+
+  useEffect(() => {
+    try {
+      const profile = JSON.parse(localStorage.getItem('guest_profile') || 'null');
+      const legacyNames = typeof profile?.guestName === 'string' ? splitGuestName(profile.guestName) : {};
+      if (profile) {
+        setGuest(previous => ({
+          ...previous,
+          firstName: profile.firstName || legacyNames.firstName || '',
+          lastName: profile.lastName || legacyNames.lastName || '',
+          email: profile.email || '',
+        }));
+      }
+    } catch (error) {
+      console.error('Unable to restore guest details for feedback:', error);
+    }
+  }, []);
 
   useEffect(() => {
     if (document.getElementById('hp-fonts')) return;
@@ -70,10 +88,17 @@ export default function FeedbackForm() {
   const submit = async (e) => {
     e.preventDefault();
     if (!given.length) { setError('Rate at least one category before you send.'); return; }
+    if ((guest.firstName || guest.lastName)
+      && (!NAME_PATTERN.test(guest.firstName.trim()) || !NAME_PATTERN.test(guest.lastName.trim()))) {
+      setError('Enter both first and last names using 2-35 letters, spaces, hyphens, or apostrophes.');
+      return;
+    }
     setError(''); setSubmitting(true);
     try {
       await addDoc(collection(db, 'feedback'), {
-        guestName: guest.guestName.trim(),
+        guestName: joinGuestName(guest.firstName, guest.lastName),
+        firstName: guest.firstName.trim(),
+        lastName: guest.lastName.trim(),
         email: guest.email.trim(),
         roomNumber: guest.roomNumber.trim(),
         comment: guest.comment.trim(),
@@ -191,10 +216,16 @@ export default function FeedbackForm() {
             <p className="lk-sec-note">Optional — leave blank to stay anonymous.</p>
             <div className="lk-grid">
               <label className="lk-field">
-                <span>Full name</span>
+                <span>First name</span>
                 <span className="lk-input"><IUser size={16} />
-                  <input value={guest.guestName} autoComplete="name" placeholder="Maria Santos"
-                    onChange={e => setGuest({ ...guest, guestName: e.target.value })} /></span>
+                  <input value={guest.firstName} autoComplete="given-name" maxLength={35} placeholder="Maria"
+                    onChange={e => setGuest({ ...guest, firstName: e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'-]/g, '').slice(0, 35) })} /></span>
+              </label>
+              <label className="lk-field">
+                <span>Last name</span>
+                <span className="lk-input"><IUser size={16} />
+                  <input value={guest.lastName} autoComplete="family-name" maxLength={35} placeholder="Santos"
+                    onChange={e => setGuest({ ...guest, lastName: e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'-]/g, '').slice(0, 35) })} /></span>
               </label>
               <label className="lk-field">
                 <span>Room number</span>

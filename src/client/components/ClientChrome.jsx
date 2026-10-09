@@ -96,6 +96,7 @@ export default function ClientChrome({ children }) {
             { label: 'Cancellation Policy', path: '/cancellation-policy' },
             { label: 'Privacy Policy', path: '/privacy-policy' },
           ]} />
+          {link('MY BOOKINGS', '/my-bookings')}
         </nav>
         <div className="client-header-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
           <button disabled={!canBook} onClick={() => navigate('/rooms')} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, whiteSpace: 'nowrap' }}>{canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}</button>
@@ -117,7 +118,7 @@ export default function ClientChrome({ children }) {
         .client-dropdown-link { display: block; width: 100%; text-align: left; padding: 11px 18px; border: 0; background: transparent; color: #22261B; font: 12.5px ${SANS}; cursor: pointer; }
         .client-dropdown-link:hover { background: #F4EFE1; color: #22261B; }
         .client-header-actions { margin-left: auto; justify-content: flex-end; }
-        @media (max-width: 700px) { header { flex-wrap: wrap; padding: 14px 18px !important; } header nav { order: 3; width: 100%; justify-content: space-between; gap: 8px !important; } .client-header-actions { margin-left: auto; } footer > div:first-child { grid-template-columns: 1fr !important; } }
+        @media (max-width: 700px) { header { flex-wrap: wrap; padding: 14px 18px !important; } header nav { order: 3; width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 8px 16px !important; } .client-header-actions { margin-left: auto; } footer > div:first-child { grid-template-columns: 1fr !important; } }
       `}</style>
     </div>
   );

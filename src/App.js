@@ -108,6 +108,7 @@ function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/rooms" element={<Rooms />} />
           <Route path="/book/:roomId" element={<BookRoom />} />
+          <Route path="/my-bookings" element={<BookRoom />} />
           <Route path="/amenities" element={<Amenities />} />
           <Route path="/about-us" element={<About />} />
           <Route path="/certifications" element={<Certifications />} />

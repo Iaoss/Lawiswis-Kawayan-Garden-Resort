@@ -112,7 +112,8 @@ export default function BookRoom() {
   const { available: resortAvailable, reason: unavailableReason, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const today = formatDate(new Date());
   const maximumBookingDate = formatDate(addMonths(new Date(), 2));
-  const roomId = window.location.pathname.split('/').pop();
+  const isBookingsRoute = window.location.pathname === '/my-bookings';
+  const roomId = isBookingsRoute ? null : window.location.pathname.split('/').pop();
   const params = new URLSearchParams(window.location.search);
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -136,9 +137,14 @@ export default function BookRoom() {
   const [promoFeedback, setPromoFeedback] = useState(null);
   const [promoChecking, setPromoChecking] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
-  const [activeTab, setActiveTab] = useState('book');
+  const [activeTab, setActiveTab] = useState(isBookingsRoute ? 'history' : 'book');
   const [savedProfile, setSavedProfile] = useState(null);
   const [bookingHistory, setBookingHistory] = useState([]);
+  const [lookupReference, setLookupReference] = useState('');
+  const [lookupContact, setLookupContact] = useState('');
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState('');
+  const [lookupResult, setLookupResult] = useState(null);
 
   const [form, setForm] = useState({
     firstName: '',
@@ -197,6 +203,10 @@ export default function BookRoom() {
 
   useEffect(() => {
     const fetchRoom = async () => {
+      if (!roomId) {
+        setLoading(false);
+        return;
+      }
       try {
         const snap = await getDoc(doc(db, 'rooms', roomId));
         if (snap.exists()) {
@@ -221,6 +231,9 @@ export default function BookRoom() {
         ? splitGuestName(profile.guestName)
         : {};
       setSavedProfile(profile);
+      setLookupContact(typeof profile.phone === 'string' && profile.phone
+        ? profile.phone
+        : typeof profile.email === 'string' ? profile.email : '');
       setForm(previous => ({
         ...previous,
         firstName: typeof profile.firstName === 'string' ? profile.firstName : savedName.firstName || previous.firstName,
@@ -298,16 +311,70 @@ export default function BookRoom() {
   const requestRefund = bookingId => {
     const booking = bookingHistory.find(item => item.bookingId === bookingId);
     if (!booking || !['Pending', 'Confirmed'].includes(booking.status)) return;
-    if (!window.confirm(`Request cancellation/refund for booking #${booking.bookingId.slice(0, 8).toUpperCase()}? This will mark the request as pending on this device. Contact the resort to confirm the request.`)) return;
+    submitRefundRequest(booking);
+  };
 
-    const updatedHistory = bookingHistory.map(item => item.bookingId === bookingId
-      ? { ...item, status: 'Pending Refund' }
-      : item);
-    if (!writeLocalValue(BOOKING_HISTORY_KEY, updatedHistory)) {
-      setErrorMsg('The refund request could not be saved on this device. Please contact the resort directly.');
+  const findReservation = async (reference, contact) => {
+    const response = await fetch('/api/reservation-guest-action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'lookup', reference, contact }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not find this reservation.');
+    return data.reservation;
+  };
+
+  const lookupBooking = async event => {
+    event.preventDefault();
+    setLookupLoading(true);
+    setLookupError('');
+    setLookupResult(null);
+    try {
+      const reservation = await findReservation(lookupReference, lookupContact);
+      setLookupResult(reservation);
+    } catch (error) {
+      setLookupError(error.message || 'Could not find this reservation.');
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const submitRefundRequest = async booking => {
+    const contact = String(savedProfile?.phone || savedProfile?.email || lookupContact || '').trim();
+    if (!contact) {
+      setLookupError('Enter the phone number or email used for this booking to submit a refund request.');
       return;
     }
-    setBookingHistory(updatedHistory);
+    if (!window.confirm(`Send a cancellation/refund request for booking #${String(booking.bookingId).slice(0, 8).toUpperCase()}? The resort must review and confirm the request.`)) return;
+    setLookupLoading(true);
+    setLookupError('');
+    try {
+      const response = await fetch('/api/reservation-guest-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'refund',
+          reference: booking.bookingId,
+          contact,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Could not send the refund request.');
+      const update = item => item.bookingId === booking.bookingId
+        ? { ...item, refundRequestStatus: 'requested', status: 'Pending Refund' }
+        : item;
+      const updatedHistory = bookingHistory.map(update);
+      setBookingHistory(updatedHistory);
+      writeLocalValue(BOOKING_HISTORY_KEY, updatedHistory);
+      if (lookupResult?.bookingId === booking.bookingId) {
+        setLookupResult({ ...lookupResult, refundRequestStatus: 'requested' });
+      }
+    } catch (error) {
+      setLookupError(error.message || 'Could not send the refund request.');
+    } finally {
+      setLookupLoading(false);
+    }
   };
 
   const validateField = (key, value) => {
@@ -582,10 +649,43 @@ export default function BookRoom() {
         {activeTab === 'history' ? (
           <section style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', padding: '24px' }}>
             <h1 style={{ color: '#111', fontSize: '22px', margin: '0 0 6px' }}>My Bookings</h1>
-            <p style={{ color: '#6b7280', fontSize: '12px', lineHeight: 1.7, margin: '0 0 20px' }}>This list is stored in this browser only. Cancellation/refund requests are tracked here and must be confirmed with the resort.</p>
+            <p style={{ color: '#6b7280', fontSize: '12px', lineHeight: 1.7, margin: '0 0 20px' }}>Your bookings saved on this device appear below. If you booked on another device, look up your reservation using its reference and the phone number or email used to book.</p>
             {errorMsg && <div role="alert" style={{ marginBottom: '16px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px', color: '#b91c1c', fontSize: '12px' }}>{errorMsg}</div>}
+            {(lookupError || lookupLoading) && <div role={lookupError ? 'alert' : 'status'} style={{ marginBottom: '16px', color: lookupError ? '#b91c1c' : '#6b7280', fontSize: '12px' }}>{lookupLoading ? 'Checking reservation…' : lookupError}</div>}
             {bookingHistory.length === 0 ? (
-              <div style={{ padding: '30px 16px', textAlign: 'center', color: '#6b7280', fontSize: '13px' }}>No bookings are saved in this browser yet.</div>
+              <>
+                <div style={{ padding: '12px 0 20px', color: '#6b7280', fontSize: '13px' }}>No bookings are saved in this browser yet.</div>
+                <form onSubmit={lookupBooking} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px', borderTop: '1px solid #e5e7eb', paddingTop: '20px' }}>
+                  <label style={{ display: 'grid', gap: '6px', color: '#374151', fontSize: '11px', fontWeight: 600 }}>
+                    BOOKING REFERENCE
+                    <input required value={lookupReference} onChange={event => setLookupReference(event.target.value.trim().toUpperCase().slice(0, 32))} placeholder="e.g. A1B2C3D4" autoComplete="off" style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #d1d5db', borderRadius: 8, padding: '11px', fontSize: 13 }} />
+                  </label>
+                  <label style={{ display: 'grid', gap: '6px', color: '#374151', fontSize: '11px', fontWeight: 600 }}>
+                    BOOKING PHONE OR EMAIL
+                    <input required value={lookupContact} onChange={event => setLookupContact(event.target.value.trim())} placeholder="Phone number or email" autoComplete="email" style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #d1d5db', borderRadius: 8, padding: '11px', fontSize: 13 }} />
+                  </label>
+                  <button type="submit" disabled={lookupLoading} style={{ alignSelf: 'end', border: 0, borderRadius: 8, background: DARK, color: '#fff', padding: '12px 16px', fontWeight: 700, cursor: lookupLoading ? 'wait' : 'pointer' }}>
+                    {lookupLoading ? 'Searching…' : 'Find reservation'}
+                  </button>
+                </form>
+                {lookupResult && (
+                  <article style={{ marginTop: 18, border: '1px solid #e5e7eb', borderRadius: 12, padding: 18, display: 'grid', gap: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                      <div><div style={{ color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' }}>Booking reference</div><strong style={{ color: DARK }}>#{String(lookupResult.bookingId).slice(0, 8).toUpperCase()}</strong></div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: DARK }}>{lookupResult.refundRequestStatus === 'requested' ? 'Refund request pending' : lookupResult.status}</span>
+                    </div>
+                    <div className="booking-history-details">
+                      <div><span>Room</span><strong>{lookupResult.roomName}</strong></div>
+                      <div><span>Check-in</span><strong>{lookupResult.checkIn}</strong></div>
+                      <div><span>Check-out</span><strong>{lookupResult.checkOut}</strong></div>
+                      <div><span>Total</span><strong>₱{Number(lookupResult.totalAmount || 0).toLocaleString()}</strong></div>
+                    </div>
+                    {['pending', 'confirmed'].includes(String(lookupResult.status).toLowerCase()) && lookupResult.refundRequestStatus !== 'requested' && (
+                      <button type="button" onClick={() => submitRefundRequest(lookupResult)} disabled={lookupLoading} style={{ justifySelf: 'start', border: '1px solid #b91c1c', borderRadius: 8, background: '#fff', color: '#b91c1c', padding: '9px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>Request Refund / Cancel</button>
+                    )}
+                  </article>
+                )}
+              </>
             ) : (
               <div style={{ display: 'grid', gap: '12px' }}>
                 {bookingHistory.map(booking => (
@@ -603,8 +703,8 @@ export default function BookRoom() {
                       <div><span>Check-out</span><strong>{booking.checkOut}</strong></div>
                       <div><span>Total</span><strong>₱{Number(booking.totalAmount || 0).toLocaleString()}</strong></div>
                     </div>
-                    {['Pending', 'Confirmed'].includes(booking.status) && (
-                      <button type="button" onClick={() => requestRefund(booking.bookingId)} style={{ justifySelf: 'start', border: '1px solid #b91c1c', borderRadius: '8px', background: '#fff', color: '#b91c1c', padding: '9px 12px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                    {['Pending', 'Confirmed'].includes(booking.status) && booking.refundRequestStatus !== 'requested' && (
+                      <button type="button" onClick={() => requestRefund(booking.bookingId)} disabled={lookupLoading} style={{ justifySelf: 'start', border: '1px solid #b91c1c', borderRadius: '8px', background: '#fff', color: '#b91c1c', padding: '9px 12px', fontSize: '11px', fontWeight: 700, cursor: lookupLoading ? 'wait' : 'pointer' }}>
                         Request Refund / Cancel
                       </button>
                     )}

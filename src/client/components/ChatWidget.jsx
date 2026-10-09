@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -22,21 +23,39 @@ export default function ChatWidget() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [newMsg, setNewMsg] = useState('');
-  const [guestName, setGuestName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
+  const guestName = joinGuestName(firstName, lastName);
+  const validName = name => NAME_PATTERN.test(name.trim())
+    && (name.match(/[A-Za-zÀ-ÖØ-öø-ÿ]/g) || []).length >= 2;
+  const [nameError, setNameError] = useState('');
   const phoneInvalid = Boolean(guestPhone) && !/^09\d{9}$/.test(guestPhone);
   const [convId, setConvId] = useState(null);
   const [started, setStarted] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('huapro_conv');
-    if (saved) {
-      const { id, name, phone } = JSON.parse(saved);
-      setConvId(id);
-      setGuestName(name);
-      setGuestPhone(phone);
-      setStarted(true);
+    try {
+      const profile = JSON.parse(localStorage.getItem('guest_profile') || 'null');
+      if (profile && typeof profile === 'object') {
+        const savedNames = typeof profile.guestName === 'string' ? splitGuestName(profile.guestName) : {};
+        setFirstName(typeof profile.firstName === 'string' ? profile.firstName : savedNames.firstName || '');
+        setLastName(typeof profile.lastName === 'string' ? profile.lastName : savedNames.lastName || '');
+        if (typeof profile.phone === 'string') setGuestPhone(profile.phone.replace(/\D/g, '').slice(0, 11));
+      }
+
+      const saved = JSON.parse(localStorage.getItem('huapro_conv') || 'null');
+      if (saved?.id) {
+        const savedNames = typeof saved.name === 'string' ? splitGuestName(saved.name) : {};
+        setConvId(saved.id);
+        setFirstName(saved.firstName || savedNames.firstName || '');
+        setLastName(saved.lastName || savedNames.lastName || '');
+        setGuestPhone(String(saved.phone || '').replace(/\D/g, '').slice(0, 11));
+        setStarted(true);
+      }
+    } catch (error) {
+      console.error('Unable to restore saved guest chat details:', error);
     }
   }, []);
 
@@ -61,21 +80,50 @@ export default function ChatWidget() {
 
   const startChat = async (e) => {
     e.preventDefault();
-    if (!guestName.trim() || guestName.length > 50 || phoneInvalid) return;
+    const normalizedFirstName = firstName.trim();
+    const normalizedLastName = lastName.trim();
+    if (!validName(normalizedFirstName) || !validName(normalizedLastName) || phoneInvalid) {
+      setNameError('Enter a valid first and last name using at least two letters each.');
+      return;
+    }
+    setNameError('');
+    setFirstName(normalizedFirstName);
+    setLastName(normalizedLastName);
+    const normalizedGuestName = joinGuestName(normalizedFirstName, normalizedLastName);
     const id = `guest_${Date.now()}`;
     await setDoc(doc(db, 'conversations', id), {
-      guestName,
+      guestName: normalizedGuestName,
+      firstName: normalizedFirstName,
+      lastName: normalizedLastName,
       guestPhone,
       lastMessage: '',
       lastMessageAt: serverTimestamp(),
       unread: true,
     });
-    localStorage.setItem('huapro_conv', JSON.stringify({ id, name: guestName, phone: guestPhone }));
+    localStorage.setItem('huapro_conv', JSON.stringify({
+      id,
+      name: normalizedGuestName,
+      firstName: normalizedFirstName,
+      lastName: normalizedLastName,
+      phone: guestPhone,
+    }));
+    try {
+      const profile = JSON.parse(localStorage.getItem('guest_profile') || '{}');
+      localStorage.setItem('guest_profile', JSON.stringify({
+        ...profile,
+        firstName: normalizedFirstName,
+        lastName: normalizedLastName,
+        guestName: normalizedGuestName,
+        phone: guestPhone,
+      }));
+    } catch (error) {
+      console.error('Unable to save guest chat details:', error);
+    }
     setConvId(id);
     setStarted(true);
     await addDoc(collection(db, 'conversations', id, 'messages'), {
       sender: 'staff',
-      text: `Hello ${guestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
+      text: `Hello ${normalizedGuestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
       createdAt: serverTimestamp(),
     });
   };
@@ -95,6 +143,8 @@ export default function ChatWidget() {
       lastMessageAt: serverTimestamp(),
       unread: true,
       guestName,
+      firstName,
+      lastName,
       guestPhone,
     }, { merge: true });
   };
@@ -122,14 +172,35 @@ export default function ChatWidget() {
                   <div style={{ fontSize: '14px', fontWeight: '700', color: '#111', marginBottom: '4px' }}>Start a conversation</div>
                   <div style={{ fontSize: '11px', color: '#6b7280' }}>Enter your name to begin chatting.</div>
                 </div>
-                <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Your Name *</label>
+                <label htmlFor="chat-first-name" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>First Name *</label>
                 <input
-                  value={guestName}
-                  maxLength={50}
-                  onChange={e => setGuestName(e.target.value.slice(0, 50))}
-                  placeholder="Juan dela Cruz"
+                  id="chat-first-name"
+                  value={firstName}
+                  maxLength={35}
+                  autoComplete="given-name"
+                  onChange={e => {
+                    const value = e.target.value;
+                    setFirstName(value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'-]/g, '').slice(0, 35));
+                    setNameError(NAME_ALLOWED_CHARACTERS.test(value) ? '' : 'Numbers and special symbols are not allowed.');
+                  }}
+                  placeholder="Juan"
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                 />
+                <label htmlFor="chat-last-name" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Last Name *</label>
+                <input
+                  id="chat-last-name"
+                  value={lastName}
+                  maxLength={35}
+                  autoComplete="family-name"
+                  onChange={e => {
+                    const value = e.target.value;
+                    setLastName(value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'-]/g, '').slice(0, 35));
+                    setNameError(NAME_ALLOWED_CHARACTERS.test(value) ? '' : 'Numbers and special symbols are not allowed.');
+                  }}
+                  placeholder="Dela Cruz"
+                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
+                />
+                {nameError && <div role="alert" style={{ color: '#b91c1c', fontSize: '12px', marginTop: '-8px' }}>{nameError}</div>}
                 <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Phone (optional)</label>
                 <input
                   value={guestPhone}
@@ -153,7 +224,7 @@ export default function ChatWidget() {
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '12px 14px', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
                 />
                 {phoneInvalid && <div id="chat-phone-error" role="alert" style={{ color: '#b91c1c', fontSize: '12px', marginTop: '-8px' }}>Please enter a valid 11-digit mobile number.</div>}
-                <button type="submit" disabled={!guestName.trim() || phoneInvalid} style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '12px', fontSize: '14px', fontWeight: '700', cursor: !guestName.trim() || phoneInvalid ? 'not-allowed' : 'pointer', opacity: !guestName.trim() || phoneInvalid ? 0.6 : 1 }}>
+                <button type="submit" disabled={!validName(firstName) || !validName(lastName) || phoneInvalid} style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '12px', fontSize: '14px', fontWeight: '700', cursor: !validName(firstName) || !validName(lastName) || phoneInvalid ? 'not-allowed' : 'pointer', opacity: !validName(firstName) || !validName(lastName) || phoneInvalid ? 0.6 : 1 }}>
                   Start Chatting
                 </button>
               </form>
