@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/firebase';
-import { collection, addDoc, query, orderBy, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
 
@@ -35,7 +35,7 @@ export default function GuestChat() {
   const [chatError, setChatError] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
   const [convId, setConvId] = useState(null);
-  const [ownerUid, setOwnerUid] = useState(null);
+  const [guestUid, setGuestUid] = useState(null);
   const [started, setStarted] = useState(false);
   const bottomRef = useRef(null);
 
@@ -46,7 +46,7 @@ export default function GuestChat() {
     try {
       const user = await ensureGuestAuth();
       if (!active) return;
-      setOwnerUid(user.uid);
+      setGuestUid(user.uid);
       const profile = JSON.parse(localStorage.getItem('guest_profile') || 'null');
       if (profile && typeof profile === 'object') {
         const names = typeof profile.guestName === 'string' ? splitGuestName(profile.guestName) : {};
@@ -60,7 +60,7 @@ export default function GuestChat() {
         setFirstName(saved.firstName || names.firstName || '');
         setLastName(saved.lastName || names.lastName || '');
         setGuestPhone(String(saved.phone || '').replace(/\D/g, '').slice(0, 11));
-        if (saved.ownerUid === user.uid && saved.sessionStarted === true) {
+        if ((saved.guestUid || saved.ownerUid) === user.uid && saved.sessionStarted === true) {
           setConvId(saved.id);
           setStarted(true);
         }
@@ -77,9 +77,10 @@ export default function GuestChat() {
   // Listen for messages
   useEffect(() => {
     if (!convId) return;
-    const q = query(collection(db, 'conversations', convId, 'messages'), orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(q, snap => {
-      const loadedMessages = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const unsub = onSnapshot(collection(db, 'conversations', convId, 'messages'), snap => {
+      const loadedMessages = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.timestamp?.seconds || a.createdAt?.seconds || 0) - (b.timestamp?.seconds || b.createdAt?.seconds || 0));
       setMessages(loadedMessages.length ? loadedMessages : [{
         id: 'welcome',
         sender: 'system',
@@ -107,14 +108,13 @@ export default function GuestChat() {
     }
     setNameError('');
     const normalizedGuestName = joinGuestName(normalizedFirstName, normalizedLastName);
-    const id = `guest_${Date.now()}`;
     setFirstName(normalizedFirstName);
     setLastName(normalizedLastName);
     setMessages([{
       id: 'welcome',
       sender: 'system',
       text: `Hello ${normalizedGuestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
-      createdAt: { seconds: Math.floor(Date.now() / 1000) },
+      timestamp: { seconds: Math.floor(Date.now() / 1000) },
     }]);
     setStarted(true);
     try {
@@ -127,27 +127,23 @@ export default function GuestChat() {
         phone: guestPhone,
       }));
       const user = await ensureGuestAuth();
-      setOwnerUid(user.uid);
-      await setDoc(doc(db, 'conversations', id), {
-        ownerUid: user.uid,
-        sessionStarted: true,
+      setGuestUid(user.uid);
+      const conversationRef = await addDoc(collection(db, 'conversations'), {
         guestName: normalizedGuestName,
-        firstName: normalizedFirstName,
-        lastName: normalizedLastName,
-        phone: guestPhone,
         guestPhone,
+        guestUid: user.uid,
         lastMessage: '',
         lastMessageAt: serverTimestamp(),
-        unread: true,
+        unread: false,
       });
-      setConvId(id);
+      setConvId(conversationRef.id);
       localStorage.setItem('huapro_conv', JSON.stringify({
-        id,
+        id: conversationRef.id,
         name: normalizedGuestName,
         firstName: normalizedFirstName,
         lastName: normalizedLastName,
         phone: guestPhone,
-        ownerUid: user.uid,
+        guestUid: user.uid,
         sessionStarted: true,
       }));
     } catch (error) {
@@ -162,7 +158,7 @@ export default function GuestChat() {
   const sendMessage = async () => {
     if (!newMsg.trim() || sendingMessage) return;
     if (countWords(newMsg) > 50) return;
-    if (!convId || !ownerUid) {
+    if (!convId || !guestUid) {
       setChatError('This chat is not connected yet. Please refresh and try again.');
       return;
     }
@@ -173,15 +169,12 @@ export default function GuestChat() {
       await addDoc(collection(db, 'conversations', convId, 'messages'), {
         sender: 'guest',
         text,
-        createdAt: serverTimestamp(),
-        ownerUid,
+        timestamp: serverTimestamp(),
       });
       await setDoc(doc(db, 'conversations', convId), {
         lastMessage: text,
         lastMessageAt: serverTimestamp(),
         unread: true,
-        guestName,
-        guestPhone,
       }, { merge: true });
       setNewMsg('');
     } catch (error) {
@@ -286,7 +279,7 @@ export default function GuestChat() {
                       {m.text}
                     </div>
                     <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', textAlign: m.sender === 'guest' ? 'right' : 'left' }}>
-                      {m.createdAt?.seconds ? new Date(m.createdAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
+                      {(m.timestamp || m.createdAt)?.seconds ? new Date((m.timestamp || m.createdAt).seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
                     </div>
                   </div>
                   {m.sender === 'guest' && (

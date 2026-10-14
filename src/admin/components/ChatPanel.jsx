@@ -46,8 +46,11 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
 
   useEffect(() => {
     if (!selected) return;
-    const q = query(collection(db, 'conversations', selected.id, 'messages'), orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(q, (snap) => setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsub = onSnapshot(collection(db, 'conversations', selected.id, 'messages'), (snap) => {
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      items.sort((a, b) => (a.timestamp?.seconds || a.createdAt?.seconds || 0) - (b.timestamp?.seconds || b.createdAt?.seconds || 0));
+      setMessages(items);
+    });
     return () => unsub();
   }, [selected]);
 
@@ -74,7 +77,7 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
     await addDoc(collection(db, 'conversations', selected.id, 'messages'), {
       sender: 'staff',
       text: newMsg,
-      createdAt: serverTimestamp(),
+      timestamp: serverTimestamp(),
     });
     await updateDoc(doc(db, 'conversations', selected.id), {
       lastMessage: newMsg,
@@ -201,7 +204,7 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
                   </div>
                   <div style={{ fontSize: 10, color: MUTED, marginTop: 4, display: 'flex', gap: 6, justifyContent: m.sender === 'staff' ? 'flex-end' : 'flex-start' }}>
                     {m.isBot && <span>🤖 Auto-reply</span>}
-                    <span>{m.createdAt?.seconds ? new Date(m.createdAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}</span>
+                    <span>{(m.timestamp || m.createdAt)?.seconds ? new Date((m.timestamp || m.createdAt).seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}</span>
                   </div>
                 </div>
               ))}

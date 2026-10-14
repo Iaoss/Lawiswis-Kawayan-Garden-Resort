@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/firebase';
 import {
-  collection, query, orderBy, onSnapshot,
+  collection, onSnapshot,
   addDoc, serverTimestamp, doc, updateDoc, setDoc, getDocs, deleteDoc
 } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
@@ -75,9 +75,10 @@ export default function Messages() {
   // Listen for messages of selected conversation
   useEffect(() => {
     if (!selected) return;
-    const q = query(collection(db, 'conversations', selected.id, 'messages'), orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(q, (snap) => {
-      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const unsub = onSnapshot(collection(db, 'conversations', selected.id, 'messages'), (snap) => {
+      const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      items.sort((a, b) => (a.timestamp?.seconds || a.createdAt?.seconds || 0) - (b.timestamp?.seconds || b.createdAt?.seconds || 0));
+      setMessages(items);
     });
     return () => unsub();
   }, [selected]);
@@ -100,7 +101,7 @@ export default function Messages() {
     await addDoc(collection(db, 'conversations', selected.id, 'messages'), {
       sender: 'staff',
       text: msg,
-      createdAt: serverTimestamp(),
+      timestamp: serverTimestamp(),
     });
     await updateDoc(doc(db, 'conversations', selected.id), {
       lastMessage: msg,
@@ -377,7 +378,7 @@ export default function Messages() {
                         {m.text}
                       </div>
                       <div style={{ fontSize: '10px', color: MUTED, marginTop: '4px', textAlign: m.sender === 'staff' ? 'right' : 'left' }}>
-                        {m.createdAt?.seconds ? new Date(m.createdAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
+                        {(m.timestamp || m.createdAt)?.seconds ? new Date((m.timestamp || m.createdAt).seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
                       </div>
                     </div>
                     {m.sender === 'staff' && (

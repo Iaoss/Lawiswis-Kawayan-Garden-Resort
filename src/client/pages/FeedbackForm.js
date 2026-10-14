@@ -97,8 +97,6 @@ export default function FeedbackForm() {
     try {
       await addDoc(collection(db, 'feedback'), {
         guestName: joinGuestName(guest.firstName, guest.lastName),
-        firstName: guest.firstName.trim(),
-        lastName: guest.lastName.trim(),
         email: guest.email.trim(),
         roomNumber: guest.roomNumber.trim(),
         comment: guest.comment.trim(),
