@@ -5,7 +5,8 @@ import resortAvailability from '../apiHandlers/resort-availability';
 import occupancy from '../apiHandlers/occupancy';
 import reservationGuestAction from '../apiHandlers/reservation-guest-action';
 import publicFeedback from '../apiHandlers/public-feedback';
-import reservationStaffAction from './reservation-staff-action';
+import createCorporateReservation from '../apiHandlers/create-corporate-reservation';
+import reservationStaffAction from '../apiHandlers/reservation-staff-action';
 
 const handlers = {
   'contact-inquiry': contactInquiry,
@@ -14,6 +15,7 @@ const handlers = {
   'resort-availability': resortAvailability,
   'reservation-guest-action': reservationGuestAction,
   'reservation-staff-action': reservationStaffAction,
+  'create-corporate-reservation': createCorporateReservation,
   'public-feedback': publicFeedback,
   occupancy,
 };
