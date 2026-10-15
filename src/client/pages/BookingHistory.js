@@ -15,7 +15,8 @@ function readStoredValue(key, fallback) {
 }
 
 function bookingStatus(booking) {
-  if (booking.refundRequestStatus === 'requested') return 'Refund request pending';
+  if (booking.refundRequestStatus) return `Refund ${String(booking.refundRequestStatus).replaceAll('_', ' ')}`;
+  if (booking.modificationRequest?.status) return `Change ${String(booking.modificationRequest.status).replaceAll('_', ' ')}`;
   return booking.status || 'Pending';
 }
 
@@ -27,6 +28,7 @@ export default function BookingHistory() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+  const [requestedDates, setRequestedDates] = useState({ checkIn: '', checkOut: '' });
 
   useEffect(() => {
     const history = readStoredValue('booking_history', []);
@@ -38,11 +40,11 @@ export default function BookingHistory() {
     }
   }, []);
 
-  const sendGuestAction = async (action, bookingReference) => {
+  const sendGuestAction = async (action, bookingReference, details = {}) => {
     const response = await fetch('/api/reservation-guest-action', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, reference: bookingReference, contact: contact.trim() }),
+      body: JSON.stringify({ action, reference: bookingReference, contact: contact.trim(), ...details }),
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Could not process the reservation request.');
@@ -58,6 +60,10 @@ export default function BookingHistory() {
     try {
       const result = await sendGuestAction('lookup', reference.trim());
       setLookupResult(result.reservation);
+      setRequestedDates({
+        checkIn: result.reservation.checkIn || '',
+        checkOut: result.reservation.checkOut || '',
+      });
     } catch (lookupError) {
       setError(lookupError.message || 'Could not find this reservation.');
     } finally {
@@ -72,7 +78,7 @@ export default function BookingHistory() {
     try {
       const result = await sendGuestAction('refund', booking.bookingId);
       const update = item => item.bookingId === booking.bookingId
-        ? { ...item, refundRequestStatus: 'requested' }
+        ? { ...item, refundRequestStatus: result.outcome || 'requested' }
         : item;
       const updatedBookings = bookings.map(update);
       setBookings(updatedBookings);
@@ -82,11 +88,17 @@ export default function BookingHistory() {
         console.error('Unable to update booking history in local storage:', storageError);
       }
       if (lookupResult?.bookingId === booking.bookingId) {
-        setLookupResult({ ...lookupResult, refundRequestStatus: 'requested' });
+        setLookupResult({
+          ...lookupResult,
+          refundRequestStatus: result.outcome || 'requested',
+          refundDecision: result.decision || lookupResult.refundDecision,
+        });
       }
       setNotice(result.alreadyRequested
-        ? 'A refund request for this reservation is already awaiting resort review.'
-        : 'Your refund request was sent to the resort for review.');
+        ? 'A refund request for this reservation is already on file.'
+        : result.outcome === 'eligible'
+          ? `Policy estimate: ₱${Number(result.decision?.refundableAmount || 0).toLocaleString()} refundable, pending staff approval.`
+          : result.decision?.reason || 'Your refund request was sent to the resort for review.');
     } catch (refundError) {
       setError(refundError.message || 'Could not submit the refund request.');
     } finally {
@@ -94,10 +106,29 @@ export default function BookingHistory() {
     }
   };
 
-  const canRequestRefund = booking => ['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase())
-    && booking.refundRequestStatus !== 'requested';
+  const requestScheduleChange = async (event, booking) => {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await sendGuestAction('schedule-change', booking.bookingId, requestedDates);
+      const updated = { ...booking, modificationRequest: result.modificationRequest };
+      if (lookupResult?.bookingId === booking.bookingId) setLookupResult(updated);
+      setNotice(result.alreadyRequested
+        ? 'A schedule-change request is already awaiting resort review.'
+        : `Your requested dates were sent to resort staff. ${result.modificationRequest?.reason || ''}`);
+    } catch (requestError) {
+      setError(requestError.message || 'Could not request a schedule change.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const renderBooking = booking => (
+  const canRequestRefund = booking => ['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase())
+    && !booking.refundRequestStatus;
+
+  const renderBooking = (booking, allowModification = false) => (
     <article key={booking.bookingId} style={{ border: '1px solid #e5e7eb', borderRadius: 14, padding: 18, background: '#fff' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div>
@@ -114,10 +145,36 @@ export default function BookingHistory() {
         <div><div style={{ color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' }}>Check-out</div><strong>{booking.checkOut || '—'}</strong></div>
         <div><div style={{ color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' }}>Total</div><strong>₱{Number(booking.totalAmount || 0).toLocaleString()}</strong></div>
       </div>
+      {booking.refundDecision && (
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#f8faf8', color: '#4b5563', fontSize: 12 }}>
+          <strong>Refund decision:</strong> {booking.refundDecision.reason}
+          {Number(booking.refundDecision.refundableAmount) > 0 && <> Estimated amount ₱{Number(booking.refundDecision.refundableAmount).toLocaleString()}.</>}
+          {booking.refundDecision.alternatives?.length > 0 && <div style={{ marginTop: 5 }}>Options: {booking.refundDecision.alternatives.join(' ')}</div>}
+        </div>
+      )}
+      {booking.modificationRequest && (
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#f8faf8', color: '#4b5563', fontSize: 12 }}>
+          <strong>Schedule change:</strong> {booking.modificationRequest.status?.replaceAll('_', ' ')} · {booking.modificationRequest.requestedCheckIn} – {booking.modificationRequest.requestedCheckOut}
+          {booking.modificationRequest.reason && <div style={{ marginTop: 4 }}>{booking.modificationRequest.reason}</div>}
+        </div>
+      )}
       {canRequestRefund(booking) && (
         <button type="button" disabled={loading} onClick={() => requestRefund(booking)} style={{ marginTop: 16, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '10px 14px', color: DARK, background: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
           Request Refund
         </button>
+      )}
+      {allowModification
+        && (!booking.modificationRequest || ['rejected', 'completed'].includes(booking.modificationRequest.status))
+        && ['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase()) && (
+        <form onSubmit={event => requestScheduleChange(event, booking)} style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #e5e7eb', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, alignItems: 'end' }}>
+          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>New check-in
+            <input type="date" required value={requestedDates.checkIn} onChange={event => setRequestedDates(current => ({ ...current, checkIn: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+          </label>
+          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>New check-out
+            <input type="date" required value={requestedDates.checkOut} onChange={event => setRequestedDates(current => ({ ...current, checkOut: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+          </label>
+          <button type="submit" disabled={loading || !contact.trim()} style={{ border: 0, borderRadius: 8, padding: '10px 14px', background: DARK, color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>Request date change</button>
+        </form>
       )}
     </article>
   );
@@ -159,7 +216,7 @@ export default function BookingHistory() {
           </form>
           {error && <p role="alert" style={{ color: '#b91c1c', fontSize: 13, margin: '14px 0 0' }}>{error}</p>}
           {notice && <p role="status" style={{ color: DARK, background: '#eff6f0', borderRadius: 8, padding: 12, fontSize: 13, margin: '14px 0 0' }}>{notice}</p>}
-          {lookupResult && <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>{renderBooking(lookupResult)}</div>}
+          {lookupResult && <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>{renderBooking(lookupResult, true)}</div>}
         </section>
         <div style={{ marginTop: 22, textAlign: 'center' }}><Link to="/rooms" style={{ color: DARK, fontWeight: 700, fontSize: 13 }}>Browse rooms</Link></div>
       </div>

@@ -3,6 +3,7 @@ import { db } from '../../firebase/firebase';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import OccupancyBadge from '../components/OccupancyBadge';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
+import { Skeleton } from '../../components/ui/v-skeleton-8-utils/skeleton.jsx';
 
 /* ─────────────────────────────────────────────
    BRAND PALETTE — pulled from the Lawiswis Kawayan
@@ -91,18 +92,6 @@ const Reveal = ({ children, delay = 0, y = 16, style = {} }) => {
 /* ─────────────────────────────────────────────
    TESTIMONIALS
 ───────────────────────────────────────────── */
-const allTestimonials = [
-  { text: 'The bamboo garden is absolutely breathtaking! We loved every moment of our stay. Perfect for families and so peaceful.', name: 'Maria Santos', role: 'Family Guest', type: 'Family Stay', avatar: 'https://images.unsplash.com/photo-1607746882042-944635dfe10e?w=80&h=80&fit=crop&crop=faces', stars: 5 },
-  { text: 'Best resort in Bulacan! Staff were so welcoming, food was amazing. Our team-building event ran perfectly start to finish.', name: 'Jose Reyes', role: 'HR Manager', type: 'Corporate', avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=80&h=80&fit=crop&crop=faces', stars: 5 },
-  { text: 'A truly serene getaway just an hour from Manila. The spa was heavenly and the rooms were spotlessly clean. So unique!', name: 'Ana Cruz', role: 'Weekend Guest', type: 'Couple', avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=80&h=80&fit=crop&crop=faces', stars: 5 },
-  { text: 'Perfect honeymoon venue! The villa exceeded all expectations. Garden views at sunrise were absolutely romantic.', name: 'Robert Lim', role: 'Honeymoon Suite', type: 'Couple', avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=80&h=80&fit=crop&crop=faces', stars: 5 },
-  { text: 'The function hall was beautifully set up. Guests were amazed by the bamboo garden backdrop for our celebration.', name: 'Lorraine Reyes', role: 'Event Organizer', type: 'Events', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&h=80&fit=crop&crop=faces', stars: 5 },
-  { text: 'Lawiswis Kawayan is our go-to resort in Bulacan. The garden is gorgeous, the pool is clean, and the whole vibe is so relaxing.', name: 'Kevin Manalo', role: 'Local Guest', type: 'Recreation', avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=80&h=80&fit=crop&crop=faces', stars: 5 },
-  { text: 'We celebrated my parents\' anniversary here and the staff went above and beyond to make it memorable. Very family-friendly.', name: 'Christine Bautista', role: 'Celebration Guest', type: 'Family Stay', avatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=80&h=80&fit=crop&crop=faces', stars: 5 },
-  { text: 'Our company seminar was a huge success. The peaceful environment helped our team focus and the catering was excellent.', name: 'Paolo Villanueva', role: 'Project Lead', type: 'Corporate', avatar: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?w=80&h=80&fit=crop&crop=faces', stars: 5 },
-  { text: 'The morning garden walk with dew on the bamboo leaves was magical. Reminded me why these nature escapes matter so much.', name: 'Grace Ocampo', role: 'Nature Lover', type: 'Recreation', avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=80&h=80&fit=crop&crop=faces', stars: 5 },
-];
-
 const TestimonialColumn = ({ items, duration = 18000, paused = false }) => {
   const trackRef = useRef(null);
   const offsetRef = useRef(0);
@@ -133,15 +122,21 @@ const TestimonialColumn = ({ items, duration = 18000, paused = false }) => {
   return (
     <div ref={trackRef} style={{ display: 'flex', flexDirection: 'column', gap: '16px', willChange: 'transform' }}>
       {doubled.map((r, idx) => (
-        <div key={idx} style={{ background: PAPER, borderRadius: '4px', padding: '22px', border: `1px solid ${LINE}`, flexShrink: 0, width: '280px' }}>
-          <span style={{ display: 'inline-block', fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', background: CREAM, color: FOREST, padding: '3px 10px', borderRadius: '3px', marginBottom: '10px', fontFamily: SANS }}>{r.type}</span>
-          <div style={{ color: BRASS, fontSize: '13px', marginBottom: '10px', letterSpacing: '2px' }}>{'★'.repeat(r.stars)}</div>
-          <p style={{ fontSize: '13px', color: '#4b4a3f', lineHeight: '1.75', fontStyle: 'italic', marginBottom: '16px', fontFamily: SERIF }}>"{r.text}"</p>
+        <div key={`${r.id}-${idx}`} style={{ background: PAPER, borderRadius: '4px', padding: '22px', border: `1px solid ${LINE}`, flexShrink: 0, width: '280px' }}>
+          <span style={{ display: 'inline-block', fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', background: CREAM, color: FOREST, padding: '3px 10px', borderRadius: '3px', marginBottom: '10px', fontFamily: SANS }}>{r.category}</span>
+          <div aria-label={`${r.rating} out of 5 stars`} style={{ color: BRASS, fontSize: '13px', marginBottom: '10px', letterSpacing: '2px' }}>{'★'.repeat(Math.round(r.rating))}{'☆'.repeat(5 - Math.round(r.rating))}</div>
+          <p style={{ fontSize: '13px', color: '#4b4a3f', lineHeight: '1.75', fontStyle: 'italic', marginBottom: '16px', fontFamily: SERIF }}>"{r.comment}"</p>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderTop: `1px solid ${LINE}`, paddingTop: '12px' }}>
-            <img src={r.avatar} alt={r.name} style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+            {r.avatarUrl ? (
+              <img src={r.avatarUrl} alt="" style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+            ) : (
+              <div aria-hidden="true" style={{ width: '34px', height: '34px', borderRadius: '50%', flexShrink: 0, display: 'grid', placeItems: 'center', background: CREAM, color: FOREST, fontSize: '12px', fontWeight: '600' }}>
+                {(r.guestName || 'G').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase()}
+              </div>
+            )}
             <div>
-              <div style={{ fontWeight: '600', fontSize: '12px', color: INK, lineHeight: '1.2', fontFamily: SANS }}>{r.name}</div>
-              <div style={{ fontSize: '10px', color: '#9b9788', fontFamily: SANS }}>{r.role}</div>
+              <div style={{ fontWeight: '600', fontSize: '12px', color: INK, lineHeight: '1.2', fontFamily: SANS }}>{r.guestName || 'Verified Guest'}</div>
+              <div style={{ fontSize: '10px', color: '#9b9788', fontFamily: SANS }}>Verified guest</div>
             </div>
           </div>
         </div>
@@ -152,15 +147,36 @@ const TestimonialColumn = ({ items, duration = 18000, paused = false }) => {
 
 const TestimonialsSection = () => {
   const [hoveredCol, setHoveredCol] = useState(null);
-  const col1 = allTestimonials.slice(0, 3);
-  const col2 = allTestimonials.slice(3, 6);
-  const col3 = allTestimonials.slice(6, 9);
-  const stats = [
-    { val: '4.9/5', label: 'Overall Rating' },
-    { val: '98%', label: 'Satisfaction' },
-    { val: '1,200+', label: 'Reviews' },
-    { val: '500+', label: 'Events Hosted' },
-  ];
+  const [feedback, setFeedback] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const columns = [0, 1, 2].map(column => feedback.filter((_, index) => index % 3 === column));
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadFeedback = async () => {
+      try {
+        const response = await fetch('/api/public-feedback', { signal: controller.signal });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Guest feedback is temporarily unavailable.');
+        if (!Array.isArray(data.feedback)) throw new Error('The guest feedback response was invalid.');
+        setFeedback(data.feedback.filter(item => item && item.verified === true));
+      } catch (loadError) {
+        if (loadError.name !== 'AbortError') {
+          console.error('Failed to load verified guest feedback:', loadError);
+          setError(loadError.message || 'Guest feedback is temporarily unavailable.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    };
+    loadFeedback();
+    return () => controller.abort();
+  }, []);
+
+  const averageRating = feedback.length
+    ? (feedback.reduce((total, item) => total + Number(item.rating || 0), 0) / feedback.length).toFixed(1)
+    : '';
 
   return (
     <div style={{ background: CREAM, padding: '90px 0' }}>
@@ -171,33 +187,71 @@ const TestimonialsSection = () => {
           <p style={{ fontSize: '13px', color: '#6b6a5c', maxWidth: '440px', margin: '0 auto 26px', fontFamily: SANS }}>
             Families, corporate teams, and weekend travelers on their time at Lawiswis Kawayan.
           </p>
-          <div style={{ display: 'flex', gap: '34px', justifyContent: 'center', flexWrap: 'wrap' }}>
-            {stats.map(s => (
-              <div key={s.label} style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '22px', fontWeight: '600', color: FOREST, fontFamily: SERIF }}>{s.val}</div>
-                <div style={{ fontSize: '10px', color: '#9b9788', marginTop: '2px', fontFamily: SANS }}>{s.label}</div>
+          {!loading && !error && feedback.length > 0 && (
+            <div style={{ display: 'flex', gap: '34px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '22px', fontWeight: '600', color: FOREST, fontFamily: SERIF }}>{averageRating}/5</div>
+                <div style={{ fontSize: '10px', color: '#9b9788', marginTop: '2px', fontFamily: SANS }}>Average guest rating</div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '22px', fontWeight: '600', color: FOREST, fontFamily: SERIF }}>{feedback.length}</div>
+                <div style={{ fontSize: '10px', color: '#9b9788', marginTop: '2px', fontFamily: SANS }}>Verified reviews</div>
+              </div>
+            </div>
+          )}
+        </Reveal>
+
+        {loading ? (
+          <div className="testimonial-loading-grid" role="status" aria-label="Loading guest feedback">
+            {[0, 1, 2].map(index => (
+              <div key={index} style={{ background: PAPER, borderRadius: '4px', padding: '22px', border: `1px solid ${LINE}`, width: '280px', boxSizing: 'border-box' }}>
+                <Skeleton className="mb-3 h-5 w-24 rounded-sm" />
+                <Skeleton className="mb-3 h-4 w-20" />
+                <Skeleton className="mb-2 h-3 w-full" />
+                <Skeleton className="mb-2 h-3 w-11/12" />
+                <Skeleton className="mb-5 h-3 w-3/4" />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderTop: `1px solid ${LINE}`, paddingTop: '12px' }}>
+                  <Skeleton className="size-9 rounded-full" />
+                  <div style={{ display: 'grid', gap: '6px' }}>
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-2.5 w-16" />
+                  </div>
+                </div>
               </div>
             ))}
           </div>
-        </Reveal>
-
-        <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', maxHeight: '660px', overflow: 'hidden', WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 16%, black 84%, transparent)', maskImage: 'linear-gradient(to bottom, transparent, black 16%, black 84%, transparent)' }}>
-          <div onMouseEnter={() => setHoveredCol(0)} onMouseLeave={() => setHoveredCol(null)} style={{ flexShrink: 0 }}>
-            <TestimonialColumn items={col1} duration={18000} paused={hoveredCol === 0} />
+        ) : error ? (
+          <div role="status" style={{ textAlign: 'center', padding: '54px 20px', color: '#8b8977', fontFamily: SANS, fontSize: '13px' }}>
+            Verified guest feedback is temporarily unavailable.
           </div>
-          <div className="testi-col-md" onMouseEnter={() => setHoveredCol(1)} onMouseLeave={() => setHoveredCol(null)} style={{ flexShrink: 0 }}>
-            <TestimonialColumn items={col2} duration={22000} paused={hoveredCol === 1} />
+        ) : feedback.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '54px 20px', color: '#8b8977', fontFamily: SANS, fontSize: '13px' }}>
+            No verified guest feedback is available yet. Be the first to share your experience.
           </div>
-          <div className="testi-col-lg" onMouseEnter={() => setHoveredCol(2)} onMouseLeave={() => setHoveredCol(null)} style={{ flexShrink: 0 }}>
-            <TestimonialColumn items={col3} duration={20000} paused={hoveredCol === 2} />
+        ) : (
+          <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', maxHeight: '660px', overflow: 'hidden', WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 16%, black 84%, transparent)', maskImage: 'linear-gradient(to bottom, transparent, black 16%, black 84%, transparent)' }}>
+            {columns.map((items, index) => items.length > 0 && (
+              <div
+                key={index}
+                className={index === 1 ? 'testi-col-md' : index === 2 ? 'testi-col-lg' : ''}
+                onMouseEnter={() => setHoveredCol(index)}
+                onMouseLeave={() => setHoveredCol(null)}
+                style={{ flexShrink: 0 }}
+              >
+                <TestimonialColumn items={items} duration={[18000, 22000, 20000][index]} paused={hoveredCol === index} />
+              </div>
+            ))}
           </div>
-        </div>
+        )}
 
         <style>{`
+          .testimonial-loading-grid { display: grid; grid-template-columns: repeat(3, 280px); justify-content: center; gap: 16px; }
           .testi-col-md { display: flex; }
           .testi-col-lg { display: flex; }
           @media (max-width: 700px)  { .testi-col-md { display: none !important; } .testi-col-lg { display: none !important; } }
           @media (max-width: 1023px) { .testi-col-lg { display: none !important; } }
+          @media (max-width: 900px) { .testimonial-loading-grid { grid-template-columns: repeat(2, 280px); } .testimonial-loading-grid > :last-child { display: none; } }
+          @media (max-width: 700px) { .testimonial-loading-grid { grid-template-columns: minmax(0, 280px); } .testimonial-loading-grid > :not(:first-child) { display: none; } }
         `}</style>
       </div>
     </div>
@@ -375,7 +429,7 @@ export default function Home() {
               opacity: heroIn ? 1 : 0, transform: heroIn ? 'translateY(0)' : 'translateY(18px)',
               transition: 'opacity 0.9s cubic-bezier(0.16,1,0.3,1) 340ms, transform 0.9s cubic-bezier(0.16,1,0.3,1) 340ms',
             }} className="lk-home-hero-ctas">
-              <button disabled={!canBook} onClick={() => window.location.href = '/rooms'}
+              <button disabled={!canBook} onClick={() => window.location.href = '/booking-options'}
                 style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '15px 32px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS, display: 'flex', alignItems: 'center', gap: '10px', transition: 'transform 0.35s cubic-bezier(0.16,1,0.3,1)' }}
                 onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
                 onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
@@ -580,7 +634,7 @@ export default function Home() {
             <div style={{ fontSize: '11px', color: '#e7dfc4', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '14px', fontFamily: SANS }}>We Can't Wait to Serve You</div>
             <h2 style={{ fontSize: '32px', fontWeight: '500', color: '#fff', fontFamily: SERIF, margin: 0 }}>Ready for Your Bulacan Getaway?</h2>
           </Reveal>
-          <button disabled={!canBook} onClick={() => window.location.href = '/rooms'}
+          <button disabled={!canBook} onClick={() => window.location.href = '/booking-options'}
             style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '16px 34px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS, whiteSpace: 'nowrap' }}>
             {canBook ? 'BOOK YOUR STAY →' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}
           </button>

@@ -19,6 +19,23 @@
 
 :root {
   color-scheme: light;
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --border: 214 32% 91%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --ring: 142 45% 38%;
+  --accent-foreground: #10200d;
+}
+
+:root[data-dark="true"] {
+  color-scheme: dark;
+  --background: 150 10% 10%;
+  --foreground: 60 10% 91%;
+  --border: 120 4% 20%;
+  --muted: 120 4% 17%;
+  --muted-foreground: 60 5% 65%;
+  --ring: 82 65% 55%;
 }
 
 body {
@@ -33,6 +50,21 @@ body {
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
+}
+
+@keyframes skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton-shimmer::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
 }
 
 .client-page {

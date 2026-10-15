@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { createPayMongoCheckout } from '../../lib/paymongo';
-import { getOnlinePaymentAmount } from '../../lib/paymentPolicy';
+import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
   calculateBookingPrice,
   COTTAGE_OPTIONS,
@@ -190,9 +190,9 @@ export default function BookRoom() {
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
   const discountAmount = activePromo?.discountAmount || 0;
   const bookingTotal = useMemo(() => Math.max(0, totalAmount - discountAmount), [totalAmount, discountAmount]);
-  const paymentChoice = selectedPaymentChoice || (bookingTotal < 5000 ? 'full' : 'deposit');
+  const paymentChoice = selectedPaymentChoice || 'deposit';
   const onlinePaymentAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, paymentChoice) : 0;
-  const depositPercentage = 25;
+  const depositPercentage = RESERVATION_DEPOSIT_PERCENTAGE;
   const depositAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, 'deposit') : 0;
   const balanceAmount = Math.max(0, bookingTotal - depositAmount);
   const configuredMaxGuests = Number(room?.maxCapacity ?? room?.maximumCapacity ?? room?.maxGuests);
@@ -1140,7 +1140,7 @@ export default function BookRoom() {
                   <span>Total</span>
                   <span style={{ color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today (25% deposit)</span><span>₱{depositAmount.toLocaleString()}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today ({depositPercentage}% deposit)</span><span>₱{depositAmount.toLocaleString()}</span></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '7px' }}><span>Balance due on arrival</span><span>₱{balanceAmount.toLocaleString()}</span></div>
               </div>
 

@@ -132,6 +132,12 @@ export default function Contact() {
 
   return (
     <div style={{ background: PAPER, minHeight: '100vh' }}>
+      <style>{`
+        @media (max-width: 760px) {
+          .contact-grid-layout { grid-template-columns: 1fr !important; gap: 38px !important; padding-top: 48px !important; }
+          .contact-form-card { padding: 22px !important; }
+        }
+      `}</style>
       <section style={{ background: FOREST_DEEP, padding: '78px 24px 92px', color: '#fff' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
           <div style={{ color: '#e7dfc4', font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '14px' }}>Come say hello</div>
@@ -140,7 +146,7 @@ export default function Contact() {
         </div>
       </section>
 
-      <div id="contact-grid" style={{ maxWidth: '1100px', margin: '0 auto', padding: '70px 24px 100px', display: 'grid', gridTemplateColumns: '.8fr 1.2fr', gap: '70px' }}>
+      <div id="contact-grid" className="contact-grid-layout" style={{ maxWidth: '1100px', margin: '0 auto', padding: '70px 24px 100px', display: 'grid', gridTemplateColumns: '.8fr 1.2fr', gap: '70px' }}>
         <div>
           <h2 style={{ color: INK, font: `500 32px ${SERIF}`, margin: '0 0 22px' }}>Find us in the garden.</h2>
           <div style={{ display: 'grid', gap: '22px', color: '#6b6a5c', font: `13px/1.7 ${SANS}` }}>
@@ -148,10 +154,26 @@ export default function Contact() {
             <div><strong style={{ display: 'block', color: FOREST, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>Call</strong>0917 811 2332<br />Daily, 7:00 AM – 10:00 PM</div>
             <div><strong style={{ display: 'block', color: FOREST, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>Email</strong>info@lawiswiskawayanresort.com</div>
           </div>
+          <div style={{ marginTop: '30px' }}>
+            <h3 style={{ color: FOREST, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase', margin: '0 0 10px' }}>Find the resort</h3>
+            <div style={{ aspectRatio: '4 / 3', minHeight: '220px', overflow: 'hidden', border: `1px solid ${LINE}`, background: CREAM }}>
+              <iframe
+                title="Map to Lawiswis Kawayan Garden Resort in Calumpit, Bulacan"
+                src="https://www.google.com/maps?q=Lawiswis+Kawayan+Garden+Resort%2C+402+Brgy.+Buguion%2C+Calumpit%2C+Bulacan&output=embed"
+                width="100%"
+                height="100%"
+                style={{ border: 0, display: 'block' }}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                allowFullScreen
+              />
+            </div>
+            <a href="https://www.google.com/maps/search/?api=1&query=Lawiswis+Kawayan+Garden+Resort%2C+402+Brgy.+Buguion%2C+Calumpit%2C+Bulacan" target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: '9px', color: FOREST, font: `600 11px ${SANS}` }}>Open directions in Google Maps ↗</a>
+          </div>
           <div style={{ marginTop: '38px', background: CREAM, padding: '24px', borderLeft: `3px solid ${BRASS}`, color: '#6b6a5c', font: `13px/1.8 ${SANS}` }}>Check-in is at 2:00 PM and check-out is at 12:00 NN. For events and group stays, contact us ahead of time so we can prepare the garden for you.</div>
         </div>
 
-        <div style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '32px' }}>
+        <div className="contact-form-card" style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '32px' }}>
           {sent ? (
             <div role="status" aria-live="polite" style={{ padding: '50px 10px', textAlign: 'center', animation: 'contact-confirm .35s ease-out both' }}>
               <div style={{ color: BRASS, font: `500 44px ${SERIF}` }}>Thank you.</div>

@@ -2,9 +2,6 @@ import React, { useState, useEffect } from 'react';
 import PageLayout from '../components/PageLayout';
 import { useSettings, DEFAULT_SETTINGS } from '../components/SettingsContext';
 import { auth } from '../../firebase/firebase';
-// Cancellation is a tab here instead of a sidebar page.
-// Adjust the path if your file is named differently.
-import Cancellation from './CancellationPolicy';
 
 const ACCENT_COLORS = [
   { label: 'Lime',   value: '#9cb56f' },
@@ -21,7 +18,6 @@ const TABS = [
   { id: 'regional',      label: 'Regional',      icon: 'ti-world' },
   { id: 'dashboard',     label: 'Dashboard',     icon: 'ti-layout-dashboard' },
   { id: 'availability',  label: 'Resort Status', icon: 'ti-building-store' },
-  { id: 'cancellation',  label: 'Cancellation',  icon: 'ti-file-x' },
 ];
 
 // ── Sub-components live outside the page component so they are not
@@ -209,8 +205,6 @@ export default function Settings() {
     background: t.CARD2, color: t.TEXT,
   };
 
-  const isCancellation = activeTab === 'cancellation';
-
   return (
     <PageLayout>
       <div style={{ fontFamily: "'Poppins', sans-serif", maxWidth: 980, margin: '0 auto' }}>
@@ -222,20 +216,17 @@ export default function Settings() {
             <p style={{ fontSize: 12, color: t.SUBTEXT, margin: '4px 0 0' }}>Manage your preferences</p>
           </div>
 
-          {/* Save / reset only apply to the settings tabs */}
-          {!isCancellation && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={handleReset}
-                style={{ padding: '8px 16px', border: `1px solid ${t.BORDER}`, borderRadius: 10, background: t.CARD, color: t.SUBTEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
-                Reset defaults
-              </button>
-              <button onClick={handleSave}
-                style={{ padding: '8px 20px', border: 'none', borderRadius: 10, background: t.ACCENT, color: t.ACCENT_TEXT, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 6 }}>
-                {saved && <i className="ti ti-check" style={{ fontSize: 13 }} />}
-                {saved ? 'Saved' : 'Save changes'}
-              </button>
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={handleReset}
+              style={{ padding: '8px 16px', border: `1px solid ${t.BORDER}`, borderRadius: 10, background: t.CARD, color: t.SUBTEXT, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Reset defaults
+            </button>
+            <button onClick={handleSave}
+              style={{ padding: '8px 20px', border: 'none', borderRadius: 10, background: t.ACCENT, color: t.ACCENT_TEXT, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {saved && <i className="ti ti-check" style={{ fontSize: 13 }} />}
+              {saved ? 'Saved' : 'Save changes'}
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -390,16 +381,6 @@ export default function Settings() {
               {availabilitySaving ? 'Saving…' : 'Save resort status'}
             </button>
           </Section>
-        )}
-
-        {/* ── CANCELLATION (moved out of the sidebar) ── */}
-        {isCancellation && (
-          <div style={{
-            background: t.CARD, borderRadius: 16, border: `1px solid ${t.BORDER}`,
-            padding: 16, boxShadow: t.dark ? '0 4px 16px rgba(0,0,0,0.3)' : 'none',
-          }}>
-            <Cancellation embedded />
-          </div>
         )}
 
         {saved && (

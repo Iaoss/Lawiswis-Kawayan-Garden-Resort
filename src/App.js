@@ -24,6 +24,8 @@ import BookingHistory from './client/pages/BookingHistory';
 import GuestChat from './client/pages/Chat';
 import About from './client/pages/About';
 import Contact from './client/pages/Contact';
+import BookingTypeSelection from './client/pages/BookingTypeSelection';
+import CorporateBooking from './client/pages/CorporateBooking';
 import Amenities from './client/pages/Amenities';
 import Certifications from './client/pages/Certifications';
 import CustomerCarePage from './client/pages/CustomerCarePage';
@@ -108,6 +110,8 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/home" element={<Home />} />
           <Route path="/rooms" element={<Rooms />} />
+          <Route path="/booking-options" element={<BookingTypeSelection />} />
+          <Route path="/corporate-booking" element={<CorporateBooking />} />
           <Route path="/book/:roomId" element={<BookRoom />} />
           <Route path="/my-bookings" element={<BookingHistory />} />
           <Route path="/amenities" element={<Amenities />} />

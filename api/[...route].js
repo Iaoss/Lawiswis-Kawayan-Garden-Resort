@@ -4,6 +4,8 @@ import newsletterBroadcast from '../apiHandlers/newsletter-broadcast';
 import resortAvailability from '../apiHandlers/resort-availability';
 import occupancy from '../apiHandlers/occupancy';
 import reservationGuestAction from '../apiHandlers/reservation-guest-action';
+import publicFeedback from '../apiHandlers/public-feedback';
+import reservationStaffAction from './reservation-staff-action';
 
 const handlers = {
   'contact-inquiry': contactInquiry,
@@ -11,6 +13,8 @@ const handlers = {
   'newsletter-broadcast': newsletterBroadcast,
   'resort-availability': resortAvailability,
   'reservation-guest-action': reservationGuestAction,
+  'reservation-staff-action': reservationStaffAction,
+  'public-feedback': publicFeedback,
   occupancy,
 };
 

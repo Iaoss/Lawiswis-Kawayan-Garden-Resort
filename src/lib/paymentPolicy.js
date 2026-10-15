@@ -1,6 +1,8 @@
+export const RESERVATION_DEPOSIT_PERCENTAGE = 50;
+
 export function getDepositPercentage(totalAmount) {
-  if (!Number.isFinite(totalAmount) || totalAmount <= 0) return 25;
-  return 25;
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) return RESERVATION_DEPOSIT_PERCENTAGE;
+  return RESERVATION_DEPOSIT_PERCENTAGE;
 }
 
 export function getOnlinePaymentAmount(totalAmount, choice) {

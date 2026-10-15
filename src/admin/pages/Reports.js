@@ -14,6 +14,7 @@ export default function Reports() {
   const BORDER = dark ? '#2a2a28' : '#e5e7eb';
   const TEXT   = dark ? '#f0f0f0' : '#1f2937';   // primary text
   const SUBTEXT= dark ? '#c7c7c0' : '#4b5563';
+  const ACCENT = settings?.accentColor || '#9cb56f';
   const MUTED  = dark ? '#9ca3af' : '#9ca3af';   // secondary text
   const TRACK  = dark ? '#282827' : '#f3f4f6';   // progress bar track
   const HOVER_BG = dark ? '#242422' : '#f9fafb';
@@ -24,8 +25,6 @@ export default function Reports() {
   const RED   = dark ? '#fca5a5' : '#dc2626';
   const GRAY  = dark ? '#c7c7c0' : '#4b5563';
 
-  const STATUS_BG   = dark ? '#1e3a5f' : '#dbeafe';
-  const STATUS_TEXT = dark ? '#93c5fd' : '#1d4ed8';
   const RATE_BG      = dark ? '#1e3a5f' : '#eff6ff';
   const RATE_TEXT    = dark ? '#93c5fd' : '#1d4ed8';
 
@@ -33,6 +32,8 @@ export default function Reports() {
   const [rooms, setRooms] = useState([]);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [sortBy, setSortBy] = useState('checkIn');
+  const [sortDirection, setSortDirection] = useState('desc');
 
   useEffect(() => {
     const fetch = async () => {
@@ -53,6 +54,36 @@ export default function Reports() {
     if (to && checkIn > to) return false;
     return true;
   });
+  const sortedReservations = [...filtered].sort((left, right) => {
+    const a = left[sortBy] ?? '';
+    const b = right[sortBy] ?? '';
+    const aValue = sortBy === 'totalAmount' ? Number(a) : sortBy === 'checkIn' || sortBy === 'checkOut'
+      ? new Date(a || 0).getTime() : String(a).toLocaleLowerCase();
+    const bValue = sortBy === 'totalAmount' ? Number(b) : sortBy === 'checkIn' || sortBy === 'checkOut'
+      ? new Date(b || 0).getTime() : String(b).toLocaleLowerCase();
+    const comparison = aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
+
+  const toggleSort = key => {
+    if (sortBy === key) setSortDirection(direction => direction === 'asc' ? 'desc' : 'asc');
+    else {
+      setSortBy(key);
+      setSortDirection(key === 'checkIn' || key === 'checkOut' ? 'desc' : 'asc');
+    }
+  };
+
+  const reservationStatusStyle = status => {
+    const colors = {
+      confirmed: ['#dcfce7', '#15803d'],
+      cancelled: ['#fee2e2', '#b91c1c'],
+      pending: ['#fef3c7', '#b45309'],
+      'checked-out': ['#f3f4f6', '#4b5563'],
+      'checked-in': ['#dbeafe', '#1d4ed8'],
+    };
+    const pair = colors[String(status || '').toLowerCase()] || colors.pending;
+    return { background: pair[0], color: pair[1] };
+  };
 
   const totalRevenue = filtered.filter(r => r.paymentStatus === 'paid')
     .reduce((s, r) => s + Number(r.totalAmount || 0), 0);
@@ -95,11 +126,17 @@ export default function Reports() {
 
   return (
     <Layout>
-      <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '20px' }}>
-        <h2 style={{ fontSize: '22px', fontWeight: '700', color: TEXT, marginBottom: '22px' }}>Reports</h2>
+      <div className="report-print-root" style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '22px' }}>
+          <h2 style={{ fontSize: '22px', fontWeight: '700', color: TEXT, margin: 0 }}>Reports</h2>
+          <button className="report-print-controls" type="button" onClick={() => window.print()}
+            style={{ background: ACCENT, color: '#0a1a0a', border: 'none', borderRadius: '8px', padding: '9px 14px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
+            <i className="ti ti-printer" style={{ marginRight: '7px' }} />Print Detailed Report
+          </button>
+        </div>
 
         {/* Date Filter */}
-        <div style={{ ...card, padding: '16px', marginBottom: '22px', display: 'flex', gap: '16px', alignItems: 'flex-end' }}>
+        <div className="report-print-controls" style={{ ...card, padding: '16px', marginBottom: '22px', display: 'flex', gap: '16px', alignItems: 'flex-end' }}>
           <div>
             <label style={{ fontSize: '12px', color: SUBTEXT }}>From</label>
             <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={inp} />
@@ -178,9 +215,20 @@ export default function Reports() {
           <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
             <thead style={{ background: CARD2 }}>
               <tr>
-                {['Guest', 'Room', 'Check-in', 'Check-out', 'Amount', 'Status'].map(h => (
-                  <th key={h} style={{ padding: '12px 16px', textAlign: 'left', color: SUBTEXT, fontWeight: '600', fontSize: '12px' }}>
-                    {h}
+                {[
+                  ['Guest', 'guestName'],
+                  ['Room', 'roomNumber'],
+                  ['Check-in', 'checkIn'],
+                  ['Check-out', 'checkOut'],
+                  ['Amount', 'totalAmount'],
+                  ['Status', 'status'],
+                ].map(([heading, key]) => (
+                  <th key={heading} aria-sort={sortBy === key ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                    style={{ padding: '12px 16px', textAlign: 'left', color: SUBTEXT, fontWeight: '600', fontSize: '12px' }}>
+                    <button type="button" onClick={() => toggleSort(key)}
+                      style={{ border: 0, padding: 0, background: 'transparent', color: 'inherit', font: 'inherit', fontWeight: 'inherit', cursor: 'pointer' }}>
+                      {heading}{sortBy === key ? (sortDirection === 'asc' ? ' ↑' : ' ↓') : ' ↕'}
+                    </button>
                   </th>
                 ))}
               </tr>
@@ -189,7 +237,7 @@ export default function Reports() {
               {filtered.length === 0 ? (
                 <tr><td colSpan="6" style={{ textAlign: 'center', padding: '24px 0', color: MUTED }}>No data found.</td></tr>
               ) : (
-                filtered.map(r => (
+                sortedReservations.map(r => (
                   <tr key={r.id} style={{ borderTop: `1px solid ${BORDER}`, transition: 'background 0.12s' }}
                     onMouseEnter={e => e.currentTarget.style.background = HOVER_BG}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
@@ -199,7 +247,7 @@ export default function Reports() {
                     <td style={{ padding: '12px 16px', color: TEXT }}>{r.checkOut}</td>
                     <td style={{ padding: '12px 16px', color: TEXT }}>₱{Number(r.totalAmount || 0).toLocaleString()}</td>
                     <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>
-                      <span style={{ background: STATUS_BG, color: STATUS_TEXT, padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600' }}>{r.status}</span>
+                      <span style={{ ...reservationStatusStyle(r.status), padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600' }}>{String(r.status || 'pending').replace(/-/g, ' ')}</span>
                     </td>
                   </tr>
                 ))

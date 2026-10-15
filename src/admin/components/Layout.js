@@ -7,6 +7,13 @@ import ChatPanel from './ChatPanel';
 import logo from './logo-mark.png';
 import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
 import NotificationButton from '../../components/ui/notification-button';
+import {
+  AnimatedSidebarInset,
+  AnimatedSidebarProvider,
+  AnimatedSidebarTrigger,
+} from '../../components/ui/animated-sidebar.tsx';
+import PortalSidebar from './PortalSidebar';
+import './portal-sidebar.css';
 
 // ── Reusable fixed-size icon button (Settings / Chat) ────────
 function ExpandableIconButton({ icon, label, dark, badge = 0, onClick }) {
@@ -51,33 +58,32 @@ function ExpandableIconButton({ icon, label, dark, badge = 0, onClick }) {
 }
 
 // ── Nav structure ────────────────────────────────────────────
-// Settings and Cancellation are intentionally not here:
-// Settings is reachable from the topbar button, and Cancellation
-// is now a tab inside the Settings page.
 const navItems = [
   { label: 'Dashboard',      path: '/admin/dashboard',    icon: 'ti-layout-dashboard' },
   { label: 'Room Management',path: '/admin/rooms',         icon: 'ti-bed' },
-  { label: 'Promos & Discounts', path: '/admin/promos', icon: 'ti-discount-2' },
   { label: 'Reservations',   path: '/admin/reservations',  icon: 'ti-calendar-event' },
   { label: 'Walk-in',        path: '/admin/walkin',        icon: 'ti-walk' },
   { label: 'Billing',        path: '/admin/billing',       icon: 'ti-receipt' },
   { label: 'Payments',       path: '/admin/payments',      icon: 'ti-credit-card' },
   { label: 'Customers',      path: '/admin/customers',     icon: 'ti-users' },
-  { label: 'Email', path: '/admin/email', icon: 'ti-mail' },
-  { label: 'History',        path: '/admin/history',       icon: 'ti-clock' },
   { label: 'Reports',        path: '/admin/reports',       icon: 'ti-chart-bar' },
-  { label: 'Users',          path: '/admin/users',         icon: 'ti-user-cog' },
+  { label: 'History',        path: '/admin/history',       icon: 'ti-clock' },
+  { label: 'Promos & Discounts', path: '/admin/promos', icon: 'ti-discount-2' },
   { label: 'Feedback & QR',  path: '/admin/feedback',      icon: 'ti-star' },
   { label: 'Contact Inquiries', path: '/admin/contact-inquiries', icon: 'ti-inbox' },
+  { label: 'Email', path: '/admin/email', icon: 'ti-mail' },
+  { label: 'Messages', path: '/admin/messages', icon: 'ti-message-circle-2' },
   { label: 'News Management',path: '/admin/news',           icon: 'ti-news' },
+  { label: 'Users',          path: '/admin/users',         icon: 'ti-user-cog' },
+  { label: 'Cancellation',   path: '/admin/cancellation',  icon: 'ti-file-x' },
+  { label: 'Settings',       path: '/admin/settings',       icon: 'ti-settings' },
 ];
 
-// Pages that still exist but are not in the sidebar — used for the topbar title.
+// Pages that are not in the sidebar — used for the topbar title.
 const EXTRA_LABELS = {
   '/admin/settings':     'Settings',
   '/admin/messages':     'Messages',
   '/admin/contact-inquiries': 'Contact Inquiries',
-  '/admin/cancellation': 'Cancellation',
 };
 
 // ── Read state for notifications ─────────────────────────────
@@ -364,22 +370,29 @@ export default function Layout({ children }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [emailUnread, setEmailUnread] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('lkgr_admin_sidebar_collapsed') === 'true'; }
+    catch (error) {
+      console.warn('Admin sidebar preference could not be restored:', error);
+      return false;
+    }
+  });
   const current = window.location.pathname;
 
   const dark = settings?.darkMode;
 
-  const collapsed = false;
-
-  const SIDEBAR_BG   = dark ? '#1c1c1c'  : '#ffffff';
   const SIDEBAR_TEXT = dark ? '#e8e8d8'  : '#111827';
   const TOPBAR_BG    = dark ? '#1c1c1c'  : '#ffffff';
   const BG           = dark ? '#020b09'  : '#f4f6f4';
   const BORDER       = dark ? '#282827'  : '#f0f0f0';
-  const NAV_TEXT     = dark ? '#8a8a7a'  : '#6b7280';
   const ACCENT       = settings?.accentColor || '#c8f06e';
   const ACCENT_TEXT  = '#0a1a0a';
   const MUTED        = dark ? '#5a5a4a'  : '#9ca3af';
-  const sidebarWidth = collapsed ? '64px' : '210px';
+
+  useEffect(() => {
+    try { localStorage.setItem('lkgr_admin_sidebar_collapsed', String(collapsed)); }
+    catch (error) { console.warn('Admin sidebar preference could not be saved:', error); }
+  }, [collapsed]);
 
   useEffect(() => {
     if (!document.querySelector('link[href*="tabler-icons"]')) {
@@ -430,115 +443,28 @@ export default function Layout({ children }) {
   const currentLabel =
     navItems.find(n => n.path === current)?.label || EXTRA_LABELS[current] || 'Dashboard';
 
-  const navButtonStyle = (isActive) => ({
-    width: '100%', display: 'flex', alignItems: 'center',
-    gap: collapsed ? '0' : '9px',
-    justifyContent: collapsed ? 'center' : 'flex-start',
-    padding: collapsed ? '10px 0' : '8px 10px',
-    borderRadius: '8px', marginBottom: '1px',
-    border: 'none', cursor: 'pointer',
-    fontSize: '12.5px', fontFamily: "'Poppins', sans-serif",
-    background: isActive ? ACCENT : 'transparent',
-    color: isActive ? ACCENT_TEXT : NAV_TEXT,
-    fontWeight: isActive ? '600' : '400',
-    textAlign: 'left',
-  });
-
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', fontFamily: "'Poppins', sans-serif", background: BG }}>
-
-      {/* ── Sidebar ── */}
-      <aside
-        style={{
-        minHeight: '100vh',
-        background: SIDEBAR_BG,
-        borderRight: `1px solid ${BORDER}`,
-        display: 'flex', flexDirection: 'column',
-        position: 'fixed', left: 0, top: 0, zIndex: 100,
-        boxShadow: dark ? '2px 0 20px rgba(0,0,0,0.4)' : '2px 0 8px rgba(0,0,0,0.04)',
-        overflow: 'hidden',
-      }}>
-
-        {/* Logo */}
-        <div style={{
-          padding: collapsed ? '18px 0' : '22px 16px 18px',
-          display: 'flex', alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'flex-start',
-          gap: '10px', borderBottom: `1px solid ${BORDER}`,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-            <img
-              src={logo}
-              alt="Lawiswis Kawayan Garden Resort"
-              style={{ width: '28px', height: '34px', borderRadius: '6px', objectFit: 'cover', flexShrink: 0, display: 'block' }}
-            />
-            {!collapsed && <div style={{ minWidth: 0, whiteSpace: 'nowrap' }}>
-              <div style={{ color: dark ? '#d4d4c4' : '#111827', fontWeight: '700', fontSize: '12px', lineHeight: 1.2 }}>Lawiswis Kawayan</div>
-              <div style={{ color: dark ? '#c8f06e' : '#8fb83a', fontSize: '8.5px', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: '600' }}>Garden Resort</div>
-              <div style={{ color: MUTED, fontSize: '8px', marginTop: '1px' }}>HuaPro Admin</div>
-            </div>}
-          </div>
-        </div>
-
-        {/* Nav */}
-        <nav style={{ flex: 1, padding: '14px 10px', overflowY: 'auto' }}>
-          {navItems.map((item) => {
-            const isActive = current === item.path;
-            return (
-              <button key={item.label}
-                onClick={() => window.location.href = item.path}
-                title={collapsed ? item.label : ''}
-                style={navButtonStyle(isActive)}
-              >
-                <i className={`ti ${item.icon}`} style={{ fontSize: '16px', flexShrink: 0, color: isActive ? ACCENT_TEXT : NAV_TEXT }} />
-                {!collapsed && <span style={{ flex: 1, whiteSpace: 'nowrap', textAlign: 'left' }}>{item.label}</span>}
-                {item.path === '/admin/email' && emailUnread > 0 && (
-                  <span style={{ background: '#ef4444', color: '#fff', borderRadius: '10px', fontSize: '10px', fontWeight: '700', padding: '1px 7px' }}>
-                    {emailUnread}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        {/* User + Logout */}
-        <div style={{
-          padding: collapsed ? '14px 0' : '14px 12px',
-          borderTop: `1px solid ${BORDER}`,
-        }}>
-          {!collapsed && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-              <div style={{
-                width: '34px', height: '34px', borderRadius: '50%', background: ACCENT,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontWeight: '700', fontSize: '12px', color: ACCENT_TEXT, flexShrink: 0,
-              }}>{initials}</div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ color: SIDEBAR_TEXT, fontSize: '12px', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{adminName || 'Admin'}</div>
-                <div style={{ color: MUTED, fontSize: '10px', textTransform: 'capitalize' }}>{adminRole}</div>
-              </div>
-            </div>
-          )}
-          <button onClick={handleLogout} style={{
-            width: '100%', padding: '7px 10px', borderRadius: '7px',
-            border: `1px solid ${BORDER}`,
-            background: dark ? '#282827' : '#fff',
-            color: NAV_TEXT, fontSize: '11.5px',
-            fontFamily: "'Poppins', sans-serif", cursor: 'pointer', fontWeight: '500',
-            display: 'flex', alignItems: 'center',
-            justifyContent: collapsed ? 'center' : 'flex-start',
-            gap: '6px',
-          }}
-          >
-            <i className="ti ti-logout" style={{ fontSize: '14px' }} />
-            {!collapsed && <span style={{ whiteSpace: 'nowrap' }}>Sign out</span>}
-          </button>
-        </div>
-      </aside>
+    <AnimatedSidebarProvider
+      open={!collapsed}
+      onOpenChange={(open) => setCollapsed(!open)}
+      className="min-h-screen"
+      style={{ fontFamily: "'Poppins', sans-serif", background: BG, '--sidebar-width': '210px', '--sidebar-width-icon': '64px', '--sidebar-width-mobile': 'min(18rem, 88vw)' }}
+    >
+      <PortalSidebar
+        navItems={navItems}
+        currentPath={current}
+        unreadCount={unreadCount}
+        emailUnread={emailUnread}
+        logo={logo}
+        portalName="Admin"
+        name={adminName || 'Admin'}
+        role={adminRole}
+        initials={initials}
+        onLogout={handleLogout}
+      />
 
       {/* ── Main area ── */}
-      <div style={{ marginLeft: sidebarWidth, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <AnimatedSidebarInset className="portal-main-area" style={{ background: BG }}>
 
         {/* Topbar */}
         <header style={{
@@ -549,6 +475,10 @@ export default function Layout({ children }) {
           position: 'sticky', top: 0, zIndex: 99,
           boxShadow: dark ? '0 1px 20px rgba(0,0,0,0.3)' : '0 1px 4px rgba(0,0,0,0.04)',
         }}>
+          <AnimatedSidebarTrigger className="portal-mobile-menu" aria-label="Open navigation"
+            style={{ border: 'none', background: 'transparent', color: SIDEBAR_TEXT, cursor: 'pointer', fontSize: '20px', padding: '6px' }}>
+            <i className="ti ti-menu-2" />
+          </AnimatedSidebarTrigger>
           <div>
             <div style={{ fontWeight: '600', fontSize: '17px', color: SIDEBAR_TEXT }}>{currentLabel}</div>
             <div style={{ fontSize: '11px', color: MUTED }}>HuaPro Resort Management System</div>
@@ -571,13 +501,6 @@ export default function Layout({ children }) {
                 background: dark ? '#282827' : '#f3f4f6',
                 color: dark ? '#e8e8d8' : '#111827',
               }}
-            />
-
-            <ExpandableIconButton
-              icon="ti-settings"
-              label="Settings"
-              dark={dark}
-              onClick={() => window.location.href = '/admin/settings'}
             />
 
             <ExpandableIconButton
@@ -604,13 +527,13 @@ export default function Layout({ children }) {
           </div>
         </header>
 
-        <main style={{ flex: 1, padding: '28px', background: BG }}>
+        <div className="portal-main-content" style={{ flex: 1, padding: '28px', background: BG }}>
           {children}
-        </main>
-      </div>
+        </div>
+      </AnimatedSidebarInset>
 
       {/* Slide-in Messages panel */}
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
-    </div>
+    </AnimatedSidebarProvider>
   );
 }

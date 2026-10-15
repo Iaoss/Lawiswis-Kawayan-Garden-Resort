@@ -42,7 +42,11 @@ export default function CancellationPolicy({ embedded = false }) {
   const [policy, setPolicy] = useState({ moreThan7Days: 20, between4And7Days: 50, lessThan3Days: 100 });
   const [selected, setSelected] = useState(null);
   const [cancelResult, setCancelResult] = useState(null);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [success, setSuccess] = useState('');
+  const [cancelError, setCancelError] = useState('');
   const [search, setSearch] = useState('');
   const [showPolicyEdit, setShowPolicyEdit] = useState(false);
 
@@ -91,21 +95,42 @@ export default function CancellationPolicy({ embedded = false }) {
   const handleSelect = (r) => {
     setSelected(r);
     setSuccess('');
+    setCancelError('');
     setCancelResult(calculateFee(r));
   };
 
   const handleCancel = async () => {
-    if (!selected || !cancelResult) return;
-    await updateDoc(doc(db, 'reservations', selected.id), {
-      status: 'cancelled',
-      cancellationFee: cancelResult.fee,
-      refundAmount: cancelResult.refund,
-      cancelledAt: new Date().toISOString(),
-    });
-    setSuccess(`Reservation for ${selected.guestName} cancelled. Fee: ₱${cancelResult.fee.toLocaleString()} · Refund: ₱${cancelResult.refund.toLocaleString()}`);
-    setSelected(null);
-    setCancelResult(null);
-    await fetchReservations();
+    if (!selected || !cancelResult || cancelBusy) return;
+    setCancelBusy(true);
+    try {
+      await updateDoc(doc(db, 'reservations', selected.id), {
+        status: 'cancelled',
+        cancellationRequested: false,
+        cancellationReason: cancelReason.trim(),
+        cancellationFee: cancelResult.fee,
+        refundAmount: cancelResult.refund,
+        cancelledAt: new Date().toISOString(),
+      });
+      if (selected.roomId) {
+        try {
+          await updateDoc(doc(db, 'rooms', selected.roomId), { status: 'vacant' });
+        } catch (roomError) {
+          console.error('Cancelled reservation room could not be released:', roomError);
+        }
+      }
+      setSuccess(`Reservation for ${selected.guestName} cancelled. Fee: ₱${cancelResult.fee.toLocaleString()} · Refund: ₱${cancelResult.refund.toLocaleString()}`);
+      setCancelError('');
+      setSelected(null);
+      setCancelResult(null);
+      setShowCancelConfirm(false);
+      setCancelReason('');
+      await fetchReservations();
+    } catch (error) {
+      console.error('Unable to cancel reservation:', error);
+      setCancelError(error.message || 'The reservation could not be cancelled. Please try again.');
+    } finally {
+      setCancelBusy(false);
+    }
   };
 
   const handleSavePolicy = async () => {
@@ -148,6 +173,11 @@ export default function CancellationPolicy({ embedded = false }) {
         <div style={{ background: SUCCESS_BG, color: SUCCESS_TEXT, padding: '12px 16px', borderRadius: '10px', marginBottom: '16px', fontSize: '13px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <i className="ti ti-circle-check" style={{ fontSize: '16px' }} />
           {success}
+        </div>
+      )}
+      {cancelError && (
+        <div role="alert" style={{ background: dark ? '#7f1d1d' : '#fee2e2', color: dark ? '#fca5a5' : '#991b1b', padding: '12px 16px', borderRadius: '10px', marginBottom: '16px', fontSize: '13px', fontWeight: '500' }}>
+          {cancelError}
         </div>
       )}
 
@@ -289,15 +319,40 @@ export default function CancellationPolicy({ embedded = false }) {
                   style={{ flex: 1, background: CARD2, color: SUBTEXT, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
                   Go back
                 </button>
-                <button onClick={handleCancel}
+                <button onClick={() => { setCancelReason(''); setShowCancelConfirm(true); }}
                   style={{ flex: 1, background: dark ? '#b91c1c' : '#dc2626', color: '#fff', border: 'none', borderRadius: '10px', padding: '12px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
-                  Confirm cancel
+                  Continue to cancellation
                 </button>
               </div>
             </div>
           )}
         </div>
       </div>
+      {showCancelConfirm && selected && cancelResult && (
+        <div role="presentation" onClick={event => {
+          if (event.target === event.currentTarget && !cancelBusy) setShowCancelConfirm(false);
+        }} style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.48)', display: 'grid', placeItems: 'center', padding: '18px' }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="policy-cancel-title"
+            style={{ width: '100%', maxWidth: '440px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '16px', padding: '22px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+            <h2 id="policy-cancel-title" style={{ color: TEXT, fontSize: '17px', margin: '0 0 10px' }}>Are you sure you want to cancel this reservation?</h2>
+            <p style={{ color: SUBTEXT, fontSize: '13px', margin: '0 0 16px' }}>
+              {selected.guestName} · Room {selected.roomNumber}. Cancellation fee: ₱{cancelResult.fee.toLocaleString()}; refund: ₱{cancelResult.refund.toLocaleString()}.
+            </p>
+            <label htmlFor="policy-cancel-reason" style={{ display: 'block', color: SUBTEXT, fontSize: '12px', marginBottom: '6px' }}>Reason (optional)</label>
+            <textarea id="policy-cancel-reason" value={cancelReason} onChange={event => setCancelReason(event.target.value)}
+              rows={3} maxLength={500} disabled={cancelBusy} placeholder="Enter a reason for cancellation"
+              style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', border: `1px solid ${BORDER}`, borderRadius: '9px', padding: '10px', color: TEXT, background: CARD2, font: 'inherit', fontSize: '13px' }} />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '9px', marginTop: '18px' }}>
+              <button type="button" disabled={cancelBusy} onClick={() => setShowCancelConfirm(false)}
+                style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 14px', background: CARD2, color: TEXT, cursor: 'pointer' }}>Go back</button>
+              <button type="button" disabled={cancelBusy} onClick={handleCancel}
+                style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: '#dc2626', color: '#fff', fontWeight: 700, cursor: cancelBusy ? 'wait' : 'pointer' }}>
+                {cancelBusy ? 'Processing…' : 'Confirm cancellation'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </>
   );
 

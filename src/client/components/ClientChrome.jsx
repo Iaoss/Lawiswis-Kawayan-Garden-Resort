@@ -114,7 +114,7 @@ export default function ClientChrome({ children }) {
           {renderNavigation(() => {})}
         </nav>
         <div className="client-header-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
-          <button disabled={!canBook} onClick={() => navigate('/rooms')} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, whiteSpace: 'nowrap' }}>{canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}</button>
+          <button disabled={!canBook} onClick={() => navigate('/booking-options')} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, whiteSpace: 'nowrap' }}>{canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}</button>
         </div>
         <button className="client-mobile-menu-toggle" type="button" aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'} aria-expanded={mobileMenuOpen} aria-controls="client-mobile-menu" onClick={() => setMobileMenuOpen(value => !value)}>
           <span aria-hidden="true">{mobileMenuOpen ? '×' : '☰'}</span>
@@ -124,7 +124,7 @@ export default function ClientChrome({ children }) {
         <div className="client-mobile-menu-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMobileMenuOpen(false); }}>
           <nav id="client-mobile-menu" className="client-mobile-nav" aria-label="Mobile navigation">
             {renderNavigation(() => setMobileMenuOpen(false))}
-            <button type="button" disabled={!canBook} onClick={() => { setMobileMenuOpen(false); navigate('/rooms'); }} className="client-mobile-book-button">
+            <button type="button" disabled={!canBook} onClick={() => { setMobileMenuOpen(false); navigate('/booking-options'); }} className="client-mobile-book-button">
               {canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}
             </button>
           </nav>

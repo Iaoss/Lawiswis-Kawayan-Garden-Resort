@@ -4,6 +4,16 @@ import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 
+const paymentDateValue = payment => payment.paidAt || payment.paymentDate || payment.createdAt || payment.date;
+const paymentDateMillis = payment => {
+  const value = paymentDateValue(payment);
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.seconds === 'number') return value.seconds * 1000;
+  if (value instanceof Date) return value.getTime();
+  const parsed = Date.parse(value || '');
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
 export default function PaymentTransactions() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
@@ -27,7 +37,7 @@ export default function PaymentTransactions() {
     const fetch = async () => {
       const snap = await getDocs(collection(db, 'payments'));
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+      data.sort((a, b) => paymentDateMillis(b) - paymentDateMillis(a));
       setPayments(data);
     };
     fetch();
@@ -93,7 +103,7 @@ export default function PaymentTransactions() {
                     <td style={{ padding: '12px 16px', fontWeight: '700', color: GREEN }}>₱{Number(p.amount).toLocaleString()}</td>
                     <td style={{ padding: '12px 16px', color: TEXT, textTransform: 'capitalize' }}>{p.method}</td>
                     <td style={{ padding: '12px 16px', color: MUTED }}>
-                      {p.createdAt?.seconds ? new Date(p.createdAt.seconds * 1000).toLocaleDateString() : 'N/A'}
+                      {paymentDateMillis(p) ? new Date(paymentDateMillis(p)).toLocaleDateString() : 'N/A'}
                     </td>
                   </tr>
                 ))

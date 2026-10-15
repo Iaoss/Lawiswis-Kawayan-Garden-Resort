@@ -4,6 +4,14 @@ module.exports = {
   ],
   theme: {
     extend: {
+      colors: {
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
+        border: 'hsl(var(--border))',
+        muted: 'hsl(var(--muted))',
+        'muted-foreground': 'hsl(var(--muted-foreground))',
+        ring: 'hsl(var(--ring))',
+      },
       keyframes: {
         blob: {
           '0%': { transform: 'translate(0px, 0px) scale(1)' },

@@ -394,8 +394,11 @@ export default function Rooms() {
             <div className="rooms-tag" style={{ color: BRASS, marginBottom: '8px' }}>Plan your stay</div>
             <h2 style={{ color: INK, margin: 0, font: `500 32px ${SERIF}` }}>Check availability</h2>
           </div>
-          <div style={{ color: '#777363', font: `12px ${SANS}` }}>
-            Booking dates are available through {maxDate.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}
+          <div style={{ display: 'grid', gap: '10px', justifyItems: 'end' }}>
+            <div style={{ color: '#777363', font: `12px ${SANS}` }}>
+              Booking dates are available through {maxDate.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}
+            </div>
+            <button type="button" onClick={() => window.location.href = '/booking-options'} style={{ border: `1px solid ${FOREST}`, background: 'transparent', color: FOREST, padding: '9px 12px', cursor: 'pointer', font: `600 10px ${SANS}`, letterSpacing: '.05em' }}>BOOKING OPTIONS · PERSONAL OR 15+ GROUP</button>
           </div>
         </div>
 

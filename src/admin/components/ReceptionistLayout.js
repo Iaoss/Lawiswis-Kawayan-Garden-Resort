@@ -4,8 +4,15 @@ import { doc, getDoc, collection, query, orderBy, onSnapshot, where } from 'fire
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
+import './portal-sidebar.css';
 import logo from './logo-mark.png';
 import NotificationButton from '../../components/ui/notification-button';
+import {
+  AnimatedSidebarInset,
+  AnimatedSidebarProvider,
+  AnimatedSidebarTrigger,
+} from '../../components/ui/animated-sidebar.tsx';
+import PortalSidebar from './PortalSidebar';
 
 function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
   const BORDER = dark ? '#383837' : '#e5e7eb';
@@ -48,15 +55,16 @@ function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
 
 const navItems = [
   { label: 'Dashboard', path: '/receptionist/dashboard', icon: 'ti-layout-dashboard' },
+  { label: 'Room Management', path: '/receptionist/rooms', icon: 'ti-bed' },
   { label: 'Reservations', path: '/receptionist/reservations', icon: 'ti-calendar-event' },
   { label: 'Walk-in', path: '/receptionist/walkin', icon: 'ti-walk' },
-  { label: 'Room Management', path: '/receptionist/rooms', icon: 'ti-bed' },
-  { label: 'Booking Transactions', path: '/receptionist/transactions', icon: 'ti-credit-card' },
   { label: 'Billing', path: '/receptionist/billing', icon: 'ti-receipt' },
+  { label: 'Booking Transactions', path: '/receptionist/transactions', icon: 'ti-credit-card' },
   { label: 'Customers', path: '/receptionist/customers', icon: 'ti-users' },
   { label: 'History', path: '/receptionist/history', icon: 'ti-clock' },
   { label: 'Cancellation', path: '/receptionist/cancellation', icon: 'ti-file-x' },
   { label: 'Messages', path: '/receptionist/messages', icon: 'ti-message-circle-2' },
+  { label: 'Settings', path: '/receptionist/settings', icon: 'ti-settings' },
 ];
 
 const EXTRA_LABELS = {
@@ -346,21 +354,28 @@ export default function ReceptionistLayout({ children }) {
   const [staffEmail, setStaffEmail] = useState('');
   const [unreadCount, setUnreadCount] = useState(0);
   const [chatOpen, setChatOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('lkgr_receptionist_sidebar_collapsed') === 'true'; }
+    catch (error) {
+      console.warn('Receptionist sidebar preference could not be restored:', error);
+      return false;
+    }
+  });
   const current = window.location.pathname;
 
   const dark = settings?.darkMode;
-  const collapsed = false;
-
-  const SIDEBAR_BG = dark ? '#1c1c1c' : '#ffffff';
   const SIDEBAR_TEXT = dark ? '#e8e8d8' : '#111827';
   const TOPBAR_BG = dark ? '#1c1c1c' : '#ffffff';
   const BG = dark ? '#020b09' : '#f4f6f4';
   const BORDER = dark ? '#282827' : '#f0f0f0';
-  const NAV_TEXT = dark ? '#8a8a7a' : '#6b7280';
   const ACCENT = settings?.accentColor || '#9cb56f';
   const ACCENT_TEXT = '#0a1a0a';
   const MUTED = dark ? '#5a5a4a' : '#9ca3af';
-  const sidebarWidth = collapsed ? '64px' : '210px';
+
+  useEffect(() => {
+    try { localStorage.setItem('lkgr_receptionist_sidebar_collapsed', String(collapsed)); }
+    catch (error) { console.warn('Receptionist sidebar preference could not be saved:', error); }
+  }, [collapsed]);
 
   useEffect(() => {
     if (!document.querySelector('link[href*="tabler-icons"]')) {
@@ -412,118 +427,27 @@ export default function ReceptionistLayout({ children }) {
 
   const currentLabel = navItems.find(n => n.path === current)?.label || EXTRA_LABELS[current] || 'Dashboard';
 
-  const navButtonStyle = (isActive) => ({
-    width: '100%',
-    display: 'flex',
-    alignItems: 'center',
-    gap: collapsed ? '0' : '9px',
-    justifyContent: collapsed ? 'center' : 'flex-start',
-    padding: collapsed ? '10px 0' : '8px 10px',
-    borderRadius: '8px',
-    marginBottom: '1px',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: '12.5px',
-    fontFamily: "'Poppins', sans-serif",
-    background: isActive ? ACCENT : 'transparent',
-    color: isActive ? ACCENT_TEXT : NAV_TEXT,
-    fontWeight: isActive ? '600' : '400',
-    textAlign: 'left',
-  });
-
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', fontFamily: "'Poppins', sans-serif", background: BG }}>
-      <aside
-        style={{
-          minHeight: '100vh',
-          background: SIDEBAR_BG,
-          borderRight: `1px solid ${BORDER}`,
-          display: 'flex',
-          flexDirection: 'column',
-          position: 'fixed',
-          left: 0,
-          top: 0,
-          zIndex: 100,
-          boxShadow: dark ? '2px 0 20px rgba(0,0,0,0.4)' : '2px 0 8px rgba(0,0,0,0.04)',
-          overflow: 'hidden',
-        }}
-      >
-        <div style={{
-          padding: collapsed ? '18px 0' : '22px 16px 18px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'flex-start',
-          gap: '10px',
-          borderBottom: `1px solid ${BORDER}`,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-            <img
-              src={logo}
-              alt="Lawiswis Kawayan Garden Resort"
-              style={{ width: '28px', height: '34px', borderRadius: '6px', objectFit: 'cover', flexShrink: 0, display: 'block' }}
-            />
-            {!collapsed && <div style={{ minWidth: 0, whiteSpace: 'nowrap' }}>
-              <div style={{ color: dark ? '#d4d4c4' : '#111827', fontWeight: '700', fontSize: '12px', lineHeight: 1.2 }}>Lawiswis Kawayan</div>
-              <div style={{ color: dark ? '#c8f06e' : '#8fb83a', fontSize: '8.5px', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: '600' }}>Garden Resort</div>
-              <div style={{ color: MUTED, fontSize: '8px', marginTop: '1px' }}>HuaPro Receptionist</div>
-            </div>}
-          </div>
-        </div>
+    <AnimatedSidebarProvider
+      open={!collapsed}
+      onOpenChange={(open) => setCollapsed(!open)}
+      className="min-h-screen"
+      style={{ fontFamily: "'Poppins', sans-serif", background: BG, '--sidebar-width': '210px', '--sidebar-width-icon': '64px', '--sidebar-width-mobile': 'min(18rem, 88vw)' }}
+    >
+      <PortalSidebar
+        navItems={navItems}
+        currentPath={current}
+        unreadCount={unreadCount}
+        logo={logo}
+        portalName="Receptionist"
+        name={staffName || 'Receptionist'}
+        role={staffRole || 'receptionist'}
+        email={staffEmail}
+        initials={initials}
+        onLogout={handleLogout}
+      />
 
-        <nav style={{ flex: 1, padding: '14px 10px', overflowY: 'auto' }}>
-          {navItems.map((item) => {
-            const isActive = current === item.path;
-            return (
-              <button key={item.label}
-                onClick={() => window.location.href = item.path}
-                title={collapsed ? item.label : ''}
-                style={navButtonStyle(isActive)}
-              >
-                <i className={`ti ${item.icon}`} style={{ fontSize: '16px', flexShrink: 0, color: isActive ? ACCENT_TEXT : NAV_TEXT }} />
-                {!collapsed && <span style={{ flex: 1, whiteSpace: 'nowrap', textAlign: 'left' }}>{item.label}</span>}
-                {item.path === '/receptionist/messages' && unreadCount > 0 && (
-                  <span style={{ minWidth: '18px', height: '18px', padding: '0 5px', borderRadius: '999px', background: '#ef4444', color: '#fff', fontSize: '9px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {unreadCount > 9 ? '9+' : unreadCount}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div style={{ padding: collapsed ? '14px 0' : '14px 12px', borderTop: `1px solid ${BORDER}` }}>
-          {!collapsed && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-              <div style={{
-                width: '34px', height: '34px', borderRadius: '50%', background: ACCENT,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontWeight: '700', fontSize: '12px', color: ACCENT_TEXT, flexShrink: 0,
-              }}>{initials}</div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ color: SIDEBAR_TEXT, fontSize: '12px', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{staffName || 'Receptionist'}</div>
-                <div style={{ color: MUTED, fontSize: '10px', textTransform: 'capitalize' }}>{staffRole || 'receptionist'}</div>
-                {staffEmail && <div style={{ color: MUTED, fontSize: '9px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '132px' }}>{staffEmail}</div>}
-              </div>
-            </div>
-          )}
-          <button onClick={handleLogout} style={{
-            width: '100%', padding: '7px 10px', borderRadius: '7px',
-            border: `1px solid ${BORDER}`,
-            background: dark ? '#282827' : '#fff',
-            color: NAV_TEXT, fontSize: '11.5px',
-            fontFamily: "'Poppins', sans-serif", cursor: 'pointer', fontWeight: '500',
-            display: 'flex', alignItems: 'center',
-            justifyContent: collapsed ? 'center' : 'flex-start',
-            gap: '6px',
-          }}
-          >
-            <i className="ti ti-logout" style={{ fontSize: '14px' }} />
-            {!collapsed && <span style={{ whiteSpace: 'nowrap' }}>Sign out</span>}
-          </button>
-        </div>
-      </aside>
-
-      <div style={{ marginLeft: sidebarWidth, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <AnimatedSidebarInset className="portal-main-area" style={{ background: BG }}>
         <header style={{
           background: TOPBAR_BG,
           borderBottom: `1px solid ${BORDER}`,
@@ -537,6 +461,10 @@ export default function ReceptionistLayout({ children }) {
           zIndex: 99,
           boxShadow: dark ? '0 1px 20px rgba(0,0,0,0.3)' : '0 1px 4px rgba(0,0,0,0.04)',
         }}>
+          <AnimatedSidebarTrigger className="portal-mobile-menu" aria-label="Open navigation"
+            style={{ border: 'none', background: 'transparent', color: SIDEBAR_TEXT, cursor: 'pointer', fontSize: '20px', padding: '6px' }}>
+            <i className="ti ti-menu-2" />
+          </AnimatedSidebarTrigger>
           <div style={{ minWidth: 0, overflow: 'hidden' }}>
             <div style={{ fontWeight: '600', fontSize: '17px', color: SIDEBAR_TEXT }}>{currentLabel}</div>
             <div style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>HuaPro Resort Management System</div>
@@ -548,13 +476,6 @@ export default function ReceptionistLayout({ children }) {
               label={dark ? 'Light' : 'Dark'}
               dark={dark}
               onClick={() => updateSetting('darkMode', !dark)}
-            />
-
-            <ExpandableIconButton
-              icon="ti-settings"
-              label="Settings"
-              dark={dark}
-              onClick={() => window.location.href = '/receptionist/settings'}
             />
 
             <ExpandableIconButton
@@ -581,12 +502,12 @@ export default function ReceptionistLayout({ children }) {
           </div>
         </header>
 
-        <main style={{ flex: 1, padding: '28px', background: BG }}>
+        <div className="portal-main-content" style={{ flex: 1, padding: '28px', background: BG }}>
           {children}
-        </main>
-      </div>
+        </div>
+      </AnimatedSidebarInset>
 
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
-    </div>
+    </AnimatedSidebarProvider>
   );
 }
