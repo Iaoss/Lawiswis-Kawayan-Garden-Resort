@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import {
   collection, getDocs, onSnapshot, addDoc, updateDoc,
   doc, Timestamp, query, orderBy, limit,
 } from 'firebase/firestore';
 import ReceptionistLayout from '../components/ReceptionistLayout';
+import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
 
@@ -28,6 +30,7 @@ function sameDay(a, b) {
 }
 
 export default function ReceptionistDashboard() {
+  const navigate = useNavigate();
   const { settings } = useSettings();
   const dark = settings?.darkMode;
 
@@ -65,6 +68,7 @@ export default function ReceptionistDashboard() {
   const [allReservations, setAllReservations] = useState([]);
 
   // ── Tasks (live) ──────────────────────────────────────────
+  const [loaded, setLoaded] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -103,7 +107,7 @@ export default function ReceptionistDashboard() {
         totalRooms: rooms.length,
       });
     };
-    fetch();
+    fetch().catch(err => console.error(err)).finally(() => setLoaded(true));
   }, []);
 
   // live tasks
@@ -236,12 +240,14 @@ export default function ReceptionistDashboard() {
   };
 
   const cards = [
-    { label: "Today's Arrivals", value: stats.todayArrivals, icon: 'ti-plane-arrival', bg: ACCENT, color: ACCENT_TEXT },
-    { label: "Today's Departures", value: stats.todayDepartures, icon: 'ti-plane-departure', bg: DARK_CHIP, color: ACCENT },
-    { label: 'Currently Checked In', value: stats.checkedIn, icon: 'ti-home-check', bg: dark ? '#1e3a5f' : '#dbeafe', color: dark ? '#93c5fd' : '#1d4ed8' },
-    { label: 'Pending Payments', value: stats.pendingPayments, icon: 'ti-clock', bg: dark ? '#7f1d1d' : '#fee2e2', color: dark ? '#fca5a5' : '#dc2626' },
-    { label: 'Available Rooms', value: `${stats.availableRooms}/${stats.totalRooms}`, icon: 'ti-bed', bg: dark ? '#14532d' : '#dcfce7', color: dark ? '#86efac' : '#16a34a' },
-  ];
+    { label: "Today's Arrivals", value: stats.todayArrivals, icon: 'ti-plane-arrival', to: '/receptionist/reservations?view=arrivals', bg: ACCENT, color: ACCENT_TEXT },
+    { label: "Today's Departures", value: stats.todayDepartures, icon: 'ti-plane-departure', to: '/receptionist/reservations?view=departures', bg: DARK_CHIP, color: ACCENT },
+    { label: 'Currently Checked In', value: stats.checkedIn, icon: 'ti-home-check', to: '/receptionist/reservations?view=checked-in', bg: dark ? '#1e3a5f' : '#dbeafe', color: dark ? '#93c5fd' : '#1d4ed8' },
+    { label: 'Pending Payments', value: stats.pendingPayments, icon: 'ti-clock', to: '/receptionist/reservations?view=pending-payment', bg: dark ? '#7f1d1d' : '#fee2e2', color: dark ? '#fca5a5' : '#dc2626' },
+    { label: 'Available Rooms', value: `${stats.availableRooms}/${stats.totalRooms}`, icon: 'ti-bed', to: '/receptionist/rooms', bg: dark ? '#14532d' : '#dcfce7', color: dark ? '#86efac' : '#16a34a' },
+  ].filter(c => c.label !== 'Available Rooms' || settings.showOccupancyRate !== false);
+
+  if (!loaded) return <ReceptionistLayout><  DashboardSkeleton /></ReceptionistLayout>;
 
   return (
     <ReceptionistLayout>
@@ -254,11 +260,15 @@ export default function ReceptionistDashboard() {
         </div>
 
         {/* Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: '14px', marginBottom: '24px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cards.length}, minmax(0, 1fr))`, gap: '14px', marginBottom: '24px' }}>
           {cards.map((c, index) => (
             <div
               key={c.label}
+              role="button" tabIndex={0}
+              onClick={() => navigate(c.to)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(c.to); } }}
               style={{
+                cursor: 'pointer',
                 position: 'relative', overflow: 'hidden', minHeight: '164px',
                 borderRadius: '16px', padding: '20px',
                 background: STAT_CARD_BACKGROUNDS[index % 4],
@@ -284,6 +294,7 @@ export default function ReceptionistDashboard() {
           ))}
         </div>
 
+        {settings.showRecentReservations !== false && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
           {/* Today's Arrivals */}
           <div style={S.card}>
@@ -374,6 +385,7 @@ export default function ReceptionistDashboard() {
             )}
           </div>
         </div>
+        )}
 
         {/* Quick Actions */}
         <div style={{ ...S.card, marginTop: '16px' }}>
@@ -421,6 +433,7 @@ export default function ReceptionistDashboard() {
                 />
                 <input
                   type="date"
+                  min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)}
                   value={newTaskDate}
                   onChange={e => setNewTaskDate(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}

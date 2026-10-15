@@ -1,4 +1,27 @@
-import { calculateBookingPrice, getRoomBaseRate } from './bookingPricing';
+import { calculateBookingPrice, getRoomBaseRate, getRoomMaximumGuests, isCoupleRoom } from './bookingPricing';
+import { isPreferredContactMethod, PREFERRED_CONTACT_METHODS } from './preferredContactMethods';
+
+describe('couple room occupancy', () => {
+  test('caps a couple room at 3 guests', () => {
+    expect(isCoupleRoom({ type: 'Deluxe' })).toBe(true);
+    expect(isCoupleRoom({ name: 'Couple Room' })).toBe(true);
+    expect(getRoomMaximumGuests({ name: 'Couple Room' })).toBe(3);
+  });
+
+  test('does not cap other rooms', () => {
+    expect(isCoupleRoom({ name: 'Family Suite for 6' })).toBe(false);
+    expect(getRoomMaximumGuests({ name: 'Family Suite for 6' })).toBeNull();
+    expect(getRoomMaximumGuests({ name: 'Family Suite', maxGuests: 6 })).toBe(6);
+  });
+});
+
+describe('preferred contact method', () => {
+  test('accepts only the listed methods', () => {
+    PREFERRED_CONTACT_METHODS.forEach(method => expect(isPreferredContactMethod(method)).toBe(true));
+    expect(isPreferredContactMethod('Fax')).toBe(false);
+    expect(isPreferredContactMethod('')).toBe(false);
+  });
+});
 
 describe('booking pricing', () => {
   it('uses the configured daytour and overnight room rates', () => {

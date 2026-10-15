@@ -3,12 +3,15 @@ import { db } from '../../firebase/firebase';
 import { collection, getDocs, updateDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { SortControls, sortRecords } from '../lib/listSort';
 
 export default function BookingTransactions() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
   const [reservations, setReservations] = useState([]);
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('booked');
+  const [sortDir, setSortDir] = useState('desc');
   const [selected, setSelected] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -47,10 +50,10 @@ export default function BookingTransactions() {
     setSelected(prev => ({ ...prev, amountPaid: newPaid, paymentStatus }));
   };
 
-  const filtered = reservations.filter(r =>
+  const filtered = sortRecords(reservations.filter(r =>
     r.guestName?.toLowerCase().includes(search.toLowerCase()) ||
     r.roomNumber?.includes(search)
-  );
+  ), sortBy, sortDir);
 
   const statusStyle = (s) => {
     const map = dark
@@ -89,10 +92,12 @@ export default function BookingTransactions() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: '20px' }}>
           {/* Reservations Table */}
           <div style={S.card}>
-            <div style={{ padding: '16px', borderBottom: `1px solid ${BORDER_FAINT}` }}>
+            <div style={{ padding: '16px', borderBottom: `1px solid ${BORDER_FAINT}`, display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <SortControls sortBy={sortBy} sortDir={sortDir} onSortBy={setSortBy} onSortDir={setSortDir}
+                style={{ border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '9px 10px', fontSize: '12px', fontFamily: "'Poppins', sans-serif", background: CARD_ALT, color: TEXT, outline: 'none' }} />
               <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search by guest or room..."
-                style={{ width: '100%', border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '10px 14px', fontSize: '12px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: CARD_ALT, color: TEXT }} />
+                style={{ flex: 1, minWidth: '180px', border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '10px 14px', fontSize: '12px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: CARD_ALT, color: TEXT }} />
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>

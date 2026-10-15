@@ -4,6 +4,7 @@ import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import OccupancyBadge from '../components/OccupancyBadge';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { Skeleton } from '../../components/ui/v-skeleton-8-utils/skeleton.jsx';
+import { openBookingTypeModal } from '../lib/bookingTypeModal';
 
 /* ─────────────────────────────────────────────
    BRAND PALETTE — pulled from the Lawiswis Kawayan
@@ -429,7 +430,7 @@ export default function Home() {
               opacity: heroIn ? 1 : 0, transform: heroIn ? 'translateY(0)' : 'translateY(18px)',
               transition: 'opacity 0.9s cubic-bezier(0.16,1,0.3,1) 340ms, transform 0.9s cubic-bezier(0.16,1,0.3,1) 340ms',
             }} className="lk-home-hero-ctas">
-              <button disabled={!canBook} onClick={() => window.location.href = '/booking-options'}
+              <button disabled={!canBook} onClick={openBookingTypeModal}
                 style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '15px 32px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS, display: 'flex', alignItems: 'center', gap: '10px', transition: 'transform 0.35s cubic-bezier(0.16,1,0.3,1)' }}
                 onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
                 onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
@@ -634,7 +635,7 @@ export default function Home() {
             <div style={{ fontSize: '11px', color: '#e7dfc4', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '14px', fontFamily: SANS }}>We Can't Wait to Serve You</div>
             <h2 style={{ fontSize: '32px', fontWeight: '500', color: '#fff', fontFamily: SERIF, margin: 0 }}>Ready for Your Bulacan Getaway?</h2>
           </Reveal>
-          <button disabled={!canBook} onClick={() => window.location.href = '/booking-options'}
+          <button disabled={!canBook} onClick={openBookingTypeModal}
             style={{ background: BRASS, color: '#fff', border: 'none', borderRadius: '3px', padding: '16px 34px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS, whiteSpace: 'nowrap' }}>
             {canBook ? 'BOOK YOUR STAY →' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}
           </button>

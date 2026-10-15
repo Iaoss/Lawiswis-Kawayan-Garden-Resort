@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { auth, db } from '../../firebase/firebase';
-import { doc, getDoc, collection, query, orderBy, onSnapshot, where } from 'firebase/firestore';
+import { doc, getDoc, collection, query, onSnapshot, where } from 'firebase/firestore';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
@@ -13,45 +13,8 @@ import {
   AnimatedSidebarTrigger,
 } from '../../components/ui/animated-sidebar.tsx';
 import PortalSidebar from './PortalSidebar';
-
-function ExpandableIconButton({ icon, label, onClick, badge, dark }) {
-  const BORDER = dark ? '#383837' : '#e5e7eb';
-  const BG = dark ? '#282827' : '#f3f4f6';
-  const TEXT = dark ? '#e8e8d8' : '#111827';
-
-  return (
-    <button
-      onClick={onClick}
-      aria-label={label}
-      style={{
-        position: 'relative',
-        width: '40px',
-        height: '38px',
-        flexShrink: 0,
-        borderRadius: '10px',
-        border: `1px solid ${BORDER}`,
-        background: BG,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        overflow: 'hidden',
-      }}
-    >
-      <i className={`ti ${icon}`} style={{ fontSize: '17px', color: TEXT, flexShrink: 0 }} />
-      {badge > 0 && (
-        <div style={{
-          position: 'absolute', top: '-5px', right: '-5px',
-          width: '18px', height: '18px', background: '#ef4444',
-          borderRadius: '50%', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', fontSize: '10px', color: '#fff', fontWeight: '700',
-        }}>
-          {badge > 9 ? '9+' : badge}
-        </div>
-      )}
-    </button>
-  );
-}
+import { AccountMenu, PulsingDot, TopbarIconButton, topbarButtonStyle } from './TopbarControls';
+import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
 
 const navItems = [
   { label: 'Dashboard', path: '/receptionist/dashboard', icon: 'ti-layout-dashboard' },
@@ -90,14 +53,17 @@ function saveReadIds(ids) {
 const clockTime = (seconds) => seconds
   ? new Date(seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   : 'Just now';
+const formatBookingRef = (id) => `#${String(id || '').slice(0, 8).toUpperCase()}`;
+const ACTIVE_MODIFICATION_STATUSES = ['requested', 'needs_review', 'awaiting_payment', 'awaiting_refund'];
+const ACTIVE_REFUND_STATUSES = ['requested', 'eligible', 'needs_review', 'awaiting_refund'];
 
 function NotificationBell({ dark, accent, soundAlerts }) {
   const [open, setOpen] = useState(false);
-  const [feeds, setFeeds] = useState({ res: [], pay: [], msg: [] });
+  const [feeds, setFeeds] = useState({ booking: [], dateChange: [], refund: [] });
   const [ready, setReady] = useState(false);
   const [readIds, setReadIds] = useState(loadReadIds);
 
-  const firedRef = useRef({ res: false, pay: false, msg: false });
+  const firedRef = useRef({ booking: false });
   const seededRef = useRef(false);
   const knownRef = useRef(new Set());
   const dotRef = useRef(new Set());
@@ -136,75 +102,77 @@ function NotificationBell({ dark, accent, soundAlerts }) {
   useEffect(() => {
     const markFired = (key) => {
       firedRef.current[key] = true;
-      if (firedRef.current.res && firedRef.current.pay && firedRef.current.msg) setReady(true);
+      if (firedRef.current.booking) setReady(true);
     };
 
-    const unsubRes = onSnapshot(
+    const unsubBooking = onSnapshot(
       query(collection(db, 'reservations'), where('type', '==', 'online')),
       (snap) => {
-        const res = snap.docs
-          .filter(d => d.data().status === 'pending')
-          .sort((a, b) => (b.data().createdAt?.seconds || 0) - (a.data().createdAt?.seconds || 0))
+        const rows = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+
+        const booking = rows
+          .filter(item => String(item.status || '').toLowerCase() === 'pending')
           .slice(0, 5)
-          .map(d => ({
-            id: `res_${d.id}`,
+          .map(item => ({
+            id: `new-booking_${item.id}`,
             icon: 'ti-calendar-plus',
-            message: `New booking from ${d.data().guestName || 'Guest'}`,
-            sub: `Room ${d.data().roomNumber || '—'} · ${d.data().checkIn || ''}`,
-            time: clockTime(d.data().createdAt?.seconds),
+            badge: 'New Booking',
+            message: `${item.guestName || 'Guest'} · ${formatBookingRef(item.id)}`,
+            details: `${item.checkIn || '—'} → ${item.checkOut || '—'} · ₱${Number(item.totalAmount || 0).toLocaleString()}`,
+            time: clockTime(item.createdAt?.seconds),
+            bookingId: item.id,
             path: '/receptionist/reservations',
           }));
-        setFeeds(prev => ({ ...prev, res }));
-        markFired('res');
-      }
-    );
 
-    const unsubPay = onSnapshot(
-      query(
-        collection(db, 'reservations'),
-        where('type', '==', 'online'),
-        where('paymentStatus', '==', 'paid'),
-        orderBy('createdAt', 'desc')
-      ),
-      (snap) => {
-        const pay = snap.docs.slice(0, 5).map(d => ({
-          id: `pay_${d.id}`,
-          icon: 'ti-cash',
-          message: `Payment received from ${d.data().guestName || 'Guest'}`,
-          sub: `Room ${d.data().roomNumber || '—'} · ₱${Number(d.data().totalAmount || 0).toLocaleString()}`,
-          time: clockTime(d.data().createdAt?.seconds),
-          path: '/receptionist/billing',
-        }));
-        setFeeds(prev => ({ ...prev, pay }));
-        markFired('pay');
-      }
-    );
+        const dateChange = rows
+          .filter(item => item.modificationRequest && ACTIVE_MODIFICATION_STATUSES.includes(String(item.modificationRequest.status || '').toLowerCase()))
+          .slice(0, 5)
+          .map(item => {
+            const request = item.modificationRequest || {};
+            return {
+              id: `date-change_${request.id || item.id}`,
+              icon: 'ti-calendar-time',
+              badge: 'Date Modified',
+              message: `${item.guestName || 'Guest'} · ${formatBookingRef(item.id)}`,
+              details: `${request.originalCheckIn || item.checkIn || '—'} → ${request.requestedCheckIn || item.checkIn || '—'} · ${request.originalCheckOut || item.checkOut || '—'} → ${request.requestedCheckOut || item.checkOut || '—'}`,
+              time: clockTime(request.requestedAt?.seconds || item.createdAt?.seconds),
+              bookingId: item.id,
+              path: '/receptionist/reservations',
+            };
+          });
 
-    const unsubMsg = onSnapshot(
-      query(collection(db, 'conversations'), where('unread', '==', true)),
-      (snap) => {
-        const msg = snap.docs.slice(0, 3).map(d => ({
-          id: `msg_${d.id}`,
-          icon: 'ti-message-circle-2',
-          message: `New message from ${d.data().guestName || 'Guest'}`,
-          sub: d.data().lastMessage || 'New message',
-          time: clockTime(d.data().lastMessageAt?.seconds),
-          path: '/receptionist/messages',
-        }));
-        setFeeds(prev => ({ ...prev, msg }));
-        markFired('msg');
+        const refund = rows
+          .filter(item => item.cancellationRequested || ACTIVE_REFUND_STATUSES.includes(String(item.refundRequestStatus || '').toLowerCase()))
+          .slice(0, 5)
+          .map(item => {
+            const refundRequested = ACTIVE_REFUND_STATUSES.includes(String(item.refundRequestStatus || '').toLowerCase());
+            const reason = item.refundDecision?.reason || item.cancellationReason || 'Awaiting staff review';
+            return {
+              id: `${refundRequested ? 'refund-requested' : 'cancellation-requested'}_${item.id}`,
+              icon: refundRequested ? 'ti-receipt-refund' : 'ti-calendar-x',
+              badge: refundRequested ? 'Refund Requested' : 'Cancellation Requested',
+              message: `${item.guestName || 'Guest'} · ${formatBookingRef(item.id)}`,
+              details: `${reason}${refundRequested ? ` · ₱${Number(item.refundDecision?.refundableAmount || 0).toLocaleString()}` : ''}`,
+              time: clockTime(item.refundRequestedAt?.seconds || item.cancellationRequestedAt?.seconds || item.createdAt?.seconds),
+              bookingId: item.id,
+              path: '/receptionist/reservations',
+            };
+          });
+
+        setFeeds({ booking, dateChange, refund });
+        markFired('booking');
       }
     );
 
     return () => {
-      unsubRes();
-      unsubPay();
-      unsubMsg();
+      unsubBooking();
     };
   }, []);
 
   const notifications = useMemo(
-    () => [...feeds.res, ...feeds.pay, ...feeds.msg].slice(0, 10),
+    () => [...feeds.booking, ...feeds.dateChange, ...feeds.refund].slice(0, 12),
     [feeds]
   );
 
@@ -244,39 +212,31 @@ function NotificationBell({ dark, accent, soundAlerts }) {
   const openItem = (n) => {
     markRead([n.id]);
     setOpen(false);
-    window.location.href = n.path;
+    const bookingParam = n.bookingId ? `${n.path}?booking=${encodeURIComponent(n.bookingId)}` : n.path;
+    window.location.href = bookingParam;
   };
 
   return (
     <div style={{ position: 'relative' }}>
       <NotificationButton
         onClick={toggleOpen}
-        aria-label="Alerts"
+        aria-label={unread > 0 ? `Alerts (${unread} unread)` : 'Alerts'}
         title="Alerts"
-        count={unread}
         icon={<i className="ti ti-bell" style={{ fontSize: '18px', color: TEXT, flexShrink: 0 }} />}
         style={{
           position: 'relative',
-          minWidth: '76px',
+          width: '38px',
           height: '38px',
+          padding: 0,
           flexShrink: 0,
           borderRadius: '10px',
           border: `1px solid ${BTN_BORDER}`,
           background: BTN_BG,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          cursor: 'pointer', overflow: 'hidden',
-        }}
-        badgeStyle={{
-          top: '-5px',
-          right: '-5px',
-          width: '18px',
-          height: '18px',
-          background: '#ef4444',
-          color: '#fff',
-          fontSize: '10px',
+          cursor: 'pointer',
         }}
       >
-        <span style={{ whiteSpace: 'nowrap', fontSize: '12px', fontWeight: 600, color: TEXT }}>Alerts</span>
+        {unread > 0 && <PulsingDot color={accent} />}
       </NotificationButton>
 
       {open && (
@@ -304,10 +264,10 @@ function NotificationBell({ dark, accent, soundAlerts }) {
               ) : notifications.map((n, i) => {
                 const isNew = dotRef.current.has(n.id);
                 return (
-                  <div key={n.id} onClick={() => openItem(n)}
+                  <div key={n.id}
                     style={{
                       padding: '12px 16px', borderBottom: `1px solid ${BORDER}`,
-                      cursor: 'pointer', background: i % 2 === 0 ? ROW_A : ROW_B,
+                      background: i % 2 === 0 ? ROW_A : ROW_B,
                       display: 'flex', gap: '12px', alignItems: 'flex-start',
                     }}
                     onMouseEnter={e => e.currentTarget.style.background = ROW_HOVER}
@@ -317,9 +277,15 @@ function NotificationBell({ dark, accent, soundAlerts }) {
                       <i className={`ti ${n.icon}`} style={{ fontSize: '17px', color: TEXT }} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 999, border: `1px solid ${ACCENT}55`, background: `${ACCENT}22`, color: TEXT, fontSize: 10, fontWeight: 700, letterSpacing: '.03em', padding: '2px 8px', marginBottom: 6 }}>{n.badge}</span>
                       <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT }}>{n.message}</div>
-                      <div style={{ fontSize: '11px', color: MUTED, marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.sub}</div>
-                      <div style={{ fontSize: '10px', color: FAINT, marginTop: '3px' }}>{n.time}</div>
+                      <div style={{ fontSize: '11px', color: MUTED, marginTop: '2px' }}>{n.details}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, gap: 10 }}>
+                        <div style={{ fontSize: '10px', color: FAINT }}>{n.time}</div>
+                        <button type="button" onClick={() => openItem(n)} style={{ border: `1px solid ${BORDER}`, background: dark ? '#252525' : '#fff', color: TEXT, borderRadius: 8, fontSize: 10, fontWeight: 700, padding: '5px 8px', cursor: 'pointer' }}>
+                          Open booking
+                        </button>
+                      </div>
                     </div>
                     {isNew && <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: ACCENT, flexShrink: 0, marginTop: '4px' }} />}
                   </div>
@@ -470,15 +436,30 @@ export default function ReceptionistLayout({ children }) {
             <div style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>HuaPro Resort Management System</div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', flexShrink: 0, marginLeft: 'auto' }}>
-            <ExpandableIconButton
-              icon={dark ? 'ti-sun' : 'ti-moon'}
-              label={dark ? 'Light' : 'Dark'}
-              dark={dark}
-              onClick={() => updateSetting('darkMode', !dark)}
+          <div className="topbar-dock" style={{ '--dock-accent': ACCENT, justifyContent: 'flex-end', flexShrink: 0, marginLeft: 'auto' }}>
+            <AnimatedThemeToggler
+              theme={dark ? 'dark' : 'light'}
+              onThemeChange={(nextTheme) => updateSetting('darkMode', nextTheme === 'dark')}
+              variant="circle"
+              duration={500}
+              aria-label={dark ? 'Light mode' : 'Dark mode'}
+              title={dark ? 'Light mode' : 'Dark mode'}
+              style={{
+                position: 'relative',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '38px',
+                height: '38px',
+                padding: 0,
+                flexShrink: 0,
+                borderRadius: '10px',
+                cursor: 'pointer',
+                ...topbarButtonStyle(dark),
+              }}
             />
 
-            <ExpandableIconButton
+            <TopbarIconButton
               icon="ti-message-circle-2"
               label="Messages"
               dark={dark}
@@ -488,17 +469,22 @@ export default function ReceptionistLayout({ children }) {
 
             <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} />
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{
-                width: '36px', height: '36px', borderRadius: '50%', background: ACCENT,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontWeight: '700', fontSize: '13px', color: ACCENT_TEXT,
-              }}>{initials}</div>
-              <div>
-                <div style={{ fontWeight: '600', fontSize: '13px', color: SIDEBAR_TEXT }}>{staffName || 'Receptionist'}</div>
-                <div style={{ fontSize: '11px', color: MUTED, textTransform: 'capitalize' }}>{staffRole || 'receptionist'}</div>
-              </div>
-            </div>
+            <TopbarIconButton
+              icon="ti-settings"
+              label="Settings"
+              dark={dark}
+              onClick={() => { window.location.href = '/receptionist/settings'; }}
+            />
+
+            <AccountMenu
+              initials={initials}
+              name={staffName || 'Receptionist'}
+              role={staffRole || 'receptionist'}
+              dark={dark}
+              accent={ACCENT}
+              accentText={ACCENT_TEXT}
+              onSignOut={handleLogout}
+            />
           </div>
         </header>
 

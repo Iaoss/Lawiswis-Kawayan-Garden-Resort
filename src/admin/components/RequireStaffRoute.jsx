@@ -3,6 +3,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { Navigate, useLocation } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
+import { Pattern } from '../../components/ui/v-skeleton-8.tsx';
 
 export default function RequireStaffRoute({ children, allowedRoles = ['admin', 'receptionist'] }) {
   const location = useLocation();
@@ -37,8 +38,8 @@ export default function RequireStaffRoute({ children, allowedRoles = ['admin', '
 
   if (access.loading) {
     return (
-      <main role="status" aria-live="polite" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#f4f6f4', color: '#374151', fontFamily: "'Poppins', sans-serif", fontSize: '14px' }}>
-        Verifying staff access...
+      <main role="status" aria-live="polite" style={{ minHeight: '100vh', padding: '20px', background: '#f4f6f4' }}>
+        <Pattern className="h-[calc(100vh-40px)] max-w-none" />
       </main>
     );
   }

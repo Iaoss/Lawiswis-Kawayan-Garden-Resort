@@ -2,6 +2,7 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendReservationPendingEmail } from '../lib/email';
 import { getCorporatePackage } from '../src/lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
+import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -28,6 +29,7 @@ export default async function handler(req, res) {
       guestName,
       email,
       phone,
+      preferredContactMethod,
       totalGuests,
       bookingType,
       checkIn,
@@ -50,6 +52,7 @@ export default async function handler(req, res) {
       || typeof email !== 'string' || !email.trim() || email.length > 254
       || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
       || typeof phone !== 'string' || !/^09\d{9}$/.test(phone)
+      || !isPreferredContactMethod(preferredContactMethod)
       || !Number.isSafeInteger(totalGuests) || !getCorporatePackage(totalGuests)
       || !['daytour', 'overnight'].includes(bookingType)
       || typeof checkIn !== 'string' || typeof checkOut !== 'string'
@@ -107,6 +110,7 @@ export default async function handler(req, res) {
       email: email.trim(),
       emailLower: email.trim().toLowerCase(),
       phone,
+      preferredContactMethod,
       checkIn,
       checkOut,
       checkInTime: isDayTour ? 'Flexible day-tour arrival' : 'Flexible check-in',

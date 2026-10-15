@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import { getCorporatePackage, CORPORATE_FEATURE_ROWS, CORPORATE_PACKAGES, isCorporateFeatureIncluded } from '../../lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
+import { PREFERRED_CONTACT_METHODS } from '../../lib/preferredContactMethods';
 import { CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
+import { openBookingTypeModal } from '../lib/bookingTypeModal';
 
 const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const addMonths = (date, months) => {
@@ -15,7 +16,6 @@ const addMonths = (date, months) => {
 };
 
 export default function CorporateBooking() {
-  const navigate = useNavigate();
   const { available, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const today = formatDate(new Date());
   const maxDate = formatDate(addMonths(new Date(), 2));
@@ -25,6 +25,7 @@ export default function CorporateBooking() {
     lastName: '',
     email: '',
     phone: '',
+    preferredContactMethod: '',
     totalGuests: 15,
     bookingType: 'overnight',
     checkIn: '',
@@ -59,6 +60,7 @@ export default function CorporateBooking() {
       [name]: type === 'checkbox' ? checked : value,
       ...(name === 'bookingType' && value === 'daytour' ? { checkOut: previous.checkIn } : {}),
       ...(name === 'checkIn' && previous.bookingType === 'daytour' ? { checkOut: value } : {}),
+      ...(name === 'checkIn' && previous.bookingType === 'overnight' && previous.checkOut && previous.checkOut <= value ? { checkOut: '' } : {}),
     }));
   };
 
@@ -108,6 +110,7 @@ export default function CorporateBooking() {
             guestName,
             email: form.email.trim(),
             phone: form.phone.trim(),
+            preferredContactMethod: form.preferredContactMethod,
             totalGuests,
             bookingType: form.bookingType,
             checkIn: form.checkIn,
@@ -145,7 +148,7 @@ export default function CorporateBooking() {
       `}</style>
       <header style={{ background: FOREST_DEEP, color: '#fff', padding: '64px 24px 56px' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
-          <button type="button" onClick={() => navigate('/booking-options')} style={{ border: 0, background: 'transparent', color: '#e4d4a7', padding: 0, marginBottom: '24px', cursor: 'pointer', font: `600 11px ${SANS}` }}>← CHANGE BOOKING TYPE</button>
+          <button type="button" onClick={openBookingTypeModal} style={{ border: 0, background: 'transparent', color: '#e4d4a7', padding: 0, marginBottom: '24px', cursor: 'pointer', font: `600 11px ${SANS}` }}>← CHANGE BOOKING TYPE</button>
           <div style={{ color: '#e4d4a7', font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '12px' }}>Corporate / Big Group Booking · 15+ Guests</div>
           <h1 style={{ margin: '0 0 12px', font: `500 clamp(38px, 6vw, 64px)/1.05 ${SERIF}` }}>Bring your whole team.</h1>
           <p style={{ maxWidth: '650px', color: 'rgba(255,255,255,.76)', font: `14px/1.8 ${SANS}`, margin: 0 }}>Select your group size and dates to see the Bamboo package tier and per-person pricing. A {RESERVATION_DEPOSIT_PERCENTAGE}% deposit reserves your request.</p>
@@ -163,6 +166,7 @@ export default function CorporateBooking() {
               <label style={labelStyle}>Contact last name<input required minLength="2" maxLength="35" name="lastName" value={form.lastName} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Email address<input required type="email" maxLength="254" name="email" value={form.email} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Mobile number<input required type="tel" inputMode="numeric" pattern="09[0-9]{9}" maxLength="11" placeholder="09XXXXXXXXX" name="phone" value={form.phone} onChange={changeField} style={inputStyle} /></label>
+              <label style={labelStyle}>Preferred Contact Method *<select required name="preferredContactMethod" value={form.preferredContactMethod} onChange={changeField} style={inputStyle}><option value="">Select a method</option>{PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
             </div>
           </section>
 

@@ -31,7 +31,12 @@ import {
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
+  getRoomMaximumGuests,
+  isCoupleRoom,
 } from '../src/lib/bookingPricing';
+import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+
+const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -74,6 +79,7 @@ export default async function handler(req, res) {
       cottageId,
       cottageFee,
       notes,
+      preferredContactMethod,
       paymentMethod,
       promoCode: submittedPromoCode,
       website, // honeypot field — real guests never fill this in
@@ -111,6 +117,9 @@ export default async function handler(req, res) {
     if ((address !== undefined && typeof address !== 'string')
       || (notes !== undefined && typeof notes !== 'string')) {
       return res.status(400).json({ error: 'Address and special requests must be text.' });
+    }
+    if (!isPreferredContactMethod(preferredContactMethod)) {
+      return res.status(400).json({ error: 'Please choose a preferred contact method.' });
     }
     const legacyNameParts = typeof guestName === 'string' ? splitGuestName(guestName) : {};
     const normalizedFirstName = String(firstName ?? legacyNameParts.firstName ?? '').trim();
@@ -172,6 +181,10 @@ export default async function handler(req, res) {
     const maxCapacity = Number(room.maxCapacity ?? room.maximumCapacity ?? room.maxGuests);
     if (Number.isInteger(maxCapacity) && maxCapacity > 0 && adults + children > maxCapacity) {
       return res.status(400).json({ error: `This room allows up to ${maxCapacity} guests.` });
+    }
+
+    if (isCoupleRoom(room) && adults + children > getRoomMaximumGuests(room)) {
+      return res.status(400).json({ error: COUPLE_ROOM_LIMIT_MESSAGE, code: 'COUPLE_ROOM_LIMIT' });
     }
 
     // ---- 5. Date-overlap check against existing reservations ------------
@@ -237,6 +250,7 @@ export default async function handler(req, res) {
       cottageId: pricing.cottageId,
       cottageFee: pricing.cottageFee,
       notes: notes || '',
+      preferredContactMethod,
       paymentMethod,
       subtotalAmount: totalAmount,
       nights,

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { db } from '../../firebase/firebase';
 import {
@@ -6,6 +7,7 @@ import {
   doc, Timestamp, query, orderBy, limit,
 } from 'firebase/firestore';
 import Layout from '../components/Layout';
+import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -166,6 +168,7 @@ const statItemVariants = {
 };
 
 export default function AdminDashboard() {
+  const navigate = useNavigate();
   const { settings, formatCurrency, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
@@ -203,7 +206,7 @@ export default function AdminDashboard() {
     const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d;
   });
   const [selectedDay, setSelectedDay] = useState(() => new Date());
-
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     const fetchData = async () => {
       const roomsSnap = await getDocs(collection(db, 'rooms'));
@@ -224,7 +227,7 @@ export default function AdminDashboard() {
       });
       setRecent([...reservations].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
     };
-    fetchData();
+    fetchData().catch(err => console.error('Dashboard load failed:', err)).finally(() => setLoaded(true));
   }, []);
 
   // live tasks
@@ -405,20 +408,27 @@ export default function AdminDashboard() {
     fontWeight: '600', cursor: 'pointer', background: bg, color,
   });
 
+  if (!loaded) return <Layout><DashboardSkeleton /></Layout>;
+
   return (
     <Layout>
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh' }}>
 
         {/* ── Stat Cards ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '14px', marginBottom: '18px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${settings.showTotalRevenue === false ? 3 : 4},1fr)`, gap: '14px', marginBottom: '18px' }}>
           {[
-            { label: 'New Bookings',  value: stats.totalReservations, icon: 'ti-calendar-event', trend: '+8.70%', up: true },
-            { label: 'Check-In',      value: stats.checkedIn,         icon: 'ti-login',           trend: '+3.56%', up: true },
-            { label: 'Check-Out',     value: stats.checkOuts,         icon: 'ti-logout',          trend: '-1.06%', up: false },
-            { label: 'Total Revenue', value: formatCurrency(stats.totalRevenue), icon: 'ti-currency-peso', trend: '+5.70%', up: true },
-          ].map((c, i) => (
-            <div key={c.label} style={{
-              position: 'relative', overflow: 'hidden',
+            { label: 'New Bookings',  show: true, value: stats.totalReservations, icon: 'ti-calendar-event', trend: '+8.70%', up: true, to: '/admin/reservations?view=new' },
+            { label: 'Check-In',      show: true, value: stats.checkedIn,         icon: 'ti-login',           trend: '+3.56%', up: true, to: '/admin/reservations?view=checked-in' },
+            { label: 'Check-Out',     show: true, value: stats.checkOuts,         icon: 'ti-logout',          trend: '-1.06%', up: false, to: '/admin/reservations?view=checked-out' },
+            { label: 'Total Revenue', show: settings.showTotalRevenue !== false, value: formatCurrency(stats.totalRevenue), icon:             'ti-currency-peso', trend: '+5.70%', up: true, to: '/admin/payments' },
+          ].map((c, i) => !c.show ? null : (
+                        <div key={c.label}
+                          role="button" tabIndex={0}
+                          onClick={() => navigate(c.to)}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(c.to); } }}
+                          style={{
+                          cursor: 'pointer',
+                          position: 'relative', overflow: 'hidden',
               borderRadius: '16px', padding: '20px',
               background: dark ? `linear-gradient(135deg, ${cardGradients[i].from}, ${cardGradients[i].to})` : statCardBackgrounds[i],
               border: dark ? 'none' : '1px solid #e6ebe7',
@@ -455,8 +465,9 @@ export default function AdminDashboard() {
         </div>
 
         {/* ── Row 2 ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr 280px', gap: '14px', marginBottom: '14px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: [settings.showOccupancyRate !== false && '1fr', settings.showRevenueChart !== false && '1.5fr', '280px'].filter(Boolean).join(' '), gap: '14px', marginBottom: '14px' }}>
 
+          {settings.showOccupancyRate !== false && (
           <Card>
             <SectionTitle action>Room Availability</SectionTitle>
             <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', height: '36px', marginBottom: '16px', gap: '2px' }}>
@@ -486,7 +497,9 @@ export default function AdminDashboard() {
               ))}
             </div>
           </Card>
+          )}
 
+          {settings.showRevenueChart !== false && (
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue</span>
@@ -510,6 +523,7 @@ export default function AdminDashboard() {
               </AreaChart>
             </ResponsiveContainer>
           </Card>
+          )}
 
           <Card>
             <SectionTitle action>Overall Rating</SectionTitle>
@@ -609,6 +623,7 @@ export default function AdminDashboard() {
                 />
                 <input
                   type="date"
+                  min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)}
                   value={newTaskDate}
                   onChange={e => setNewTaskDate(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') e.preventDefault(); }}
@@ -658,8 +673,9 @@ export default function AdminDashboard() {
         </div>
 
         {/* ── Row 4 ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: '14px', marginBottom: '14px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: settings.showRecentReservations === false ? '1fr' : '1fr 280px', gap: '14px', marginBottom: '14px' }}>
 
+          {settings.showRecentReservations !== false && (
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Booking List</span>
@@ -738,6 +754,7 @@ export default function AdminDashboard() {
               </tbody>
             </table>
           </Card>
+          )}
 
           {/* ── Recent Activities (functional) ── */}
           <Card>

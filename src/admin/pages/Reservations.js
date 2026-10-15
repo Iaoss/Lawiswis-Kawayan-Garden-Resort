@@ -2,11 +2,52 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { db, auth } from '../../firebase/firebase';
 import { collection, getDocs, getDoc, updateDoc, doc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
+import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
+import { SortControls, sortRecords } from '../lib/listSort';
+
+const QUICK_VIEWS = {
+  new: { label: 'New bookings', sortBy: 'booked', sortDir: 'desc' },
+  arrivals: { label: "Today's check-ins", sortBy: 'checkin', sortDir: 'asc' },
+  departures: { label: "Today's check-outs", sortBy: 'booked', sortDir: 'desc' },
+  'checked-in': { label: 'Currently checked in', status: 'checked-in', sortBy: 'checkin', sortDir: 'desc' },
+  'checked-out': { label: 'Checked out', status: 'checked-out', sortBy: 'checkin', sortDir: 'desc' },
+  'pending-payment': { label: 'Pending payments', sortBy: 'booked', sortDir: 'desc' },
+};
+
+const localToday = () => {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+const matchesQuickView = (r, view) => {
+  if (view === 'arrivals') return r.checkIn === localToday() && r.status !== 'cancelled';
+  if (view === 'departures') return r.checkOut === localToday() && r.status !== 'cancelled';
+  if (view === 'pending-payment') return r.paymentStatus === 'pending' && r.status !== 'cancelled';
+  if (view === 'new') return r.status !== 'cancelled';
+  return true;
+};
 
 export default function Reservations() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
+  const initialBookingQuery = (() => {
+    try {
+      return new URLSearchParams(window.location.search).get('booking') || '';
+    } catch {
+      return '';
+    }
+  })();
+
+  const initialView = (() => {
+    try {
+      const v = new URLSearchParams(window.location.search).get('view');
+      return QUICK_VIEWS[v] ? v : '';
+    } catch {
+      return '';
+    }
+  })();
 
   // ── Theme tokens (mirrors PageLayout's light/dark palette) ──
   const BG       = dark ? '#020b09' : '#f4f6f4';
@@ -32,9 +73,15 @@ export default function Reservations() {
   const [decisionBusy, setDecisionBusy] = useState('');
   const [manualTotals, setManualTotals] = useState({});
   const [manualRefunds, setManualRefunds] = useState({});
-  const [filter, setFilter]             = useState('all');
-  const [search, setSearch]             = useState('');
+  const [filter, setFilter]             = useState(QUICK_VIEWS[initialView]?.status || 'all');
+  const [quickView, setQuickView]       = useState(initialView);
+  const [sortBy, setSortBy]             = useState(QUICK_VIEWS[initialView]?.sortBy || 'booked');
+  const [sortDir, setSortDir]           = useState(QUICK_VIEWS[initialView]?.sortDir || 'desc');
+  const [search, setSearch]             = useState(initialBookingQuery);
   const [page,   setPage]               = useState(1);
+  const [selectedId, setSelectedId]     = useState(null);
+  const [autoOpened, setAutoOpened]     = useState(false);
+  const [loaded, setLoaded]             = useState(false);
   const perPage = 10;
   const hasOutstandingBalance = (reservation) => Math.round((
     Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0) - Number(reservation.amountPaid || 0)
@@ -91,12 +138,28 @@ export default function Reservations() {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setReservations(data);
+      setLoaded(true);
     }, error => {
       console.error('Unable to watch reservation status changes:', error);
+      setLoaded(true);
       setToast({ type: 'error', text: 'Reservation updates could not be loaded.' });
     });
     return unsubscribe;
   }, [fetchReservations]);
+
+  useEffect(() => {
+    if (autoOpened || !initialBookingQuery || reservations.length === 0) return;
+    const match = reservations.find(r => r.id === initialBookingQuery);
+    if (match) setSelectedId(match.id);
+    setAutoOpened(true);
+  }, [autoOpened, initialBookingQuery, reservations]);
+
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const onKey = event => { if (event.key === 'Escape') setSelectedId(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedId]);
 
   const openCancellationDialog = (kind, reservation) => {
     setCancelReason(kind === 'approve' ? reservation.cancellationReason || '' : '');
@@ -105,6 +168,7 @@ export default function Reservations() {
 
 const updateStatus = async (id, status, reason = '') => {
   const reservation = reservations.find(r => r.id === id);
+  if (isReceptionist && reservation?.status === 'cancelled') return;
   if (status === 'cancelled') {
     await updateDoc(doc(db, 'reservations', id), {
       status: 'cancelled',
@@ -281,14 +345,25 @@ const updateStatus = async (id, status, reason = '') => {
     return `${n} night${n !== 1 ? 's' : ''}`;
   };
 
-  const filtered = reservations.filter(r => {
+  const selectedReservation = selectedId ? reservations.find(r => r.id === selectedId) : null;
+
+  const filtered = sortRecords(reservations.filter(r => {
     const matchFilter = filter === 'all' || r.status === filter;
+    const matchQuick = !quickView || matchesQuickView(r, quickView);
     const matchSearch =
       r.guestName?.toLowerCase().includes(search.toLowerCase()) ||
       r.roomNumber?.includes(search) ||
-      r.status?.includes(search.toLowerCase());
-    return matchFilter && matchSearch;
-  });
+      r.status?.includes(search.toLowerCase()) ||
+      r.id?.toLowerCase().includes(search.toLowerCase());
+    return matchFilter && matchQuick && matchSearch;
+  }), sortBy, sortDir);
+
+  const clearQuickView = () => {
+    setQuickView('');
+    setFilter('all');
+    setPage(1);
+    window.history.replaceState(null, '', window.location.pathname);
+  };
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const paged      = filtered.slice((page - 1) * perPage, page * perPage);
@@ -305,6 +380,8 @@ const updateStatus = async (id, status, reason = '') => {
     ['eligible', 'needs_review'].includes(String(r.refundRequestStatus || '').toLowerCase())) : [];
   const pendingModifications = reservations.filter(r =>
     ['requested', 'needs_review'].includes(String(r.modificationRequest?.status || '').toLowerCase()));
+
+  if (!loaded) return <PageLayout><DashboardSkeleton /></PageLayout>;
 
   return (
     <PageLayout>
@@ -346,6 +423,57 @@ const updateStatus = async (id, status, reason = '') => {
           </div>
         )}
 
+        {selectedReservation && (() => {
+          const s = selectedReservation;
+          const sb = statusBadge(s.status);
+          const money = v => (v === undefined || v === null || v === '' ? '—' : `₱${Number(v).toLocaleString()}`);
+          const rows = [
+            ['Phone Number', s.phone || 'Not provided'],
+            ['Email Address', s.email || 'Not provided'],
+            ['Preferred Contact Method', s.preferredContactMethod || 'Not provided'],
+            ['Room', [s.roomNumber, s.roomType].filter(Boolean).join(' · ') || '—'],
+            ['Check-in', s.checkIn || '—'],
+            ['Check-out', s.checkOut || '—'],
+            ['Duration', nights(s)],
+            ['Special Requests', s.notes || 'None'],
+            ['Payment Status', s.paymentStatus || '—'],
+            ['Payment Method', s.paymentMethod || '—'],
+            ['Total Amount', money(s.totalAmount)],
+            ['Amount Paid', money(s.amountPaid)],
+          ];
+          return (
+            <div role="presentation" onClick={event => { if (event.target === event.currentTarget) setSelectedId(null); }}
+              style={{ position: 'fixed', inset: 0, zIndex: 1050, background: 'rgba(0,0,0,0.55)', display: 'grid', placeItems: 'center', padding: '18px' }}>
+              <section role="dialog" aria-modal="true" aria-labelledby="reservation-details-title"
+                style={{ width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '16px', padding: '22px', boxShadow: '0 20px 60px rgba(0,0,0,0.35)', fontFamily: "'Poppins', sans-serif" }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '16px' }}>
+                  <div>
+                    <h2 id="reservation-details-title" style={{ color: TEXT, fontSize: '18px', margin: 0 }}>{s.guestName || 'Guest'}</h2>
+                    <div style={{ color: ACCENT, fontSize: '12px', marginTop: '3px' }}>Booking ID: {s.id.slice(0, 8).toUpperCase()}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ background: sb.bg, color: sb.color, padding: '4px 12px', borderRadius: '20px', fontSize: '10px', fontWeight: 600, textTransform: 'capitalize' }}>{s.status}</span>
+                    <button type="button" aria-label="Close details" onClick={() => setSelectedId(null)}
+                      style={{ border: `1px solid ${BORDER2}`, background: CARD2, color: TEXT, borderRadius: '8px', width: '30px', height: '30px', cursor: 'pointer', fontSize: '16px' }}>×</button>
+                  </div>
+                </div>
+                <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px 18px', margin: 0 }}>
+                  {rows.map(([label, value]) => (
+                    <div key={label} style={{ gridColumn: label === 'Special Requests' ? '1 / -1' : undefined }}>
+                      <dt style={{ color: MUTED, fontSize: '11px' }}>{label}</dt>
+                      <dd style={{ color: TEXT, fontSize: '13px', margin: '2px 0 0', textTransform: label === 'Payment Status' ? 'capitalize' : 'none', wordBreak: 'break-word' }}>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+                  <button type="button" onClick={() => setSelectedId(null)}
+                    style={{ border: 'none', borderRadius: '8px', padding: '9px 16px', background: ACCENT, color: ACCENT_TEXT, fontWeight: 700, cursor: 'pointer' }}>Close</button>
+                </div>
+              </section>
+            </div>
+          );
+        })()}
+
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
           <div style={{ fontWeight: '700', fontSize: '18px', color: TEXT }}>Reservation List</div>
@@ -357,6 +485,17 @@ const updateStatus = async (id, status, reason = '') => {
                 placeholder="Search guest, status, etc"
                 style={{ border: 'none', outline: 'none', fontSize: '12px', fontFamily: "'Poppins', sans-serif", width: '180px', background: 'transparent', color: TEXT }} />
             </div>
+
+            {quickView && (
+              <button onClick={clearQuickView} title="Clear card filter"
+                style={{ ...inp, display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' }}>
+                {QUICK_VIEWS[quickView].label} <i className="ti ti-x" style={{ fontSize: '12px' }} />
+              </button>
+            )}
+
+            <SortControls sortBy={sortBy} sortDir={sortDir}
+              onSortBy={v => { setSortBy(v); setPage(1); }}
+              onSortDir={v => { setSortDir(v); setPage(1); }} style={inp} />
 
             {/* Filter */}
             <select value={filter} onChange={e => { setFilter(e.target.value); setPage(1); }} style={inp}>
@@ -490,7 +629,13 @@ const updateStatus = async (id, status, reason = '') => {
                 paged.map(r => {
                   const b = statusBadge(r.status);
                   return (
-                    <tr key={r.id} style={{ borderBottom: `1px solid ${ROWLINE}` }}>
+                    <tr key={r.id} role="button" tabIndex={0}
+                      onClick={() => setSelectedId(r.id)}
+                      onKeyDown={e => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedId(r.id); }
+                      }}
+                      style={{ borderBottom: `1px solid ${ROWLINE}`, cursor: 'pointer' }}>
                       <td style={{ padding: '14px 16px', fontSize: '12px', color: TEXT, verticalAlign: 'top' }}>
                         <div style={{ fontWeight: '600' }}>{r.guestName}</div>
                         <div style={{ fontSize: '10px', color: MUTED, marginTop: '2px' }}>{r.id.slice(0, 8).toUpperCase()}</div>
@@ -514,9 +659,13 @@ const updateStatus = async (id, status, reason = '') => {
                           {r.status}
                         </span>
                       </td>
-                      <td style={{ padding: '14px 16px', fontSize: '12px', verticalAlign: 'top' }}>
+                      <td onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ padding: '14px 16px', fontSize: '12px', verticalAlign: 'top', cursor: 'default' }}>
                         {isReceptionist ? (
-                          r.cancellationRequested ? (
+                          r.status === 'cancelled' ? (
+                            <span title="Cancelled bookings can only be changed by an admin" style={{ fontSize: '10px', color: MUTED, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                              <i className="ti ti-lock" /> Cancelled – locked
+                            </span>
+                          ) : r.cancellationRequested ? (
                             <span style={{ fontSize: '10px', color: MUTED }}>Cancellation requested</span>
                           ) : (
                             <select value={r.status} onChange={e => {

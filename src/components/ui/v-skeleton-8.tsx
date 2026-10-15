@@ -1,9 +1,14 @@
 import React from 'react';
 import { Skeleton } from './v-skeleton-8-utils/skeleton.jsx';
 
-export function Pattern() {
+export function Pattern({ className = "h-80 max-w-2xl" }: { className?: string }) {
   return (
-    <div className="flex h-80 w-full max-w-2xl overflow-hidden rounded-xl border">
+    <div
+      className={`flex w-full overflow-hidden rounded-xl border ${className}`}
+      role="status"
+      aria-busy="true"
+      aria-label="Loading"
+    >
       <div className="flex w-48 shrink-0 flex-col gap-1 border-r bg-muted/30 p-3">
         <div className="mb-2 flex items-center gap-2 px-1 py-1">
           <Skeleton className="size-6 rounded-md" />

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { collection, doc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import PageLayout from '../components/PageLayout';
+import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 
 const emptyForm = {
@@ -136,6 +137,8 @@ export default function PromoCodes() {
         style={inputStyle} {...extra} />
     </label>
   );
+
+  if (loading) return <PageLayout><DashboardSkeleton /></PageLayout>;
 
   return (
     <PageLayout>

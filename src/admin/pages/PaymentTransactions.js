@@ -3,6 +3,7 @@ import { db } from '../../firebase/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { SortControls, sortRecords } from '../lib/listSort';
 
 const paymentDateValue = payment => payment.paidAt || payment.paymentDate || payment.createdAt || payment.date;
 const paymentDateMillis = payment => {
@@ -32,6 +33,8 @@ export default function PaymentTransactions() {
 
   const [payments, setPayments] = useState([]);
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('booked');
+  const [sortDir, setSortDir] = useState('desc');
 
   useEffect(() => {
     const fetch = async () => {
@@ -43,10 +46,10 @@ export default function PaymentTransactions() {
     fetch();
   }, []);
 
-  const filtered = payments.filter(p =>
+  const filtered = sortRecords(payments.filter(p =>
     p.guestName?.toLowerCase().includes(search.toLowerCase()) ||
     p.roomNumber?.includes(search)
-  );
+  ), sortBy, sortDir);
 
   const total = filtered.reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
@@ -69,7 +72,9 @@ export default function PaymentTransactions() {
           </div>
         </div>
 
-        <div style={{ marginBottom: '16px' }}>
+        <div style={{ marginBottom: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <SortControls sortBy={sortBy} sortDir={sortDir} onSortBy={setSortBy} onSortDir={setSortDir}
+            style={{ border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '9px 10px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", background: CARD2, color: TEXT, outline: 'none' }} />
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search by guest name or room..."
             style={{

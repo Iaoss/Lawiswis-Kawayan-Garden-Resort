@@ -4,6 +4,11 @@ import { Link } from 'react-router-dom';
 const DARK = '#1a3a1a';
 const ACCENT = '#4a7c59';
 
+const todayLocal = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
+
 function readStoredValue(key, fallback) {
   try {
     const value = window.localStorage.getItem(key);
@@ -168,10 +173,10 @@ export default function BookingHistory() {
         && ['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase()) && (
         <form onSubmit={event => requestScheduleChange(event, booking)} style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #e5e7eb', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, alignItems: 'end' }}>
           <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>New check-in
-            <input type="date" required value={requestedDates.checkIn} onChange={event => setRequestedDates(current => ({ ...current, checkIn: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+            <input type="date" required min={todayLocal()} value={requestedDates.checkIn} onChange={event => { const value = event.target.value; setRequestedDates(current => ({ checkIn: value, checkOut: current.checkOut && current.checkOut <= value ? '' : current.checkOut })); }} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
           </label>
           <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>New check-out
-            <input type="date" required value={requestedDates.checkOut} onChange={event => setRequestedDates(current => ({ ...current, checkOut: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+            <input type="date" required min={requestedDates.checkIn || todayLocal()} value={requestedDates.checkOut} onChange={event => setRequestedDates(current => ({ ...current, checkOut: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
           </label>
           <button type="submit" disabled={loading || !contact.trim()} style={{ border: 0, borderRadius: 8, padding: '10px 14px', background: DARK, color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>Request date change</button>
         </form>

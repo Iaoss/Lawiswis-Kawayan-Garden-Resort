@@ -3,6 +3,7 @@ import { db } from '../../firebase/firebase';
 import { collection, getDocs, updateDoc, doc, getDoc, setDoc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { SortControls, sortRecords } from '../lib/listSort';
 
 // `embedded` is used when this renders inside the Settings page tab,
 // so it does not wrap itself in a second PageLayout.
@@ -48,6 +49,8 @@ export default function CancellationPolicy({ embedded = false }) {
   const [success, setSuccess] = useState('');
   const [cancelError, setCancelError] = useState('');
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('booked');
+  const [sortDir, setSortDir] = useState('desc');
   const [showPolicyEdit, setShowPolicyEdit] = useState(false);
 
   const fetchReservations = async () => {
@@ -139,10 +142,10 @@ export default function CancellationPolicy({ embedded = false }) {
     setSuccess('Cancellation policy saved');
   };
 
-  const filtered = reservations.filter(r =>
+  const filtered = sortRecords(reservations.filter(r =>
     r.guestName?.toLowerCase().includes(search.toLowerCase()) ||
     r.roomNumber?.includes(search)
-  );
+  ), sortBy, sortDir);
 
   const statusBadgeKind = (s) => {
     const map = { confirmed: 'green', 'checked-in': 'blue', pending: 'yellow' };
@@ -212,10 +215,12 @@ export default function CancellationPolicy({ embedded = false }) {
       <div style={{ display: 'grid', gridTemplateColumns: embedded ? '1fr 320px' : '1fr 360px', gap: '20px' }}>
         {/* Reservation list */}
         <div style={S.card}>
-          <div style={{ padding: '14px 16px', borderBottom: `1px solid ${BORDER}` }}>
+          <div style={{ padding: '14px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <SortControls sortBy={sortBy} sortDir={sortDir} onSortBy={setSortBy} onSortDir={setSortDir}
+              style={{ border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '9px 10px', fontSize: '12px', fontFamily: "'Poppins', sans-serif", background: CARD2, color: TEXT, outline: 'none' }} />
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search by guest name or room"
-              style={{ width: '100%', border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '10px 14px', fontSize: '12px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: CARD2, color: TEXT }} />
+              style={{ flex: 1, minWidth: '160px', border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '10px 14px', fontSize: '12px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: CARD2, color: TEXT }} />
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>

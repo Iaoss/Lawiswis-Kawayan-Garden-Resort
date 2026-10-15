@@ -4,6 +4,7 @@ import { collection, getDocs, updateDoc, doc, addDoc, serverTimestamp, onSnapsho
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { createPayMongoCheckout, checkPayMongoCheckoutStatus } from '../../lib/paymongo';
+import { SortControls, sortRecords } from '../lib/listSort';
 
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
@@ -28,6 +29,8 @@ export default function Billing() {
   const MONO = "'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace";
 
   const [reservations, setReservations] = useState([]);
+  const [sortBy, setSortBy] = useState('booked');
+  const [sortDir, setSortDir] = useState('desc');
   const [selected, setSelected] = useState(null);
   const [extraCharge, setExtraCharge] = useState({ description: '', amount: '' });
   const [paymentAmount, setPaymentAmount] = useState('');
@@ -254,11 +257,15 @@ export default function Billing() {
           {/* Reservation list — plain list, not cards */}
           <div>
             <h3 style={{ fontWeight: '600', color: SUBINK, fontSize: '12px', margin: '0 0 10px', textTransform: 'none' }}>Active reservations</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
+              <SortControls sortBy={sortBy} sortDir={sortDir} onSortBy={setSortBy} onSortDir={setSortDir}
+                style={{ border: `1px solid ${LINE}`, borderRadius: '6px', padding: '7px 8px', fontSize: '12px', fontFamily: SANS, background: SURFACE, color: INK, outline: 'none' }} />
+            </div>
             {reservations.length === 0 ? (
               <p style={{ color: MUTED, fontSize: '13px', padding: '12px 0' }}>No active reservations.</p>
             ) : (
               <div style={{ borderTop: `1px solid ${LINE}` }}>
-                {reservations.map(r => (
+                {sortRecords(reservations, sortBy, sortDir).map(r => (
                   <div key={r.id} onClick={() => selectReservation(r)}
                     style={{
                       padding: '11px 10px', borderBottom: `1px solid ${LINE}`, cursor: 'pointer',

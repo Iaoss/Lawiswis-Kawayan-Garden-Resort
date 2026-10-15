@@ -6,6 +6,15 @@ import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
+import { getRoomMaximumGuests, isCoupleRoom } from '../../lib/bookingPricing';
+import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
+
+const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
+
+const getLocalToday = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+};
 
 // Same real room photos used in RoomManagement — keyed by room name/number
 // (lowercased) so the walk-in flow shows the same picture as the rest of
@@ -113,7 +122,7 @@ export default function WalkIn() {
   const [step,             setStep]             = useState(1);
   const [success,          setSuccess]          = useState('');
   const [form, setForm] = useState({
-    firstName: '', lastName: '', email: '', phone: '', address: '',
+    firstName: '', lastName: '', email: '', phone: '', address: '', preferredContactMethod: '',
     roomId: '', checkIn: '', checkOut: '',
     adults: 1, children: 0,
     paymentMethod: 'cash', paymentStatus: 'paid', notes: '',
@@ -123,7 +132,24 @@ export default function WalkIn() {
   const [totalAmount, setTotalAmount] = useState(0);
   const [nights,      setNights]      = useState(0);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalToday();
+  const [upsellOpen, setUpsellOpen] = useState(false);
+  const coupleGuestLimit = isCoupleRoom(selectedRoom) ? getRoomMaximumGuests(selectedRoom) : null;
+
+  const changeGuests = (key, value) => {
+    const other = Number(form[key === 'adults' ? 'children' : 'adults']) || 0;
+    if (coupleGuestLimit !== null && (Number(value) || 0) + other > coupleGuestLimit) {
+      setUpsellOpen(true);
+      return;
+    }
+    setForm(previous => ({ ...previous, [key]: value }));
+  };
+
+  const switchToFamilySuite = () => {
+    const familySuite = WALK_IN_CATEGORIES.find(item => item.category === 'Family Suite for 6');
+    setUpsellOpen(false);
+    if (familySuite) handleSelectCategory(familySuite);
+  };
 
   const isVacant = (r) => ['vacant', 'available'].includes(r.status);
 
@@ -162,6 +188,11 @@ export default function WalkIn() {
     e.preventDefault();
     if (!selectedRoom)    return alert('Please select a room.');
     if (totalAmount <= 0) return alert('Check-out must be after check-in.');
+    if (!isPreferredContactMethod(form.preferredContactMethod)) return alert('Please choose a preferred contact method.');
+    if (coupleGuestLimit !== null && (Number(form.adults) || 0) + (Number(form.children) || 0) > coupleGuestLimit) {
+      setUpsellOpen(true);
+      return;
+    }
     const errors = {
       firstName: NAME_PATTERN.test(form.firstName.trim()) ? '' : 'Enter 2-35 valid letters.',
       lastName: NAME_PATTERN.test(form.lastName.trim()) ? '' : 'Enter 2-35 valid letters.',
@@ -207,7 +238,7 @@ export default function WalkIn() {
       }
     }
     setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is now occupied.${receiptMessage}`);
-    setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
+    setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
     setNameErrors({});
     setSelectedRoom(null); setSelectedCategory(null);
     setStep(1); setTotalAmount(0); setNights(0);
@@ -454,6 +485,14 @@ export default function WalkIn() {
                             )}
                           </div>
                         ))}
+                        <div>
+                          <label style={label}>Preferred Contact Method *</label>
+                          <select required value={form.preferredContactMethod}
+                            onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))} style={inp}>
+                            <option value="">Select contact method</option>
+                            {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
+                          </select>
+                        </div>
                       </div>
                     </div>
 
@@ -464,22 +503,25 @@ export default function WalkIn() {
                         <div>
                           <label style={label}>Check-in *</label>
                           <input required type="date" min={today} value={form.checkIn}
-                            onChange={e => setForm({ ...form, checkIn: e.target.value })} style={inp} />
+                            onChange={e => {
+                              const checkIn = e.target.value;
+                              setForm(previous => ({ ...previous, checkIn, checkOut: previous.checkOut && checkIn && previous.checkOut < checkIn ? '' : previous.checkOut }));
+                            }} style={inp} />
                         </div>
                         <div>
                           <label style={label}>Check-out *</label>
-                          <input required type="date" min={form.checkIn || today} value={form.checkOut}
+                          <input required type="date" min={form.checkIn && form.checkIn > today ? form.checkIn : today} value={form.checkOut}
                             onChange={e => setForm({ ...form, checkOut: e.target.value })} style={inp} />
                         </div>
                         <div>
                           <label style={label}>Adults</label>
                           <input type="number" min="1" value={form.adults}
-                            onChange={e => setForm({ ...form, adults: e.target.value })} style={inp} />
+                            onChange={e => changeGuests('adults', e.target.value)} style={inp} />
                         </div>
                         <div>
                           <label style={label}>Children</label>
                           <input type="number" min="0" value={form.children}
-                            onChange={e => setForm({ ...form, children: e.target.value })} style={inp} />
+                            onChange={e => changeGuests('children', e.target.value)} style={inp} />
                         </div>
                       </div>
                     </div>
@@ -615,6 +657,18 @@ export default function WalkIn() {
           </motion.div>
         </AnimatePresence>
       </div>
+      {upsellOpen && (
+        <div role="presentation" onClick={() => setUpsellOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 1000 }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="walkin-upsell-title" onClick={e => e.stopPropagation()} style={{ ...card, maxWidth: 420, width: '100%' }}>
+            <div id="walkin-upsell-title" style={{ fontSize: 15, fontWeight: 700, color: TEXT, marginBottom: 8 }}>Need more space?</div>
+            <p style={{ margin: '0 0 16px', fontSize: 13, lineHeight: 1.6, color: MUTED }}>{COUPLE_ROOM_LIMIT_MESSAGE}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => setUpsellOpen(false)} style={{ ...inp, width: 'auto', cursor: 'pointer' }}>Keep Couple Room</button>
+              <button type="button" onClick={switchToFamilySuite} style={{ background: ACCENT, color: ACCENT_TEXT, border: 0, borderRadius: 10, padding: '10px 14px', fontWeight: 700, cursor: 'pointer' }}>Switch to Family Suite for 6</button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageLayout>
   );
 }

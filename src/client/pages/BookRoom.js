@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
@@ -10,12 +10,16 @@ import {
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
+  getRoomMaximumGuests,
+  isCoupleRoom,
 } from '../../lib/bookingPricing';
+import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 
+const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
 const LIGHT = '#f0f7f0';
@@ -152,6 +156,7 @@ export default function BookRoom() {
     email: '',
     phone: '',
     address: '',
+    preferredContactMethod: '',
     checkIn: params.get('checkIn') || '',
     checkOut: params.get('checkOut') || '',
     adults: 1,
@@ -195,10 +200,16 @@ export default function BookRoom() {
   const depositPercentage = RESERVATION_DEPOSIT_PERCENTAGE;
   const depositAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, 'deposit') : 0;
   const balanceAmount = Math.max(0, bookingTotal - depositAmount);
+  const roomIsCouple = isCoupleRoom(room);
+  const coupleGuestLimit = roomIsCouple ? getRoomMaximumGuests(room) : null;
   const configuredMaxGuests = Number(room?.maxCapacity ?? room?.maximumCapacity ?? room?.maxGuests);
-  const maxGuests = Number.isInteger(configuredMaxGuests) && configuredMaxGuests > 0
-    ? configuredMaxGuests
-    : null;
+  const maxGuests = roomIsCouple
+    ? null
+    : Number.isInteger(configuredMaxGuests) && configuredMaxGuests > 0
+      ? configuredMaxGuests
+      : null;
+  const [upsellOpen, setUpsellOpen] = useState(false);
+  const [upsellSwitching, setUpsellSwitching] = useState(false);
   const baseCapacity = pricing?.baseCapacity || 2;
 
   useEffect(() => {
@@ -241,6 +252,9 @@ export default function BookRoom() {
         phone: typeof profile.phone === 'string' ? profile.phone : previous.phone,
         email: typeof profile.email === 'string' ? profile.email : previous.email,
         address: typeof profile.address === 'string' ? profile.address : previous.address,
+        preferredContactMethod: isPreferredContactMethod(profile.preferredContactMethod)
+          ? profile.preferredContactMethod
+          : previous.preferredContactMethod,
       }));
     }
 
@@ -290,10 +304,34 @@ export default function BookRoom() {
     const otherGuestCount = Number(form[key === 'adults' ? 'children' : 'adults']);
     const upperBound = maxGuests === null ? undefined : Math.max(minimum, maxGuests - otherGuestCount);
     const parsed = Number(value);
+    if (coupleGuestLimit !== null && Number.isFinite(parsed) && Math.floor(parsed) + otherGuestCount > coupleGuestLimit) {
+      setUpsellOpen(true);
+      return;
+    }
     const safeValue = Number.isFinite(parsed)
       ? Math.max(minimum, Math.min(Math.floor(parsed), upperBound ?? Number.MAX_SAFE_INTEGER))
       : minimum;
     setForm(previous => ({ ...previous, [key]: safeValue }));
+  };
+
+  const switchToFamilySuite = async () => {
+    setUpsellSwitching(true);
+    const query = `?checkIn=${encodeURIComponent(form.checkIn)}&checkOut=${encodeURIComponent(form.checkOut)}`;
+    try {
+      const snap = await getDocs(collection(db, 'rooms'));
+      const suites = snap.docs
+        .map(item => ({ id: item.id, ...item.data() }))
+        .filter(item => /family/i.test(String(item.type || '')) && Number(item.capacity ?? item.baseCapacity) === 6);
+      const target = suites.find(item => item.status !== 'maintenance') || suites[0];
+      setUpsellOpen(false);
+      navigate(target ? `/book/${target.id}${query}` : `/rooms${query}`);
+    } catch (error) {
+      console.error('Unable to find a Family Suite:', error);
+      setUpsellOpen(false);
+      navigate(`/rooms${query}`);
+    } finally {
+      setUpsellSwitching(false);
+    }
   };
 
   const clearSavedProfile = () => {
@@ -431,6 +469,15 @@ export default function BookRoom() {
       document.getElementById(Object.keys(guestErrors).find(key => guestErrors[key]))?.focus();
       return;
     }
+    if (!isPreferredContactMethod(form.preferredContactMethod)) {
+      setErrorMsg('Please choose a preferred contact method.');
+      document.getElementById('preferredContactMethod')?.focus();
+      return;
+    }
+    if (coupleGuestLimit !== null && Number(form.adults) + Number(form.children) > coupleGuestLimit) {
+      setUpsellOpen(true);
+      return;
+    }
     if (maxGuests !== null && Number(form.adults) + Number(form.children) > maxGuests) {
       setErrorMsg(`This room allows up to ${maxGuests} guests.`);
       return;
@@ -461,6 +508,7 @@ export default function BookRoom() {
           email: form.email,
           phone: form.phone,
           address: form.address,
+          preferredContactMethod: form.preferredContactMethod,
           checkIn: form.checkIn,
           checkOut: form.checkOut,
           checkInTime: form.bookingType === 'daytour'
@@ -501,6 +549,7 @@ export default function BookRoom() {
         phone: form.phone,
         email: form.email.trim(),
         address: form.address.trim(),
+        preferredContactMethod: form.preferredContactMethod,
       };
       setSavedProfile(profile);
       if (!writeLocalValue(GUEST_PROFILE_KEY, profile)) {
@@ -761,6 +810,15 @@ export default function BookRoom() {
                     {f.key !== 'firstName' && f.key !== 'lastName' && fieldErrors[f.key] && <div role="alert" style={{ color: '#b91c1c', fontSize: '11px', marginTop: '5px' }}>{fieldErrors[f.key]}</div>}
                   </div>
                 ))}
+                <div>
+                  <label htmlFor="preferredContactMethod" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preferred Contact Method *</label>
+                  <select id="preferredContactMethod" name="preferredContactMethod" required value={form.preferredContactMethod}
+                    onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))}
+                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: '#fff' }}>
+                    <option value="">Select contact method</option>
+                    {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
+                  </select>
+                </div>
               </div>
               {savedProfile && (
                 <div style={{ marginTop: '16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', background: LIGHT, color: '#355a42', borderRadius: '999px', padding: '9px 13px', fontSize: '11px' }}>
@@ -852,6 +910,7 @@ export default function BookRoom() {
                       <div style={{ color: '#6b7280', fontSize: '10px', lineHeight: 1.6, marginTop: '6px' }}>
                         Base capacity: {baseCapacity} guests · Extra {guestType.key === 'adults' ? 'adult' : 'child'}: ₱{guestType.rate.toLocaleString()} / person / night
                         {maxGuests !== null && <span> · Maximum occupancy: {maxGuests}</span>}
+                        {coupleGuestLimit !== null && <span> · Maximum occupancy: {coupleGuestLimit} (1 extra adult or child)</span>}
                       </div>
                     </div>
                   );
@@ -1070,6 +1129,18 @@ export default function BookRoom() {
               {availabilityLoading ? 'Checking resort status…' : availabilityError ? 'Booking status unavailable' : !resortAvailable ? 'Reservations temporarily closed' : submitting ? 'Redirecting to payment...' : !termsAccepted ? 'Accept terms to continue' : 'Continue to Payment →'}
             </button>
           </form>
+          {upsellOpen && (
+            <div role="presentation" onClick={() => setUpsellOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 1000 }}>
+              <div role="dialog" aria-modal="true" aria-labelledby="upsell-title" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '16px', padding: '24px', maxWidth: '420px', width: '100%' }}>
+                <h2 id="upsell-title" style={{ margin: '0 0 10px', fontSize: '17px', color: '#111' }}>Need more space?</h2>
+                <p style={{ margin: '0 0 18px', fontSize: '13px', lineHeight: 1.6, color: '#4b5563' }}>{COUPLE_ROOM_LIMIT_MESSAGE}</p>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => setUpsellOpen(false)} style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: '10px', padding: '10px 14px', cursor: 'pointer' }}>Keep Couple Room</button>
+                  <button type="button" disabled={upsellSwitching} onClick={switchToFamilySuite} style={{ border: 0, background: DARK, color: '#d4f550', borderRadius: '10px', padding: '10px 14px', fontWeight: 700, cursor: 'pointer' }}>{upsellSwitching ? 'Switching…' : 'Switch to Family Suite for 6'}</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Room Summary */}

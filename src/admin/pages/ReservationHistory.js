@@ -3,6 +3,7 @@ import { db } from '../../firebase/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { SortControls, sortRecords } from '../lib/listSort';
 
 export default function ReservationHistory() {
   const { settings } = useSettings();
@@ -23,6 +24,8 @@ export default function ReservationHistory() {
   const [reservations, setReservations] = useState([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('booked');
+  const [sortDir, setSortDir] = useState('desc');
 
   useEffect(() => {
     const fetch = async () => {
@@ -34,14 +37,14 @@ export default function ReservationHistory() {
     fetch();
   }, []);
 
-  const filtered = reservations.filter(r => {
+  const filtered = sortRecords(reservations.filter(r => {
     const matchSearch =
       r.guestName?.toLowerCase().includes(search.toLowerCase()) ||
       r.roomNumber?.includes(search) ||
       r.phone?.includes(search);
     const matchFilter = filter === 'all' || r.status === filter;
     return matchSearch && matchFilter;
-  });
+  }), sortBy, sortDir);
 
   // Badge colors: dark = saturated bg + light text, light = tinted bg + saturated text
   const badge = (kind) => {
@@ -80,6 +83,8 @@ export default function ReservationHistory() {
         <h2 style={{ fontSize: '22px', fontWeight: '700', color: TEXT, marginBottom: '22px' }}>Reservation History</h2>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '20px' }}>
+          <SortControls sortBy={sortBy} sortDir={sortDir} onSortBy={setSortBy} onSortDir={setSortDir}
+            style={{ border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '9px 10px', fontSize: '12px', fontFamily: "'Poppins', sans-serif", background: CARD2, color: TEXT, outline: 'none' }} />
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search by guest, room, or phone..."
             style={{

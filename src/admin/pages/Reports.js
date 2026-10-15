@@ -143,7 +143,7 @@ export default function Reports() {
           </div>
           <div>
             <label style={{ fontSize: '12px', color: SUBTEXT }}>To</label>
-            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={inp} />
+            <input type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} style={inp} />
           </div>
           <button onClick={() => { setDateFrom(''); setDateTo(''); }}
             style={{ background: CARD2, color: SUBTEXT, border: `1px solid ${BORDER}`, padding: '8px 16px', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>

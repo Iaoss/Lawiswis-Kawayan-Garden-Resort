@@ -15,18 +15,35 @@ export const DEFAULT_SETTINGS = {
   soundAlerts: false,
   emailAlerts: true,
   autoLogout: '30',
-  showRevenue: true,
-  showOccupancy: true,
-  showReservations: true,
-  showChart: true,
+  showTotalRevenue: true,
+  showOccupancyRate: true,
+  showRecentReservations: true,
+  showRevenueChart: true,
   twoFactor: false,
   sessionTimeout: true,
+};
+
+export const DASHBOARD_KEYS = ['showTotalRevenue', 'showOccupancyRate', 'showRecentReservations', 'showRevenueChart'];
+
+const LEGACY_KEYS = {
+  showRevenue: 'showTotalRevenue',
+  showOccupancy: 'showOccupancyRate',
+  showReservations: 'showRecentReservations',
+  showChart: 'showRevenueChart',
 };
 
 function load() {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
-    return s ? { ...DEFAULT_SETTINGS, ...JSON.parse(s) } : DEFAULT_SETTINGS;
+    if (!s) return DEFAULT_SETTINGS;
+    const parsed = JSON.parse(s);
+    Object.entries(LEGACY_KEYS).forEach(([oldKey, newKey]) => {
+      if (oldKey in parsed) {
+        if (!(newKey in parsed)) parsed[newKey] = parsed[oldKey];
+        delete parsed[oldKey];
+      }
+    });
+    return { ...DEFAULT_SETTINGS, ...parsed };
   } catch { return DEFAULT_SETTINGS; }
 }
 

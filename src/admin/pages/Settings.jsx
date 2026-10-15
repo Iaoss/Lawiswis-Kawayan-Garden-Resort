@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import PageLayout from '../components/PageLayout';
-import { useSettings, DEFAULT_SETTINGS } from '../components/SettingsContext';
+import { useSettings, DEFAULT_SETTINGS, DASHBOARD_KEYS } from '../components/SettingsContext';
 import { auth } from '../../firebase/firebase';
 
 const ACCENT_COLORS = [
@@ -101,6 +101,7 @@ export default function Settings() {
 
   const [local, setLocal] = useState({ ...DEFAULT_SETTINGS, ...settings });
   const [saved, setSaved] = useState(false);
+  const [toast, setToast] = useState('');
   const [activeTab, setActiveTab] = useState('appearance');
   const [resortAvailable, setResortAvailable] = useState(true);
   const [availabilityReason, setAvailabilityReason] = useState('');
@@ -161,10 +162,20 @@ export default function Settings() {
   const handleSave = () => {
     saveAll({ ...settings, ...local });
     setSaved(true);
+    setToast('Settings saved');
     setTimeout(() => setSaved(false), 2500);
+    setTimeout(() => setToast(''), 2500);
   };
 
   const handleReset = () => {
+    if (activeTab === 'dashboard') {
+      const defaults = Object.fromEntries(DASHBOARD_KEYS.map(k => [k, DEFAULT_SETTINGS[k]]));
+      setLocal(prev => ({ ...prev, ...defaults }));
+      saveAll({ ...settings, ...local, ...defaults });
+      setToast('Dashboard preferences reset to defaults');
+      setTimeout(() => setToast(''), 2500);
+      return;
+    }
     if (window.confirm('Reset all settings to default?')) {
       setLocal({ ...DEFAULT_SETTINGS });
       resetAll();
@@ -208,6 +219,11 @@ export default function Settings() {
   return (
     <PageLayout>
       <div style={{ fontFamily: "'Poppins', sans-serif", maxWidth: 980, margin: '0 auto' }}>
+        {toast && (
+          <div role="status" style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 1000, padding: '11px 16px', borderRadius: 10, background: t.ACCENT, color: t.ACCENT_TEXT, fontSize: 12, fontWeight: 700, boxShadow: '0 8px 24px rgba(0,0,0,0.25)' }}>
+            <i className="ti ti-check" style={{ marginRight: 6 }} />{toast}
+          </div>
+        )}
 
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
@@ -337,16 +353,16 @@ export default function Settings() {
         {activeTab === 'dashboard' && (
           <Section title="Visible cards" t={t}>
             <SettingRow t={t} icon="ti-cash" label="Total revenue" desc="Show the revenue card on the dashboard">
-              <Toggle t={t} value={local.showRevenue} onChange={v => set('showRevenue', v)} />
+              <Toggle t={t} value={local.showTotalRevenue} onChange={v => set('showTotalRevenue', v)} />
             </SettingRow>
             <SettingRow t={t} icon="ti-bed" label="Occupancy rate" desc="Show the room occupancy card">
-              <Toggle t={t} value={local.showOccupancy} onChange={v => set('showOccupancy', v)} />
+              <Toggle t={t} value={local.showOccupancyRate} onChange={v => set('showOccupancyRate', v)} />
             </SettingRow>
             <SettingRow t={t} icon="ti-clipboard-list" label="Recent reservations" desc="Show the latest bookings list">
-              <Toggle t={t} value={local.showReservations} onChange={v => set('showReservations', v)} />
+              <Toggle t={t} value={local.showRecentReservations} onChange={v => set('showRecentReservations', v)} />
             </SettingRow>
             <SettingRow t={t} icon="ti-chart-bar" label="Revenue chart" desc="Show the 6-month revenue chart" last>
-              <Toggle t={t} value={local.showChart} onChange={v => set('showChart', v)} />
+              <Toggle t={t} value={local.showRevenueChart} onChange={v => set('showRevenueChart', v)} />
             </SettingRow>
           </Section>
         )}

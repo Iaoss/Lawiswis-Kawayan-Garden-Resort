@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BRASS, FOREST, FOREST_DEEP, PAPER, SANS, LINE } from './clientTheme';
 import { useResortAvailability } from './ResortAvailabilityContext';
+import { BookingTypeSelectionModal } from '../pages/BookingTypeSelection';
+import { BOOKING_TYPE_MODAL_EVENT } from '../lib/bookingTypeModal';
 
 const logo = 'https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png';
 
@@ -45,8 +47,13 @@ export default function ClientChrome({ children }) {
   const { pathname: path } = useLocation();
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [bookingModalOpen, setBookingModalOpen] = useState(false);
   const { available: resortAvailable, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const canBook = resortAvailable && !availabilityLoading;
+  const openBookingModal = () => {
+    if (!canBook) return;
+    setBookingModalOpen(true);
+  };
 
   useEffect(() => {
     document.documentElement.classList.remove('dark');
@@ -67,6 +74,22 @@ export default function ClientChrome({ children }) {
     document.addEventListener('keydown', closeOnEscape);
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, [mobileMenuOpen]);
+  useEffect(() => {
+    const handleOpen = () => {
+      if (!canBook) return;
+      setBookingModalOpen(true);
+    };
+    window.addEventListener(BOOKING_TYPE_MODAL_EVENT, handleOpen);
+    return () => window.removeEventListener(BOOKING_TYPE_MODAL_EVENT, handleOpen);
+  }, [canBook]);
+  useEffect(() => {
+    if (!bookingModalOpen) return undefined;
+    const onEscape = event => {
+      if (event.key === 'Escape') setBookingModalOpen(false);
+    };
+    document.addEventListener('keydown', onEscape);
+    return () => document.removeEventListener('keydown', onEscape);
+  }, [bookingModalOpen]);
   const link = (label, href, onNavigate = () => {}) => (
     <button key={label} onClick={() => { onNavigate(); navigate(href); }} className={`client-nav-link${path === href || (href === '/home' && path === '/') || (href === '/rooms' && path.startsWith('/book/')) ? ' is-active' : ''}`} aria-current={path === href || (href === '/home' && path === '/') ? 'page' : undefined}>
       {label}
@@ -114,7 +137,7 @@ export default function ClientChrome({ children }) {
           {renderNavigation(() => {})}
         </nav>
         <div className="client-header-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', marginLeft: 'auto', flexShrink: 0 }}>
-          <button disabled={!canBook} onClick={() => navigate('/booking-options')} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, whiteSpace: 'nowrap' }}>{canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}</button>
+          <button disabled={!canBook} onClick={openBookingModal} style={{ background: BRASS, color: '#fff', border: 0, borderRadius: '3px', padding: '11px 26px', font: `600 11.5px ${SANS}`, letterSpacing: '0.06em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, whiteSpace: 'nowrap' }}>{canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}</button>
         </div>
         <button className="client-mobile-menu-toggle" type="button" aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'} aria-expanded={mobileMenuOpen} aria-controls="client-mobile-menu" onClick={() => setMobileMenuOpen(value => !value)}>
           <span aria-hidden="true">{mobileMenuOpen ? '×' : '☰'}</span>
@@ -124,12 +147,24 @@ export default function ClientChrome({ children }) {
         <div className="client-mobile-menu-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMobileMenuOpen(false); }}>
           <nav id="client-mobile-menu" className="client-mobile-nav" aria-label="Mobile navigation">
             {renderNavigation(() => setMobileMenuOpen(false))}
-            <button type="button" disabled={!canBook} onClick={() => { setMobileMenuOpen(false); navigate('/booking-options'); }} className="client-mobile-book-button">
+            <button type="button" disabled={!canBook} onClick={() => { setMobileMenuOpen(false); openBookingModal(); }} className="client-mobile-book-button">
               {canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}
             </button>
           </nav>
         </div>
       )}
+      <BookingTypeSelectionModal
+        open={bookingModalOpen}
+        onClose={() => setBookingModalOpen(false)}
+        onSelectPersonal={() => {
+          setBookingModalOpen(false);
+          navigate('/rooms');
+        }}
+        onSelectCorporate={() => {
+          setBookingModalOpen(false);
+          navigate('/corporate-booking');
+        }}
+      />
       <main>{children}</main>
       <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '34px' }}>

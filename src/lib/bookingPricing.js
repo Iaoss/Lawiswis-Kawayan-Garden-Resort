@@ -39,6 +39,20 @@ const ROOM_RATES = {
 
 const normalizeText = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
+export function isCoupleRoom(room) {
+  if (!room) return false;
+  return ['type', 'name', 'roomNumber', 'description', 'category']
+    .some(key => normalizeText(room[key]).includes('couple'))
+    || normalizeText(room.type) === 'deluxe';
+}
+
+export function getRoomMaximumGuests(room) {
+  if (!room) return null;
+  if (isCoupleRoom(room)) return 3;
+  const configuredCapacity = Number(room.maxCapacity ?? room.maximumCapacity ?? room.maxGuests);
+  return Number.isInteger(configuredCapacity) && configuredCapacity > 0 ? configuredCapacity : null;
+}
+
 function getRoomRate(room = {}) {
   const roomText = [
     room.rateKey,

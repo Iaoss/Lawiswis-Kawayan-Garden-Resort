@@ -5,6 +5,7 @@ import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS, FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
+import { openBookingTypeModal } from '../lib/bookingTypeModal';
 
 /* ------------------------------------------------------------------ */
 /* Room catalog copied from lawiswiskawayanresort.com/regular-rooms    */
@@ -398,7 +399,7 @@ export default function Rooms() {
             <div style={{ color: '#777363', font: `12px ${SANS}` }}>
               Booking dates are available through {maxDate.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}
             </div>
-            <button type="button" onClick={() => window.location.href = '/booking-options'} style={{ border: `1px solid ${FOREST}`, background: 'transparent', color: FOREST, padding: '9px 12px', cursor: 'pointer', font: `600 10px ${SANS}`, letterSpacing: '.05em' }}>BOOKING OPTIONS · PERSONAL OR 15+ GROUP</button>
+            <button type="button" onClick={openBookingTypeModal} style={{ border: `1px solid ${FOREST}`, background: 'transparent', color: FOREST, padding: '9px 12px', cursor: 'pointer', font: `600 10px ${SANS}`, letterSpacing: '.05em' }}>BOOKING OPTIONS · PERSONAL OR 15+ GROUP</button>
           </div>
         </div>
 

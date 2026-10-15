@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, onSnapshot, query, orderBy, updateDoc, doc, writeBatch } from 'firebase/firestore';
 import Layout from '../components/Layout';
+import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 
 /* ---------------------------------- icons --------------------------------- */
@@ -155,6 +156,8 @@ export default function Feedback() {
       ))}
     </span>
   );
+
+  if (loading) return <Layout><DashboardSkeleton /></Layout>;
 
   return (
     <Layout>
