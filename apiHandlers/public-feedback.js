@@ -1,21 +1,34 @@
 import { adminDb } from '../lib/firebaseAdmin';
 
-function normalize(value) {
-  return String(value || '').trim().toLowerCase();
+const MAX_PUBLIC_REVIEWS = 9;
+const MIN_PUBLIC_RATING = 4;
+const PLACEHOLDER_NAMES = new Set(['anonymous', 'guest', 'n/a', 'na', 'none', 'unknown']);
+const PLACEHOLDER_ROOMS = new Set(['', 'n/a', 'na', 'none', 'unknown', 'room not given', 'not given']);
+
+function cleanText(value, maximumLength) {
+  return typeof value === 'string' ? value.trim().slice(0, maximumLength) : '';
 }
 
-function reservationKey(email, roomNumber) {
-  return `${normalize(email)}|${normalize(roomNumber)}`;
+// "Maria Santos" -> "Maria S."; placeholders and anonymous reviews fall back to "Verified Guest".
+function displayName(item) {
+  if (item.isAnonymous === true) return 'Verified Guest';
+  const first = cleanText(item.firstName, 35);
+  const last = cleanText(item.lastName, 35);
+  let name = [first, last].filter(Boolean).join(' ') || cleanText(item.guestName, 100);
+  if (!name || PLACEHOLDER_NAMES.has(name.toLowerCase())) return 'Verified Guest';
+  const parts = name.split(/\s+/);
+  if (parts.length > 1) name = `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.`;
+  return name;
 }
 
-function publicAvatar(value) {
-  if (typeof value !== 'string') return '';
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' ? url.toString() : '';
-  } catch {
-    return '';
-  }
+function displayRoom(item) {
+  const room = cleanText(item.roomName || item.roomNumber, 120);
+  return PLACEHOLDER_ROOMS.has(room.toLowerCase()) ? '' : room;
+}
+
+function createdAtIso(value) {
+  const date = typeof value?.toDate === 'function' ? value.toDate() : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toISOString() : '';
 }
 
 export default async function handler(req, res) {
@@ -28,49 +41,34 @@ export default async function handler(req, res) {
   }
 
   try {
-    const [feedbackSnapshot, reservationSnapshot] = await Promise.all([
-      adminDb.collection('feedback').orderBy('createdAt', 'desc').limit(100).get(),
-      adminDb.collection('reservations').where('status', '==', 'checked-out').get(),
-    ]);
+    const snapshot = await adminDb.collection('feedback').orderBy('createdAt', 'desc').limit(200).get();
 
-    const completedReservations = new Set(
-      reservationSnapshot.docs.map(document => {
-        const reservation = document.data();
-        return reservationKey(reservation.emailLower || reservation.email, reservation.roomNumber);
-      })
-    );
-
-    const feedback = feedbackSnapshot.docs
+    const feedback = snapshot.docs
       .map(document => ({ id: document.id, ...document.data() }))
-      .filter(item => (
-        typeof item.comment === 'string'
-        && item.comment.trim().length > 0
-        && item.comment.length <= 2000
-        && typeof item.rating === 'number'
-        && Number.isFinite(item.rating)
-        && item.rating >= 0
-        && item.rating <= 5
-        && completedReservations.has(reservationKey(item.email, item.roomNumber))
-      ))
+      .filter(item => {
+        const sentiment = String(item.sentiment || '').toLowerCase();
+        const rating = Number(item.rating);
+        const positive = sentiment ? sentiment === 'positive' : (Number.isFinite(rating) && rating >= MIN_PUBLIC_RATING);
+        return positive
+          && Number.isFinite(rating) && rating <= 5
+          && typeof item.comment === 'string'
+          && item.comment.trim().length > 0
+          && item.comment.length <= 2000
+          && item.hidden !== true;
+      })
+      .slice(0, MAX_PUBLIC_REVIEWS)
       .map(item => {
         const tags = Array.isArray(item.tags)
-          ? item.tags
-            .filter(tag => typeof tag === 'string')
-            .map(tag => tag.trim().slice(0, 80))
-            .filter(Boolean)
-            .slice(0, 5)
+          ? item.tags.map(tag => cleanText(tag, 80)).filter(Boolean).slice(0, 5)
           : [];
-        const category = typeof item.category === 'string'
-          ? item.category
-          : (typeof item.guestCategory === 'string' ? item.guestCategory : (tags[0] || 'Verified Guest'));
         return {
           id: item.id,
-          guestName: typeof item.guestName === 'string' ? item.guestName.trim().slice(0, 100) : '',
+          guestName: displayName(item),
           comment: item.comment.trim(),
-          rating: item.rating,
+          rating: Number(item.rating),
           tags,
-          category: category.trim().slice(0, 80) || 'Verified Guest',
-          avatarUrl: publicAvatar(item.avatarUrl),
+          roomName: displayRoom(item),
+          createdAt: createdAtIso(item.createdAt),
           verified: true,
         };
       });

@@ -124,21 +124,28 @@ const TestimonialColumn = ({ items, duration = 18000, paused = false }) => {
     <div ref={trackRef} style={{ display: 'flex', flexDirection: 'column', gap: '16px', willChange: 'transform' }}>
       {doubled.map((r, idx) => (
         <div key={`${r.id}-${idx}`} style={{ background: PAPER, borderRadius: '4px', padding: '22px', border: `1px solid ${LINE}`, flexShrink: 0, width: '280px' }}>
-          <span style={{ display: 'inline-block', fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', background: CREAM, color: FOREST, padding: '3px 10px', borderRadius: '3px', marginBottom: '10px', fontFamily: SANS }}>{r.category}</span>
+          {r.roomName && (
+            <span style={{ display: 'inline-block', fontSize: '9px', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase', background: CREAM, color: FOREST, padding: '3px 10px', borderRadius: '3px', marginBottom: '10px', fontFamily: SANS }}>Stayed in: {r.roomName}</span>
+          )}
           <div aria-label={`${r.rating} out of 5 stars`} style={{ color: BRASS, fontSize: '13px', marginBottom: '10px', letterSpacing: '2px' }}>{'★'.repeat(Math.round(r.rating))}{'☆'.repeat(5 - Math.round(r.rating))}</div>
           <p style={{ fontSize: '13px', color: '#4b4a3f', lineHeight: '1.75', fontStyle: 'italic', marginBottom: '16px', fontFamily: SERIF }}>"{r.comment}"</p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderTop: `1px solid ${LINE}`, paddingTop: '12px' }}>
-            {r.avatarUrl ? (
-              <img src={r.avatarUrl} alt="" style={{ width: '34px', height: '34px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-            ) : (
-              <div aria-hidden="true" style={{ width: '34px', height: '34px', borderRadius: '50%', flexShrink: 0, display: 'grid', placeItems: 'center', background: CREAM, color: FOREST, fontSize: '12px', fontWeight: '600' }}>
-                {(r.guestName || 'G').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase()}
-              </div>
-            )}
-            <div>
-              <div style={{ fontWeight: '600', fontSize: '12px', color: INK, lineHeight: '1.2', fontFamily: SANS }}>{r.guestName || 'Verified Guest'}</div>
-              <div style={{ fontSize: '10px', color: '#9b9788', fontFamily: SANS }}>Verified guest</div>
-            </div>
+                    {Array.isArray(r.tags) && r.tags.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '14px' }}>
+                        {r.tags.map(tag => (
+                          <span key={tag} style={{ fontSize: '10px', color: FOREST, background: CREAM, borderRadius: '999px', padding: '2px 8px', fontFamily: SANS }}>{tag}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderTop: `1px solid ${LINE}`, paddingTop: '12px' }}>
+                      <div aria-hidden="true" style={{ width: '34px', height: '34px', borderRadius: '50%', flexShrink: 0, display: 'grid', placeItems: 'center', background: CREAM, color: FOREST, fontSize: '12px', fontWeight: '600' }}>
+                        {(r.guestName || 'G').trim().split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: '600', fontSize: '12px', color: INK, lineHeight: '1.2', fontFamily: SANS }}>{r.guestName || 'Verified Guest'}</div>
+                        <div style={{ fontSize: '10px', color: '#9b9788', fontFamily: SANS }}>
+                          {r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Resort guest'}
+                        </div>
+                      </div>
           </div>
         </div>
       ))}
