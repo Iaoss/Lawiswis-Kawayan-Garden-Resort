@@ -6,7 +6,7 @@ import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
-import { getRoomMaximumGuests, isCoupleRoom } from '../../lib/bookingPricing';
+import { getRoomMaximumGuests, isCoupleRoom, getStayDurationError, MAX_STAY_NIGHTS } from '../../lib/bookingPricing';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
@@ -163,7 +163,8 @@ export default function WalkIn() {
 
   useEffect(() => {
     if (selectedRoom && form.checkIn && form.checkOut) {
-      const n = Math.ceil((new Date(form.checkOut) - new Date(form.checkIn)) / (1000 * 60 * 60 * 24));
+      const n = getStayDurationError(form.checkIn, form.checkOut)
+        ? 0 : Math.round((new Date(form.checkOut) - new Date(form.checkIn)) / (1000 * 60 * 60 * 24));
       setNights(n > 0 ? n : 0);
       setTotalAmount(n > 0 ? n * Number(selectedRoom.price) : 0);
     }
@@ -187,6 +188,8 @@ export default function WalkIn() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!selectedRoom)    return alert('Please select a room.');
+    const stayError = getStayDurationError(form.checkIn, form.checkOut);
+    if (stayError) return alert(stayError);
     if (totalAmount <= 0) return alert('Check-out must be after check-in.');
     if (!isPreferredContactMethod(form.preferredContactMethod)) return alert('Please choose a preferred contact method.');
     if (coupleGuestLimit !== null && (Number(form.adults) || 0) + (Number(form.children) || 0) > coupleGuestLimit) {
@@ -510,8 +513,13 @@ export default function WalkIn() {
                         </div>
                         <div>
                           <label style={label}>Check-out *</label>
-                          <input required type="date" min={form.checkIn && form.checkIn > today ? form.checkIn : today} value={form.checkOut}
+                          <input required type="date" min={form.checkIn && form.checkIn > today ? form.checkIn : today}
+                            max={form.checkIn ? (() => { const d = new Date(`${form.checkIn}T00:00:00`); d.setDate(d.getDate() + MAX_STAY_NIGHTS); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })() : undefined}
+                            value={form.checkOut}
                             onChange={e => setForm({ ...form, checkOut: e.target.value })} style={inp} />
+                          {form.checkIn && form.checkOut && getStayDurationError(form.checkIn, form.checkOut) && (
+                            <div role="alert" style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px' }}>{getStayDurationError(form.checkIn, form.checkOut)}</div>
+                          )}
                         </div>
                         <div>
                           <label style={label}>Adults</label>

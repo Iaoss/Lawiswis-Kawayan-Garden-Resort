@@ -1,17 +1,36 @@
-import { calculateBookingPrice, getRoomBaseRate, getRoomMaximumGuests, isCoupleRoom } from './bookingPricing';
+import { calculateBookingPrice, getGuestCountViolation, getRoomBaseRate, getRoomCapacityPolicy, getRoomMaximumGuests, getStayDurationError, isCoupleRoom } from './bookingPricing';
 import { isPreferredContactMethod, PREFERRED_CONTACT_METHODS } from './preferredContactMethods';
 
+describe('stay duration guardrails', () => {
+  it('accepts stays up to 30 nights', () => {
+    expect(getStayDurationError('2026-01-01', '2026-01-31')).toBe('');
+  });
+  it('rejects stays over 30 nights, absurd years, and inverted dates', () => {
+    expect(getStayDurationError('2026-01-01', '2026-02-01')).toMatch(/30/);
+    expect(getStayDurationError('2026-01-01', '2226-01-01')).not.toBe('');
+    expect(getStayDurationError('2026-01-05', '2026-01-05')).not.toBe('');
+    expect(getStayDurationError('', '2026-01-05')).not.toBe('');
+  });
+});
+
 describe('couple room occupancy', () => {
-  test('caps a couple room at 3 guests', () => {
+  test('caps a standard couple room at two adults and one child', () => {
     expect(isCoupleRoom({ type: 'Deluxe' })).toBe(true);
     expect(isCoupleRoom({ name: 'Couple Room' })).toBe(true);
     expect(getRoomMaximumGuests({ name: 'Couple Room' })).toBe(3);
+    expect(getGuestCountViolation({ name: 'Couple Room' }, 3, 0)).toContain('maximum of 2 adults');
+    expect(getGuestCountViolation({ name: 'Couple Room' }, 2, 2)).toContain('maximum of 1 child');
   });
 
-  test('does not cap other rooms', () => {
+  test('uses per-room defaults and configured capacity limits', () => {
     expect(isCoupleRoom({ name: 'Family Suite for 6' })).toBe(false);
-    expect(getRoomMaximumGuests({ name: 'Family Suite for 6' })).toBeNull();
+    expect(getRoomMaximumGuests({ name: 'Family Suite for 6' })).toBe(6);
     expect(getRoomMaximumGuests({ name: 'Family Suite', maxGuests: 6 })).toBe(6);
+    expect(getRoomCapacityPolicy({ name: 'Couple Room with Extra Bed' })).toMatchObject({
+      maxAdults: 3, maxChildren: 1, maxGuests: 4,
+    });
+    expect(getGuestCountViolation({ type: 'FamilyRoom', baseCapacity: 4 }, 4, 1)).toContain('maximum of 4 guests');
+    expect(getGuestCountViolation({ type: 'MainVilla', maxGuests: 25 }, 20, 6)).toContain('maximum of 25 guests');
   });
 });
 

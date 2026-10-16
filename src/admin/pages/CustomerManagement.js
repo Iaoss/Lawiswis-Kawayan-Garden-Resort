@@ -4,6 +4,17 @@ import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 
+const normalizeStatus = status => String(status || 'pending').toLowerCase().trim().replace(/[\s_]+/g, '-');
+const dateKey = value => {
+  if (!value) return '';
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = typeof value.toDate === 'function'
+    ? value.toDate()
+    : typeof value.seconds === 'number' ? new Date(value.seconds * 1000) : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+
 export default function CustomerManagement() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
@@ -26,6 +37,10 @@ export default function CustomerManagement() {
 
   const [customers, setCustomers] = useState([]);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [stayFilter, setStayFilter] = useState('all');
+  const [checkInStart, setCheckInStart] = useState('');
+  const [checkInEnd, setCheckInEnd] = useState('');
   const [selected, setSelected] = useState(null);
 
   useEffect(() => {
@@ -52,11 +67,31 @@ export default function CustomerManagement() {
     fetch();
   }, []);
 
-  const filtered = customers.filter(c =>
-    c.guestName?.toLowerCase().includes(search.toLowerCase()) ||
-    c.phone?.includes(search) ||
-    c.email?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = customers.filter(c => {
+    const normalizedSearch = search.trim().toLowerCase();
+    const matchesSearch = String(c.guestName || '').toLowerCase().includes(normalizedSearch) ||
+      String(c.phone || '').includes(search.trim()) ||
+      String(c.email || '').toLowerCase().includes(normalizedSearch);
+    const matchesStayCount = stayFilter === 'all' ||
+      (stayFilter === 'repeat' ? c.stays.length > 1 : c.stays.length === 1);
+    const matchesStayCriteria = c.stays.some(stay => {
+      const checkIn = dateKey(stay.checkIn);
+      const matchesStatus = statusFilter === 'all' || normalizeStatus(stay.status) === statusFilter;
+      const matchesCheckIn = (!checkInStart && !checkInEnd) ||
+        (checkIn && (!checkInStart || checkIn >= checkInStart) &&
+        (!checkInEnd || checkIn <= checkInEnd));
+      return matchesStatus && matchesCheckIn;
+    });
+    return matchesSearch && matchesStayCount && matchesStayCriteria;
+  });
+
+  const resetFilters = () => {
+    setSearch('');
+    setStatusFilter('all');
+    setStayFilter('all');
+    setCheckInStart('');
+    setCheckInEnd('');
+  };
 
   /* ── shared styles ── */
   const card = { background: CARD, borderRadius: '12px', border: `1px solid ${BORDER}`, boxShadow: dark ? '0 4px 16px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.06)' };
@@ -66,14 +101,49 @@ export default function CustomerManagement() {
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '20px' }}>
         <h2 style={{ fontSize: '22px', fontWeight: '700', color: TEXT, marginBottom: '22px' }}>Customer Management</h2>
 
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name, phone, or email..."
-          style={{
-            border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '9px 14px',
-            fontSize: '13px', fontFamily: "'Poppins', sans-serif", width: '288px',
-            background: CARD2, color: TEXT, outline: 'none', boxSizing: 'border-box',
-            marginBottom: '16px', display: 'block',
-          }} />
+        <div style={{ ...card, padding: '14px', marginBottom: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '12px', alignItems: 'end' }}>
+          <div>
+            <label htmlFor="customer-search" style={{ display: 'block', fontSize: '12px', color: SUBTEXT, marginBottom: '4px' }}>Search</label>
+            <input id="customer-search" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Name, phone, or email..."
+              style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", width: '100%', background: CARD2, color: TEXT, outline: 'none', boxSizing: 'border-box' }} />
+          </div>
+          <div>
+            <label htmlFor="customer-status-filter" style={{ display: 'block', fontSize: '12px', color: SUBTEXT, marginBottom: '4px' }}>Reservation Status</label>
+            <select id="customer-status-filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+              style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", width: '100%', background: CARD2, color: TEXT }}>
+              <option value="all">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="checked-in">Checked In</option>
+              <option value="checked-out">Checked Out</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="customer-stay-filter" style={{ display: 'block', fontSize: '12px', color: SUBTEXT, marginBottom: '4px' }}>Stay Frequency</label>
+            <select id="customer-stay-filter" value={stayFilter} onChange={e => setStayFilter(e.target.value)}
+              style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", width: '100%', background: CARD2, color: TEXT }}>
+              <option value="all">All Customers</option>
+              <option value="new">One Stay</option>
+              <option value="repeat">Repeat Guests</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="customer-checkin-start" style={{ display: 'block', fontSize: '12px', color: SUBTEXT, marginBottom: '4px' }}>Stay Check-in From</label>
+            <input id="customer-checkin-start" type="date" value={checkInStart} max={checkInEnd || undefined} onChange={e => setCheckInStart(e.target.value)}
+              style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", width: '100%', background: CARD2, color: TEXT, boxSizing: 'border-box' }} />
+          </div>
+          <div>
+            <label htmlFor="customer-checkin-end" style={{ display: 'block', fontSize: '12px', color: SUBTEXT, marginBottom: '4px' }}>Stay Check-in To</label>
+            <input id="customer-checkin-end" type="date" value={checkInEnd} min={checkInStart || undefined} onChange={e => setCheckInEnd(e.target.value)}
+              style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", width: '100%', background: CARD2, color: TEXT, boxSizing: 'border-box' }} />
+          </div>
+          <button type="button" onClick={resetFilters}
+            style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 12px', background: CARD2, color: SUBTEXT, fontSize: '13px', fontFamily: "'Poppins', sans-serif", cursor: 'pointer' }}>
+            Reset Filters
+          </button>
+        </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
           {/* Customer List */}

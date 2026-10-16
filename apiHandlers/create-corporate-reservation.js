@@ -2,6 +2,7 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendReservationPendingEmail } from '../lib/email';
 import { getCorporatePackage } from '../src/lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
+import { getStayDurationError } from '../src/lib/bookingPricing';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 
 function dateKey(date) {
@@ -79,6 +80,9 @@ export default async function handler(req, res) {
       || (isDayTour ? checkOut !== checkIn : checkOut <= checkIn)) {
       return res.status(400).json({ error: 'Choose a valid event date or check-in and check-out dates.' });
     }
+
+    const stayError = isDayTour ? '' : getStayDurationError(checkIn, checkOut);
+    if (stayError) return res.status(400).json({ error: stayError });
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);

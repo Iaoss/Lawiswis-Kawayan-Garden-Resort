@@ -12,7 +12,7 @@ export const ROOM_TYPE_CATEGORY_MAP = {
 
 const TYPE_ALIASES = {
   Standard: ['standard', 'regularroom', 'regularrooms', 'regularroomfor2'],
-  Deluxe: ['deluxe', 'coupleroom', 'couple', 'coupleroom'],
+  Deluxe: ['deluxe', 'coupleroom', 'couplerooms', 'couple', 'coupleroom'],
   FamilyRoom: ['familyroom', 'familyroom4', 'familyroom6', 'familyroomfor4', 'familyroomfor6', 'family room', 'family room for 4', 'family room for 6'],
   JuniorSuite4: ['juniorsuite4', 'juniorsuite', 'junior suite', 'junior suite for 4', 'juniorsuitefor4'],
   FamilySuite: ['familysuite', 'familysuite4', 'familysuite6', 'family suite', 'family suite for 4', 'family suite for 6'],

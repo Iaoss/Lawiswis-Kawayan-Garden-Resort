@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { DEFAULT_CANCELLATION_POLICY, getCancellationPolicyOutcome, getDateRangeNights } from '../src/lib/cancellationPolicy';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
+import { getStayDurationError } from '../src/lib/bookingPricing';
 import { calculateReservationModification } from '../lib/reservationModification';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
@@ -180,6 +181,9 @@ async function requestScheduleChange(reservation, body) {
   const { checkIn, checkOut } = body;
   const isDayTour = data.bookingType === 'daytour';
   const nights = isDayTour ? 1 : getDateRangeNights(checkIn, checkOut);
+  if (!isDayTour && getStayDurationError(checkIn, checkOut)) {
+    return { error: getStayDurationError(checkIn, checkOut) };
+  }
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const maxDate = new Date(today.getFullYear(), today.getMonth() + 2, today.getDate());

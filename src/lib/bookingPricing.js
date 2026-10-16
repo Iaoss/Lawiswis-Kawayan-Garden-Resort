@@ -39,6 +39,26 @@ const ROOM_RATES = {
 
 const normalizeText = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
+export const MAX_STAY_NIGHTS = 30;
+const MIN_STAY_YEAR = 2000;
+const MAX_STAY_YEAR = 2100;
+
+// Returns an error message for an invalid or overlong stay, or '' when valid.
+export function getStayDurationError(checkIn, checkOut) {
+  const start = new Date(`${checkIn}T00:00:00`);
+  const end = new Date(`${checkOut}T00:00:00`);
+  if (!checkIn || !checkOut || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return 'Please select a valid check-in and check-out date.';
+  }
+  if (start.getFullYear() < MIN_STAY_YEAR || end.getFullYear() > MAX_STAY_YEAR) {
+    return 'Please select dates within a valid year range.';
+  }
+  const nights = Math.round((end - start) / 86400000);
+  if (nights <= 0) return 'Check-out must be after check-in.';
+  if (nights > MAX_STAY_NIGHTS) return `A stay cannot exceed ${MAX_STAY_NIGHTS} consecutive nights.`;
+  return '';
+}
+
 export function isCoupleRoom(room) {
   if (!room) return false;
   return ['type', 'name', 'roomNumber', 'description', 'category']
@@ -47,10 +67,76 @@ export function isCoupleRoom(room) {
 }
 
 export function getRoomMaximumGuests(room) {
+  return getRoomCapacityPolicy(room)?.maxGuests ?? null;
+}
+
+const getConfiguredLimit = (room, keys) => {
+  const limit = Number(keys.map(key => room?.[key]).find(value => value !== undefined && value !== ''));
+  return Number.isInteger(limit) && limit >= 0 ? limit : null;
+};
+
+const getDescribedCapacity = room => {
+  const roomText = [room?.name, room?.roomNumber, room?.type, room?.description, room?.capacity, room?.baseCapacity].join(' ');
+  const match = roomText.match(/(?:up\s*to|for)\s*(\d+)/i);
+  return [room?.baseCapacity, room?.capacity, match?.[1]]
+    .map(Number)
+    .find(capacity => Number.isInteger(capacity) && capacity > 0) ?? null;
+};
+
+export function getRoomCapacityPolicy(room) {
   if (!room) return null;
-  if (isCoupleRoom(room)) return 3;
-  const configuredCapacity = Number(room.maxCapacity ?? room.maximumCapacity ?? room.maxGuests);
-  return Number.isInteger(configuredCapacity) && configuredCapacity > 0 ? configuredCapacity : null;
+
+  const text = [room.type, room.name, room.roomNumber, room.description, room.category]
+    .map(normalizeText)
+    .join(' ');
+  const configuredMaxGuests = getConfiguredLimit(room, ['maxCapacity', 'maximumCapacity', 'maxGuests']);
+  const configuredMaxAdults = getConfiguredLimit(room, ['maxAdults', 'maximumAdults']);
+  const configuredMaxChildren = getConfiguredLimit(room, ['maxChildren', 'maximumChildren']);
+  const describedCapacity = getDescribedCapacity(room);
+  let defaults;
+
+  if (text.includes('couple') && text.includes('extrabed')) {
+    defaults = { maxAdults: 3, maxChildren: 1, maxGuests: 4, label: 'Couple Room with Extra Bed' };
+  } else if (isCoupleRoom(room)) {
+    defaults = { maxAdults: 2, maxChildren: 1, maxGuests: 3, label: 'Couple Room' };
+  } else if (text.includes('mainvilla')) {
+    defaults = { maxAdults: 20, maxChildren: 20, maxGuests: describedCapacity || 20, label: 'Main Villa' };
+  } else if (text.includes('presidential')) {
+    defaults = { maxAdults: describedCapacity || 8, maxChildren: describedCapacity || 8, maxGuests: describedCapacity || 8, label: 'Presidential Suite' };
+  } else if (text.includes('familysuite')) {
+    defaults = { maxAdults: describedCapacity || 6, maxChildren: describedCapacity || 6, maxGuests: describedCapacity || 6, label: 'Family Suite' };
+  } else if (text.includes('juniorsuite')) {
+    defaults = { maxAdults: 4, maxChildren: 4, maxGuests: 4, label: 'Junior Suite' };
+  } else if (text.includes('familyroom')) {
+    const maximum = describedCapacity || 4;
+    defaults = { maxAdults: maximum, maxChildren: maximum, maxGuests: maximum, label: `Family Room for ${maximum}` };
+  } else {
+    const maximum = configuredMaxGuests || describedCapacity;
+    if (!maximum) return null;
+    defaults = { maxAdults: maximum, maxChildren: maximum, maxGuests: maximum, label: 'Selected room' };
+  }
+
+  return {
+    ...defaults,
+    maxAdults: configuredMaxAdults ?? defaults.maxAdults,
+    maxChildren: configuredMaxChildren ?? defaults.maxChildren,
+    maxGuests: configuredMaxGuests ?? defaults.maxGuests,
+  };
+}
+
+export function getGuestCountViolation(room, adults, children) {
+  const policy = getRoomCapacityPolicy(room);
+  if (!policy) return null;
+  if (adults > policy.maxAdults) {
+    return `${policy.label} accommodates a maximum of ${policy.maxAdults} adult${policy.maxAdults === 1 ? '' : 's'}.`;
+  }
+  if (children > policy.maxChildren) {
+    return `${policy.label} accommodates a maximum of ${policy.maxChildren} child${policy.maxChildren === 1 ? '' : 'ren'}.`;
+  }
+  if (adults + children > policy.maxGuests) {
+    return `${policy.label} accommodates a maximum of ${policy.maxGuests} guests.`;
+  }
+  return null;
 }
 
 function getRoomRate(room = {}) {

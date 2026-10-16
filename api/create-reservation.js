@@ -26,17 +26,15 @@ import { sendReservationPendingEmail } from '../lib/email';
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
 import { evaluatePromo, normalizePromoCode } from '../lib/promoPolicy';
 import {
+  getStayDurationError,
   calculateBookingPrice,
   COTTAGE_OPTIONS,
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
-  getRoomMaximumGuests,
-  isCoupleRoom,
+  getGuestCountViolation,
 } from '../src/lib/bookingPricing';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
-
-const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -164,6 +162,9 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Please select a valid check-in and check-out date.' });
     }
 
+    const stayError = getStayDurationError(checkIn, checkOut);
+    if (stayError) return res.status(400).json({ error: stayError });
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const maxBookingDate = dateKey(addMonthsClamped(today, 2));
@@ -178,13 +179,9 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'This room could not be found.' });
     }
     const room = roomSnap.data();
-    const maxCapacity = Number(room.maxCapacity ?? room.maximumCapacity ?? room.maxGuests);
-    if (Number.isInteger(maxCapacity) && maxCapacity > 0 && adults + children > maxCapacity) {
-      return res.status(400).json({ error: `This room allows up to ${maxCapacity} guests.` });
-    }
-
-    if (isCoupleRoom(room) && adults + children > getRoomMaximumGuests(room)) {
-      return res.status(400).json({ error: COUPLE_ROOM_LIMIT_MESSAGE, code: 'COUPLE_ROOM_LIMIT' });
+    const guestCountViolation = getGuestCountViolation(room, adults, children);
+    if (guestCountViolation) {
+      return res.status(400).json({ error: guestCountViolation, code: 'ROOM_CAPACITY_LIMIT' });
     }
 
     // ---- 5. Date-overlap check against existing reservations ------------

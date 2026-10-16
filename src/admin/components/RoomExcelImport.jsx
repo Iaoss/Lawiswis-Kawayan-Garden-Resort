@@ -3,21 +3,21 @@ import * as XLSX from 'xlsx';
 import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { useSettings } from './SettingsContext';
+import { normalizeRoomType, ROOM_TYPES } from '../utils/roomCatalog';
 
 // Expected columns in the Excel file
-const REQUIRED_COLS = ['roomNumber', 'type', 'price', 'capacity', 'status'];
+const REQUIRED_COLS = ['roomName', 'type', 'price', 'capacity', 'status'];
 const OPTIONAL_COLS = ['amenities', 'description', 'floor'];
 const ALL_COLS = [...REQUIRED_COLS, ...OPTIONAL_COLS];
 
 const STATUS_OPTIONS = ['available', 'occupied', 'maintenance', 'not ready', 'vacant'];
-const TYPE_OPTIONS   = ['Standard', 'Deluxe', 'Suite', 'Family', 'Single', 'Double', 'Twin'];
+const TYPE_OPTIONS = ROOM_TYPES;
 
 // Given any-case input, return the canonically-cased Type from TYPE_OPTIONS
 // (e.g. "deluxe" / "DELUXE" / "Deluxe" all resolve to "Deluxe"). Falls back
 // to the raw value if nothing matches, so validation can still flag it.
 function normalizeType(rawType) {
-  const match = TYPE_OPTIONS.find(t => t.toLowerCase() === String(rawType).trim().toLowerCase());
-  return match || String(rawType).trim();
+  return normalizeRoomType(rawType);
 }
 
 function Badge({ color, bg, children }) {
@@ -35,9 +35,8 @@ function DownloadTemplate({ darkBtnBg, accent }) {
     const wb = XLSX.utils.book_new();
     const sampleData = [
       ALL_COLS,
-      ['101', 'Standard', '2500', '2', 'available', 'AC, TV, WiFi', 'Cozy standard room', '1'],
-      ['102', 'Deluxe',   '3500', '3', 'available', 'AC, TV, WiFi, Bathtub', 'Spacious deluxe room', '1'],
-      ['201', 'Suite',    '5000', '4', 'maintenance', 'AC, TV, WiFi, Kitchen, Balcony', 'Premium suite', '2'],
+      ['Room Bituin', 'Couple Rooms', '3000', '2', 'available', 'AC, TV, WiFi'],
+      ['Junior Suite 4', 'JuniorSuite4', '5500', '4', 'available', 'AC, TV, WiFi, Balcony, Lounge'],
     ];
     const ws = XLSX.utils.aoa_to_sheet(sampleData);
     ws['!cols'] = ALL_COLS.map((_, i) => ({ wch: i < 5 ? 14 : 28 }));
@@ -60,12 +59,12 @@ function DownloadTemplate({ darkBtnBg, accent }) {
 
 function validateRow(row) {
   const errors = [];
-  if (!row.roomNumber) errors.push('Room number is required');
+  if (!row.roomName) errors.push('Room name is required');
 
   if (!row.type) {
     errors.push('Type is required');
-  } else if (!TYPE_OPTIONS.some(t => t.toLowerCase() === String(row.type).toLowerCase())) {
-    errors.push(`Type must be one of: ${TYPE_OPTIONS.join(', ')} (any capitalization is fine)`);
+  } else if (!normalizeType(row.type)) {
+    errors.push(`Type must be one of: ${TYPE_OPTIONS.join(', ')} or a supported room category.`);
   }
 
   if (!row.price || isNaN(Number(row.price))) errors.push('Price must be a number');
@@ -128,10 +127,17 @@ export default function RoomExcelImport({ onImportComplete }) {
 
       if (raw.length === 0) return alert('The file is empty.');
 
-      // Normalize keys (trim + lowercase for matching)
+      // Normalize supported header names so spreadsheets may use either
+      // machine-readable fields or display names such as "Room Name".
       const normalized = raw.map(r => {
         const obj = {};
-        Object.keys(r).forEach(k => { obj[k.trim()] = String(r[k]).trim(); });
+        Object.keys(r).forEach(k => {
+          const key = k.trim().toLowerCase();
+          const normalizedKey = key === 'roomname' || key === 'room name' || key === 'roomnumber' || key === 'room number'
+            ? 'roomName'
+            : key;
+          obj[normalizedKey] = String(r[k]).trim();
+        });
         return obj;
       });
 
@@ -167,13 +173,16 @@ export default function RoomExcelImport({ onImportComplete }) {
       if (rowErrors[i]) { failed++; setProgress(Math.round(((i + 1) / total) * 100)); continue; }
 
       try {
-        // Check for duplicate room number
-        const q = query(collection(db, 'rooms'), where('roomNumber', '==', row.roomNumber));
+        // Room names are the public identifier used by the room catalog.
+        const q = query(collection(db, 'rooms'), where('roomName', '==', row.roomName));
         const snap = await getDocs(q);
         if (!snap.empty) { skipped++; setProgress(Math.round(((i + 1) / total) * 100)); continue; }
 
         await addDoc(collection(db, 'rooms'), {
-          roomNumber:  row.roomNumber,
+          roomName:    row.roomName,
+          // Keep the legacy display field populated until all existing room
+          // consumers are migrated to roomName.
+          roomNumber:  row.roomName,
           // Normalized to canonical Title Case regardless of how it was typed
           // in the spreadsheet, so category matching elsewhere never breaks.
           type:        normalizeType(row.type),
@@ -249,7 +258,7 @@ export default function RoomExcelImport({ onImportComplete }) {
             <strong style={{ color: TEXT }}>Status</strong> — also not case-sensitive. Always saved in lowercase automatically.
           </div>
           <div>
-            <strong style={{ color: TEXT }}>Room Number, Amenities, Description</strong> — saved exactly as typed, so capitalize these however you want guests to see them.
+            <strong style={{ color: TEXT }}>Room Name, Amenities, Description</strong> — saved exactly as typed, so capitalize these however you want guests to see them.
           </div>
         </div>
       </div>

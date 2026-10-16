@@ -7,6 +7,7 @@ import reservationGuestAction from '../apiHandlers/reservation-guest-action';
 import publicFeedback from '../apiHandlers/public-feedback';
 import createCorporateReservation from '../apiHandlers/create-corporate-reservation';
 import reservationStaffAction from '../apiHandlers/reservation-staff-action';
+import submitFeedback from '../apiHandlers/submit-feedback';
 
 const handlers = {
   'contact-inquiry': contactInquiry,
@@ -17,6 +18,7 @@ const handlers = {
   'reservation-staff-action': reservationStaffAction,
   'create-corporate-reservation': createCorporateReservation,
   'public-feedback': publicFeedback,
+  'submit-feedback': submitFeedback,
   occupancy,
 };
 

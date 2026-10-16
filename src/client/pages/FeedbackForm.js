@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
+import { collection, getDocs } from 'firebase/firestore';
+import { splitGuestName } from '../../lib/nameValidation';
 
 const HERO_IMAGE =
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/09/About-Lawiswis-Kawayan-scaled-1.jpeg';
@@ -42,7 +42,8 @@ const WORDS = ['', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
 
 /* ------------------------------- component -------------------------------- */
 export default function FeedbackForm() {
-  const [guest, setGuest] = useState({ firstName: '', lastName: '', email: '', roomNumber: '', comment: '' });
+  const [guest, setGuest] = useState({ firstName: '', lastName: '', email: '', roomName: '', comment: '' });
+  const [roomNames, setRoomNames] = useState([]);
   const [scores, setScores] = useState({ ambience: 0, rooms: 0, staff: 0, facilities: 0 });
   const [hover, setHover] = useState({ key: null, value: 0 });
   const [tags, setTags] = useState([]);
@@ -69,6 +70,26 @@ export default function FeedbackForm() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const fetchRoomNames = async () => {
+      try {
+        const snapshot = await getDocs(collection(db, 'rooms'));
+        if (!active) return;
+        const names = [...new Set(snapshot.docs
+          .map(item => item.data().roomName || item.data().name || item.data().roomNumber)
+          .filter(name => typeof name === 'string' && name.trim())
+          .map(name => name.trim()))]
+          .sort((left, right) => left.localeCompare(right));
+        setRoomNames(names);
+      } catch (error) {
+        console.error('Unable to load room names for feedback:', error);
+      }
+    };
+    fetchRoomNames();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     if (document.getElementById('hp-fonts')) return;
     const l = document.createElement('link');
     l.id = 'hp-fonts'; l.rel = 'stylesheet';
@@ -88,24 +109,24 @@ export default function FeedbackForm() {
   const submit = async (e) => {
     e.preventDefault();
     if (!given.length) { setError('Rate at least one category before you send.'); return; }
-    if ((guest.firstName || guest.lastName)
-      && (!NAME_PATTERN.test(guest.firstName.trim()) || !NAME_PATTERN.test(guest.lastName.trim()))) {
-      setError('Enter both first and last names using 2-35 letters, spaces, hyphens, or apostrophes.');
-      return;
-    }
     setError(''); setSubmitting(true);
     try {
-      await addDoc(collection(db, 'feedback'), {
-        guestName: joinGuestName(guest.firstName, guest.lastName),
-        email: guest.email.trim(),
-        roomNumber: guest.roomNumber.trim(),
-        comment: guest.comment.trim(),
-        rating: overallRounded,          // admin portal reads this
-        ratings: scores,                 // per-category breakdown
-        tags,
-        read: false,
-        createdAt: serverTimestamp(),
+      const response = await fetch('/api/submit-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          firstName: guest.firstName,
+          lastName: guest.lastName,
+          emailAddress: guest.email,
+          roomName: guest.roomName,
+          comment: guest.comment,
+          rating: overallRounded,
+          ratings: scores,
+          tags,
+        }),
       });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Could not send your feedback.');
       setSubmitted(true);
     } catch (err) {
       setError(
@@ -217,25 +238,28 @@ export default function FeedbackForm() {
                 <span>First name</span>
                 <span className="lk-input"><IUser size={16} />
                   <input value={guest.firstName} autoComplete="given-name" maxLength={35} placeholder="Maria"
-                    onChange={e => setGuest({ ...guest, firstName: e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'-]/g, '').slice(0, 35) })} /></span>
+                    onChange={e => setGuest({ ...guest, firstName: e.target.value })} /></span>
               </label>
               <label className="lk-field">
                 <span>Last name</span>
                 <span className="lk-input"><IUser size={16} />
                   <input value={guest.lastName} autoComplete="family-name" maxLength={35} placeholder="Santos"
-                    onChange={e => setGuest({ ...guest, lastName: e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'-]/g, '').slice(0, 35) })} /></span>
+                    onChange={e => setGuest({ ...guest, lastName: e.target.value })} /></span>
               </label>
               <label className="lk-field">
-                <span>Room number</span>
+                <span>Room Name</span>
                 <span className="lk-input"><IKey size={16} />
-                  <input value={guest.roomNumber} inputMode="numeric" placeholder="101"
-                    onChange={e => setGuest({ ...guest, roomNumber: e.target.value })} /></span>
+                  <input value={guest.roomName} list="feedback-room-names" placeholder="e.g., Room Bituin, Family Room for 4"
+                    onChange={e => setGuest({ ...guest, roomName: e.target.value })} /></span>
+                <datalist id="feedback-room-names">
+                  {roomNames.map(name => <option key={name} value={name} />)}
+                </datalist>
               </label>
             </div>
             <label className="lk-field">
               <span>Email address</span>
               <span className="lk-input"><IMail size={16} />
-                <input type="email" value={guest.email} autoComplete="email" placeholder="maria@example.com"
+                <input type="text" inputMode="email" value={guest.email} autoComplete="email" placeholder="maria@example.com"
                   onChange={e => setGuest({ ...guest, email: e.target.value })} /></span>
             </label>
           </section>

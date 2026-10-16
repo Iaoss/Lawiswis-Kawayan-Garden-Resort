@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { createPayMongoCheckout } from '../../lib/paymongo';
@@ -10,8 +10,9 @@ import {
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
-  getRoomMaximumGuests,
-  isCoupleRoom,
+  getGuestCountViolation,
+  getRoomCapacityPolicy,
+  getStayDurationError,
 } from '../../lib/bookingPricing';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
@@ -19,13 +20,20 @@ import OccupancyBadge from '../components/OccupancyBadge';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 
-const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
 const LIGHT = '#f0f7f0';
 const RECEIPT_NOTICE = 'Your official booking receipt and confirmation details will be sent to the email address provided.';
 const GUEST_PROFILE_KEY = 'guest_profile';
 const BOOKING_HISTORY_KEY = 'booking_history';
+const ROOM_COMFORT_DETAILS = {
+  couple: { layout: 'Private couple room', comfort: 'Cozy stay for a couple with one child.' },
+  familyroom: { layout: 'Family room layout', comfort: 'Practical shared space for families.' },
+  juniorsuite: { layout: 'Separate living area', comfort: 'Premium furnishings and a more spacious suite layout.' },
+  familysuite: { layout: 'Living room and kitchenette', comfort: 'Extra room and suite comforts for families.' },
+  presidential: { layout: 'Private living room and full kitchen', comfort: 'Premium large-group suite with multiple bedrooms.' },
+  mainvilla: { layout: 'Multiple bedrooms, full kitchen, and event space', comfort: 'The resort’s largest private accommodation for groups.' },
+};
 
 const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const addMonths = (date, months) => {
@@ -52,6 +60,25 @@ function writeLocalValue(key, value) {
     console.error(`Unable to save ${key} to local storage:`, error);
     return false;
   }
+}
+
+function getRoomComparisonDetails(room) {
+  const text = [room?.type, room?.name, room?.roomNumber, room?.description].join(' ').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const detail = text.includes('mainvilla')
+    ? ROOM_COMFORT_DETAILS.mainvilla
+    : text.includes('presidential') || text.includes('paraiso') || text.includes('halimuyak')
+      ? ROOM_COMFORT_DETAILS.presidential
+      : text.includes('familysuite')
+        ? ROOM_COMFORT_DETAILS.familysuite
+        : text.includes('juniorsuite') || text.includes('hiwaga')
+          ? ROOM_COMFORT_DETAILS.juniorsuite
+          : text.includes('familyroom')
+            ? ROOM_COMFORT_DETAILS.familyroom
+            : ROOM_COMFORT_DETAILS.couple;
+  const amenities = typeof room?.amenities === 'string'
+    ? room.amenities.split(',').map(item => item.trim()).filter(Boolean)
+    : [];
+  return { ...detail, amenities: amenities.length ? amenities : ['Air conditioning', 'Wi-Fi', 'Hot shower'] };
 }
 
 // Small inline icons (no emojis) -----------------------------------------
@@ -113,6 +140,7 @@ const WALLETS = [
 
 export default function BookRoom() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { available: resortAvailable, reason: unavailableReason, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const today = formatDate(new Date());
   const maximumBookingDate = formatDate(addMonths(new Date(), 2));
@@ -150,7 +178,7 @@ export default function BookRoom() {
   const [lookupError, setLookupError] = useState('');
   const [lookupResult, setLookupResult] = useState(null);
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => ({
     firstName: '',
     lastName: '',
     email: '',
@@ -169,11 +197,13 @@ export default function BookRoom() {
     notes: '',
     paymentMethod: 'online',
     website: '', // honeypot — real guests leave this blank; see hidden field below
-  });
+    ...(location.state?.bookingForm || {}),
+  }));
   const guestName = joinGuestName(form.firstName, form.lastName);
   const datesValid = Boolean(form.checkIn && form.checkOut
     && form.checkIn >= today && form.checkOut > form.checkIn
-    && form.checkIn <= maximumBookingDate && form.checkOut <= maximumBookingDate);
+    && form.checkIn <= maximumBookingDate && form.checkOut <= maximumBookingDate
+    && !getStayDurationError(form.checkIn, form.checkOut));
   const nights = useMemo(() => form.checkIn && form.checkOut
     ? Math.ceil((new Date(`${form.checkOut}T00:00:00`) - new Date(`${form.checkIn}T00:00:00`)) / (1000 * 60 * 60 * 24))
     : 0, [form.checkIn, form.checkOut]);
@@ -200,17 +230,27 @@ export default function BookRoom() {
   const depositPercentage = RESERVATION_DEPOSIT_PERCENTAGE;
   const depositAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, 'deposit') : 0;
   const balanceAmount = Math.max(0, bookingTotal - depositAmount);
-  const roomIsCouple = isCoupleRoom(room);
-  const coupleGuestLimit = roomIsCouple ? getRoomMaximumGuests(room) : null;
-  const configuredMaxGuests = Number(room?.maxCapacity ?? room?.maximumCapacity ?? room?.maxGuests);
-  const maxGuests = roomIsCouple
-    ? null
-    : Number.isInteger(configuredMaxGuests) && configuredMaxGuests > 0
-      ? configuredMaxGuests
-      : null;
-  const [upsellOpen, setUpsellOpen] = useState(false);
-  const [upsellSwitching, setUpsellSwitching] = useState(false);
+  const roomCapacity = getRoomCapacityPolicy(room);
+  const guestCountViolation = getGuestCountViolation(room, Number(form.adults), Number(form.children));
+  const [capacityWarning, setCapacityWarning] = useState('');
+  const [availableRooms, setAvailableRooms] = useState([]);
+  const [roomSuggestionsLoading, setRoomSuggestionsLoading] = useState(false);
   const baseCapacity = pricing?.baseCapacity || 2;
+  const groupSize = Number(form.adults) + Number(form.children);
+  const suggestedRooms = useMemo(() => {
+    const matchingRooms = availableRooms
+      .filter(item => item.id !== room?.id && !['maintenance', 'cleaning', 'occupied', 'unavailable'].includes(String(item.status || '').toLowerCase()))
+      .filter(item => !getGuestCountViolation(item, Number(form.adults), Number(form.children)))
+      .sort((first, second) => {
+        const firstCapacity = getRoomCapacityPolicy(first)?.maxGuests || Number.MAX_SAFE_INTEGER;
+        const secondCapacity = getRoomCapacityPolicy(second)?.maxGuests || Number.MAX_SAFE_INTEGER;
+        return firstCapacity - secondCapacity || String(first.roomNumber || first.name).localeCompare(String(second.roomNumber || second.name));
+      });
+    if (!matchingRooms.length) return [];
+    const closestCapacity = getRoomCapacityPolicy(matchingRooms[0])?.maxGuests;
+    const closestMatches = matchingRooms.filter(item => getRoomCapacityPolicy(item)?.maxGuests === closestCapacity);
+    return (closestMatches.length >= 2 ? closestMatches : matchingRooms).slice(0, 2);
+  }, [availableRooms, form.adults, form.children, room?.id]);
 
   useEffect(() => {
     const fetchRoom = async () => {
@@ -234,6 +274,24 @@ export default function BookRoom() {
     };
     fetchRoom();
   }, [roomId]);
+
+  useEffect(() => {
+    if (!room) return undefined;
+    let active = true;
+    const fetchRooms = async () => {
+      setRoomSuggestionsLoading(true);
+      try {
+        const snap = await getDocs(collection(db, 'rooms'));
+        if (active) setAvailableRooms(snap.docs.map(item => ({ id: item.id, ...item.data() })));
+      } catch (error) {
+        console.error('Unable to load room recommendations:', error);
+      } finally {
+        if (active) setRoomSuggestionsLoading(false);
+      }
+    };
+    fetchRooms();
+    return () => { active = false; };
+  }, [room]);
 
   useEffect(() => {
     const profile = readLocalValue(GUEST_PROFILE_KEY, null);
@@ -301,37 +359,22 @@ export default function BookRoom() {
 
   const changeGuestCount = (key, value) => {
     const minimum = key === 'adults' ? 1 : 0;
-    const otherGuestCount = Number(form[key === 'adults' ? 'children' : 'adults']);
-    const upperBound = maxGuests === null ? undefined : Math.max(minimum, maxGuests - otherGuestCount);
     const parsed = Number(value);
-    if (coupleGuestLimit !== null && Number.isFinite(parsed) && Math.floor(parsed) + otherGuestCount > coupleGuestLimit) {
-      setUpsellOpen(true);
+    const safeValue = Number.isFinite(parsed) ? Math.max(minimum, Math.floor(parsed)) : minimum;
+    const nextAdults = key === 'adults' ? safeValue : Number(form.adults);
+    const nextChildren = key === 'children' ? safeValue : Number(form.children);
+    const violation = getGuestCountViolation(room, nextAdults, nextChildren);
+    if (violation) {
+      setCapacityWarning(violation);
       return;
     }
-    const safeValue = Number.isFinite(parsed)
-      ? Math.max(minimum, Math.min(Math.floor(parsed), upperBound ?? Number.MAX_SAFE_INTEGER))
-      : minimum;
+    setCapacityWarning('');
     setForm(previous => ({ ...previous, [key]: safeValue }));
   };
 
-  const switchToFamilySuite = async () => {
-    setUpsellSwitching(true);
+  const switchToRoom = targetRoom => {
     const query = `?checkIn=${encodeURIComponent(form.checkIn)}&checkOut=${encodeURIComponent(form.checkOut)}`;
-    try {
-      const snap = await getDocs(collection(db, 'rooms'));
-      const suites = snap.docs
-        .map(item => ({ id: item.id, ...item.data() }))
-        .filter(item => /family/i.test(String(item.type || '')) && Number(item.capacity ?? item.baseCapacity) === 6);
-      const target = suites.find(item => item.status !== 'maintenance') || suites[0];
-      setUpsellOpen(false);
-      navigate(target ? `/book/${target.id}${query}` : `/rooms${query}`);
-    } catch (error) {
-      console.error('Unable to find a Family Suite:', error);
-      setUpsellOpen(false);
-      navigate(`/rooms${query}`);
-    } finally {
-      setUpsellSwitching(false);
-    }
+    navigate(`/book/${targetRoom.id}${query}`, { state: { bookingForm: form } });
   };
 
   const clearSavedProfile = () => {
@@ -474,12 +517,8 @@ export default function BookRoom() {
       document.getElementById('preferredContactMethod')?.focus();
       return;
     }
-    if (coupleGuestLimit !== null && Number(form.adults) + Number(form.children) > coupleGuestLimit) {
-      setUpsellOpen(true);
-      return;
-    }
-    if (maxGuests !== null && Number(form.adults) + Number(form.children) > maxGuests) {
-      setErrorMsg(`This room allows up to ${maxGuests} guests.`);
+    if (guestCountViolation) {
+      setErrorMsg(guestCountViolation);
       return;
     }
     if (!datesValid || nights <= 0) return alert('Please choose valid stay dates from the availability calendar first.');
@@ -894,8 +933,10 @@ export default function BookRoom() {
                   { key: 'children', label: 'Children (under 10)', min: 0, rate: 400 },
                 ].map(guestType => {
                   const otherCount = Number(form[guestType.key === 'adults' ? 'children' : 'adults']);
-                  const maximum = maxGuests === null ? undefined : Math.max(guestType.min, maxGuests - otherCount);
                   const count = Number(form[guestType.key]);
+                  const guestLimit = guestType.key === 'adults' ? roomCapacity?.maxAdults : roomCapacity?.maxChildren;
+                  const totalLimit = roomCapacity ? Math.max(guestType.min, roomCapacity.maxGuests - otherCount) : undefined;
+                  const maximum = guestLimit === undefined ? totalLimit : Math.min(guestLimit, totalLimit ?? guestLimit);
                   return (
                     <div key={guestType.key}>
                       <label htmlFor={`${guestType.key}-count`} style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{guestType.label}</label>
@@ -909,13 +950,54 @@ export default function BookRoom() {
                       </div>
                       <div style={{ color: '#6b7280', fontSize: '10px', lineHeight: 1.6, marginTop: '6px' }}>
                         Base capacity: {baseCapacity} guests · Extra {guestType.key === 'adults' ? 'adult' : 'child'}: ₱{guestType.rate.toLocaleString()} / person / night
-                        {maxGuests !== null && <span> · Maximum occupancy: {maxGuests}</span>}
-                        {coupleGuestLimit !== null && <span> · Maximum occupancy: {coupleGuestLimit} (1 extra adult or child)</span>}
+                        {roomCapacity && <span> · Maximum: {roomCapacity.maxAdults} adults, {roomCapacity.maxChildren} children, {roomCapacity.maxGuests} guests total</span>}
                       </div>
                     </div>
                   );
                 })}
               </div>
+              {(capacityWarning || guestCountViolation) && (
+                <div role="alert" style={{ marginTop: '14px', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.5, color: '#9a3412' }}>
+                  <strong>Guest limit:</strong> {guestCountViolation || capacityWarning}
+                </div>
+              )}
+              {groupSize > 0 && (
+                <section aria-labelledby="room-suggestions-title" style={{ marginTop: '16px', border: '1px solid #d8e7db', background: '#f7fbf7', borderRadius: '12px', padding: '14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <div>
+                      <h3 id="room-suggestions-title" style={{ margin: 0, fontSize: '13px', color: DARK }}>Rooms that fit your group of {groupSize}</h3>
+                      <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#4b6352' }}>
+                        {guestCountViolation ? 'Choose a room below to continue with this group size.' : 'Compare rooms before you continue; your entered booking details will be kept.'}
+                      </p>
+                    </div>
+                    {roomSuggestionsLoading && <span style={{ fontSize: '11px', color: '#4b6352' }}>Finding rooms...</span>}
+                  </div>
+                  {suggestedRooms.length > 0 ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${suggestedRooms.length}, minmax(0, 1fr))`, gap: '10px', marginTop: '12px' }}>
+                      {suggestedRooms.map(suggestedRoom => {
+                        const capacity = getRoomCapacityPolicy(suggestedRoom);
+                        const details = getRoomComparisonDetails(suggestedRoom);
+                        return (
+                          <article key={suggestedRoom.id} style={{ background: '#fff', border: '1px solid #d8e7db', borderRadius: '10px', padding: '12px', minWidth: 0 }}>
+                            <strong style={{ display: 'block', color: DARK, fontSize: '13px' }}>{suggestedRoom.roomNumber || suggestedRoom.name || suggestedRoom.type}</strong>
+                            <span style={{ display: 'block', marginTop: '3px', color: '#52725b', fontSize: '11px' }}>Up to {capacity?.maxGuests} guests</span>
+                            <div style={{ marginTop: '10px', fontSize: '11px', color: '#374151', lineHeight: 1.5 }}>
+                              <div><strong>Layout:</strong> {details.layout}</div>
+                              <div><strong>Comfort:</strong> {details.comfort}</div>
+                              <div><strong>Amenities:</strong> {details.amenities.slice(0, 3).join(', ')}</div>
+                            </div>
+                            <button type="button" onClick={() => switchToRoom(suggestedRoom)} style={{ marginTop: '12px', width: '100%', border: 0, background: DARK, color: '#d4f550', borderRadius: '8px', padding: '9px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                              Switch to this room
+                            </button>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : !roomSuggestionsLoading && (
+                    <p style={{ margin: '12px 0 0', fontSize: '11px', color: '#4b6352' }}>No other currently available room matches this guest mix. Please contact the resort for help.</p>
+                  )}
+                </section>
+              )}
               {form.checkIn && form.checkOut && nights > 0 && (
                 <div style={{ marginTop: '14px' }}>
                   <OccupancyBadge startDate={form.checkIn} endDate={form.checkOut} />
@@ -1124,23 +1206,11 @@ export default function BookRoom() {
                 {errorMsg}
               </div>
             )}
-            <button type="submit" disabled={submitting || !termsAccepted || !resortAvailable || availabilityLoading || Boolean(availabilityError)}
-              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError ? 0.7 : 1 }}>
-              {availabilityLoading ? 'Checking resort status…' : availabilityError ? 'Booking status unavailable' : !resortAvailable ? 'Reservations temporarily closed' : submitting ? 'Redirecting to payment...' : !termsAccepted ? 'Accept terms to continue' : 'Continue to Payment →'}
+            <button type="submit" disabled={submitting || !termsAccepted || !resortAvailable || availabilityLoading || Boolean(availabilityError) || Boolean(guestCountViolation)}
+              style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError || guestCountViolation ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError || guestCountViolation ? 0.7 : 1 }}>
+              {availabilityLoading ? 'Checking resort status…' : availabilityError ? 'Booking status unavailable' : !resortAvailable ? 'Reservations temporarily closed' : submitting ? 'Redirecting to payment...' : guestCountViolation ? 'Choose a room that fits your group' : !termsAccepted ? 'Accept terms to continue' : 'Continue to Payment →'}
             </button>
           </form>
-          {upsellOpen && (
-            <div role="presentation" onClick={() => setUpsellOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 1000 }}>
-              <div role="dialog" aria-modal="true" aria-labelledby="upsell-title" onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: '16px', padding: '24px', maxWidth: '420px', width: '100%' }}>
-                <h2 id="upsell-title" style={{ margin: '0 0 10px', fontSize: '17px', color: '#111' }}>Need more space?</h2>
-                <p style={{ margin: '0 0 18px', fontSize: '13px', lineHeight: 1.6, color: '#4b5563' }}>{COUPLE_ROOM_LIMIT_MESSAGE}</p>
-                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                  <button type="button" onClick={() => setUpsellOpen(false)} style={{ border: '1px solid #e5e7eb', background: '#fff', borderRadius: '10px', padding: '10px 14px', cursor: 'pointer' }}>Keep Couple Room</button>
-                  <button type="button" disabled={upsellSwitching} onClick={switchToFamilySuite} style={{ border: 0, background: DARK, color: '#d4f550', borderRadius: '10px', padding: '10px 14px', fontWeight: 700, cursor: 'pointer' }}>{upsellSwitching ? 'Switching…' : 'Switch to Family Suite for 6'}</button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Room Summary */}
