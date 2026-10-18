@@ -108,21 +108,29 @@ const pages = {
   },
   'cancellation-policy': {
     title: 'Cancellation Policy',
-    intro: 'Cancellation fees depend on how far in advance a reservation is cancelled.',
+    intro: 'Please review the following terms for cancellations, changes and refunds.',
     items: [
-      ['More than 7 days before arrival', 'A cancellation fee of 20% applies.'],
-      ['4 to 7 days before arrival', 'A cancellation fee of 50% applies.'],
-      ['3 days or less before arrival', 'A cancellation fee of 100% applies.'],
-      ['Need help?', 'Contact the resort to request a cancellation or clarify how this policy applies to your booking.'],
+      ['1. 30-day notice', 'A cancellation penalty equivalent to 50% of the total accommodation charge will be imposed for booking cancellations made LESS than thirty (30) days prior to guest’s arrival.'],
+      ['2. 7-day notice', 'A cancellation penalty equivalent to FULL charge will be imposed for booking cancellations made LESS than seven (7) days prior to guest’s arrival or will be considered as NO SHOW.'],
+      ['3. Cancellation on arrival date', 'Should cancellation be made upon arrival date; it will be considered as NO SHOW.'],
+      ['4. Non-refundable payments', 'The amount paid is non-refundable or convertible in case of changes in booking upon arrival or during the stay.'],
+      ['5. Force majeure', 'In cases of cancellation due to “force majeure”, the Hotel shall not be responsible for the cancellations or failures if such cancellations arise out of causes beyond its control. Such causes may include, but are not restricted to, acts of God or of public enemy, fires, floods, epidemics, quarantine restrictions, strikes, earthquakes, computer or communication failures, and severe weather.'],
+      ['6. Changes to reservation', 'No refund will be made in reducing the number of rooms initially reserved, and on change of room type. For shortening of stay, a full room charge shall be observed.'],
+      ['7. No show', 'No show is nonrefundable and non-re-bookable. We will keep you posted once there are additional changes.'],
     ],
+    actions: true,
   },
   'privacy-policy': {
     title: 'Privacy Policy',
-    intro: 'We use guest information to manage reservations and provide resort services.',
+    intro: 'The privacy and security of personal data collected from you – our guests, clients, members, visitors and suppliers – are important to Lawiswis Kawayan Garden Resort. The officers and employees of Lawiswis Kawayan Garden Resort adhere to the principles of Data Privacy Act (RA 10173) and comply with the best data privacy practices sanctioned in its Implementing Rules and Regulations and Memorandum Circulars issued by the National Privacy Commission.',
     items: [
-      ['Information we use', 'Information submitted through booking and contact forms may include your name, contact details, address, stay dates, guest count, and requests.'],
-      ['How it is used', 'Information is used to manage reservations, communicate with guests, provide support, and meet operational or legal requirements.'],
-      ['Payments', 'Card and e-wallet credentials are entered and processed through PayMongo checkout. The resort does not store full card numbers or security codes.'],
+      ['Collection of Personal Data', 'In the ordinary course of business, Lawiswis Kawayan Garden Resort may collect your personal data such as your name, phone number, gender, marital status, age, health, or education and other personal information.'],
+      ['Use of Personal Data', 'We use this data to facilitate our transaction, provide with you personalized customer service experience, and most especially, to be more efficient in providing you with the best hotel services.'],
+      ['Non-Disclosure of Personal Data', 'Lawiswis Kawayan Garden Resort will not disclose your personal information without your consent or in any circumstance not authorized by law or any valid order of court or government agencies.'],
+      ['Security of Personal Data', 'Lawiswis Kawayan Garden Resort applies strict security measures and modern technologies to make sure your personal data are kept confidential and secured with us. Our employees are trained to handle your personal data with utmost confidentiality and we have internal control in place to avoid security breach or violation.'],
+      ['Use of Cookies', 'In visiting our website, cookies are utilized. Cookies are small files that our site transfers to your computer or smart phones through your web browser that enables the site’s system to recognize or remember certain information. The information gathered is used for statistical and analytical purposes. We may also use your browsing behavior to develop promotional offers, products, and services that we feel are beneficial to you. Cookies help us provide you with a better service by enabling us to understand your preferences based on previous or current website activity. However, a cookie gives us no access to your computer or any information about you other than the data you choose to share with us. You can choose to access or decline cookies. Most web browsers automatically accept cookies. You can modify your browser setting to decline cookies, if you prefer, but this may prevent you from taking full advantage of our website. By continuing to visit or use our website, you are agreeing to the use of cookies and similar technologies for the purposes we describe in this policy.'],
+      ['Data Privacy Rights', 'You may inquire or request for information regarding any matter relating to the processing of your personal data including the data privacy and security policies implemented by Lawiswis Kawayan Garden Resort to ensure the protection of your personal data. You may also request for an updating, rectification or amendment of your personal data or file complaint in case of any breach or violation of your privacy.'],
+      ['Send your inquiry or request to', 'Address: 402 Brgy. Buguion, Calumpit, Bulacan, PH · Mobile No: 0917 811 2332 · Email: lawiswiskawayyyan123@gmail.com'],
     ],
   },
 };
@@ -171,6 +179,12 @@ export default function CustomerCarePage({ pageKey }) {
                 <p style={{ color: '#6b6a5c', font: `13px/1.8 ${SANS}`, margin: 0 }}>{content}</p>
               </section>
             ))}
+          </div>
+        )}
+        {page.actions && (
+          <div style={{ marginTop: '24px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <Link to="/my-bookings" style={{ background: FOREST, color: '#fff', padding: '13px 24px', font: `600 12px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', textDecoration: 'none' }}>Request Refund</Link>
+            <Link to="/my-bookings" style={{ border: `1px solid ${FOREST}`, color: FOREST, padding: '13px 24px', font: `600 12px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', textDecoration: 'none' }}>Change Date</Link>
           </div>
         )}
         <div style={{ marginTop: '24px', background: CREAM, borderLeft: `3px solid ${BRASS}`, padding: '18px 22px', color: '#5c5a4c', font: `13px/1.8 ${SANS}` }}>

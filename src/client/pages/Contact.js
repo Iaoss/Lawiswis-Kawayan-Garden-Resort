@@ -152,7 +152,7 @@ export default function Contact() {
           <div style={{ display: 'grid', gap: '22px', color: '#6b6a5c', font: `13px/1.7 ${SANS}` }}>
             <div><strong style={{ display: 'block', color: FOREST, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>Address</strong>402 Brgy. Buguion, Calumpit, Bulacan, Philippines</div>
             <div><strong style={{ display: 'block', color: FOREST, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>Call</strong>0917 811 2332<br />Daily, 7:00 AM – 10:00 PM</div>
-            <div><strong style={{ display: 'block', color: FOREST, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>Email</strong>info@lawiswiskawayanresort.com</div>
+            <div><strong style={{ display: 'block', color: FOREST, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>Email</strong>lawiswiskawayyyan123@gmail.com</div>
           </div>
           <div style={{ marginTop: '30px' }}>
             <h3 style={{ color: FOREST, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase', margin: '0 0 10px' }}>Find the resort</h3>

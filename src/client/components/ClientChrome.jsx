@@ -125,10 +125,10 @@ export default function ClientChrome({ children }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '18px' }}>
           <span><i className="ti ti-map-pin" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />402 Brgy. Buguion, Calumpit, Bulacan, PH</span>
           <span><i className="ti ti-phone" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />0917 811 2332</span>
-          <span><i className="ti ti-mail" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />info@lawiswiskawayanresort.com</span>
+          <span><i className="ti ti-mail" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />lawiswiskawayyyan123@gmail.com</span>
         </div>
         <div style={{ display: 'flex', gap: '14px', fontSize: '13px', alignItems: 'center' }}>
-          {['ti-brand-facebook', 'ti-brand-linkedin'].map(icon => <i key={icon} className={`ti ${icon}`} style={{ cursor: 'pointer' }} />)}
+          <a href="https://www.facebook.com/search/top?q=lawiswis%20kawayan%20garden%20resort" target="_blank" rel="noopener noreferrer" aria-label="Facebook" style={{ color: 'inherit' }}><i className="ti ti-brand-facebook" /></a>
         </div>
       </div>
       <header className="client-header" style={{ backgroundColor: FOREST, backgroundImage: 'none', backdropFilter: 'none', minHeight: '76px', padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '24px', position: 'sticky', top: 0, zIndex: 50, boxShadow: '0 4px 20px rgba(35,42,27,0.16)' }}>

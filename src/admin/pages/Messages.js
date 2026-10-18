@@ -13,7 +13,7 @@ const MUTED  = '#9ca3af';
 const DEFAULT_FAQS = [
   { id: 'f1', category: 'Check-in/out',   question: 'What time is check-in?',          answer: 'Check-in is at 2:00 PM and check-out is at 12:00 NN. Early check-in may be arranged upon request and availability.' },
   { id: 'f2', category: 'Check-in/out',   question: 'What time is check-out?',         answer: 'Check-out is at 12:00 NN. Late check-out may be arranged upon request, subject to availability.' },
-  { id: 'f3', category: 'Booking',        question: 'How do I book a room?',           answer: 'You can book directly through our website at lawiswiskawayanresort.com, or contact us at 0917 811 2332 / info@lawiswiskawayanresort.com.' },
+  { id: 'f3', category: 'Booking',        question: 'How do I book a room?',           answer: 'You can book directly through our website at lawiswiskawayanresort.com, or contact us at 0917 811 2332 / lawiswiskawayyyan123@gmail.com.' },
   { id: 'f4', category: 'Booking',        question: 'Is my reservation confirmed?',    answer: 'Your reservation is confirmed once you receive a confirmation email from us. Please keep your booking reference number for your records.' },
   { id: 'f5', category: 'Payment',        question: 'What payment methods do you accept?', answer: 'We accept Cash, GCash (0917 811 2332), Bank Transfer (BDO, BPI, Metrobank, UnionBank), and Credit/Debit Cards.' },
   { id: 'f6', category: 'Payment',        question: 'Do you require a deposit?',       answer: 'Yes, a 50% deposit is required to secure your reservation. The remaining balance can be paid upon check-in.' },

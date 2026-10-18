@@ -77,7 +77,7 @@ export default function ContactInquiries() {
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <header style={{ marginBottom: 20 }}>
             <h1 style={{ fontSize: 21, margin: '0 0 5px' }}>Contact inquiries</h1>
-            <p style={{ color: colors.muted, fontSize: 12, margin: 0 }}>Website messages delivered to info@lawiswiskawayanresort.com.</p>
+            <p style={{ color: colors.muted, fontSize: 12, margin: 0 }}>Website messages delivered to lawiswiskawayyyan123@gmail.com.</p>
           </header>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
