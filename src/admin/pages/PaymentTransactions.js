@@ -16,7 +16,7 @@ const paymentDateMillis = payment => {
 };
 
 export default function PaymentTransactions() {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
   // ── Theme tokens (mirrors PageLayout's light/dark palette) ──
@@ -108,7 +108,7 @@ export default function PaymentTransactions() {
                     <td style={{ padding: '12px 16px', fontWeight: '700', color: GREEN }}>₱{Number(p.amount).toLocaleString()}</td>
                     <td style={{ padding: '12px 16px', color: TEXT, textTransform: 'capitalize' }}>{p.method}</td>
                     <td style={{ padding: '12px 16px', color: MUTED }}>
-                      {paymentDateMillis(p) ? new Date(paymentDateMillis(p)).toLocaleDateString() : 'N/A'}
+                      {paymentDateMillis(p) ? formatDate(new Date(paymentDateMillis(p))) : 'N/A'}
                     </td>
                   </tr>
                 ))

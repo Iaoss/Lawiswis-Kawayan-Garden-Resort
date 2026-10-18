@@ -232,7 +232,7 @@ export default function BookRoom() {
   const balanceAmount = Math.max(0, bookingTotal - depositAmount);
   const roomCapacity = getRoomCapacityPolicy(room);
   const guestCountViolation = getGuestCountViolation(room, Number(form.adults), Number(form.children));
-  const [capacityWarning, setCapacityWarning] = useState('');
+  const maxExtraGuests = roomCapacity ? Math.max(0, roomCapacity.maxGuests - (pricing?.baseCapacity || 2)) : 0;
   const [availableRooms, setAvailableRooms] = useState([]);
   const [roomSuggestionsLoading, setRoomSuggestionsLoading] = useState(false);
   const baseCapacity = pricing?.baseCapacity || 2;
@@ -361,14 +361,6 @@ export default function BookRoom() {
     const minimum = key === 'adults' ? 1 : 0;
     const parsed = Number(value);
     const safeValue = Number.isFinite(parsed) ? Math.max(minimum, Math.floor(parsed)) : minimum;
-    const nextAdults = key === 'adults' ? safeValue : Number(form.adults);
-    const nextChildren = key === 'children' ? safeValue : Number(form.children);
-    const violation = getGuestCountViolation(room, nextAdults, nextChildren);
-    if (violation) {
-      setCapacityWarning(violation);
-      return;
-    }
-    setCapacityWarning('');
     setForm(previous => ({ ...previous, [key]: safeValue }));
   };
 
@@ -932,21 +924,17 @@ export default function BookRoom() {
                   { key: 'adults', label: 'Adults', min: 1, rate: 800 },
                   { key: 'children', label: 'Children (under 10)', min: 0, rate: 400 },
                 ].map(guestType => {
-                  const otherCount = Number(form[guestType.key === 'adults' ? 'children' : 'adults']);
                   const count = Number(form[guestType.key]);
-                  const guestLimit = guestType.key === 'adults' ? roomCapacity?.maxAdults : roomCapacity?.maxChildren;
-                  const totalLimit = roomCapacity ? Math.max(guestType.min, roomCapacity.maxGuests - otherCount) : undefined;
-                  const maximum = guestLimit === undefined ? totalLimit : Math.min(guestLimit, totalLimit ?? guestLimit);
                   return (
                     <div key={guestType.key}>
                       <label htmlFor={`${guestType.key}-count`} style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{guestType.label}</label>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <button type="button" aria-label={`Remove one ${guestType.label.toLowerCase()}`} disabled={count <= guestType.min} onClick={() => changeGuestCount(guestType.key, count - 1)}
                           style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: count <= guestType.min ? 'not-allowed' : 'pointer' }}>−</button>
-                        <input id={`${guestType.key}-count`} type="number" min={guestType.min} max={maximum} value={count} onChange={event => changeGuestCount(guestType.key, event.target.value)}
+                        <input id={`${guestType.key}-count`} type="number" min={guestType.min} value={count} onChange={event => changeGuestCount(guestType.key, event.target.value)}
                           style={{ minWidth: 0, flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 12px', fontSize: '13px', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
-                        <button type="button" aria-label={`Add one ${guestType.label.toLowerCase()}`} disabled={maximum !== undefined && count >= maximum} onClick={() => changeGuestCount(guestType.key, count + 1)}
-                          style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: maximum !== undefined && count >= maximum ? 'not-allowed' : 'pointer' }}>+</button>
+                        <button type="button" aria-label={`Add one ${guestType.label.toLowerCase()}`} onClick={() => changeGuestCount(guestType.key, count + 1)}
+                          style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: 'pointer' }}>+</button>
                       </div>
                       <div style={{ color: '#6b7280', fontSize: '10px', lineHeight: 1.6, marginTop: '6px' }}>
                         Base capacity: {baseCapacity} guests · Extra {guestType.key === 'adults' ? 'adult' : 'child'}: ₱{guestType.rate.toLocaleString()} / person / night
@@ -956,9 +944,9 @@ export default function BookRoom() {
                   );
                 })}
               </div>
-              {(capacityWarning || guestCountViolation) && (
+              {guestCountViolation && (
                 <div role="alert" style={{ marginTop: '14px', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.5, color: '#9a3412' }}>
-                  <strong>Guest limit:</strong> {guestCountViolation || capacityWarning}
+                  <strong>Notice:</strong> You have exceeded the recommended capacity for this room (Maximum: {maxExtraGuests} extra guest{maxExtraGuests === 1 ? '' : 's'}). Please consider booking a larger room or additional rooms to ensure comfort.
                 </div>
               )}
               {groupSize > 0 && (

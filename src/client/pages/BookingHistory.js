@@ -9,6 +9,11 @@ const todayLocal = () => {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 };
 
+const formatMDY = value => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));
+  return match ? `${match[2]}/${match[3]}/${match[1]}` : (value || '—');
+};
+
 function readStoredValue(key, fallback) {
   try {
     const value = window.localStorage.getItem(key);
@@ -146,8 +151,8 @@ export default function BookingHistory() {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(125px, 1fr))', gap: 12, marginTop: 16, color: '#4b5563', fontSize: 12 }}>
         <div><div style={{ color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' }}>Room</div><strong>{booking.roomName || booking.roomType || 'Resort room'}</strong></div>
-        <div><div style={{ color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' }}>Check-in</div><strong>{booking.checkIn || '—'}</strong></div>
-        <div><div style={{ color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' }}>Check-out</div><strong>{booking.checkOut || '—'}</strong></div>
+        <div><div style={{ color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' }}>Check-in</div><strong>{formatMDY(booking.checkIn)}</strong></div>
+        <div><div style={{ color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' }}>Check-out</div><strong>{formatMDY(booking.checkOut)}</strong></div>
         <div><div style={{ color: '#9ca3af', fontSize: 10, textTransform: 'uppercase' }}>Total</div><strong>₱{Number(booking.totalAmount || 0).toLocaleString()}</strong></div>
       </div>
       {booking.refundDecision && (

@@ -16,7 +16,7 @@ const dateKey = value => {
 };
 
 export default function CustomerManagement() {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
   // ── Theme tokens (mirrors PageLayout's light/dark palette) ──
@@ -233,8 +233,8 @@ export default function CustomerManagement() {
                           onMouseEnter={e => e.currentTarget.style.background = HOVER_BG}
                           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                           <td style={{ padding: '10px 16px', color: TEXT }}>Room {r.roomNumber}</td>
-                          <td style={{ padding: '10px 16px', color: TEXT }}>{r.checkIn}</td>
-                          <td style={{ padding: '10px 16px', color: TEXT }}>{r.checkOut}</td>
+                          <td style={{ padding: '10px 16px', color: TEXT }}>{formatDate(r.checkIn)}</td>
+                          <td style={{ padding: '10px 16px', color: TEXT }}>{formatDate(r.checkOut)}</td>
                           <td style={{ padding: '10px 16px', color: TEXT }}>₱{Number(r.totalAmount).toLocaleString()}</td>
                           <td style={{ padding: '10px 16px', textTransform: 'capitalize' }}>
                             <span style={{ background: STATUS_BG, color: STATUS_TEXT, padding: '3px 10px', borderRadius: '20px', fontSize: '11px' }}>

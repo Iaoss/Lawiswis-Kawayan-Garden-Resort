@@ -30,7 +30,7 @@ const matchesQuickView = (r, view) => {
 };
 
 export default function Reservations() {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
   const initialBookingQuery = (() => {
     try {
@@ -647,7 +647,7 @@ const updateStatus = async (id, status, reason = '') => {
                       <td style={{ padding: '14px 16px', fontSize: '12px', color: MUTED, verticalAlign: 'top' }}>{r.notes || 'None'}</td>
                       <td style={{ padding: '14px 16px', fontSize: '12px', color: TEXT, verticalAlign: 'top' }}>{nights(r)}</td>
                       <td style={{ padding: '14px 16px', fontSize: '12px', color: TEXT, verticalAlign: 'top' }}>
-                        {r.checkIn} – {r.checkOut}
+                        {formatDate(r.checkIn)} – {formatDate(r.checkOut)}
                       </td>
                       <td style={{ padding: '14px 16px', fontSize: '12px', verticalAlign: 'top' }}>
                         <span style={{ background: typeBadge.bg, color: typeBadge.color, padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '600', textTransform: 'capitalize' }}>

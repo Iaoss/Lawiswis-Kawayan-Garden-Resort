@@ -8,7 +8,7 @@ import { SortControls, sortRecords } from '../lib/listSort';
 // `embedded` is used when this renders inside the Settings page tab,
 // so it does not wrap itself in a second PageLayout.
 export default function CancellationPolicy({ embedded = false }) {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
   const ACCENT      = settings?.accentColor || '#9cb56f';
@@ -249,7 +249,7 @@ export default function CancellationPolicy({ embedded = false }) {
                         <div>Room {r.roomNumber}</div>
                         <div style={{ fontSize: '10px', color: MUTED }}>{r.roomType}</div>
                       </td>
-                      <td style={S.td}>{r.checkIn}</td>
+                      <td style={S.td}>{formatDate(r.checkIn)}</td>
                       <td style={{ ...S.td, fontWeight: '600' }}>₱{Number(r.totalAmount || 0).toLocaleString()}</td>
                       <td style={S.td}>
                         <span style={{ ...badge(statusBadgeKind(r.status)), padding: '3px 8px', borderRadius: '20px', fontSize: '10px', fontWeight: '600', textTransform: 'capitalize' }}>
@@ -283,7 +283,7 @@ export default function CancellationPolicy({ embedded = false }) {
               {/* Guest info */}
               <div style={{ ...S.card, padding: '20px' }}>
                 <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '4px' }}>{selected.guestName}</div>
-                <div style={{ fontSize: '12px', color: SUBTEXT }}>Room {selected.roomNumber} · {selected.checkIn} → {selected.checkOut}</div>
+                <div style={{ fontSize: '12px', color: SUBTEXT }}>Room {selected.roomNumber} · {formatDate(selected.checkIn)} → {formatDate(selected.checkOut)}</div>
               </div>
 
               {/* Fee calculation */}

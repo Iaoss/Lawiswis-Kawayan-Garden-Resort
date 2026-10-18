@@ -6,7 +6,7 @@ import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 
 export default function BookingTransactions() {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
   const [reservations, setReservations] = useState([]);
   const [search, setSearch] = useState('');
@@ -152,7 +152,7 @@ export default function BookingTransactions() {
                 {/* Summary */}
                 <div style={{ ...S.card, padding: '20px' }}>
                   <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '14px' }}>{selected.guestName}</div>
-                  <div style={{ fontSize: '12px', color: SUBTEXT, marginBottom: '4px' }}>Room {selected.roomNumber} · {selected.checkIn} → {selected.checkOut}</div>
+                  <div style={{ fontSize: '12px', color: SUBTEXT, marginBottom: '4px' }}>Room {selected.roomNumber} · {formatDate(selected.checkIn)} → {formatDate(selected.checkOut)}</div>
                   <div style={{ borderTop: `1px solid ${BORDER_FAINT}`, marginTop: '14px', paddingTop: '14px' }}>
                     {[
                       { label: 'Total Amount', value: `₱${Number(selected.totalAmount || 0).toLocaleString()}` },

@@ -21,7 +21,7 @@ const IconCopy = () => <Ico size={13} d={<><rect x="9" y="9" width="12" height="
 const IconInbox = ({ size = 22 }) => <Ico size={size} d={<><path d="M22 12h-6l-2 3h-4l-2-3H2" /><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></>} />;
 
 export default function Feedback() {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
   const ACCENT      = settings?.accentColor || '#9cb56f';
@@ -289,7 +289,7 @@ export default function Feedback() {
                     <div style={{ minWidth: 0 }}>
                       <div style={{ color: TEXT, fontSize: 12, overflowWrap: 'anywhere' }}>{subscriber.email}</div>
                       <div style={{ color: MUTED, fontSize: 10, marginTop: 3 }}>
-                        Joined {joinedAt ? joinedAt.toLocaleDateString() : 'date unavailable'}
+                        Joined {joinedAt ? formatDate(joinedAt) : 'date unavailable'}
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

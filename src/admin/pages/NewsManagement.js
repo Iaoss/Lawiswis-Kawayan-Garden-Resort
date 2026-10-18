@@ -104,7 +104,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const emptyForm = { title: '', category: '', excerpt: '', content: '', externalLink: '', status: 'draft', publishedAt: today(), imageUrl: '' };
 
 export default function NewsManagement() {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
   const BG       = dark ? '#020b09' : '#f9fafb';
@@ -226,7 +226,7 @@ export default function NewsManagement() {
       return;
     }
 
-    const shouldBroadcast = notifySubscribers && form.status === 'published' && subscriberCount > 0;
+    const shouldBroadcast = notifySubscribers && form.status === 'published';
     setForm(emptyForm);
     resetImageState();
     setShowForm(false);
@@ -393,7 +393,10 @@ export default function NewsManagement() {
                   </div>
                   <div>
                     <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</label>
-                    <select style={inputStyle} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+                    <select style={inputStyle} value={form.status} onChange={e => {
+                      setForm({ ...form, status: e.target.value });
+                      if (e.target.value !== 'published') setNotifySubscribers(false);
+                    }}>
                       <option value="draft">Draft</option>
                       <option value="published">Published</option>
                     </select>
@@ -460,17 +463,20 @@ export default function NewsManagement() {
                   </div>
 
                   <div style={{ gridColumn: '1 / -1', display: 'grid', gap: 10 }}>
-                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, color: SUBTEXT, fontSize: 11, lineHeight: 1.5, cursor: form.status === 'published' && subscriberCount > 0 ? 'pointer' : 'not-allowed' }}>
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, color: SUBTEXT, fontSize: 11, lineHeight: 1.5, cursor: 'pointer' }}>
                       <input
                         type="checkbox"
                         checked={notifySubscribers}
-                        disabled={form.status !== 'published' || subscriberCount === 0}
-                        onChange={event => { setNotifySubscribers(event.target.checked); setBroadcastError(''); setBroadcastSent(0); }}
-                        style={{ marginTop: 2, accentColor: LIME }}
+                        onChange={event => {
+                          setNotifySubscribers(event.target.checked);
+                          if (event.target.checked) setForm(prev => ({ ...prev, status: 'published' }));
+                          setBroadcastError(''); setBroadcastSent(0);
+                        }}
+                        style={{ marginTop: 2, accentColor: LIME, cursor: 'pointer' }}
                       />
-                      <span>Send email notification to all active subscribers ({subscriberCount} subscribers). Only published articles can be sent.</span>
+                      <span>Send email notification to all active subscribers ({subscriberCount} subscribers). Checking this will publish the article.</span>
                     </label>
-                    {form.status === 'published' && subscriberCount === 0 && <div style={{ color: MUTED, fontSize: 10 }}>There are no active subscribers to notify.</div>}
+                    {subscriberCount === 0 && notifySubscribers && <div style={{ color: MUTED, fontSize: 10 }}>There are no active subscribers to notify.</div>}
                   </div>
                   <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
                     <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={uploading}
@@ -625,7 +631,7 @@ export default function NewsManagement() {
                         <div style={{ fontSize: 11, color: MUTED, marginBottom: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical' }}>
                           {article.excerpt || ''}
                         </div>
-                        <div style={{ fontSize: 10, color: MUTED }}>{article.publishedAt || '—'}</div>
+                        <div style={{ fontSize: 10, color: MUTED }}>{article.publishedAt ? formatDate(article.publishedAt) : '—'}</div>
                       </div>
                     </motion.div>
                   );
@@ -700,7 +706,7 @@ export default function NewsManagement() {
                 <div style={{ height: 1, background: BORDER }} />
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: SUBTEXT }}>
-                  <CheckIcon /> Published {activeArticle.publishedAt || '—'}
+                  <CheckIcon /> Published {activeArticle.publishedAt ? formatDate(activeArticle.publishedAt) : '—'}
                 </div>
                 {activeArticle.externalLink && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: SUBTEXT, overflow: 'hidden' }}>

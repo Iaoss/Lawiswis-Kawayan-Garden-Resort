@@ -90,8 +90,11 @@ export function SettingsProvider({ children }) {
     }
 
     // Font size
-    const sizeMap = { small: '12px', medium: '14px', large: '16px' };
-    root.style.fontSize = sizeMap[settings.fontSize] || '14px';
+    // Most pages use fixed px inline styles, so scale the whole document with zoom
+    const zoomMap = { small: '0.9', medium: '1', large: '1.12' };
+    root.style.fontSize = '';
+    root.style.zoom = zoomMap[settings.fontSize] || '1';
+    root.setAttribute('data-text-size', settings.fontSize || 'medium');
 
     // Accent color CSS variable
     root.style.setProperty('--accent', settings.accentColor);
@@ -103,7 +106,9 @@ export function SettingsProvider({ children }) {
   const toJsDate = (value) => {
     if (!value) return null;
     if (typeof value?.toDate === 'function') return value.toDate(); // Firestore Timestamp
-    const d = new Date(value);
+    // Parse plain YYYY-MM-DD as a local date to avoid timezone shifts
+    const plain = typeof value === 'string' && value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const d = plain ? new Date(+plain[1], +plain[2] - 1, +plain[3]) : new Date(value);
     return isNaN(d.getTime()) ? null : d;
   };
 
@@ -150,11 +155,11 @@ export function SettingsProvider({ children }) {
   const formatDateTime = (value) => {
     const date = toJsDate(value);
     if (!date) return '—';
-    return date.toLocaleString('en-PH', {
-      year: 'numeric', month: 'short', day: 'numeric',
+    const time = date.toLocaleTimeString('en-PH', {
       hour: '2-digit', minute: '2-digit',
       timeZone: settings.timezone || 'Asia/Manila',
     });
+    return `${formatDate(date)} ${time}`;
   };
 
   return (

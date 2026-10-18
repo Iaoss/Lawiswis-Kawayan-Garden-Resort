@@ -6,7 +6,7 @@ import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 
 export default function ReservationHistory() {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
   // ── Theme tokens (mirrors PageLayout's light/dark palette) ──
@@ -139,8 +139,8 @@ export default function ReservationHistory() {
                     <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>
                       <span style={{ ...badgeStyle, ...badge('purple') }}>{r.type}</span>
                     </td>
-                    <td style={{ padding: '12px 16px', color: TEXT }}>{r.checkIn}</td>
-                    <td style={{ padding: '12px 16px', color: TEXT }}>{r.checkOut}</td>
+                    <td style={{ padding: '12px 16px', color: TEXT }}>{formatDate(r.checkIn)}</td>
+                    <td style={{ padding: '12px 16px', color: TEXT }}>{formatDate(r.checkOut)}</td>
                     <td style={{ padding: '12px 16px', fontWeight: '600', color: TEXT }}>₱{Number(r.totalAmount || 0).toLocaleString()}</td>
                     <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>
                       <span style={{ ...badgeStyle, ...badge(paymentBadgeKind(r.paymentStatus)) }}>

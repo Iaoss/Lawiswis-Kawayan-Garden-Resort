@@ -36,7 +36,7 @@ const getDateBooked = r => r.createdAt || r.dateBooked;
 const roomLabel = r => String(r.roomName || r.roomNumber || '').trim();
 
 export default function Reports() {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
   const BG     = dark ? '#020b09' : '#f4f6f4';   // page background
@@ -388,8 +388,8 @@ export default function Reports() {
                     <td style={{ padding: '12px 16px', fontWeight: '600', color: TEXT }}>{r.guestName}</td>
                     <td style={{ padding: '12px 16px', color: TEXT }}>{roomLabel(r) ? (/^\d+$/.test(roomLabel(r)) ? `Room ${roomLabel(r)}` : roomLabel(r)) : '—'}</td>
                     <td style={{ padding: '12px 16px', color: TEXT }}>{toDateKey(getDateBooked(r)) || '—'}</td>
-                    <td style={{ padding: '12px 16px', color: TEXT }}>{r.checkIn}</td>
-                    <td style={{ padding: '12px 16px', color: TEXT }}>{r.checkOut}</td>
+                    <td style={{ padding: '12px 16px', color: TEXT }}>{formatDate(r.checkIn)}</td>
+                    <td style={{ padding: '12px 16px', color: TEXT }}>{formatDate(r.checkOut)}</td>
                     <td style={{ padding: '12px 16px', color: TEXT }}>₱{Number(r.totalAmount || 0).toLocaleString()}</td>
                     <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>
                       <span style={{ ...reservationStatusStyle(r.status), padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '600' }}>{String(r.status || 'pending').replace(/-/g, ' ')}</span>

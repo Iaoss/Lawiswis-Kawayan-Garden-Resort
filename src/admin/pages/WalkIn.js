@@ -93,7 +93,7 @@ const bannerVariants = {
 };
 
 export default function WalkIn() {
-  const { settings } = useSettings();
+  const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
 
   // ── Theme tokens (mirrors PageLayout's light/dark palette) ──
@@ -582,7 +582,7 @@ export default function WalkIn() {
                           <div style={{ background: IMG_BG, border: `1px solid ${ACCENT}`, borderRadius: '12px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div>
                               <div style={{ fontSize: '12px', color: dark ? ACCENT : '#166534' }}>{nights} night{nights !== 1 ? 's' : ''} × ₱{Number(selectedRoom.price).toLocaleString()}</div>
-                              <div style={{ fontSize: '11px', color: MUTED, marginTop: '2px' }}>{form.checkIn} → {form.checkOut}</div>
+                              <div style={{ fontSize: '11px', color: MUTED, marginTop: '2px' }}>{formatDate(form.checkIn)} → {formatDate(form.checkOut)}</div>
                             </div>
                             <div style={{ textAlign: 'right' }}>
                               <div style={{ fontSize: '11px', color: MUTED }}>Total Amount</div>
