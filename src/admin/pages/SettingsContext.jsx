@@ -121,7 +121,7 @@ export function SettingsProvider({ children }) {
 
       timer = setTimeout(() => {
         import('firebase/auth').then(({ getAuth, signOut }) => {
-          signOut(getAuth()).finally(() => { window.location.href = '/'; });
+          signOut(getAuth()).finally(() => { window.location.href = '/admin/login'; });
         });
       }, IDLE_LOGOUT_MS);
     };

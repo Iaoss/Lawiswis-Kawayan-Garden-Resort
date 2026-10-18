@@ -363,13 +363,13 @@ export default function ReceptionistLayout({ children }) {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
         if (userDoc.exists()) {
           const data = userDoc.data();
-          if (data.role !== 'receptionist') window.location.href = '/';
+          if (data.role !== 'receptionist') window.location.href = '/admin/login';
           setStaffName(data.name || 'Receptionist');
           setStaffRole(data.role || 'receptionist');
           setStaffEmail(user.email || data.email || '');
         }
       } else {
-        window.location.href = '/';
+        window.location.href = '/admin/login';
       }
     });
 
@@ -384,7 +384,7 @@ export default function ReceptionistLayout({ children }) {
 
   const handleLogout = async () => {
     await signOut(auth);
-    window.location.href = '/';
+    window.location.href = '/admin/login';
   };
 
   const initials = staffName

@@ -383,7 +383,7 @@ export default function Layout({ children }) {
           setAdminRole(userDoc.data().role);
         }
       } else {
-        window.location.href = '/';
+        window.location.href = '/admin/login';
       }
     });
 
@@ -403,7 +403,7 @@ export default function Layout({ children }) {
     };
   }, []);
 
-  const handleLogout = async () => { await signOut(auth); window.location.href = '/'; };
+  const handleLogout = async () => { await signOut(auth); window.location.href = '/admin/login'; };
 
   const initials = adminName
     ? adminName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
