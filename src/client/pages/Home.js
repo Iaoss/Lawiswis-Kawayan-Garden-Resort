@@ -351,7 +351,7 @@ export default function Home() {
 
     const fetchRooms = async () => {
       const snap = await getDocs(collection(db, 'rooms'));
-      setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.status === 'vacant' || r.status === 'available'));
+      setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => ['vacant', 'available'].includes(String(r.status || '').toLowerCase())));
     };
     fetchRooms();
 

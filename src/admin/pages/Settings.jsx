@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import PageLayout from '../components/PageLayout';
 import { useSettings, DEFAULT_SETTINGS, DASHBOARD_KEYS } from '../components/SettingsContext';
 import { auth } from '../../firebase/firebase';
+import QuickRepliesManager from '../components/QuickRepliesManager';
 
 const ACCENT_COLORS = [
   { label: 'Lime',   value: '#9cb56f' },
@@ -18,6 +19,7 @@ const TABS = [
   { id: 'regional',      label: 'Regional',      icon: 'ti-world' },
   { id: 'dashboard',     label: 'Dashboard',     icon: 'ti-layout-dashboard' },
   { id: 'availability',  label: 'Resort Status', icon: 'ti-building-store' },
+  { id: 'quickReplies',  label: 'Quick Replies', icon: 'ti-message-2-bolt' },
 ];
 
 // ── Sub-components live outside the page component so they are not
@@ -398,6 +400,8 @@ export default function Settings() {
             </button>
           </Section>
         )}
+
+        {activeTab === 'quickReplies' && <QuickRepliesManager t={t} />}
 
         {saved && (
           <div style={{

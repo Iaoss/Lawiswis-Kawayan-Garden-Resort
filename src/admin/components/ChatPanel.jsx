@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/firebase';
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
+import { DEFAULT_QUICK_REPLIES, sortQuickReplies } from './quickReplyDefaults';
 
 const PANEL_WIDTH = 400;
 
@@ -39,10 +40,11 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
   }, []);
 
   useEffect(() => {
-    const q = query(collection(db, 'faqs'), orderBy('order', 'asc'));
-    const unsub = onSnapshot(q, (snap) => setFaqs(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsub = onSnapshot(collection(db, 'faqs'), (snap) => setFaqs(sortQuickReplies(snap.docs.map(d => ({ id: d.id, ...d.data() })))));
     return () => unsub();
   }, []);
+
+  const quickReplies = faqs.length ? faqs : DEFAULT_QUICK_REPLIES;
 
   useEffect(() => {
     if (!selected) return;
@@ -224,11 +226,11 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
                     <div style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER}`, fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                       Quick Replies
                     </div>
-                    {faqs.length === 0 ? (
+                    {quickReplies.length === 0 ? (
                       <div style={{ padding: 16, fontSize: 12, color: MUTED, textAlign: 'center' }}>
                         No quick replies yet. Add some in Settings → Quick Replies.
                       </div>
-                    ) : faqs.map(faq => (
+                    ) : quickReplies.map(faq => (
                       <div key={faq.id} onClick={() => insertFaqAnswer(faq)}
                         style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER}`, cursor: 'pointer' }}
                         onMouseEnter={e => e.currentTarget.style.background = HOVER_BG}

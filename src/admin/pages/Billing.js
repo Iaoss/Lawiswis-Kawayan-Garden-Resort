@@ -214,11 +214,22 @@ export default function Billing() {
     if (totalBalance(selected) > 0) return alert('Guest still has a balance. Settle it before checkout.');
     await updateDoc(doc(db, 'reservations', selected.id), { status: 'checked-out' });
     if (selected.roomId) {
-      await updateDoc(doc(db, 'rooms', selected.roomId), { status: 'vacant' });
+      await updateDoc(doc(db, 'rooms', selected.roomId), { status: 'cleaning' });
     }
+    try {
+      const token = await auth.currentUser.getIdToken();
+      await fetch('/api/send-thank-you', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reservationId: selected.id }),
+      });
+    } catch (thankYouError) {
+      console.warn('Thank-you email skipped:', thankYouError.message);
+    }
+    const roomLabel = selected.roomName || 'The room';
     setSelected(null);
     fetchReservations();
-    setSuccess('Guest checked out.');
+    setSuccess(`Guest has checked out. ${roomLabel} is now under cleaning/maintenance.`);
   };
 
   const inp = {

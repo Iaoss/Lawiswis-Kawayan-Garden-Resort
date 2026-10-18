@@ -95,7 +95,7 @@ const peso = value => `₱${Number(value || 0).toLocaleString('en-PH')}`;
 
 /* Merge a Firestore room with the catalog entry that matches its name. */
 function decorateRoom(room, index) {
-  const key = String(room.name || room.roomNumber || '').trim().toLowerCase();
+  const key = String(room.name || room.roomName || room.roomNumber || '').trim().toLowerCase();
   const entry = CATALOG[key];
   const group = entry ? GROUPS[entry.group] : null;
   const groupTitle = group ? group.title : (room.type ? String(room.type) : OTHER_GROUP.title);
@@ -104,7 +104,7 @@ function decorateRoom(room, index) {
   return {
     ...room,
     key,
-    title: entry?.name || room.name || `Room ${room.roomNumber}`,
+    title: entry?.name || room.name || room.roomName || `Room ${room.roomNumber}`,
     groupTitle,
     capacity: group?.capacity || '',
     cover,

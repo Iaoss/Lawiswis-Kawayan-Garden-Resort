@@ -103,7 +103,7 @@ export default function Reservations() {
           const roomRef = doc(db, 'rooms', reservation.roomId);
           const roomSnap = await getDoc(roomRef);
           if (roomSnap.exists() && roomSnap.data().status === 'occupied') {
-            await updateDoc(roomRef, { status: 'vacant' });
+            await updateDoc(roomRef, { status: 'cleaning' });
           }
         } catch (roomErr) {
           console.warn('Expired room release skipped:', roomErr.message);
@@ -196,11 +196,26 @@ const updateStatus = async (id, status, reason = '') => {
       try {
         if (status === 'checked-in') {
           await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'occupied' });
-        } else if (status === 'checked-out' || status === 'cancelled' || status === 'confirmed' || status === 'pending') {
+        } else if (status === 'checked-out') {
+          await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'cleaning' });
+          setToast({ type: 'success', text: `Guest has checked out. ${reservation.roomName || 'The room'} is now under cleaning/maintenance.` });
+        } else if (status === 'cancelled' || status === 'confirmed' || status === 'pending') {
           await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
         }
       } catch (roomErr) {
         console.warn('Room status update skipped:', roomErr.message);
+      }
+    }
+    if (status === 'checked-out' && reservation?.status !== 'checked-out') {
+      try {
+        const token = await auth.currentUser.getIdToken();
+        await fetch('/api/send-thank-you', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ reservationId: id }),
+        });
+      } catch (thankYouError) {
+        console.warn('Thank-you email skipped:', thankYouError.message);
       }
     }
     if (status === 'confirmed' && reservation?.status !== 'confirmed') {
@@ -333,6 +348,20 @@ const updateStatus = async (id, status, reason = '') => {
     };
     const c = map[status] || { dbg: '#282827', dtext: '#9ca3af', lbg: '#f3f4f6', ltext: '#4b5563' };
     return dark ? { bg: c.dbg, color: c.dtext } : { bg: c.lbg, color: c.ltext };
+  };
+
+  // Confirmed guests who have not checked in once the scheduled check-in time has passed.
+  const isDelayedArrival = (r) => {
+    if (r.status !== 'confirmed' || !r.checkIn) return false;
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    if (r.checkIn < today) return true;
+    if (r.checkIn > today) return false;
+    const match = /(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(r.checkInTime || '2:00 PM');
+    let hours = match ? Number(match[1]) % 12 : 14;
+    if (match && match[3].toUpperCase() === 'PM') hours += 12;
+    const minutes = match ? Number(match[2]) : 0;
+    return now.getHours() * 60 + now.getMinutes() > hours * 60 + minutes;
   };
 
   const typeBadge = dark
@@ -658,6 +687,11 @@ const updateStatus = async (id, status, reason = '') => {
                         <span style={{ background: b.bg, color: b.color, padding: '4px 12px', borderRadius: '20px', fontSize: '10px', fontWeight: '600', textTransform: 'capitalize' }}>
                           {r.status}
                         </span>
+                        {isDelayedArrival(r) && (
+                          <div title="Guest has not checked in yet. Contact the guest or hold the reservation." style={{ marginTop: '6px', background: '#fef3c7', color: '#b45309', padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '700', display: 'inline-block' }}>
+                            Delayed Arrival / Pending Check-In
+                          </div>
+                        )}
                       </td>
                       <td onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ padding: '14px 16px', fontSize: '12px', verticalAlign: 'top', cursor: 'default' }}>
                         {isReceptionist ? (

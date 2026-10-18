@@ -183,6 +183,11 @@ export default function RoomExcelImport({ onImportComplete }) {
           // Keep the legacy display field populated until all existing room
           // consumers are migrated to roomName.
           roomNumber:  row.roomName,
+          // The guest site matches rooms by `name`; admin-created rooms use baseCapacity.
+          name:        row.roomName,
+          baseCapacity: Number(row.capacity),
+          isActive:    true,
+          isPublished: true,
           // Normalized to canonical Title Case regardless of how it was typed
           // in the spreadsheet, so category matching elsewhere never breaks.
           type:        normalizeType(row.type),

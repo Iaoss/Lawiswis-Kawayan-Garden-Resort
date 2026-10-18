@@ -265,11 +265,17 @@ export default function RoomManagement() {
     fetchRooms();
   };
 
+  const markCleaned = async (room) => {
+    await updateDoc(doc(db, 'rooms', room.id), { status: 'available' });
+    setActiveRoom(prev => (prev?.id === room.id ? { ...prev, status: 'available' } : prev));
+    fetchRooms();
+  };
+
   const statCards = [
     { label: 'Total',       value: rooms.length,                                                         color: TEXT,      icon: 'ti-building',        filterKind: 'all',      filterValue: '' },
     { label: 'Available',   value: rooms.filter(r => ['vacant','available'].includes(r.status)).length,  color: LIME,      icon: 'ti-circle-check',    filterKind: 'status',   filterValue: 'available' },
     { label: 'Occupied',    value: rooms.filter(r => r.status === 'occupied').length,                    color: '#f87171', icon: 'ti-door',            filterKind: 'status',   filterValue: 'occupied' },
-    { label: 'Maintenance', value: rooms.filter(r => r.status === 'maintenance').length,                 color: '#94a3b8', icon: 'ti-tool',            filterKind: 'status',   filterValue: 'maintenance' },
+    { label: 'Maintenance', value: rooms.filter(r => ['maintenance', 'cleaning'].includes(r.status)).length, color: '#94a3b8', icon: 'ti-tool',            filterKind: 'status',   filterValue: 'maintenance' },
     { label: 'Standard',    value: rooms.filter(r => r.type === 'Standard').length,                      color: '#60a5fa', icon: 'ti-bed',             filterKind: 'roomType', filterValue: 'Standard' },
     { label: 'Deluxe',      value: rooms.filter(r => r.type === 'Deluxe').length,                        color: '#a78bfa', icon: 'ti-star',            filterKind: 'roomType', filterValue: 'Deluxe' },
     { label: 'Family Room', value: rooms.filter(r => r.type === 'FamilyRoom').length,                    color: '#fbbf24', icon: 'ti-users',           filterKind: 'roomType', filterValue: 'FamilyRoom' },
@@ -318,9 +324,11 @@ export default function RoomManagement() {
     const matchesType = filterType ? (normalizedType === filterType || r.type === filterType) : true;
     const matchesStatus = statusFilter === 'available'
       ? ['vacant', 'available'].includes(r.status)
-      : statusFilter
-        ? r.status === statusFilter
-        : true;
+      : statusFilter === 'maintenance'
+        ? ['maintenance', 'cleaning'].includes(r.status)
+        : statusFilter
+          ? r.status === statusFilter
+          : true;
     return matchesSearch && matchesType && matchesStatus;
   });
 
@@ -756,6 +764,12 @@ export default function RoomManagement() {
                   <div style={{ fontSize: 11, color: dark ? '#89D7B7' : '#428475', fontWeight: 500 }}>
                     {activeRoom.type} · {TYPE_CATEGORY_MAP[activeRoom.type] || ''}
                   </div>
+                  {['cleaning', 'maintenance'].includes(activeRoom.status) && (
+                    <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => markCleaned(activeRoom)}
+                      style={{ marginTop: 10, padding: '7px 14px', background: LIME, border: 'none', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', color: DARK }}>
+                      Mark as Cleaned
+                    </motion.button>
+                  )}
                 </div>
 
                 <div style={{
