@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { db, auth } from '../../firebase/firebase';
-import { collection, getDocs, getDoc, updateDoc, doc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, getDoc, setDoc, updateDoc, doc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
@@ -13,7 +13,12 @@ const QUICK_VIEWS = {
   'checked-in': { label: 'Currently checked in', status: 'checked-in', sortBy: 'checkin', sortDir: 'desc' },
   'checked-out': { label: 'Checked out', status: 'checked-out', sortBy: 'checkin', sortDir: 'desc' },
   'pending-payment': { label: 'Pending payments', sortBy: 'booked', sortDir: 'desc' },
+  overstayed: { label: 'Overstayed guests', status: 'checked-in', sortBy: 'checkin', sortDir: 'asc' },
 };
+
+// ── Overstay configuration ──
+const OVERSTAY_GRACE_MINUTES = 0;            // set e.g. 30 for a grace period
+const DEFAULT_CHECKOUT_TIME = '12:00 PM';    // used when r.checkOutTime is missing
 
 const localToday = () => {
   const d = new Date();
@@ -21,7 +26,56 @@ const localToday = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-const matchesQuickView = (r, view) => {
+const parseClock = (str, fallback) => {
+  const re = /(\d{1,2}):(\d{2})\s*(AM|PM)/i;
+  const m = re.exec(str || '') || re.exec(fallback);
+  let h = Number(m[1]) % 12;
+  if (m[3].toUpperCase() === 'PM') h += 12;
+  return { h, min: Number(m[2]) };
+};
+
+const scheduledCheckOut = (r) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(r.checkOut || '');
+  if (!m) return null;
+  const { h, min } = parseClock(r.checkOutTime, DEFAULT_CHECKOUT_TIME);
+  return new Date(+m[1], +m[2] - 1, +m[3], h, min);
+};
+
+const formatDuration = (ms) => {
+  const mins = Math.floor(ms / 60000);
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${mins % 60}m`;
+  return `${mins}m`;
+};
+
+// Returns null when the guest is not overstaying.
+const getOverstay = (r, now) => {
+  if (r.status !== 'checked-in') return null;
+  const end = scheduledCheckOut(r);
+  if (!end) return null;
+  const ms = now - end - OVERSTAY_GRACE_MINUTES * 60000;
+  return ms > 0 ? { ms, label: formatDuration(ms) } : null;
+};
+
+const outstandingAmount = (reservation) =>
+  Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0) - Number(reservation.amountPaid || 0);
+
+const hasOutstandingBalance = (reservation) => Math.round(outstandingAmount(reservation) * 100) > 0;
+
+// Auto-release only applies to non-checked-in bookings. Checked-in guests past
+// checkout must be handled by staff (overstay), never silently checked out.
+const isAutoReleasable = (r) => {
+  if (!r.checkOut || hasOutstandingBalance(r) || ['checked-out', 'cancelled', 'checked-in'].includes(r.status)) return false;
+  const checkOut = new Date(`${r.checkOut}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return !isNaN(checkOut.getTime()) && checkOut < today;
+};
+
+const matchesQuickView = (r, view, now = new Date()) => {
+  if (view === 'overstayed') return !!getOverstay(r, now);
   if (view === 'arrivals') return r.checkIn === localToday() && r.status !== 'cancelled';
   if (view === 'departures') return r.checkOut === localToday() && r.status !== 'cancelled';
   if (view === 'pending-payment') return r.paymentStatus === 'pending' && r.status !== 'cancelled';
@@ -82,50 +136,43 @@ export default function Reservations() {
   const [selectedId, setSelectedId]     = useState(null);
   const [autoOpened, setAutoOpened]     = useState(false);
   const [loaded, setLoaded]             = useState(false);
+  const [now, setNow]                   = useState(() => new Date());
+  const notifiedRef = useRef(new Set());
+  const toastedRef  = useRef(false);
   const perPage = 10;
-  const hasOutstandingBalance = (reservation) => Math.round((
-    Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0) - Number(reservation.amountPaid || 0)
-  ) * 100) > 0;
 
-  const releaseExpiredRooms = useCallback(async (data) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const expired = data.filter(r => {
-      if (!r.checkOut || hasOutstandingBalance(r) || ['checked-out', 'cancelled'].includes(r.status)) return false;
-      const checkOut = new Date(`${r.checkOut}T00:00:00`);
-      return !isNaN(checkOut.getTime()) && checkOut < today;
-    });
+  // Re-evaluate overstays every minute without needing a page reload
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(t);
+  }, []);
 
+  const releaseExpiredRooms = useCallback(async (expired) => {
     await Promise.all(expired.map(async reservation => {
-      await updateDoc(doc(db, 'reservations', reservation.id), { status: 'checked-out' });
-      if (reservation.roomId) {
-        try {
+      try {
+        await updateDoc(doc(db, 'reservations', reservation.id), { status: 'checked-out' });
+        if (reservation.roomId) {
           const roomRef = doc(db, 'rooms', reservation.roomId);
           const roomSnap = await getDoc(roomRef);
           if (roomSnap.exists() && roomSnap.data().status === 'occupied') {
             await updateDoc(roomRef, { status: 'cleaning' });
           }
-        } catch (roomErr) {
-          console.warn('Expired room release skipped:', roomErr.message);
         }
+      } catch (err) {
+        console.warn('Expired room release skipped:', err.message);
       }
     }));
-
-    return expired.map(r => ({ ...r, status: 'checked-out' }));
   }, []);
 
   const fetchReservations = useCallback(async () => {
     const snap = await getDocs(collection(db, 'reservations'));
     let data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (isAdmin) {
-      const expired = data.filter(r => {
-        if (!r.checkOut || hasOutstandingBalance(r) || ['checked-out', 'cancelled'].includes(r.status)) return false;
-        const checkOut = new Date(`${r.checkOut}T00:00:00`);
-        return !isNaN(checkOut.getTime()) && checkOut < new Date(new Date().setHours(0, 0, 0, 0));
-      });
+      const expired = data.filter(isAutoReleasable);
       if (expired.length) {
-        await releaseExpiredRooms(data);
-        data = data.map(r => expired.some(item => item.id === r.id) ? { ...r, status: 'checked-out' } : r);
+        await releaseExpiredRooms(expired);
+        const ids = new Set(expired.map(r => r.id));
+        data = data.map(r => ids.has(r.id) ? { ...r, status: 'checked-out' } : r);
       }
     }
     data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
@@ -161,83 +208,143 @@ export default function Reservations() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedId]);
 
+  // ── Overstay detection + notifications (admin and receptionist) ──
+  const overstayed = useMemo(
+    () => reservations.map(r => ({ r, info: getOverstay(r, now) })).filter(x => x.info),
+    [reservations, now]
+  );
+
+  useEffect(() => {
+    if (!overstayed.length) return;
+
+    // 1) Toast once per session, visible to both roles
+    if (!toastedRef.current) {
+      toastedRef.current = true;
+      setToast(t => t || {
+        type: 'error',
+        text: `${overstayed.length} guest${overstayed.length > 1 ? 's have' : ' has'} overstayed past check-out time.`,
+      });
+    }
+
+    // 2) Persistent notification, one doc per overstay (deterministic ID, so no duplicates)
+    overstayed.forEach(async ({ r }) => {
+      const key = `overstay-${r.id}-${r.checkOut}`;
+      if (notifiedRef.current.has(key)) return;
+      notifiedRef.current.add(key);
+      try {
+        const ref = doc(db, 'notifications', key);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) {
+          await setDoc(ref, {
+            type: 'overstay',
+            reservationId: r.id,
+            guestName: r.guestName || 'Guest',
+            roomNumber: r.roomNumber || null,
+            scheduledCheckOut: r.checkOut,
+            message: `${r.guestName || 'Guest'} (Room ${r.roomNumber || '—'}) has overstayed past check-out.`,
+            audience: ['admin', 'receptionist'],
+            resolved: false,
+            createdAt: serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        console.warn('Overstay notification could not be saved:', err.message);
+      }
+    });
+  }, [overstayed]);
+
   const openCancellationDialog = (kind, reservation) => {
     setCancelReason(kind === 'approve' ? reservation.cancellationReason || '' : '');
     setCancelDialog({ kind, reservation });
   };
 
-const updateStatus = async (id, status, reason = '') => {
-  const reservation = reservations.find(r => r.id === id);
-  if (isReceptionist && reservation?.status === 'cancelled') return;
-  if (status === 'cancelled') {
-    await updateDoc(doc(db, 'reservations', id), {
-      status: 'cancelled',
-      cancellationRequested: false,
-      cancellationReason: reason,
-    });
-    if (reservation?.roomId) {
-      try {
-        await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
-      } catch (roomErr) {
-        console.warn('Room status update skipped:', roomErr.message);
-      }
-    }
-    await fetchReservations();
-    return;
-  }
-  if (status === 'checked-out' && reservation && hasOutstandingBalance(reservation)) {
-    alert('The outstanding balance must be paid before checking out this guest.');
-    return;
-  }
-  try {
-    await updateDoc(doc(db, 'reservations', id), { status });
-
-    if (reservation?.roomId) {
-      try {
-        if (status === 'checked-in') {
-          await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'occupied' });
-        } else if (status === 'checked-out') {
-          await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'cleaning' });
-          setToast({ type: 'success', text: `Guest has checked out. ${reservation.roomName || 'The room'} is now under cleaning/maintenance.` });
-        } else if (status === 'cancelled' || status === 'confirmed' || status === 'pending') {
+  const updateStatus = async (id, status, reason = '') => {
+    const reservation = reservations.find(r => r.id === id);
+    if (isReceptionist && reservation?.status === 'cancelled') return;
+    if (status === 'cancelled') {
+      await updateDoc(doc(db, 'reservations', id), {
+        status: 'cancelled',
+        cancellationRequested: false,
+        cancellationReason: reason,
+      });
+      if (reservation?.roomId) {
+        try {
           await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
+        } catch (roomErr) {
+          console.warn('Room status update skipped:', roomErr.message);
         }
-      } catch (roomErr) {
-        console.warn('Room status update skipped:', roomErr.message);
       }
+      await fetchReservations();
+      return;
     }
-    if (status === 'checked-out' && reservation?.status !== 'checked-out') {
-      try {
-        const token = await auth.currentUser.getIdToken();
-        await fetch('/api/send-thank-you', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ reservationId: id }),
+    if (status === 'checked-out' && reservation) {
+      const overstay = getOverstay(reservation, new Date());
+      if (hasOutstandingBalance(reservation)) {
+        setToast({
+          type: 'error',
+          text: overstay
+            ? `Cannot check out: guest overstayed by ${overstay.label} and has an unpaid balance. Add the overstay charge and collect payment first.`
+            : 'The outstanding balance must be paid before checking out this guest.',
         });
-      } catch (thankYouError) {
-        console.warn('Thank-you email skipped:', thankYouError.message);
+        return;
       }
     }
-    if (status === 'confirmed' && reservation?.status !== 'confirmed') {
-      try {
-        const token = await auth.currentUser.getIdToken();
-        const response = await fetch('/api/send-reservation-confirmation', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ reservationId: id }),
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.error || 'Confirmation email could not be sent.');
-        setToast({ type: 'success', text: result.sent ? 'Booking confirmation email sent.' : result.alreadySent ? 'Booking confirmation email was already sent.' : 'Confirmation email is being sent.' });
-      } catch (emailError) {
-        setToast({ type: 'error', text: emailError.message || 'Confirmation email failed to send.' });
+    try {
+      await updateDoc(doc(db, 'reservations', id), { status });
+
+      if (status === 'checked-out' && reservation) {
+        try {
+          await updateDoc(doc(db, 'notifications', `overstay-${id}-${reservation.checkOut}`), { resolved: true });
+        } catch { /* no notification existed, or no permission; safe to ignore */ }
       }
+
+      if (reservation?.roomId) {
+        try {
+          if (status === 'checked-in') {
+            await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'occupied' });
+          } else if (status === 'checked-out') {
+            await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'cleaning' });
+            setToast({ type: 'success', text: `Guest has checked out. ${reservation.roomName || 'The room'} is now under cleaning/maintenance.` });
+          } else if (status === 'cancelled' || status === 'confirmed' || status === 'pending') {
+            await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
+          }
+        } catch (roomErr) {
+          console.warn('Room status update skipped:', roomErr.message);
+        }
+      }
+      if (status === 'checked-out' && reservation?.status !== 'checked-out') {
+        try {
+          const token = await auth.currentUser.getIdToken();
+          await fetch('/api/send-thank-you', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ reservationId: id }),
+          });
+        } catch (thankYouError) {
+          console.warn('Thank-you email skipped:', thankYouError.message);
+        }
+      }
+      if (status === 'confirmed' && reservation?.status !== 'confirmed') {
+        try {
+          const token = await auth.currentUser.getIdToken();
+          const response = await fetch('/api/send-reservation-confirmation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ reservationId: id }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || 'Confirmation email could not be sent.');
+          setToast({ type: 'success', text: result.sent ? 'Booking confirmation email sent.' : result.alreadySent ? 'Booking confirmation email was already sent.' : 'Confirmation email is being sent.' });
+        } catch (emailError) {
+          setToast({ type: 'error', text: emailError.message || 'Confirmation email failed to send.' });
+        }
+      }
+      await fetchReservations();
+    } catch (error) {
+      setToast({ type: 'error', text: error.message || 'Reservation status could not be updated.' });
     }
-    await fetchReservations();
-  } catch (error) {
-    setToast({ type: 'error', text: error.message || 'Reservation status could not be updated.' });
-  }
-};
+  };
+
   // ── Cancellation request flow (receptionist requests, admin approves/denies) ──
   const requestCancellation = async (id, reason) => {
     await updateDoc(doc(db, 'reservations', id), {
@@ -246,7 +353,7 @@ const updateStatus = async (id, status, reason = '') => {
       cancellationRequestedAt: serverTimestamp(),
       cancellationReason: reason.trim(),
     });
-      await fetchReservations();
+    await fetchReservations();
   };
 
   const decideRequest = async (action, reservation, extra = {}) => {
@@ -295,11 +402,11 @@ const updateStatus = async (id, status, reason = '') => {
     }
   };
 
-    const approveCancellation = async (reservation, reason) => {
+  const approveCancellation = async (reservation, reason) => {
     await updateDoc(doc(db, 'reservations', reservation.id), {
       status: 'cancelled',
       cancellationRequested: false,
-        cancellationReason: reason.trim(),
+      cancellationReason: reason.trim(),
     });
     if (reservation.roomId) {
       try {
@@ -353,15 +460,15 @@ const updateStatus = async (id, status, reason = '') => {
   // Confirmed guests who have not checked in once the scheduled check-in time has passed.
   const isDelayedArrival = (r) => {
     if (r.status !== 'confirmed' || !r.checkIn) return false;
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const n = new Date();
+    const today = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
     if (r.checkIn < today) return true;
     if (r.checkIn > today) return false;
     const match = /(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(r.checkInTime || '2:00 PM');
     let hours = match ? Number(match[1]) % 12 : 14;
     if (match && match[3].toUpperCase() === 'PM') hours += 12;
     const minutes = match ? Number(match[2]) : 0;
-    return now.getHours() * 60 + now.getMinutes() > hours * 60 + minutes;
+    return n.getHours() * 60 + n.getMinutes() > hours * 60 + minutes;
   };
 
   const typeBadge = dark
@@ -378,7 +485,7 @@ const updateStatus = async (id, status, reason = '') => {
 
   const filtered = sortRecords(reservations.filter(r => {
     const matchFilter = filter === 'all' || r.status === filter;
-    const matchQuick = !quickView || matchesQuickView(r, quickView);
+    const matchQuick = !quickView || matchesQuickView(r, quickView, now);
     const matchSearch =
       r.guestName?.toLowerCase().includes(search.toLowerCase()) ||
       r.roomNumber?.includes(search) ||
@@ -456,6 +563,7 @@ const updateStatus = async (id, status, reason = '') => {
           const s = selectedReservation;
           const sb = statusBadge(s.status);
           const money = v => (v === undefined || v === null || v === '' ? '—' : `₱${Number(v).toLocaleString()}`);
+          const so = getOverstay(s, now);
           const rows = [
             ['Phone Number', s.phone || 'Not provided'],
             ['Email Address', s.email || 'Not provided'],
@@ -464,11 +572,13 @@ const updateStatus = async (id, status, reason = '') => {
             ['Check-in', s.checkIn || '—'],
             ['Check-out', s.checkOut || '—'],
             ['Duration', nights(s)],
+            ['Overstay', so ? `Overstayed by ${so.label}` : 'No'],
             ['Special Requests', s.notes || 'None'],
             ['Payment Status', s.paymentStatus || '—'],
             ['Payment Method', s.paymentMethod || '—'],
             ['Total Amount', money(s.totalAmount)],
             ['Amount Paid', money(s.amountPaid)],
+            ['Balance Due', money(Math.max(0, outstandingAmount(s)))],
           ];
           return (
             <div role="presentation" onClick={event => { if (event.target === event.currentTarget) setSelectedId(null); }}
@@ -490,7 +600,7 @@ const updateStatus = async (id, status, reason = '') => {
                   {rows.map(([label, value]) => (
                     <div key={label} style={{ gridColumn: label === 'Special Requests' ? '1 / -1' : undefined }}>
                       <dt style={{ color: MUTED, fontSize: '11px' }}>{label}</dt>
-                      <dd style={{ color: TEXT, fontSize: '13px', margin: '2px 0 0', textTransform: label === 'Payment Status' ? 'capitalize' : 'none', wordBreak: 'break-word' }}>{value}</dd>
+                      <dd style={{ color: label === 'Overstay' && so ? '#dc2626' : TEXT, fontSize: '13px', margin: '2px 0 0', textTransform: label === 'Payment Status' ? 'capitalize' : 'none', wordBreak: 'break-word' }}>{value}</dd>
                     </div>
                   ))}
                 </dl>
@@ -544,6 +654,40 @@ const updateStatus = async (id, status, reason = '') => {
           </div>
         </div>
 
+        {/* Overstayed guests — admin and receptionist */}
+        {overstayed.length > 0 && (
+          <section role="alert" aria-label="Overstayed guests"
+            style={{ background: dark ? '#3b1212' : '#fef2f2', border: '1px solid #dc2626', borderRadius: '14px', padding: '16px', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px', flexWrap: 'wrap' }}>
+              <div style={{ fontWeight: 700, fontSize: '13px', color: dark ? '#fca5a5' : '#b91c1c' }}>
+                🚨 Overstayed Guests ({overstayed.length})
+              </div>
+              {quickView !== 'overstayed' && (
+                <button onClick={() => { setQuickView('overstayed'); setFilter('checked-in'); setPage(1); }}
+                  style={{ ...inp, padding: '5px 10px', fontSize: '11px' }}>Filter list</button>
+              )}
+            </div>
+            {overstayed.map(({ r, info }) => (
+              <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: '1px solid rgba(220,38,38,0.25)' }}>
+                <div style={{ fontSize: '12px', color: TEXT }}>
+                  <strong>{r.guestName}</strong> — Room {r.roomNumber}
+                  <div style={{ fontSize: '10px', color: MUTED }}>
+                    Overstayed {info.label} · was due {formatDate(r.checkOut)} {r.checkOutTime || DEFAULT_CHECKOUT_TIME}
+                    {r.phone ? ` · ${r.phone}` : ''}
+                    {hasOutstandingBalance(r) ? ' · Unpaid balance' : ''}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={() => setSelectedId(r.id)}
+                    style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>View</button>
+                  <button onClick={() => updateStatus(r.id, 'checked-out')}
+                    style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Check out</button>
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
         {/* Pending Cancellation Requests — admin only */}
         {isAdmin && pendingCancellations.length > 0 && (
           <div style={{ background: CARD, borderRadius: '16px', border: `1px solid ${BORDER}`, padding: '16px', marginBottom: '16px' }}>
@@ -582,17 +726,17 @@ const updateStatus = async (id, status, reason = '') => {
                 {r.refundDecision?.alternatives?.length > 0 && (
                   <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '11px' }}>Options: {r.refundDecision.alternatives.join(' ')}</p>
                 )}
-                  {r.refundRequestStatus === 'needs_review' && (
-                    <label style={{ display: 'inline-grid', gap: 4, margin: '0 10px 10px 0', color: MUTED, fontSize: 11 }}>
-                      Staff-verified refund amount (₱)
-                      <input type="number" min="0.01" step="0.01" value={manualRefunds[r.id] || ''}
-                        onChange={event => setManualRefunds(current => ({ ...current, [r.id]: event.target.value }))}
-                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 7, padding: '8px' }} />
-                    </label>
-                  )}
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button disabled={decisionBusy === r.id || (r.refundRequestStatus === 'needs_review' && !manualRefunds[r.id])}
-                      onClick={() => decideRequest('approve-refund', r, r.refundRequestStatus === 'needs_review' ? { amount: manualRefunds[r.id] } : {})}
+                {r.refundRequestStatus === 'needs_review' && (
+                  <label style={{ display: 'inline-grid', gap: 4, margin: '0 10px 10px 0', color: MUTED, fontSize: 11 }}>
+                    Staff-verified refund amount (₱)
+                    <input type="number" min="0.01" step="0.01" value={manualRefunds[r.id] || ''}
+                      onChange={event => setManualRefunds(current => ({ ...current, [r.id]: event.target.value }))}
+                      style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 7, padding: '8px' }} />
+                  </label>
+                )}
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button disabled={decisionBusy === r.id || (r.refundRequestStatus === 'needs_review' && !manualRefunds[r.id])}
+                    onClick={() => decideRequest('approve-refund', r, r.refundRequestStatus === 'needs_review' ? { amount: manualRefunds[r.id] } : {})}
                     style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Approve &amp; refund</button>
                   <button disabled={decisionBusy === r.id} onClick={() => decideRequest('reject-refund', r)}
                     style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Reject</button>
@@ -657,6 +801,7 @@ const updateStatus = async (id, status, reason = '') => {
               ) : (
                 paged.map(r => {
                   const b = statusBadge(r.status);
+                  const overstay = getOverstay(r, now);
                   return (
                     <tr key={r.id} role="button" tabIndex={0}
                       onClick={() => setSelectedId(r.id)}
@@ -690,6 +835,11 @@ const updateStatus = async (id, status, reason = '') => {
                         {isDelayedArrival(r) && (
                           <div title="Guest has not checked in yet. Contact the guest or hold the reservation." style={{ marginTop: '6px', background: '#fef3c7', color: '#b45309', padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '700', display: 'inline-block' }}>
                             Delayed Arrival / Pending Check-In
+                          </div>
+                        )}
+                        {overstay && (
+                          <div title="Guest is still checked in past the scheduled check-out time." style={{ marginTop: '6px', background: '#fee2e2', color: '#b91c1c', padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: 700, display: 'inline-block' }}>
+                            Overstayed {overstay.label}
                           </div>
                         )}
                       </td>

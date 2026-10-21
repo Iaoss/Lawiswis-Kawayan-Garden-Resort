@@ -217,6 +217,24 @@ export default function WalkIn() {
     });
     await updateDoc(doc(db, 'rooms', form.roomId), { status: 'occupied' });
     let receiptMessage = '';
+    let confirmationMessage = '';
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const response = await fetch('/api/send-reservation-confirmation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reservationId: reservationRef.id }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Confirmation email failed to send.');
+      confirmationMessage = result.sent
+        ? ' Confirmation email sent.'
+        : result.alreadySent
+          ? ' Confirmation email was already sent.'
+          : ' Confirmation email is being sent.';
+    } catch (confirmationError) {
+      confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
+    }
     if (form.paymentStatus === 'paid') {
       try {
         const paymentRef = await addDoc(collection(db, 'payments'), {
@@ -240,7 +258,7 @@ export default function WalkIn() {
         receiptMessage = ` Payment receipt failed: ${receiptError.message || 'email delivery error'}`;
       }
     }
-    setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is now occupied.${receiptMessage}`);
+    setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is now occupied.${confirmationMessage}${receiptMessage}`);
     setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
     setNameErrors({});
     setSelectedRoom(null); setSelectedCategory(null);

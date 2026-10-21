@@ -51,22 +51,21 @@ const statusColors = {
   pending:      ['rgba(251,191,36,0.15)', '#fbbf24'],
 };
 
-const cardGradients = [
-  { from: '#0d9488', to: '#0891b2' },
-  { from: '#7c3aed', to: '#6d28d9' },
-  { from: '#ea580c', to: '#dc2626' },
-  { from: '#db2777', to: '#9333ea' },
+// Vivid gradients (same look as the Payments page cards)
+const statCardGradients = [
+  'linear-gradient(135deg, #a5b4fc 0%, #c4b5fd 100%)', // New Bookings: periwinkle → lavender
+  'linear-gradient(180deg, #a5b4fc 0%, #fdba74 100%)', // Check-In: blue → peach
+  'linear-gradient(135deg, #fdba74 0%, #fb7185 100%)', // Check-Out: orange → pink
+  'linear-gradient(135deg, #89D7B7 0%, #67e8f9 100%)', // Total Revenue: mint → aqua
 ];
 
-// Blob color sets for the animated-gradient effect behind each stat card.
+// Soft white/pastel blobs drifting over each gradient
 const statBlobColors = [
-  ['#dff8ee', '#b6ecd5', '#8cdec0'], // New Bookings — mint
-  ['#e8f2ff', '#bfdcff', '#9fc8f8'], // Check-In — blue
-  ['#fff5e9', '#ffe4ca', '#ffd2b0'], // Check-Out — peach
-  ['#f3f8e3', '#dff0b6', '#c9e38e'], // Total Revenue — lime
+  ['#ffffff', '#e0e7ff', '#ede9fe'],
+  ['#ffffff', '#dbeafe', '#ffedd5'],
+  ['#ffffff', '#ffedd5', '#ffe4e6'],
+  ['#ffffff', '#d1fae5', '#cffafe'],
 ];
-
-const statCardBackgrounds = ['#effbf5', '#eef6ff', '#fff8f0', '#f6fbe9'];
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -88,10 +87,6 @@ function sameDay(a, b) {
 }
 
 // ── Animated gradient blob background ───────────────────────────
-// Measures its container, then renders a few soft blurred circles per
-// `colors` entry that drift around slowly and loop forever. This is a
-// plain-React/inline-style stand-in for the Tailwind/SVG version — same
-// visual idea (drifting blurred color blobs behind the card content).
 function useContainerSize(ref) {
   const [size, setSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
@@ -109,22 +104,20 @@ function useContainerSize(ref) {
   return size;
 }
 
-function AnimatedGradient({ colors, speed = 0.06, blur = 'medium', dark }) {
+function AnimatedGradient({ colors, speed = 0.06, blur = 'medium' }) {
   const containerRef = useRef(null);
   const { width, height } = useContainerSize(containerRef);
   const circleSize = Math.max(width, height, 120);
 
   const blurPx = blur === 'light' ? '30px' : blur === 'medium' ? '50px' : '80px';
-  const duration = 1 / speed; // mirrors the original's `1 / speed` seconds
+  const duration = 1 / speed;
 
-  // Randomize each blob's start position/size/travel path once per color
-  // set, so it doesn't reshuffle (and look jittery) on every re-render.
+  // Randomize each blob's start position/size/travel path once per color set.
   const blobs = useMemo(() => {
-    const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
     return colors.map(() => ({
       top: `${Math.random() * 50}%`,
       left: `${Math.random() * 50}%`,
-      sizeFactor: randomInt(0.6, 1.4),
+      sizeFactor: 0.6 + Math.random() * 0.8,
       tx: [0, (Math.random() - 0.5) * 140, (Math.random() - 0.5) * 140, (Math.random() - 0.5) * 140, 0],
       ty: [0, (Math.random() - 0.5) * 140, (Math.random() - 0.5) * 140, (Math.random() - 0.5) * 140, 0],
     }));
@@ -147,7 +140,7 @@ function AnimatedGradient({ colors, speed = 0.06, blur = 'medium', dark }) {
               height: circleSize * blobs[i].sizeFactor,
               borderRadius: '9999px',
               background: color,
-              opacity: dark ? 0.22 : 0.3,
+              opacity: 0.4,
             }}
           />
         ))}
@@ -156,8 +149,7 @@ function AnimatedGradient({ colors, speed = 0.06, blur = 'medium', dark }) {
   );
 }
 
-// Staggered text reveal, matching the reference BentoCard's container/item
-// framer-motion variants.
+// Staggered text reveal
 const statContainerVariants = {
   hidden: { opacity: 0 },
   show: { opacity: 1, transition: { staggerChildren: 0.1 } },
@@ -207,6 +199,7 @@ export default function AdminDashboard() {
   });
   const [selectedDay, setSelectedDay] = useState(() => new Date());
   const [loaded, setLoaded] = useState(false);
+
   useEffect(() => {
     const fetchData = async () => {
       const roomsSnap = await getDocs(collection(db, 'rooms'));
@@ -368,11 +361,8 @@ export default function AdminDashboard() {
   const dayActivities = activitiesList.filter(a => dateKey(a.timestamp) === selectedKey);
   const dayReservations = recent.filter(r => dateKey(r.checkIn) === selectedKey);
 
-  // NOTE: these are memoized so their identity stays stable across renders.
-  // Defining components inline (recreated every render) makes React treat
-  // them as brand-new component types on every keystroke, which unmounts
-  // and remounts everything inside <Card> — including form inputs, causing
-  // them to lose focus and the whole section to visibly "reload".
+  // Memoized so their identity stays stable across renders (prevents inputs
+  // inside <Card> from losing focus on every keystroke).
   const Card = useMemo(() => function Card({ children, style = {} }) {
     return (
       <div style={{ background: CARD, borderRadius: '16px', border: `1px solid ${BORDER}`, padding: '18px 20px', ...style }}>
@@ -417,24 +407,29 @@ export default function AdminDashboard() {
         {/* ── Stat Cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${settings.showTotalRevenue === false ? 3 : 4},1fr)`, gap: '14px', marginBottom: '18px' }}>
           {[
-            { label: 'New Bookings',  show: true, value: stats.totalReservations, icon: 'ti-calendar-event', trend: '+8.70%', up: true, to: '/admin/reservations?view=new' },
-            { label: 'Check-In',      show: true, value: stats.checkedIn,         icon: 'ti-login',           trend: '+3.56%', up: true, to: '/admin/reservations?view=checked-in' },
-            { label: 'Check-Out',     show: true, value: stats.checkOuts,         icon: 'ti-logout',          trend: '-1.06%', up: false, to: '/admin/reservations?view=checked-out' },
-            { label: 'Total Revenue', show: settings.showTotalRevenue !== false, value: formatCurrency(stats.totalRevenue), icon:             'ti-currency-peso', trend: '+5.70%', up: true, to: '/admin/payments' },
+            { label: 'New Bookings',  show: true, value: stats.totalReservations, icon: 'ti-calendar-event', trend: '+8.70%', up: true,  to: '/admin/reservations?view=new' },
+            { label: 'Check-In',      show: true, value: stats.checkedIn,         icon: 'ti-login',          trend: '+3.56%', up: true,  to: '/admin/reservations?view=checked-in' },
+            { label: 'Check-Out',     show: true, value: stats.checkOuts,         icon: 'ti-logout',         trend: '-1.06%', up: false, to: '/admin/reservations?view=checked-out' },
+            { label: 'Total Revenue', show: settings.showTotalRevenue !== false, value: formatCurrency(stats.totalRevenue), icon: 'ti-currency-peso', trend: '+5.70%', up: true, to: '/admin/payments' },
           ].map((c, i) => !c.show ? null : (
-                        <div key={c.label}
-                          role="button" tabIndex={0}
-                          onClick={() => navigate(c.to)}
-                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(c.to); } }}
-                          style={{
-                          cursor: 'pointer',
-                          position: 'relative', overflow: 'hidden',
-              borderRadius: '16px', padding: '20px',
-              background: dark ? `linear-gradient(135deg, ${cardGradients[i].from}, ${cardGradients[i].to})` : statCardBackgrounds[i],
-              border: dark ? 'none' : '1px solid #e6ebe7',
-              boxShadow: dark ? `0 8px 32px ${cardGradients[i].from}44` : '0 2px 8px rgba(30, 50, 40, 0.03)',
-            }}>
-              <AnimatedGradient colors={statBlobColors[i]} speed={0.06} blur="medium" dark={dark} />
+            <div
+              key={c.label}
+              role="button"
+              tabIndex={0}
+              onClick={() => navigate(c.to)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(c.to); } }}
+              style={{
+                cursor: 'pointer',
+                position: 'relative',
+                overflow: 'hidden',
+                borderRadius: '20px',
+                padding: '20px',
+                background: statCardGradients[i],
+                border: 'none',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
+              }}
+            >
+              <AnimatedGradient colors={statBlobColors[i]} speed={0.06} blur="medium" />
 
               <motion.div
                 variants={statContainerVariants}
@@ -443,21 +438,25 @@ export default function AdminDashboard() {
                 style={{ position: 'relative', zIndex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
               >
                 <div>
-                  <motion.div variants={statItemVariants} style={{ fontSize: '11px', color: dark ? 'rgba(255,255,255,0.7)' : '#9ca3af', marginBottom: '6px' }}>{c.label}</motion.div>
-                  <motion.div variants={statItemVariants} style={{ fontSize: '28px', fontWeight: '700', color: dark ? '#fff' : TEXT, lineHeight: 1 }}>{c.value}</motion.div>
+                  <motion.div variants={statItemVariants} style={{ fontSize: '11px', color: 'rgba(255,255,255,0.85)', marginBottom: '6px' }}>
+                    {c.label}
+                  </motion.div>
+                  <motion.div variants={statItemVariants} style={{ fontSize: '28px', fontWeight: '700', color: '#fff', lineHeight: 1 }}>
+                    {c.value}
+                  </motion.div>
                   <motion.div variants={statItemVariants} style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <span style={{ color: dark ? (c.up ? '#a7f3d0' : '#fca5a5') : (c.up ? '#16a34a' : '#dc2626'), fontSize: '11px', fontWeight: '600' }}>
+                    <span style={{ color: '#fff', fontSize: '11px', fontWeight: '600' }}>
                       {c.up ? '↑' : '↓'} {c.trend}
                     </span>
-                    <span style={{ fontSize: '10px', color: dark ? 'rgba(255,255,255,0.5)' : '#9ca3af' }}>Last month</span>
+                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>Last month</span>
                   </motion.div>
                 </div>
                 <motion.div variants={statItemVariants} style={{
                   width: '44px', height: '44px', borderRadius: '12px',
-                  background: dark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.04)',
+                  background: 'rgba(255,255,255,0.25)',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <i className={`ti ${c.icon}`} style={{ fontSize: '20px', color: dark ? '#fff' : TEXT }} />
+                  <i className={`ti ${c.icon}`} style={{ fontSize: '20px', color: '#fff' }} />
                 </motion.div>
               </motion.div>
             </div>
@@ -484,8 +483,8 @@ export default function AdminDashboard() {
               {[
                 { label: 'Occupied',  val: occupied,  color: TEAL },
                 { label: 'Reserved',  val: reserved,  color: LIME },
-                { label: 'Available', val: available,  color: '#e7f7a0' },
-                { label: 'Not Ready', val: notReady,   color: '#fde68a' },
+                { label: 'Available', val: available, color: '#e7f7a0' },
+                { label: 'Not Ready', val: notReady,  color: '#fde68a' },
               ].map(s => (
                 <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ width: '10px', height: '10px', borderRadius: '3px', background: s.color, flexShrink: 0 }} />

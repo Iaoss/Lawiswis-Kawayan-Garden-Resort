@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { db, auth } from '../../firebase/firebase';
+import { db, secondaryAuth } from '../../firebase/firebase';
 import { collection, getDocs, updateDoc, doc, setDoc } from 'firebase/firestore';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import Layout from '../components/Layout';
 import { useSettings } from '../components/SettingsContext';
 
@@ -54,14 +54,25 @@ export default function UserManagement() {
   const handleCreate = async (e) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     try {
-      const cred = await createUserWithEmailAndPassword(auth, form.email, form.password);
-      await setDoc(doc(db, 'users', cred.user.uid), {
+      // Create the Auth account on the secondary instance (admin stays logged in)
+      const cred = await createUserWithEmailAndPassword(
+        secondaryAuth,
+        form.email,
+        form.password
+      );
+      const newUid = cred.user.uid;
+      await signOut(secondaryAuth);
+
+      // Write the profile doc with the main app (still signed in as admin)
+      await setDoc(doc(db, 'users', newUid), {
         name: form.name,
         email: form.email,
         role: form.role,
         status: 'active',
       });
+
       setSuccess(`User ${form.name} created successfully!`);
       setForm({ name: '', email: '', password: '', role: 'receptionist' });
       setShowForm(false);

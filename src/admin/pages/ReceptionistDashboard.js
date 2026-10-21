@@ -12,6 +12,25 @@ import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
+// Vivid gradients (same look as the Payments page and Admin dashboard).
+// 5 entries because the receptionist dashboard can show up to 5 stat cards.
+const STAT_CARD_GRADIENTS = [
+  'linear-gradient(135deg, #a5b4fc 0%, #c4b5fd 100%)', // periwinkle → lavender
+  'linear-gradient(180deg, #a5b4fc 0%, #fdba74 100%)', // blue → peach
+  'linear-gradient(135deg, #fdba74 0%, #fb7185 100%)', // orange → pink
+  'linear-gradient(135deg, #89D7B7 0%, #67e8f9 100%)', // mint → aqua
+  'linear-gradient(135deg, #67e8f9 0%, #a5b4fc 100%)', // aqua → periwinkle
+];
+
+// Soft white/pastel blobs drifting over each gradient
+const STAT_BLOB_COLORS = [
+  ['#ffffff', '#e0e7ff', '#ede9fe'],
+  ['#ffffff', '#dbeafe', '#ffedd5'],
+  ['#ffffff', '#ffedd5', '#ffe4e6'],
+  ['#ffffff', '#d1fae5', '#cffafe'],
+  ['#ffffff', '#cffafe', '#e0e7ff'],
+];
+
 // ── date helpers ──────────────────────────────────────────────
 function toJSDate(val) {
   if (!val) return null;
@@ -43,24 +62,6 @@ export default function ReceptionistDashboard() {
   const ACCENT    = settings?.accentColor || '#d4f550';
   const ACCENT_TEXT = dark ? '#0a1a0a' : '#111';
   const DARK_CHIP = dark ? '#0a1a0a' : '#1a2420';
-
-  // Keep receptionist stat cards aligned with the admin dashboard palette.
-  const STAT_BLOB_COLORS = dark
-    ? [
-      ['#0d9488', '#0891b2'],
-      ['#7c3aed', '#6d28d9'],
-      ['#ea580c', '#dc2626'],
-      ['#db2777', '#9333ea'],
-    ]
-    : [
-      ['#dff8ee', '#b6ecd5', '#8cdec0'], // New Bookings — mint
-      ['#e8f2ff', '#bfdcff', '#9fc8f8'], // Check-In — blue
-      ['#fff5e9', '#ffe4ca', '#ffd2b0'], // Check-Out — peach
-      ['#f3f8e3', '#dff0b6', '#c9e38e'],
-    ];
-  const STAT_CARD_BACKGROUNDS = dark
-    ? ['linear-gradient(135deg, #0d9488, #0891b2)', 'linear-gradient(135deg, #7c3aed, #6d28d9)', 'linear-gradient(135deg, #ea580c, #dc2626)', 'linear-gradient(135deg, #db2777, #9333ea)']
-    : ['#effbf5', '#eef6ff', '#fff8f0', '#f6fbe9'];
 
   const [stats, setStats] = useState({ todayArrivals: 0, todayDepartures: 0, checkedIn: 0, pendingPayments: 0, availableRooms: 0, totalRooms: 0 });
   const [arrivals, setArrivals] = useState([]);
@@ -240,14 +241,14 @@ export default function ReceptionistDashboard() {
   };
 
   const cards = [
-    { label: "Today's Arrivals", value: stats.todayArrivals, icon: 'ti-plane-arrival', to: '/receptionist/reservations?view=arrivals', bg: ACCENT, color: ACCENT_TEXT },
-    { label: "Today's Departures", value: stats.todayDepartures, icon: 'ti-plane-departure', to: '/receptionist/reservations?view=departures', bg: DARK_CHIP, color: ACCENT },
-    { label: 'Currently Checked In', value: stats.checkedIn, icon: 'ti-home-check', to: '/receptionist/reservations?view=checked-in', bg: dark ? '#1e3a5f' : '#dbeafe', color: dark ? '#93c5fd' : '#1d4ed8' },
-    { label: 'Pending Payments', value: stats.pendingPayments, icon: 'ti-clock', to: '/receptionist/reservations?view=pending-payment', bg: dark ? '#7f1d1d' : '#fee2e2', color: dark ? '#fca5a5' : '#dc2626' },
-    { label: 'Available Rooms', value: `${stats.availableRooms}/${stats.totalRooms}`, icon: 'ti-bed', to: '/receptionist/rooms', bg: dark ? '#14532d' : '#dcfce7', color: dark ? '#86efac' : '#16a34a' },
+    { label: "Today's Arrivals", value: stats.todayArrivals, icon: 'ti-plane-arrival', to: '/receptionist/reservations?view=arrivals' },
+    { label: "Today's Departures", value: stats.todayDepartures, icon: 'ti-plane-departure', to: '/receptionist/reservations?view=departures' },
+    { label: 'Currently Checked In', value: stats.checkedIn, icon: 'ti-home-check', to: '/receptionist/reservations?view=checked-in' },
+    { label: 'Pending Payments', value: stats.pendingPayments, icon: 'ti-clock', to: '/receptionist/reservations?view=pending-payment' },
+    { label: 'Available Rooms', value: `${stats.availableRooms}/${stats.totalRooms}`, icon: 'ti-bed', to: '/receptionist/rooms' },
   ].filter(c => c.label !== 'Available Rooms' || settings.showOccupancyRate !== false);
 
-  if (!loaded) return <ReceptionistLayout><  DashboardSkeleton /></ReceptionistLayout>;
+  if (!loaded) return <ReceptionistLayout><DashboardSkeleton /></ReceptionistLayout>;
 
   return (
     <ReceptionistLayout>
@@ -270,23 +271,23 @@ export default function ReceptionistDashboard() {
               style={{
                 cursor: 'pointer',
                 position: 'relative', overflow: 'hidden', minHeight: '164px',
-                borderRadius: '16px', padding: '20px',
-                background: STAT_CARD_BACKGROUNDS[index % 4],
-                border: dark ? '1px solid rgba(255,255,255,0.12)' : '1px solid #e6ebe7',
-                boxShadow: dark ? '0 8px 24px rgba(0,0,0,0.2)' : '0 2px 8px rgba(30, 50, 40, 0.03)',
+                borderRadius: '20px', padding: '20px',
+                background: STAT_CARD_GRADIENTS[index % STAT_CARD_GRADIENTS.length],
+                border: 'none',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.08)',
               }}
             >
               <AnimatedGradient
-                colors={STAT_BLOB_COLORS[index % 4]}
+                colors={STAT_BLOB_COLORS[index % STAT_BLOB_COLORS.length]}
                 blur="medium"
                 className="absolute inset-0"
               />
               <div style={{ position: 'relative', zIndex: 1 }}>
-                <div style={{ fontSize: '11px', color: dark ? 'rgba(255,255,255,0.8)' : '#9ca3af', marginBottom: '6px' }}>{c.label}</div>
-                <div style={{ fontSize: '28px', fontWeight: '700', color: dark ? '#fff' : TEXT, lineHeight: 1 }}>{c.value}</div>
+                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.85)', marginBottom: '6px' }}>{c.label}</div>
+                <div style={{ fontSize: '28px', fontWeight: '700', color: '#fff', lineHeight: 1 }}>{c.value}</div>
                 <div style={{ marginTop: '14px' }}>
-                  <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: dark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.04)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <i className={`ti ${c.icon}`} style={{ fontSize: '20px', color: dark ? '#fff' : TEXT }} />
+                  <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <i className={`ti ${c.icon}`} style={{ fontSize: '20px', color: '#fff' }} />
                   </div>
                 </div>
               </div>
