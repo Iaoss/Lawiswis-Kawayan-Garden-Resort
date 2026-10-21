@@ -83,6 +83,433 @@ const matchesQuickView = (r, view, now = new Date()) => {
   return true;
 };
 
+/* ════════════════════════════════════════════════════════════════
+   Reservation board: List / Day / Week / Month views with filters
+   ════════════════════════════════════════════════════════════════ */
+
+const STATUS_COLOR = {
+  pending: '#d97706',
+  confirmed: '#16a34a',
+  'checked-in': '#2563eb',
+  'checked-out': '#9ca3af',
+  cancelled: '#dc2626',
+};
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const DOW_LONG = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const pad2 = n => String(n).padStart(2, '0');
+const toIso = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const fromIso = s => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || '');
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+};
+const shortDate = d => `${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()}`;
+// A stay covers every day from check-in through check-out (inclusive).
+const staysOn = (r, day) => (r.checkIn && r.checkOut ? r.checkIn <= day && day <= r.checkOut : r.checkIn === day);
+const initials = (name = '') =>
+  name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || 'G';
+
+const monthGrid = (cursor) => {
+  const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+  return Array.from({ length: 42 }, (_, i) => new Date(first.getFullYear(), first.getMonth(), 1 - first.getDay() + i));
+};
+
+const tone = (t, name) => {
+  const d = t.dark;
+  const map = {
+    green: [d ? 'rgba(134,239,172,.14)' : '#ecfdf3', d ? '#86efac' : '#15803d'],
+    violet: [d ? 'rgba(196,181,253,.14)' : '#f3efff', d ? '#c4b5fd' : '#7c3aed'],
+    amber: [d ? 'rgba(253,230,138,.14)' : '#fff7e0', d ? '#fde68a' : '#b45309'],
+    red: [d ? 'rgba(252,165,165,.16)' : '#fee2e2', d ? '#fca5a5' : '#b91c1c'],
+    blue: [d ? 'rgba(147,197,253,.14)' : '#e8f1ff', d ? '#93c5fd' : '#1d4ed8'],
+    gray: [t.CARD2, t.MUTED],
+  };
+  return map[name] || map.gray;
+};
+
+function Tag({ t, c = 'gray', title, children }) {
+  const [bg, color] = tone(t, c);
+  return <span title={title} style={{ background: bg, color, borderRadius: 6, padding: '2px 8px', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap' }}>{children}</span>;
+}
+
+function ReservationBoard({
+  reservations, t, formatDate, now,
+  getOverstay: overstayOf, isDelayedArrival, hasOutstandingBalance: owes, nights,
+  onSelect, renderActions,
+}) {
+  const todayIso = toIso(now);
+  const [tab, setTab] = useState('list'); // list | day | week | month
+  const [cursor, setCursor] = useState(() => new Date(now.getFullYear(), now.getMonth(), 1));
+  const [selected, setSelected] = useState(todayIso);
+  const [scope, setScope] = useState('all'); // list tab only: all | day
+  const [type, setType] = useState('all');
+  const [pay, setPay] = useState('all');
+  const [room, setRoom] = useState('all');
+  const [limit, setLimit] = useState(12);
+
+  const types = useMemo(() => [...new Set(reservations.map(r => r.type).filter(Boolean))], [reservations]);
+  const rooms = useMemo(() => [...new Set(reservations.map(r => r.roomNumber).filter(Boolean))].sort(), [reservations]);
+
+  const items = useMemo(() => reservations.filter(r =>
+    (type === 'all' || r.type === type) &&
+    (room === 'all' || r.roomNumber === room) &&
+    (pay === 'all' || (pay === 'unpaid' ? owes(r) : !owes(r)))
+  ), [reservations, type, room, pay, owes]);
+
+  const selectedDate = fromIso(selected) || now;
+  const grid = useMemo(() => monthGrid(cursor), [cursor]);
+  const weekDays = useMemo(() => {
+    const d = fromIso(selected) || now;
+    return Array.from({ length: 7 }, (_, i) => new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay() + i));
+  }, [selected, now]);
+
+  const perDay = useMemo(() => {
+    const map = {};
+    [...grid, ...weekDays].forEach(d => { const k = toIso(d); if (!map[k]) map[k] = items.filter(r => staysOn(r, k)); });
+    return map;
+  }, [grid, weekDays, items]);
+
+  const dayItems = items.filter(r => staysOn(r, selected));
+  const listItems = scope === 'day' ? dayItems : items;
+  const visible = listItems.slice(0, limit);
+  const filtersActive = type !== 'all' || pay !== 'all' || room !== 'all';
+  const showNav = tab !== 'list' || scope === 'day';
+
+  const dayStats = {
+    arriving: items.filter(r => r.checkIn === selected && r.status !== 'cancelled').length,
+    departing: items.filter(r => r.checkOut === selected && r.status !== 'cancelled').length,
+    inHouse: items.filter(r => r.status === 'checked-in' && staysOn(r, selected)).length,
+  };
+
+  const ctl = {
+    background: t.CARD2, border: `1px solid ${t.BORDER2}`, borderRadius: 9, padding: '7px 10px',
+    fontSize: 12, fontFamily: 'inherit', color: t.TEXT, outline: 'none', cursor: 'pointer',
+  };
+  const iconBtn = {
+    width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.BORDER2}`, background: t.CARD2,
+    color: t.TEXT, cursor: 'pointer', fontSize: 14, lineHeight: 1,
+  };
+
+  const moveDay = (n) => {
+    const d = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate() + n);
+    setSelected(toIso(d));
+    setCursor(new Date(d.getFullYear(), d.getMonth(), 1));
+  };
+  const shift = (dir) => {
+    if (tab === 'month') setCursor(c => new Date(c.getFullYear(), c.getMonth() + dir, 1));
+    else if (tab === 'week') moveDay(7 * dir);
+    else moveDay(dir);
+  };
+  const goToday = () => {
+    setSelected(todayIso);
+    setCursor(new Date(now.getFullYear(), now.getMonth(), 1));
+  };
+  const pickDay = (d, nextTab) => {
+    setSelected(toIso(d));
+    setCursor(new Date(d.getFullYear(), d.getMonth(), 1));
+    if (tab === 'list') setScope('day');
+    if (nextTab) setTab(nextTab);
+    setLimit(12);
+  };
+
+  const title = tab === 'month'
+    ? `${MONTHS[cursor.getMonth()]} ${cursor.getFullYear()}`
+    : tab === 'week'
+      ? `${shortDate(weekDays[0])} – ${shortDate(weekDays[6])}, ${weekDays[6].getFullYear()}`
+      : (tab === 'day' || scope === 'day')
+        ? `${DOW_LONG[selectedDate.getDay()]}, ${shortDate(selectedDate)}`
+        : 'All reservations';
+
+  // ── Mini calendar sidebar ──
+  const sidebar = (
+    <aside style={{ width: 250, flex: '0 0 auto', borderRight: `1px solid ${t.BORDER}`, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <button type="button" aria-label="Previous month" style={iconBtn}
+          onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() - 1, 1))}>‹</button>
+        <div style={{ fontSize: 12, fontWeight: 700, color: t.TEXT }}>{MONTHS[cursor.getMonth()]} {cursor.getFullYear()}</div>
+        <button type="button" aria-label="Next month" style={iconBtn}
+          onClick={() => setCursor(c => new Date(c.getFullYear(), c.getMonth() + 1, 1))}>›</button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, textAlign: 'center' }}>
+        {DOW.map((d, i) => <div key={i} style={{ fontSize: 10, color: t.MUTED, padding: '4px 0' }}>{d}</div>)}
+        {grid.map(d => {
+          const k = toIso(d);
+          const inMonth = d.getMonth() === cursor.getMonth();
+          const isSel = showNav && k === selected;
+          const count = perDay[k]?.length || 0;
+          return (
+            <button key={k} type="button" onClick={() => pickDay(d)}
+              style={{
+                position: 'relative', height: 30, borderRadius: 999,
+                border: k === todayIso && !isSel ? `1px solid ${t.ACCENT}` : '1px solid transparent',
+                background: isSel ? t.ACCENT : 'transparent', color: isSel ? t.ACCENT_TEXT : inMonth ? t.TEXT : t.MUTED,
+                opacity: inMonth ? 1 : 0.5, fontSize: 11, fontWeight: count ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit',
+              }}>
+              {d.getDate()}
+              {count > 0 && !isSel && <span style={{ position: 'absolute', bottom: 2, left: '50%', transform: 'translateX(-50%)', width: 4, height: 4, borderRadius: 999, background: t.ACCENT }} />}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 18, fontSize: 11, fontWeight: 700, color: t.TEXT }}>
+        {selected === todayIso ? 'Today' : formatDate(selected)}
+      </div>
+      <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+        {[['Arriving', dayStats.arriving, 'green'], ['Departing', dayStats.departing, 'amber'], ['In house', dayStats.inHouse, 'blue']].map(([label, n, c]) => (
+          <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: t.CARD2, borderRadius: 9, padding: '8px 10px', fontSize: 12, color: t.TEXT }}>
+            {label}<Tag t={t} c={c}>{n}</Tag>
+          </div>
+        ))}
+      </div>
+    </aside>
+  );
+
+  // ── Reservation row (used by List and Day views) ──
+  const row = (r) => {
+    const color = STATUS_COLOR[r.status] || '#9ca3af';
+    const overstay = overstayOf(r, now);
+    const unpaid = owes(r);
+    return (
+      <div key={r.id} role="button" tabIndex={0} onClick={() => onSelect(r.id)}
+        onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelect(r.id); } }}
+        style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: t.CARD, border: `1px solid ${t.BORDER}`, borderRadius: 14, padding: '14px 16px', cursor: 'pointer' }}>
+        <div style={{ width: 78, flex: '0 0 auto' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.TEXT }}>{r.checkInTime || '2:00 PM'}</div>
+          <div style={{ fontSize: 11, color: t.MUTED, marginTop: 2 }}>{r.checkOutTime || '12:00 PM'}</div>
+        </div>
+        <div style={{ width: 3, alignSelf: 'stretch', minHeight: 44, borderRadius: 3, background: color, flex: '0 0 auto' }} />
+        <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: t.TEXT }}>
+            {r.guestName || 'Guest'} <span style={{ fontSize: 10, color: t.MUTED, fontWeight: 500 }}>#{r.id.slice(0, 8).toUpperCase()}</span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
+            <Tag t={t} c="green">Room {r.roomNumber || '—'}{r.roomType ? ` · ${r.roomType}` : ''}</Tag>
+            {r.type && <Tag t={t} c="violet"><span style={{ textTransform: 'capitalize' }}>{r.type}</span></Tag>}
+            <Tag t={t}>{formatDate(r.checkIn)} – {formatDate(r.checkOut)}</Tag>
+            <Tag t={t}>{nights(r)}</Tag>
+            <Tag t={t} c={unpaid ? 'amber' : 'green'}>{unpaid ? 'Unpaid' : 'Paid'}</Tag>
+            {r.cancellationRequested && <Tag t={t} c="red">Cancellation requested</Tag>}
+            {isDelayedArrival(r) && <Tag t={t} c="amber" title="Guest has not checked in yet">Delayed arrival</Tag>}
+            {overstay && <Tag t={t} c="red" title="Still checked in past check-out time">Overstayed {overstay.label}</Tag>}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 150, flex: '0 0 auto' }}>
+          <span style={{ width: 30, height: 30, borderRadius: 999, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, color: '#fff', background: color }}>{initials(r.guestName)}</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, color: t.TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.phone || 'No phone'}</div>
+            <div style={{ fontSize: 10, color: t.MUTED, textTransform: 'capitalize' }}>{r.status}</div>
+          </div>
+        </div>
+        <div onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ flex: '0 0 auto', cursor: 'default' }}>
+          {renderActions(r)}
+        </div>
+      </div>
+    );
+  };
+
+  // ── Compact chip (Week and Month views) ──
+  const chip = (r, k) => (
+    <button key={r.id} type="button" onClick={() => onSelect(r.id)}
+      title={`${r.guestName || 'Guest'} · Room ${r.roomNumber || '—'} · ${r.status}`}
+      style={{
+        textAlign: 'left', border: 'none', borderLeft: `3px solid ${STATUS_COLOR[r.status] || '#9ca3af'}`, borderRadius: 4,
+        background: t.CARD2, color: t.TEXT, fontSize: 10, padding: '3px 6px', cursor: 'pointer', fontFamily: 'inherit',
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', width: '100%',
+        textDecoration: r.status === 'cancelled' ? 'line-through' : 'none',
+      }}>
+      {r.checkIn === k ? '▸ ' : r.checkOut === k ? '◂ ' : ''}{r.guestName || 'Guest'} · {r.roomNumber || '—'}
+    </button>
+  );
+
+  const legend = (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 10, fontSize: 11, color: t.MUTED }}>
+      {Object.entries(STATUS_COLOR).map(([s, c]) => (
+        <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, textTransform: 'capitalize' }}>
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: c }} />{s}
+        </span>
+      ))}
+      <span>▸ check-in day · ◂ check-out day</span>
+    </div>
+  );
+
+  const empty = (text) => <div style={{ textAlign: 'center', padding: '48px 12px', color: t.MUTED, fontSize: 13 }}>{text}</div>;
+
+  // ── Day view: arriving / departing / staying ──
+  const dayView = (() => {
+    const live = dayItems.filter(r => r.status !== 'cancelled');
+    const groups = [
+      ['Arriving', live.filter(r => r.checkIn === selected)],
+      ['Departing', live.filter(r => r.checkIn !== selected && r.checkOut === selected)],
+      ['Staying', live.filter(r => r.checkIn !== selected && r.checkOut !== selected)],
+      ['Cancelled', dayItems.filter(r => r.status === 'cancelled')],
+    ].filter(g => g[1].length);
+    if (!groups.length) return empty('No reservations on this day.');
+    return (
+      <div style={{ display: 'grid', gap: 16 }}>
+        {groups.map(([label, list]) => (
+          <section key={label}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: t.TEXT, marginBottom: 8 }}>{label} <span style={{ color: t.MUTED, fontWeight: 500 }}>({list.length})</span></div>
+            <div style={{ display: 'grid', gap: 10 }}>{list.map(row)}</div>
+          </section>
+        ))}
+      </div>
+    );
+  })();
+
+  // ── Week view: seven day columns ──
+  const weekView = (
+    <div style={{ overflowX: 'auto' }}>
+      <div style={{ minWidth: 840, display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', border: `1px solid ${t.BORDER}`, borderRadius: 12, overflow: 'hidden' }}>
+        {weekDays.map((d, i) => {
+          const k = toIso(d);
+          const list = perDay[k] || [];
+          return (
+            <div key={k} style={{ minHeight: 280, background: t.CARD, borderRight: i < 6 ? `1px solid ${t.BORDER}` : 'none' }}>
+              <button type="button" onClick={() => pickDay(d, 'day')} title="Open this day"
+                style={{ width: '100%', border: 'none', borderBottom: `1px solid ${t.BORDER}`, background: k === selected ? t.CARD2 : 'transparent', padding: '10px 8px', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: t.MUTED }}>{DOW_LONG[d.getDay()]}</div>
+                <div style={{ display: 'inline-grid', placeItems: 'center', width: 28, height: 28, borderRadius: 999, marginTop: 2, fontSize: 13, fontWeight: 700, background: k === todayIso ? t.ACCENT : 'transparent', color: k === todayIso ? t.ACCENT_TEXT : t.TEXT }}>{d.getDate()}</div>
+                <div style={{ fontSize: 10, color: t.MUTED, marginTop: 2 }}>{list.length} booking{list.length !== 1 ? 's' : ''}</div>
+              </button>
+              <div style={{ display: 'grid', gap: 4, padding: 6 }}>
+                {list.map(r => chip(r, k))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {legend}
+    </div>
+  );
+
+  // ── Month view ──
+  const monthView = (
+    <div style={{ overflowX: 'auto' }}>
+      <div style={{ minWidth: 720, display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', border: `1px solid ${t.BORDER}`, borderRadius: 12, overflow: 'hidden' }}>
+        {DOW_LONG.map(d => (
+          <div key={d} style={{ padding: '8px 10px', fontSize: 11, color: t.MUTED, background: t.CARD2, borderBottom: `1px solid ${t.BORDER}` }}>{d}</div>
+        ))}
+        {grid.map((d, i) => {
+          const k = toIso(d);
+          const inMonth = d.getMonth() === cursor.getMonth();
+          const list = perDay[k] || [];
+          return (
+            <div key={k} style={{
+              minHeight: 112, padding: 6, background: t.CARD, opacity: inMonth ? 1 : 0.55,
+              borderRight: i % 7 === 6 ? 'none' : `1px solid ${t.BORDER}`, borderBottom: i >= 35 ? 'none' : `1px solid ${t.BORDER}`,
+            }}>
+              <button type="button" onClick={() => pickDay(d, 'day')} title="Open this day"
+                style={{
+                  border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 700, width: 24, height: 24, borderRadius: 999,
+                  background: k === todayIso ? t.ACCENT : 'transparent', color: k === todayIso ? t.ACCENT_TEXT : t.TEXT,
+                }}>{d.getDate()}</button>
+              <div style={{ display: 'grid', gap: 3, marginTop: 4 }}>
+                {list.slice(0, 3).map(r => chip(r, k))}
+                {list.length > 3 && (
+                  <button type="button" onClick={() => pickDay(d, 'day')}
+                    style={{ textAlign: 'left', border: 'none', background: 'transparent', color: t.MUTED, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', padding: '1px 4px' }}>
+                    +{list.length - 3} more
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {legend}
+    </div>
+  );
+
+  const listView = (
+    <div style={{ display: 'grid', gap: 10 }}>
+      {visible.length === 0
+        ? empty(scope === 'day' ? 'No reservations on this day. Pick another date or switch to All dates.' : 'No reservations match these filters.')
+        : visible.map(row)}
+      {listItems.length > visible.length && (
+        <button type="button" style={{ ...ctl, justifySelf: 'center', fontWeight: 600 }} onClick={() => setLimit(l => l + 12)}>
+          Show more ({listItems.length - visible.length} left)
+        </button>
+      )}
+      {visible.length > 0 && <div style={{ fontSize: 11, color: t.MUTED, textAlign: 'center' }}>Showing {visible.length} of {listItems.length}</div>}
+    </div>
+  );
+
+  return (
+    <div style={{ background: t.CARD, border: `1px solid ${t.BORDER}`, borderRadius: 16, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+        {tab !== 'month' && sidebar}
+
+        <div style={{ flex: '1 1 460px', minWidth: 0, padding: 16 }}>
+          {/* Title, navigation, view tabs */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: t.TEXT }}>{title}</div>
+              {showNav && (
+                <>
+                  <button type="button" aria-label="Previous" style={iconBtn} onClick={() => shift(-1)}>‹</button>
+                  <button type="button" aria-label="Next" style={iconBtn} onClick={() => shift(1)}>›</button>
+                  <button type="button" style={{ ...ctl, fontWeight: 600 }} onClick={goToday}>Today</button>
+                </>
+              )}
+            </div>
+            <div role="tablist" aria-label="Reservation view" style={{ display: 'inline-flex', background: t.CARD2, border: `1px solid ${t.BORDER2}`, borderRadius: 10, padding: 3 }}>
+              {[['list', 'List'], ['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([id, label]) => (
+                <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+                  style={{
+                    border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                    background: tab === id ? t.ACCENT : 'transparent', color: tab === id ? t.ACCENT_TEXT : t.MUTED,
+                  }}>{label}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+            <select aria-label="Booking type" value={type} onChange={e => { setType(e.target.value); setLimit(12); }} style={ctl}>
+              <option value="all">All types</option>
+              {types.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+            <select aria-label="Payment" value={pay} onChange={e => { setPay(e.target.value); setLimit(12); }} style={ctl}>
+              <option value="all">Any payment</option>
+              <option value="paid">Fully paid</option>
+              <option value="unpaid">Unpaid balance</option>
+            </select>
+            <select aria-label="Room" value={room} onChange={e => { setRoom(e.target.value); setLimit(12); }} style={ctl}>
+              <option value="all">All rooms</option>
+              {rooms.map(v => <option key={v} value={v}>Room {v}</option>)}
+            </select>
+            {filtersActive && (
+              <button type="button" style={{ ...ctl, color: t.MUTED }} onClick={() => { setType('all'); setPay('all'); setRoom('all'); }}>Clear filters</button>
+            )}
+            {tab === 'list' && (
+              <div style={{ marginLeft: 'auto', display: 'inline-flex', background: t.CARD2, border: `1px solid ${t.BORDER2}`, borderRadius: 9, padding: 2 }}>
+                {[['all', 'All dates'], ['day', 'Selected day']].map(([id, label]) => (
+                  <button key={id} type="button" onClick={() => { setScope(id); setLimit(12); }}
+                    style={{
+                      border: 'none', borderRadius: 7, padding: '5px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                      background: scope === id ? t.CARD : 'transparent', color: scope === id ? t.TEXT : t.MUTED,
+                    }}>{label}</button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {tab === 'list' && listView}
+          {tab === 'day' && dayView}
+          {tab === 'week' && weekView}
+          {tab === 'month' && monthView}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Reservations page
+   ════════════════════════════════════════════════════════════════ */
+
 export default function Reservations() {
   const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
@@ -132,14 +559,12 @@ export default function Reservations() {
   const [sortBy, setSortBy]             = useState(QUICK_VIEWS[initialView]?.sortBy || 'booked');
   const [sortDir, setSortDir]           = useState(QUICK_VIEWS[initialView]?.sortDir || 'desc');
   const [search, setSearch]             = useState(initialBookingQuery);
-  const [page,   setPage]               = useState(1);
   const [selectedId, setSelectedId]     = useState(null);
   const [autoOpened, setAutoOpened]     = useState(false);
   const [loaded, setLoaded]             = useState(false);
   const [now, setNow]                   = useState(() => new Date());
   const notifiedRef = useRef(new Set());
   const toastedRef  = useRef(false);
-  const perPage = 10;
 
   // Re-evaluate overstays every minute without needing a page reload
   useEffect(() => {
@@ -471,10 +896,6 @@ export default function Reservations() {
     return n.getHours() * 60 + n.getMinutes() > hours * 60 + minutes;
   };
 
-  const typeBadge = dark
-    ? { bg: '#2d1b4e', color: '#c4b5fd' }
-    : { bg: '#ede9fe', color: '#7c3aed' };
-
   const nights = (r) => {
     if (!r.checkIn || !r.checkOut) return '—';
     const n = Math.ceil((new Date(r.checkOut) - new Date(r.checkIn)) / (1000 * 60 * 60 * 24));
@@ -497,18 +918,53 @@ export default function Reservations() {
   const clearQuickView = () => {
     setQuickView('');
     setFilter('all');
-    setPage(1);
     window.history.replaceState(null, '', window.location.pathname);
   };
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const paged      = filtered.slice((page - 1) * perPage, page * perPage);
 
   const inp = {
     background: CARD2, border: `1px solid ${BORDER2}`,
     borderRadius: '10px', padding: '9px 14px',
     fontSize: '12px', fontFamily: "'Poppins', sans-serif",
     color: TEXT, outline: 'none', cursor: 'pointer',
+  };
+
+  // Status control shown on every row of the board (role rules unchanged)
+  const selectStyle = { background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 8px', fontSize: '11px', fontFamily: "'Poppins', sans-serif", cursor: 'pointer', color: TEXT, outline: 'none' };
+  const renderActions = (r) => {
+    if (isReceptionist) {
+      if (r.status === 'cancelled') {
+        return (
+          <span title="Cancelled bookings can only be changed by an admin" style={{ fontSize: '10px', color: MUTED, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+            <i className="ti ti-lock" /> Cancelled – locked
+          </span>
+        );
+      }
+      if (r.cancellationRequested) return <span style={{ fontSize: '10px', color: MUTED }}>Cancellation requested</span>;
+      return (
+        <select value={r.status} style={selectStyle} onChange={e => {
+          if (e.target.value === 'cancelled') openCancellationDialog('request', r);
+          else updateStatus(r.id, e.target.value);
+        }}>
+          <option value="pending">Pending</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="checked-in">Checked-in</option>
+          <option value="checked-out" disabled={hasOutstandingBalance(r)}>Checked-out</option>
+          <option value="cancelled">Request Cancellation</option>
+        </select>
+      );
+    }
+    return (
+      <select value={r.status} style={selectStyle} onChange={e => {
+        if (e.target.value === 'cancelled') openCancellationDialog('cancel', r);
+        else updateStatus(r.id, e.target.value);
+      }}>
+        <option value="pending">Pending</option>
+        <option value="confirmed">Confirmed</option>
+        <option value="checked-in">Checked-in</option>
+        <option value="checked-out" disabled={hasOutstandingBalance(r)}>Checked-out</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+    );
   };
 
   const pendingCancellations = reservations.filter(r => r.cancellationRequested);
@@ -620,7 +1076,7 @@ export default function Reservations() {
             {/* Search */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '10px', padding: '8px 14px' }}>
               <i className="ti ti-search" style={{ fontSize: '14px', color: MUTED }} />
-              <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
+              <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search guest, status, etc"
                 style={{ border: 'none', outline: 'none', fontSize: '12px', fontFamily: "'Poppins', sans-serif", width: '180px', background: 'transparent', color: TEXT }} />
             </div>
@@ -633,11 +1089,11 @@ export default function Reservations() {
             )}
 
             <SortControls sortBy={sortBy} sortDir={sortDir}
-              onSortBy={v => { setSortBy(v); setPage(1); }}
-              onSortDir={v => { setSortDir(v); setPage(1); }} style={inp} />
+              onSortBy={v => setSortBy(v)}
+              onSortDir={v => setSortDir(v)} style={inp} />
 
             {/* Filter */}
-            <select value={filter} onChange={e => { setFilter(e.target.value); setPage(1); }} style={inp}>
+            <select value={filter} onChange={e => setFilter(e.target.value)} style={inp}>
               <option value="all">All status</option>
               <option value="pending">Pending</option>
               <option value="confirmed">Confirmed</option>
@@ -663,7 +1119,7 @@ export default function Reservations() {
                 🚨 Overstayed Guests ({overstayed.length})
               </div>
               {quickView !== 'overstayed' && (
-                <button onClick={() => { setQuickView('overstayed'); setFilter('checked-in'); setPage(1); }}
+                <button onClick={() => { setQuickView('overstayed'); setFilter('checked-in'); }}
                   style={{ ...inp, padding: '5px 10px', fontSize: '11px' }}>Filter list</button>
               )}
             </div>
@@ -779,134 +1235,19 @@ export default function Reservations() {
           </section>
         )}
 
-        {/* Table card */}
-        <div style={{ background: CARD, borderRadius: '16px', border: `1px solid ${BORDER}`, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr>
-                {['Guest', 'Room', 'Request', 'Duration', 'Check-in & Check-out', 'Type', 'Status', 'Action'].map(h => (
-                  <th key={h} style={{ textAlign: 'left', fontSize: '11px', color: MUTED, fontWeight: '500', padding: '14px 16px', borderBottom: `1px solid ${BORDER}`, fontFamily: "'Poppins', sans-serif" }}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paged.length === 0 ? (
-                <tr>
-                  <td colSpan="8" style={{ textAlign: 'center', padding: '48px', color: MUTED, fontSize: '13px' }}>
-                    No reservations found.
-                  </td>
-                </tr>
-              ) : (
-                paged.map(r => {
-                  const b = statusBadge(r.status);
-                  const overstay = getOverstay(r, now);
-                  return (
-                    <tr key={r.id} role="button" tabIndex={0}
-                      onClick={() => setSelectedId(r.id)}
-                      onKeyDown={e => {
-                        if (e.target !== e.currentTarget) return;
-                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedId(r.id); }
-                      }}
-                      style={{ borderBottom: `1px solid ${ROWLINE}`, cursor: 'pointer' }}>
-                      <td style={{ padding: '14px 16px', fontSize: '12px', color: TEXT, verticalAlign: 'top' }}>
-                        <div style={{ fontWeight: '600' }}>{r.guestName}</div>
-                        <div style={{ fontSize: '10px', color: MUTED, marginTop: '2px' }}>{r.id.slice(0, 8).toUpperCase()}</div>
-                      </td>
-                      <td style={{ padding: '14px 16px', fontSize: '12px', color: TEXT, verticalAlign: 'top' }}>
-                        <div>{r.roomNumber}</div>
-                        <div style={{ fontSize: '10px', color: MUTED }}>{r.roomType}</div>
-                      </td>
-                      <td style={{ padding: '14px 16px', fontSize: '12px', color: MUTED, verticalAlign: 'top' }}>{r.notes || 'None'}</td>
-                      <td style={{ padding: '14px 16px', fontSize: '12px', color: TEXT, verticalAlign: 'top' }}>{nights(r)}</td>
-                      <td style={{ padding: '14px 16px', fontSize: '12px', color: TEXT, verticalAlign: 'top' }}>
-                        {formatDate(r.checkIn)} – {formatDate(r.checkOut)}
-                      </td>
-                      <td style={{ padding: '14px 16px', fontSize: '12px', verticalAlign: 'top' }}>
-                        <span style={{ background: typeBadge.bg, color: typeBadge.color, padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '600', textTransform: 'capitalize' }}>
-                          {r.type}
-                        </span>
-                      </td>
-                      <td style={{ padding: '14px 16px', fontSize: '12px', verticalAlign: 'top' }}>
-                        <span style={{ background: b.bg, color: b.color, padding: '4px 12px', borderRadius: '20px', fontSize: '10px', fontWeight: '600', textTransform: 'capitalize' }}>
-                          {r.status}
-                        </span>
-                        {isDelayedArrival(r) && (
-                          <div title="Guest has not checked in yet. Contact the guest or hold the reservation." style={{ marginTop: '6px', background: '#fef3c7', color: '#b45309', padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: '700', display: 'inline-block' }}>
-                            Delayed Arrival / Pending Check-In
-                          </div>
-                        )}
-                        {overstay && (
-                          <div title="Guest is still checked in past the scheduled check-out time." style={{ marginTop: '6px', background: '#fee2e2', color: '#b91c1c', padding: '3px 10px', borderRadius: '20px', fontSize: '10px', fontWeight: 700, display: 'inline-block' }}>
-                            Overstayed {overstay.label}
-                          </div>
-                        )}
-                      </td>
-                      <td onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ padding: '14px 16px', fontSize: '12px', verticalAlign: 'top', cursor: 'default' }}>
-                        {isReceptionist ? (
-                          r.status === 'cancelled' ? (
-                            <span title="Cancelled bookings can only be changed by an admin" style={{ fontSize: '10px', color: MUTED, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                              <i className="ti ti-lock" /> Cancelled – locked
-                            </span>
-                          ) : r.cancellationRequested ? (
-                            <span style={{ fontSize: '10px', color: MUTED }}>Cancellation requested</span>
-                          ) : (
-                            <select value={r.status} onChange={e => {
-                              if (e.target.value === 'cancelled') {
-                                openCancellationDialog('request', r);
-                              } else {
-                                updateStatus(r.id, e.target.value);
-                              }
-                            }}
-                              style={{ background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 8px', fontSize: '11px', fontFamily: "'Poppins', sans-serif", cursor: 'pointer', color: TEXT, outline: 'none' }}>
-                              <option value="pending">Pending</option>
-                              <option value="confirmed">Confirmed</option>
-                              <option value="checked-in">Checked-in</option>
-                              <option value="checked-out" disabled={hasOutstandingBalance(r)}>Checked-out</option>
-                              <option value="cancelled">{r.status === 'cancelled' ? 'Cancelled' : 'Request Cancellation'}</option>
-                            </select>
-                          )
-                        ) : (
-                          <select value={r.status} onChange={e => {
-                            if (e.target.value === 'cancelled') openCancellationDialog('cancel', r);
-                            else updateStatus(r.id, e.target.value);
-                          }}
-                            style={{ background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 8px', fontSize: '11px', fontFamily: "'Poppins', sans-serif", cursor: 'pointer', color: TEXT, outline: 'none' }}>
-                            <option value="pending">Pending</option>
-                            <option value="confirmed">Confirmed</option>
-                            <option value="checked-in">Checked-in</option>
-                            <option value="checked-out" disabled={hasOutstandingBalance(r)}>Checked-out</option>
-                            <option value="cancelled">Cancelled</option>
-                          </select>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-
-          {/* Pagination */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderTop: `1px solid ${BORDER}` }}>
-            <div style={{ fontSize: '11px', color: MUTED }}>
-              Showing {filtered.length === 0 ? 0 : (page - 1) * perPage + 1}–{Math.min(page * perPage, filtered.length)} of {filtered.length}
-            </div>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              {Array.from({ length: Math.min(totalPages, 5) }).map((_, i) => (
-                <button key={i} onClick={() => setPage(i + 1)}
-                  style={{ width: '28px', height: '28px', borderRadius: '8px', border: `1px solid ${BORDER2}`, background: page === i + 1 ? ACCENT : CARD2, fontWeight: page === i + 1 ? '700' : '400', fontSize: '11px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: page === i + 1 ? ACCENT_TEXT : TEXT }}>
-                  {i + 1}
-                </button>
-              ))}
-              <button onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                style={{ width: '28px', height: '28px', borderRadius: '8px', border: `1px solid ${BORDER2}`, background: CARD2, cursor: 'pointer', fontSize: '14px', color: TEXT }}>
-                ›
-              </button>
-            </div>
-          </div>
-        </div>
+        {/* List / Day / Week / Month board */}
+        <ReservationBoard
+          reservations={filtered}
+          t={{ dark, CARD, CARD2, BORDER, BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+          formatDate={formatDate}
+          now={now}
+          getOverstay={getOverstay}
+          isDelayedArrival={isDelayedArrival}
+          hasOutstandingBalance={hasOutstandingBalance}
+          nights={nights}
+          onSelect={setSelectedId}
+          renderActions={renderActions}
+        />
       </div>
     </PageLayout>
   );

@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { auth, db } from '../../firebase/firebase';
-import { collection, addDoc, getDocs, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, onSnapshot, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
@@ -11,14 +11,35 @@ import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/p
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
 
-const getLocalToday = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+const toIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const getLocalToday = () => toIso(new Date());
+const addDays = (iso, n) => {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + n);
+  return toIso(d);
 };
 
-// Same real room photos used in RoomManagement — keyed by room name/number
-// (lowercased) so the walk-in flow shows the same picture as the rest of
-// the app. Falls back to the bed icon when a room name doesn't match.
+/* ── Availability (the double-booking guard) ─────────────────────
+   A room is taken for [checkIn, checkOut) when ANY active reservation
+   (online or walk-in) for that room overlaps. A new guest may arrive on
+   the day another guest leaves. Cancelled and checked-out bookings free
+   the room. Matching is by roomId, or by roomNumber when roomId is missing. */
+const isActiveReservation = (r) => !['cancelled', 'checked-out'].includes(String(r.status || '').toLowerCase());
+const sameRoom = (r, room) => (r.roomId ? r.roomId === room.id : !!r.roomNumber && r.roomNumber === room.roomNumber);
+const overlaps = (r, checkIn, checkOut) => {
+  if (!r.checkIn) return false;
+  const end = r.checkOut && r.checkOut > r.checkIn ? r.checkOut : addDays(r.checkIn, 1); // same-day bookings hold that night
+  return checkIn < end && checkOut > r.checkIn;
+};
+const isBooked = (reservations, room, checkIn, checkOut) =>
+  reservations.some(r => isActiveReservation(r) && sameRoom(r, room) && overlaps(r, checkIn, checkOut));
+const blockedByStatus = (room, checkIn, today) => {
+  const s = String(room.status || '').toLowerCase();
+  if (/maint|out.?of.?(service|order)|blocked|closed/.test(s)) return true;
+  return s === 'cleaning' && checkIn === today; // cleaning only matters for same-day arrivals
+};
+
+// Same real room photos used in RoomManagement — keyed by room name/number (lowercased).
 const ROOM_IMAGES = {
   himbing:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Himbing-01-1400x700-1.jpeg',
   tahimik:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tahimik-02-1400x700-1.jpeg',
@@ -49,44 +70,17 @@ const ROOM_IMAGES = {
   paraiso:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Paraiso-03-1400x700-1.jpeg',
   'main villa': 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Main-Villa-08-1400x700-1.jpeg',
 };
+const getRoomImage = (name) => (name ? ROOM_IMAGES[name.trim().toLowerCase()] || null : null);
 
-function getRoomImage(name) {
-  if (!name) return null;
-  return ROOM_IMAGES[name.trim().toLowerCase()] || null;
-}
-
-// Category icons — Tabler Icons, the same icon font already used everywhere
-// else in the app (ti-search, ti-bed, ti-users, etc.), swapped in for the
-// old emoji. Matched against the category name so it keeps working however
-// WALK_IN_CATEGORIES is worded, with a sensible fallback.
-const CATEGORY_ICON_RULES = [
-  { test: /presidential/i,        icon: 'ti-crown' },
-  { test: /villa/i,                icon: 'ti-building-castle' },
-  { test: /suite/i,                icon: 'ti-sofa' },
-  { test: /family/i,               icon: 'ti-users' },
-  { test: /deluxe/i,               icon: 'ti-star' },
-  { test: /standard/i,             icon: 'ti-bed' },
-];
-function getCategoryIcon(category = '') {
-  const hit = CATEGORY_ICON_RULES.find(r => r.test.test(category));
-  return hit ? hit.icon : 'ti-home';
-}
-
-// ── Motion variants ──────────────────────────────────────────
+const gridItemVariants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: (i) => ({ opacity: 1, y: 0, transition: { delay: Math.min(i, 8) * 0.04, duration: 0.3, ease: 'easeOut' } }),
+};
 const stepVariants = {
   enter:  { opacity: 0, x: 20 },
   center: { opacity: 1, x: 0, transition: { duration: 0.3, ease: 'easeOut' } },
   exit:   { opacity: 0, x: -20, transition: { duration: 0.18, ease: 'easeIn' } },
 };
-
-const gridItemVariants = {
-  hidden: { opacity: 0, y: 12 },
-  visible: (i) => ({
-    opacity: 1, y: 0,
-    transition: { delay: Math.min(i, 8) * 0.04, duration: 0.3, ease: 'easeOut' },
-  }),
-};
-
 const bannerVariants = {
   hidden: { opacity: 0, y: -8, scale: 0.98 },
   visible: { opacity: 1, y: 0, scale: 1, transition: { duration: 0.25, ease: 'easeOut' } },
@@ -106,35 +100,74 @@ export default function WalkIn() {
   const BORDER2 = dark ? '#3a3a38' : '#e5e7eb';
   const TEXT    = dark ? '#f0f0f0' : '#111827';
   const MUTED   = dark ? '#9ca3af' : '#6b7280';
-  const IMG_BG    = dark ? '#0d1f0d' : '#f0fdf4';
-  const IMG_BORDER= dark ? '#2a3a2a' : '#dcfce7';
+  const IMG_BG     = dark ? '#0d1f0d' : '#f0fdf4';
+  const IMG_BORDER = dark ? '#2a3a2a' : '#dcfce7';
   const SUCCESS_BG   = dark ? '#14532d' : '#dcfce7';
   const SUCCESS_TEXT = dark ? '#86efac' : '#15803d';
   const AVAIL_BG    = dark ? '#14532d' : '#dcfce7';
   const AVAIL_TEXT  = dark ? '#86efac' : '#15803d';
-  const UNAVAIL_BG   = dark ? '#7f1d1d' : '#fee2e2';
-  const UNAVAIL_TEXT = dark ? '#fca5a5' : '#b91c1c';
-  const ICON_BOX_BG  = dark ? 'rgba(156,181,111,0.14)' : '#eef6e4';
 
-  const [rooms,            setRooms]            = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState(null);
-  const [selectedRoom,     setSelectedRoom]     = useState(null);
-  const [step,             setStep]             = useState(1);
-  const [success,          setSuccess]          = useState('');
+  const [rooms, setRooms] = useState([]);
+  const [reservations, setReservations] = useState([]);
+  const [catFilter, setCatFilter] = useState('all');
+  const [selectedRoom, setSelectedRoom] = useState(null);
+  const [step, setStep] = useState(1); // 1 = dates & room, 2 = guest details
+  const [success, setSuccess] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [upsellOpen, setUpsellOpen] = useState(false);
+  const [nameErrors, setNameErrors] = useState({});
   const [form, setForm] = useState({
     firstName: '', lastName: '', email: '', phone: '', address: '', preferredContactMethod: '',
     roomId: '', checkIn: '', checkOut: '',
     adults: 1, children: 0,
     paymentMethod: 'cash', paymentStatus: 'paid', notes: '',
   });
-  const [nameErrors, setNameErrors] = useState({});
-  const guestName = joinGuestName(form.firstName, form.lastName);
-  const [totalAmount, setTotalAmount] = useState(0);
-  const [nights,      setNights]      = useState(0);
 
   const today = getLocalToday();
-  const [upsellOpen, setUpsellOpen] = useState(false);
+  const guestName = joinGuestName(form.firstName, form.lastName);
   const coupleGuestLimit = isCoupleRoom(selectedRoom) ? getRoomMaximumGuests(selectedRoom) : null;
+
+  // Live data: new online bookings show up here immediately, so availability stays current.
+  useEffect(() => {
+    const unsubRooms = onSnapshot(collection(db, 'rooms'),
+      snap => setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.warn('Rooms could not be loaded:', err.message));
+    const unsubRes = onSnapshot(collection(db, 'reservations'),
+      snap => setReservations(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.warn('Reservations could not be loaded:', err.message));
+    return () => { unsubRooms(); unsubRes(); };
+  }, []);
+
+  // ── Dates ──
+  const stayError = form.checkIn && form.checkOut ? getStayDurationError(form.checkIn, form.checkOut) : '';
+  const datesReady = !!form.checkIn && !!form.checkOut && !stayError;
+  const nights = datesReady ? Math.round((new Date(form.checkOut) - new Date(form.checkIn)) / 86400000) : 0;
+  const totalAmount = selectedRoom && nights > 0 ? nights * Number(selectedRoom.price) : 0;
+
+  // ── Rooms that are actually free for the chosen dates ──
+  const { availableRooms, bookedCount } = useMemo(() => {
+    if (!datesReady) return { availableRooms: [], bookedCount: 0 };
+    const bookable = rooms.filter(r => !blockedByStatus(r, form.checkIn, today));
+    const free = bookable.filter(r => !isBooked(reservations, r, form.checkIn, form.checkOut));
+    return { availableRooms: free, bookedCount: bookable.length - free.length };
+  }, [rooms, reservations, datesReady, form.checkIn, form.checkOut, today]);
+
+  const categoryOf = (room) => WALK_IN_CATEGORIES.find(c => getRoomsForCategory([room], c).length > 0);
+  const activeCategory = WALK_IN_CATEGORIES.find(c => c.category === catFilter);
+  const shownRooms = activeCategory ? getRoomsForCategory(availableRooms, activeCategory) : availableRooms;
+
+  // If the chosen room becomes taken (dates changed, or someone just booked it), drop it.
+  useEffect(() => {
+    if (selectedRoom && datesReady && !availableRooms.some(r => r.id === selectedRoom.id)) {
+      setSelectedRoom(null);
+      setForm(f => ({ ...f, roomId: '' }));
+    }
+  }, [availableRooms, selectedRoom, datesReady]);
+
+  const handleSelectRoom = (room) => {
+    setSelectedRoom(room);
+    setForm(f => ({ ...f, roomId: room.id }));
+  };
 
   const changeGuests = (key, value) => {
     const other = Number(form[key === 'adults' ? 'children' : 'adults']) || 0;
@@ -148,48 +181,18 @@ export default function WalkIn() {
   const switchToFamilySuite = () => {
     const familySuite = WALK_IN_CATEGORIES.find(item => item.category === 'Family Suite for 6');
     setUpsellOpen(false);
-    if (familySuite) handleSelectCategory(familySuite);
-  };
-
-  const isVacant = (r) => ['vacant', 'available'].includes(r.status);
-
-  useEffect(() => {
-    const fetchRooms = async () => {
-      const snap = await getDocs(collection(db, 'rooms'));
-      setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(isVacant));
-    };
-    fetchRooms();
-  }, []);
-
-  useEffect(() => {
-    if (selectedRoom && form.checkIn && form.checkOut) {
-      const n = getStayDurationError(form.checkIn, form.checkOut)
-        ? 0 : Math.round((new Date(form.checkOut) - new Date(form.checkIn)) / (1000 * 60 * 60 * 24));
-      setNights(n > 0 ? n : 0);
-      setTotalAmount(n > 0 ? n * Number(selectedRoom.price) : 0);
-    }
-  }, [selectedRoom, form.checkIn, form.checkOut]);
-
-  const getRoomsByCategory = (cat) => getRoomsForCategory(rooms, cat);
-
-  const handleSelectCategory = (cat) => {
-    setSelectedCategory(cat);
+    if (familySuite) setCatFilter(familySuite.category);
     setSelectedRoom(null);
     setForm(f => ({ ...f, roomId: '' }));
-    setStep(2);
-  };
-
-  const handleSelectRoom = (room) => {
-    setSelectedRoom(room);
-    setForm(f => ({ ...f, roomId: room.id }));
-    setStep(3);
+    setStep(1);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!selectedRoom)    return alert('Please select a room.');
-    const stayError = getStayDurationError(form.checkIn, form.checkOut);
-    if (stayError) return alert(stayError);
+    if (saving) return;
+    if (!selectedRoom) return alert('Please select a room.');
+    const err = getStayDurationError(form.checkIn, form.checkOut);
+    if (err) return alert(err);
     if (totalAmount <= 0) return alert('Check-out must be after check-in.');
     if (!isPreferredContactMethod(form.preferredContactMethod)) return alert('Please choose a preferred contact method.');
     if (coupleGuestLimit !== null && (Number(form.adults) || 0) + (Number(form.children) || 0) > coupleGuestLimit) {
@@ -202,115 +205,145 @@ export default function WalkIn() {
     };
     setNameErrors(errors);
     if (Object.values(errors).some(Boolean)) return;
-    const reservationRef = await addDoc(collection(db, 'reservations'), {
-      ...form,
-      firstName: form.firstName.trim(),
-      lastName: form.lastName.trim(),
-      guestName,
-      roomNumber: selectedRoom.roomNumber,
-      roomType:   selectedRoom.type,
-      category:   selectedCategory?.category,
-      totalAmount, nights,
-      amountPaid: form.paymentStatus === 'paid' ? totalAmount : 0,
-      type: 'walk-in', status: 'confirmed',
-      createdAt: serverTimestamp(),
-    });
-    await updateDoc(doc(db, 'rooms', form.roomId), { status: 'occupied' });
-    let receiptMessage = '';
-    let confirmationMessage = '';
+
+    setSaving(true);
     try {
-      const token = await auth.currentUser.getIdToken();
-      const response = await fetch('/api/send-reservation-confirmation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ reservationId: reservationRef.id }),
+      // Final check against fresh data so two staff (or an online guest) can't take the same room/dates.
+      const fresh = await getDocs(collection(db, 'reservations'));
+      const latest = fresh.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (isBooked(latest, selectedRoom, form.checkIn, form.checkOut)) {
+        setSelectedRoom(null);
+        setForm(f => ({ ...f, roomId: '' }));
+        setStep(1);
+        alert(`Room ${selectedRoom.roomNumber} was just booked for those dates. Please choose another room.`);
+        return;
+      }
+
+      const category = categoryOf(selectedRoom)?.category;
+      const reservationRef = await addDoc(collection(db, 'reservations'), {
+        ...form,
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        guestName,
+        roomNumber: selectedRoom.roomNumber,
+        roomType:   selectedRoom.type,
+        category,
+        totalAmount, nights,
+        amountPaid: form.paymentStatus === 'paid' ? totalAmount : 0,
+        type: 'walk-in', status: 'confirmed',
+        createdAt: serverTimestamp(),
       });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Confirmation email failed to send.');
-      confirmationMessage = result.sent
-        ? ' Confirmation email sent.'
-        : result.alreadySent
-          ? ' Confirmation email was already sent.'
-          : ' Confirmation email is being sent.';
-    } catch (confirmationError) {
-      confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
-    }
-    if (form.paymentStatus === 'paid') {
+      // Only mark the room occupied when the guest arrives today; future stays are held by the reservation itself.
+      const arrivesToday = form.checkIn === today;
+      if (arrivesToday) await updateDoc(doc(db, 'rooms', form.roomId), { status: 'occupied' });
+
+      let receiptMessage = '';
+      let confirmationMessage = '';
       try {
-        const paymentRef = await addDoc(collection(db, 'payments'), {
-          reservationId: reservationRef.id,
-          guestName,
-          roomNumber: selectedRoom.roomNumber,
-          amount: totalAmount,
-          method: form.paymentMethod,
-          createdAt: serverTimestamp(),
-        });
         const token = await auth.currentUser.getIdToken();
-        const response = await fetch('/api/send-payment-receipt', {
+        const response = await fetch('/api/send-reservation-confirmation', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ paymentDocumentId: paymentRef.id }),
+          body: JSON.stringify({ reservationId: reservationRef.id }),
         });
         const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.error || 'Receipt email failed to send.');
-        receiptMessage = result.sent ? ' Payment receipt emailed.' : ' Payment receipt was already sent.';
-      } catch (receiptError) {
-        receiptMessage = ` Payment receipt failed: ${receiptError.message || 'email delivery error'}`;
+        if (!response.ok) throw new Error(result.error || 'Confirmation email failed to send.');
+        confirmationMessage = result.sent
+          ? ' Confirmation email sent.'
+          : result.alreadySent ? ' Confirmation email was already sent.' : ' Confirmation email is being sent.';
+      } catch (confirmationError) {
+        confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
       }
+      if (form.paymentStatus === 'paid') {
+        try {
+          const paymentRef = await addDoc(collection(db, 'payments'), {
+            reservationId: reservationRef.id,
+            guestName,
+            roomNumber: selectedRoom.roomNumber,
+            amount: totalAmount,
+            method: form.paymentMethod,
+            createdAt: serverTimestamp(),
+          });
+          const token = await auth.currentUser.getIdToken();
+          const response = await fetch('/api/send-payment-receipt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ paymentDocumentId: paymentRef.id }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error || 'Receipt email failed to send.');
+          receiptMessage = result.sent ? ' Payment receipt emailed.' : ' Payment receipt was already sent.';
+        } catch (receiptError) {
+          receiptMessage = ` Payment receipt failed: ${receiptError.message || 'email delivery error'}`;
+        }
+      }
+      setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is ${arrivesToday ? 'now occupied' : `reserved for ${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`}.${confirmationMessage}${receiptMessage}`);
+      setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
+      setNameErrors({});
+      setSelectedRoom(null);
+      setCatFilter('all');
+      setStep(1);
+    } catch (submitError) {
+      alert(`Could not save the reservation: ${submitError.message || 'unknown error'}`);
+    } finally {
+      setSaving(false);
     }
-    setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is now occupied.${confirmationMessage}${receiptMessage}`);
-    setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
-    setNameErrors({});
-    setSelectedRoom(null); setSelectedCategory(null);
-    setStep(1); setTotalAmount(0); setNights(0);
-    const snap = await getDocs(collection(db, 'rooms'));
-    setRooms(snap.docs.map(d => ({ id:d.id, ...d.data() })).filter(isVacant));
   };
 
   /* ── shared styles ── */
   const inp = {
-    width: '100%', padding: '10px 12px',
-    background: CARD2, border: `1px solid ${BORDER2}`,
-    borderRadius: '10px', fontSize: '13px',
-    fontFamily: "'Poppins', sans-serif",
+    width: '100%', padding: '10px 12px', background: CARD2, border: `1px solid ${BORDER2}`,
+    borderRadius: '10px', fontSize: '13px', fontFamily: "'Poppins', sans-serif",
     color: TEXT, outline: 'none', boxSizing: 'border-box',
   };
   const label = { fontSize: '11px', fontWeight: '600', color: MUTED, display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' };
   const card  = { background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '18px' };
+  const tag   = { background: CARD2, color: MUTED, borderRadius: '6px', padding: '2px 8px', fontSize: '10px' };
+  const amenitiesOf = (room) => (room.amenities || 'AC, TV, WiFi').split(',');
+  const maxGuests = selectedRoom ? getRoomMaximumGuests(selectedRoom) : null;
 
-  /* ── step breadcrumb ── */
   const Breadcrumb = () => (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px', fontSize: '12px' }}>
-      {[{ n:1, label:'Category' }, { n:2, label:'Room' }, { n:3, label:'Details' }].map((s, i) => (
+      {[{ n: 1, label: 'Dates & room' }, { n: 2, label: 'Guest details' }].map((s, i) => (
         <React.Fragment key={s.n}>
-          <div style={{ display:'flex', alignItems:'center', gap:'6px', cursor: step > s.n ? 'pointer' : 'default' }}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: step > s.n ? 'pointer' : 'default' }}
             onClick={() => step > s.n && setStep(s.n)}>
-            <motion.div
-              animate={{ scale: step === s.n ? 1.08 : 1 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              style={{ width:'22px', height:'22px', borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', background: step >= s.n ? ACCENT : CARD2, color: step >= s.n ? ACCENT_TEXT : MUTED, fontSize:'10px', fontWeight:'700' }}>
+            <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: step >= s.n ? ACCENT : CARD2, color: step >= s.n ? ACCENT_TEXT : MUTED, fontSize: 10, fontWeight: 700 }}>
               {step > s.n ? '✓' : s.n}
-            </motion.div>
-            <span style={{ color: step >= s.n ? TEXT : MUTED, fontWeight: step === s.n ? '600' : '400' }}>{s.label}</span>
+            </div>
+            <span style={{ color: step >= s.n ? TEXT : MUTED, fontWeight: step === s.n ? 600 : 400 }}>{s.label}</span>
           </div>
-          {i < 2 && <span style={{ color: BORDER2 }}>›</span>}
+          {i < 1 && <span style={{ color: BORDER2 }}>›</span>}
         </React.Fragment>
       ))}
     </div>
   );
 
+  const roomPhoto = (room, height) => {
+    const photo = getRoomImage(room.roomNumber);
+    return (
+      <div style={{
+        height, borderRadius: 12, border: `1px solid ${IMG_BORDER}`,
+        background: photo ? `url(${photo}) center/cover no-repeat` : IMG_BG,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        {!photo && <i className="ti ti-bed" style={{ fontSize: 36, color: ACCENT }} />}
+      </div>
+    );
+  };
+
+  const maxCheckOut = form.checkIn ? addDays(form.checkIn, MAX_STAY_NIGHTS) : undefined;
+
   return (
     <PageLayout>
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '20px' }}>
-        <div style={{ marginBottom: '6px', fontSize: '18px', fontWeight: '700', color: TEXT }}>Walk-in Reservation</div>
-        <p style={{ fontSize: '12px', color: MUTED, marginBottom: '20px' }}>Lawiswis Kawayan Garden Resort · Select room category to begin</p>
+        <div style={{ marginBottom: 6, fontSize: 18, fontWeight: 700, color: TEXT }}>Walk-in Reservation</div>
+        <p style={{ fontSize: 12, color: MUTED, marginBottom: 20 }}>Lawiswis Kawayan Garden Resort · Pick the stay dates first to see rooms that are free</p>
 
         <AnimatePresence>
           {success && (
-            <motion.div
-              variants={bannerVariants}
-              initial="hidden" animate="visible" exit={{ opacity: 0, y: -8, transition: { duration: 0.15 } }}
-              style={{ background: SUCCESS_BG, color: SUCCESS_TEXT, padding: '14px 18px', borderRadius: '12px', marginBottom: '20px', fontSize: '13px', fontWeight: '500' }}>
+            <motion.div variants={bannerVariants} initial="hidden" animate="visible" exit={{ opacity: 0, y: -8, transition: { duration: 0.15 } }}
+              style={{ background: SUCCESS_BG, color: SUCCESS_TEXT, padding: '14px 18px', borderRadius: 12, marginBottom: 20, fontSize: 13, fontWeight: 500 }}>
               {success}
             </motion.div>
           )}
@@ -321,163 +354,159 @@ export default function WalkIn() {
         <AnimatePresence mode="wait">
           <motion.div key={step} variants={stepVariants} initial="enter" animate="center" exit="exit">
 
-            {/* ══════════════════════════════════
-                STEP 1 — Category
-            ══════════════════════════════════ */}
+            {/* ═════════ STEP 1 — Dates, then available rooms ═════════ */}
             {step === 1 && (
-              <div>
-                <div style={{ fontSize: '13px', fontWeight: '600', color: TEXT, marginBottom: '14px' }}>Choose Room Category</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
-                  {WALK_IN_CATEGORIES.map((cat, i) => {
-                    const available = getRoomsByCategory(cat).length;
-                    return (
-                      <motion.div key={cat.category}
-                        custom={i}
-                        variants={gridItemVariants}
-                        initial="hidden"
-                        animate="visible"
-                        whileHover={available > 0 ? { y: -3, borderColor: ACCENT, boxShadow: dark ? '0 8px 22px rgba(0,0,0,0.35)' : '0 8px 20px rgba(0,0,0,0.06)' } : {}}
-                        whileTap={available > 0 ? { scale: 0.98 } : {}}
-                        onClick={() => available > 0 && handleSelectCategory(cat)}
-                        style={{
-                          background: CARD, borderRadius: '14px',
-                          border: `1px solid ${available > 0 ? BORDER2 : BORDER}`,
-                          padding: '16px 18px',
-                          cursor: available > 0 ? 'pointer' : 'not-allowed',
-                          opacity: available === 0 ? 0.45 : 1,
-                          display: 'flex', alignItems: 'center', gap: '14px',
-                        }}>
-                        <div style={{
-                          width: 52, height: 52, borderRadius: 14, flexShrink: 0,
-                          background: ICON_BOX_BG,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        }}>
-                          <i className={`ti ${getCategoryIcon(cat.category)}`} style={{ fontSize: 24, color: ACCENT }} />
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                <div style={{ flex: '1 1 480px', minWidth: 0 }}>
+                  {/* Dates */}
+                  <div style={{ ...card, marginBottom: 16 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Find a room 🏡</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, alignItems: 'end' }}>
+                      <div>
+                        <label style={label}>Check-in *</label>
+                        <input type="date" min={today} value={form.checkIn} style={inp}
+                          onChange={e => {
+                            const checkIn = e.target.value;
+                            setForm(p => ({ ...p, checkIn, checkOut: p.checkOut && checkIn && p.checkOut <= checkIn ? '' : p.checkOut }));
+                          }} />
+                      </div>
+                      <div>
+                        <label style={label}>Check-out *</label>
+                        <input type="date" disabled={!form.checkIn}
+                          min={form.checkIn ? addDays(form.checkIn, 1) : today} max={maxCheckOut}
+                          value={form.checkOut} style={{ ...inp, opacity: form.checkIn ? 1 : 0.6 }}
+                          onChange={e => setForm(p => ({ ...p, checkOut: e.target.value }))} />
+                      </div>
+                      <div style={{ fontSize: 12, color: MUTED, paddingBottom: 10 }}>
+                        {datesReady ? `${nights} night${nights !== 1 ? 's' : ''}` : 'Choose both dates'}
+                      </div>
+                    </div>
+                    {stayError && <div role="alert" style={{ color: '#dc2626', fontSize: 11, marginTop: 8 }}>{stayError}</div>}
+                  </div>
+
+                  {/* Results */}
+                  {!datesReady ? (
+                    <div style={{ ...card, textAlign: 'center', padding: '44px 20px', color: MUTED, fontSize: 13 }}>
+                      <i className="ti ti-calendar-event" style={{ fontSize: 30, color: ACCENT, display: 'block', marginBottom: 10 }} />
+                      Pick check-in and check-out dates to see which rooms are free.
+                      <div style={{ fontSize: 11, marginTop: 6 }}>Rooms already booked online or walk-in for those dates are hidden, so they can’t be double-booked.</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: TEXT }}>
+                          Rooms available <span style={{ color: MUTED, fontWeight: 500 }}>({shownRooms.length})</span>
                         </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: '600', fontSize: '13px', color: TEXT, marginBottom: '2px' }}>{cat.category}</div>
-                          <div style={{ fontSize: '11px', color: MUTED, marginBottom: '6px' }}>{cat.description}</div>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            <span style={{ background: available > 0 ? AVAIL_BG : UNAVAIL_BG, color: available > 0 ? AVAIL_TEXT : UNAVAIL_TEXT, borderRadius: '20px', padding: '2px 10px', fontSize: '10px', fontWeight: '600' }}>
-                              {available > 0 ? `${available} room${available > 1 ? 's' : ''} available` : 'No rooms available'}
-                            </span>
-                            <span style={{ background: CARD2, color: MUTED, borderRadius: '20px', padding: '2px 10px', fontSize: '10px' }}>
-                              {cat.capacity}
-                            </span>
-                          </div>
+                        {bookedCount > 0 && <div style={{ fontSize: 11, color: MUTED }}>{bookedCount} room{bookedCount !== 1 ? 's' : ''} already booked for these dates</div>}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+                        {[{ category: 'all', n: availableRooms.length, name: 'All' },
+                          ...WALK_IN_CATEGORIES.map(c => ({ category: c.category, name: c.category, n: getRoomsForCategory(availableRooms, c).length }))].map(c => (
+                          <button key={c.category} type="button" disabled={c.n === 0 && c.category !== 'all'}
+                            onClick={() => setCatFilter(c.category)}
+                            style={{
+                              border: `1px solid ${catFilter === c.category ? ACCENT : BORDER2}`, borderRadius: 20, padding: '6px 12px', fontSize: 11, fontWeight: 600,
+                              fontFamily: 'inherit', cursor: c.n === 0 && c.category !== 'all' ? 'not-allowed' : 'pointer',
+                              opacity: c.n === 0 && c.category !== 'all' ? 0.45 : 1,
+                              background: catFilter === c.category ? ACCENT : CARD, color: catFilter === c.category ? ACCENT_TEXT : TEXT,
+                            }}>
+                            {c.name} ({c.n})
+                          </button>
+                        ))}
+                      </div>
+
+                      {shownRooms.length === 0 ? (
+                        <div style={{ ...card, textAlign: 'center', padding: 40, color: MUTED, fontSize: 13 }}>
+                          No rooms are free for these dates{activeCategory ? ' in this category' : ''}. Try other dates{activeCategory ? ' or another category' : ''}.
                         </div>
-                        {available > 0 && <span style={{ color: MUTED, fontSize: '18px', flexShrink: 0 }}>›</span>}
-                      </motion.div>
-                    );
-                  })}
+                      ) : (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
+                          {shownRooms.map((room, i) => {
+                            const picked = selectedRoom?.id === room.id;
+                            return (
+                              <motion.div key={room.id} custom={i} variants={gridItemVariants} initial="hidden" animate="visible"
+                                whileHover={{ y: -3 }} whileTap={{ scale: 0.99 }}
+                                onClick={() => handleSelectRoom(room)}
+                                style={{ ...card, padding: 10, cursor: 'pointer', border: `2px solid ${picked ? ACCENT : BORDER}` }}>
+                                {roomPhoto(room, 110)}
+                                <div style={{ padding: '10px 4px 2px' }}>
+                                  <div style={{ fontWeight: 700, fontSize: 14, color: TEXT }}>{room.roomNumber}</div>
+                                  <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{normalizeRoomType(room.type) || room.type}</div>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+                                    <div>
+                                      <span style={{ fontSize: 16, fontWeight: 800, color: ACCENT }}>₱{Number(room.price).toLocaleString()}</span>
+                                      <span style={{ fontSize: 10, color: MUTED }}> / night</span>
+                                    </div>
+                                    <span style={{ background: AVAIL_BG, color: AVAIL_TEXT, borderRadius: 20, padding: '2px 8px', fontSize: 9, fontWeight: 700 }}>Free</span>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
+
+                {/* Selected room panel */}
+                <aside style={{ ...card, flex: '0 0 320px', maxWidth: '100%', position: 'sticky', top: 20 }}>
+                  {!selectedRoom ? (
+                    <div style={{ textAlign: 'center', padding: '30px 10px', color: MUTED, fontSize: 12 }}>
+                      <i className="ti ti-bed" style={{ fontSize: 30, color: ACCENT, display: 'block', marginBottom: 8 }} />
+                      Select a room to see its details and continue.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>{selectedRoom.roomNumber}</div>
+                      <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 12px' }}>{selectedRoom.type}{categoryOf(selectedRoom) ? ` · ${categoryOf(selectedRoom).category}` : ''}</div>
+                      {roomPhoto(selectedRoom, 150)}
+                      <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, margin: '14px 0 6px' }}>Overview</div>
+                      <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.6 }}>
+                        {selectedRoom.description || 'A comfortable room at Lawiswis Kawayan Garden Resort.'}
+                      </div>
+                      {maxGuests ? <div style={{ fontSize: 11, color: MUTED, marginTop: 8 }}>Up to {maxGuests} guests</div> : null}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '12px 0' }}>
+                        {amenitiesOf(selectedRoom).map(a => <span key={a} style={tag}>{a.trim()}</span>)}
+                      </div>
+                      <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12, marginBottom: 12, fontSize: 12, color: MUTED }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Stay</span><span>{formatDate(form.checkIn)} → {formatDate(form.checkOut)}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} night{nights !== 1 ? 's' : ''}</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{totalAmount.toLocaleString()}</span></div>
+                      </div>
+                      <button type="button" onClick={() => setStep(2)}
+                        style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 13, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                        Continue · ₱{Number(selectedRoom.price).toLocaleString()} / night
+                      </button>
+                    </>
+                  )}
+                </aside>
               </div>
             )}
 
-            {/* ══════════════════════════════════
-                STEP 2 — Room
-            ══════════════════════════════════ */}
-            {step === 2 && selectedCategory && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
-                  <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => setStep(1)}
-                    style={{ ...inp, width: 'auto', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', color: MUTED }}>
-                    ← Back
-                  </motion.button>
-                  <div>
-                    <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>{selectedCategory.category}</div>
-                    <div style={{ fontSize: '11px', color: MUTED }}>Select an available room</div>
-                  </div>
-                </div>
-
-                {getRoomsByCategory(selectedCategory).length === 0 ? (
-                  <div style={{ ...card, textAlign: 'center', padding: '40px', color: MUTED }}>No vacant rooms in this category.</div>
-                ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-                    {getRoomsByCategory(selectedCategory).map((room, i) => {
-                      const photo = getRoomImage(room.roomNumber);
-                      return (
-                        <motion.div key={room.id}
-                          custom={i}
-                          variants={gridItemVariants}
-                          initial="hidden"
-                          animate="visible"
-                          whileHover={{ y: -3, borderColor: ACCENT, boxShadow: dark ? '0 10px 26px rgba(0,0,0,0.35)' : '0 10px 22px rgba(0,0,0,0.07)' }}
-                          whileTap={{ scale: 0.99 }}
-                          onClick={() => handleSelectRoom(room)}
-                          style={{ ...card, cursor: 'pointer' }}>
-                          <div style={{
-                            height: '100px', borderRadius: '10px', marginBottom: '12px',
-                            border: `1px solid ${IMG_BORDER}`,
-                            background: photo ? `url(${photo}) center/cover no-repeat` : IMG_BG,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}>
-                            {!photo && <i className="ti ti-bed" style={{ fontSize: '36px', color: ACCENT }} />}
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                            <div>
-                              <div style={{ fontWeight: '700', fontSize: '15px', color: TEXT }}>{room.roomNumber}</div>
-                              <div style={{ fontSize: '11px', color: MUTED, marginTop: '2px' }}>{normalizeRoomType(room.type) || room.type}</div>
-                            </div>
-                            <span style={{ background: AVAIL_BG, color: AVAIL_TEXT, borderRadius: '20px', padding: '3px 10px', fontSize: '10px', fontWeight: '700' }}>Available</span>
-                          </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
-                            {(room.amenities || 'AC, TV, WiFi').split(',').map(a => (
-                              <span key={a} style={{ background: CARD2, color: MUTED, borderRadius: '6px', padding: '2px 8px', fontSize: '10px' }}>
-                                {a.trim()}
-                              </span>
-                            ))}
-                          </div>
-                          {room.description && (
-                            <div style={{ fontSize: '11px', color: MUTED, marginBottom: '12px', lineHeight: '1.5' }}>{room.description}</div>
-                          )}
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                              <span style={{ fontSize: '20px', fontWeight: '800', color: ACCENT }}>₱{Number(room.price).toLocaleString()}</span>
-                              <span style={{ fontSize: '11px', color: MUTED }}>/night</span>
-                            </div>
-                            <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-                              style={{ background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
-                              Select →
-                            </motion.button>
-                          </div>
-                        </motion.div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ══════════════════════════════════
-                STEP 3 — Guest form
-            ══════════════════════════════════ */}
-            {step === 3 && selectedRoom && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '18px' }}>
-                    <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => setStep(2)}
-                      style={{ ...inp, width: 'auto', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer', color: MUTED }}>
-                      ← Back
-                    </motion.button>
+            {/* ═════════ STEP 2 — Guest form ═════════ */}
+            {step === 2 && selectedRoom && (
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                <div style={{ flex: '1 1 460px', minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+                    <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => setStep(1)}
+                      style={{ ...inp, width: 'auto', padding: '7px 14px', borderRadius: 8, cursor: 'pointer', color: MUTED }}>← Back</motion.button>
                     <div>
-                      <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Guest Information</div>
-                      <div style={{ fontSize: '11px', color: MUTED }}>Room {selectedRoom.roomNumber} · {selectedCategory?.category}</div>
+                      <div style={{ fontWeight: 600, fontSize: 14, color: TEXT }}>Guest Information</div>
+                      <div style={{ fontSize: 11, color: MUTED }}>Room {selectedRoom.roomNumber} · {formatDate(form.checkIn)} → {formatDate(form.checkOut)}</div>
                     </div>
                   </div>
 
-                  <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-
-                    {/* Guest info */}
+                  <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div style={card}>
-                      <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT, marginBottom: '14px' }}>👤 Guest Details</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>👤 Guest Details</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                         {[
-                          { lbl: 'First Name *',   key: 'firstName', ph: 'Juan', req: true },
-                          { lbl: 'Last Name *',    key: 'lastName',  ph: 'dela Cruz', req: true },
-                          { lbl: 'Phone *',        key: 'phone',     ph: '09XX XXX XXXX',  req: true },
-                          { lbl: 'Email',          key: 'email',     ph: 'juan@email.com', type: 'email' },
-                          { lbl: 'Address',        key: 'address',   ph: 'City, Province' },
+                          { lbl: 'First Name *', key: 'firstName', ph: 'Juan', req: true },
+                          { lbl: 'Last Name *',  key: 'lastName',  ph: 'dela Cruz', req: true },
+                          { lbl: 'Phone *',      key: 'phone',     ph: '09XX XXX XXXX', req: true },
+                          { lbl: 'Email',        key: 'email',     ph: 'juan@email.com', type: 'email' },
+                          { lbl: 'Address',      key: 'address',   ph: 'City, Province' },
                         ].map(f => (
                           <div key={f.key}>
                             <label style={label}>{f.lbl}</label>
@@ -490,9 +519,7 @@ export default function WalkIn() {
                                   setForm(previous => ({ ...previous, [f.key]: clean }));
                                   setNameErrors(previous => ({
                                     ...previous,
-                                    [f.key]: !NAME_ALLOWED_CHARACTERS.test(raw)
-                                      ? 'Numbers and special symbols are not allowed'
-                                      : '',
+                                    [f.key]: !NAME_ALLOWED_CHARACTERS.test(raw) ? 'Numbers and special symbols are not allowed' : '',
                                   }));
                                 } else {
                                   setForm(previous => ({ ...previous, [f.key]: e.target.value }));
@@ -500,7 +527,7 @@ export default function WalkIn() {
                               }}
                               placeholder={f.ph} style={inp} />
                             {['firstName', 'lastName'].includes(f.key) && (
-                              <div role={nameErrors[f.key] ? 'alert' : undefined} style={{ color: nameErrors[f.key] ? '#b91c1c' : MUTED, fontSize: '10px', marginTop: 4 }}>
+                              <div role={nameErrors[f.key] ? 'alert' : undefined} style={{ color: nameErrors[f.key] ? '#b91c1c' : MUTED, fontSize: 10, marginTop: 4 }}>
                                 {nameErrors[f.key] || 'Use 2-35 letters, spaces, hyphens, or apostrophes.'}
                               </div>
                             )}
@@ -517,49 +544,26 @@ export default function WalkIn() {
                       </div>
                     </div>
 
-                    {/* Dates */}
                     <div style={card}>
-                      <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT, marginBottom: '14px' }}>📅 Stay Dates</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px' }}>
-                        <div>
-                          <label style={label}>Check-in *</label>
-                          <input required type="date" min={today} value={form.checkIn}
-                            onChange={e => {
-                              const checkIn = e.target.value;
-                              setForm(previous => ({ ...previous, checkIn, checkOut: previous.checkOut && checkIn && previous.checkOut < checkIn ? '' : previous.checkOut }));
-                            }} style={inp} />
-                        </div>
-                        <div>
-                          <label style={label}>Check-out *</label>
-                          <input required type="date" min={form.checkIn && form.checkIn > today ? form.checkIn : today}
-                            max={form.checkIn ? (() => { const d = new Date(`${form.checkIn}T00:00:00`); d.setDate(d.getDate() + MAX_STAY_NIGHTS); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })() : undefined}
-                            value={form.checkOut}
-                            onChange={e => setForm({ ...form, checkOut: e.target.value })} style={inp} />
-                          {form.checkIn && form.checkOut && getStayDurationError(form.checkIn, form.checkOut) && (
-                            <div role="alert" style={{ color: '#dc2626', fontSize: '11px', marginTop: '4px' }}>{getStayDurationError(form.checkIn, form.checkOut)}</div>
-                          )}
-                        </div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>👥 Guests</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                           <label style={label}>Adults</label>
-                          <input type="number" min="1" value={form.adults}
-                            onChange={e => changeGuests('adults', e.target.value)} style={inp} />
+                          <input type="number" min="1" value={form.adults} onChange={e => changeGuests('adults', e.target.value)} style={inp} />
                         </div>
                         <div>
                           <label style={label}>Children</label>
-                          <input type="number" min="0" value={form.children}
-                            onChange={e => changeGuests('children', e.target.value)} style={inp} />
+                          <input type="number" min="0" value={form.children} onChange={e => changeGuests('children', e.target.value)} style={inp} />
                         </div>
                       </div>
                     </div>
 
-                    {/* Payment */}
                     <div style={card}>
-                      <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT, marginBottom: '14px' }}>💳 Payment</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>💳 Payment</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                           <label style={label}>Payment Method</label>
-                          <select value={form.paymentMethod}
-                            onChange={e => setForm({ ...form, paymentMethod: e.target.value })} style={inp}>
+                          <select value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })} style={inp}>
                             <option value="cash">Cash</option>
                             <option value="gcash">GCash</option>
                             <option value="card">Credit/Debit Card</option>
@@ -568,8 +572,7 @@ export default function WalkIn() {
                         </div>
                         <div>
                           <label style={label}>Payment Status</label>
-                          <select value={form.paymentStatus}
-                            onChange={e => setForm({ ...form, paymentStatus: e.target.value })} style={inp}>
+                          <select value={form.paymentStatus} onChange={e => setForm({ ...form, paymentStatus: e.target.value })} style={inp}>
                             <option value="paid">Paid</option>
                             <option value="partial">Partial</option>
                             <option value="pending">Pending</option>
@@ -578,111 +581,55 @@ export default function WalkIn() {
                       </div>
                     </div>
 
-                    {/* Notes */}
                     <div style={card}>
                       <label style={label}>Special Requests / Notes</label>
-                      <textarea value={form.notes}
-                        onChange={e => setForm({ ...form, notes: e.target.value })}
-                        placeholder="Special requests, extra beds, dietary needs, etc."
-                        rows={3}
-                        style={{ ...inp, resize: 'vertical' }} />
+                      <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+                        placeholder="Special requests, extra beds, dietary needs, etc." rows={3} style={{ ...inp, resize: 'vertical' }} />
                     </div>
 
-                    {/* Total banner */}
-                    <AnimatePresence>
-                      {totalAmount > 0 && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          transition={{ duration: 0.2, ease: 'easeOut' }}
-                          style={{ overflow: 'hidden' }}>
-                          <div style={{ background: IMG_BG, border: `1px solid ${ACCENT}`, borderRadius: '12px', padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                              <div style={{ fontSize: '12px', color: dark ? ACCENT : '#166534' }}>{nights} night{nights !== 1 ? 's' : ''} × ₱{Number(selectedRoom.price).toLocaleString()}</div>
-                              <div style={{ fontSize: '11px', color: MUTED, marginTop: '2px' }}>{formatDate(form.checkIn)} → {formatDate(form.checkOut)}</div>
-                            </div>
-                            <div style={{ textAlign: 'right' }}>
-                              <div style={{ fontSize: '11px', color: MUTED }}>Total Amount</div>
-                              <div style={{ fontSize: '24px', fontWeight: '800', color: dark ? ACCENT : '#166534' }}>₱{totalAmount.toLocaleString()}</div>
-                            </div>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    <motion.button type="submit" whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}
-                      style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: '12px', padding: '14px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
-                      ✅ Confirm Walk-in Reservation
+                    <motion.button type="submit" disabled={saving} whileHover={{ scale: saving ? 1 : 1.01 }} whileTap={{ scale: saving ? 1 : 0.98 }}
+                      style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 14, fontSize: 14, fontWeight: 700, cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.7 : 1, fontFamily: "'Poppins', sans-serif" }}>
+                      {saving ? 'Saving…' : '✅ Confirm Walk-in Reservation'}
                     </motion.button>
                   </form>
                 </div>
 
-                {/* Room Summary */}
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.25, ease: 'easeOut' }}
-                  style={{ ...card, position: 'sticky', top: '20px', alignSelf: 'flex-start' }}>
-                  <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT, marginBottom: '14px' }}>📋 Booking Summary</div>
-
-                  <div style={{
-                    height: '120px', borderRadius: '10px', marginBottom: '14px',
-                    border: `1px solid ${IMG_BORDER}`,
-                    background: getRoomImage(selectedRoom.roomNumber)
-                      ? `url(${getRoomImage(selectedRoom.roomNumber)}) center/cover no-repeat`
-                      : IMG_BG,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    {!getRoomImage(selectedRoom.roomNumber) && (
-                      <i className="ti ti-bed" style={{ fontSize: '48px', color: ACCENT }} />
-                    )}
-                  </div>
-
-                  <div style={{ background: CARD2, borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
-                    <div style={{ fontWeight: '700', fontSize: '15px', color: TEXT, marginBottom: '2px' }}>{selectedRoom.roomNumber}</div>
-                    <div style={{ fontSize: '11px', color: MUTED, marginBottom: '6px' }}>{selectedRoom.type} · {selectedCategory?.category}</div>
-                    <div style={{ fontSize: '20px', fontWeight: '800', color: ACCENT }}>
-                      ₱{Number(selectedRoom.price).toLocaleString()}
-                      <span style={{ fontSize: '11px', fontWeight: '400', color: MUTED }}>/night</span>
+                {/* Booking summary */}
+                <aside style={{ ...card, flex: '0 0 300px', maxWidth: '100%', position: 'sticky', top: 20 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>📋 Booking Summary</div>
+                  {roomPhoto(selectedRoom, 120)}
+                  <div style={{ background: CARD2, borderRadius: 10, padding: 12, margin: '14px 0' }}>
+                    <div style={{ fontWeight: 700, fontSize: 15, color: TEXT }}>{selectedRoom.roomNumber}</div>
+                    <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 6px' }}>{selectedRoom.type}{categoryOf(selectedRoom) ? ` · ${categoryOf(selectedRoom).category}` : ''}</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: ACCENT }}>
+                      ₱{Number(selectedRoom.price).toLocaleString()}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/night</span>
                     </div>
                   </div>
-
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
-                    {(selectedRoom.amenities || 'AC, TV, WiFi').split(',').map(a => (
-                      <span key={a} style={{ background: CARD2, color: MUTED, borderRadius: '6px', padding: '3px 8px', fontSize: '10px' }}>
-                        {a.trim()}
-                      </span>
-                    ))}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                    {amenitiesOf(selectedRoom).map(a => <span key={a} style={tag}>{a.trim()}</span>)}
                   </div>
-
-                  <AnimatePresence>
-                    {totalAmount > 0 && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.2, ease: 'easeOut' }}
-                        style={{ overflow: 'hidden' }}>
-                        <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: '12px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: MUTED, marginBottom: '6px' }}>
-                            <span>Duration</span>
-                            <span>{nights} night{nights !== 1 ? 's' : ''}</span>
-                          </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: '700' }}>
-                            <span style={{ color: TEXT }}>Total</span>
-                            <span style={{ color: ACCENT }}>₱{totalAmount.toLocaleString()}</span>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
+                  <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: MUTED, marginBottom: 6 }}>
+                      <span>Dates</span><span>{formatDate(form.checkIn)} → {formatDate(form.checkOut)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: MUTED, marginBottom: 6 }}>
+                      <span>Duration</span><span>{nights} night{nights !== 1 ? 's' : ''}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700 }}>
+                      <span style={{ color: TEXT }}>Total</span><span style={{ color: ACCENT }}>₱{totalAmount.toLocaleString()}</span>
+                    </div>
+                    <button type="button" onClick={() => setStep(1)}
+                      style={{ marginTop: 12, width: '100%', ...inp, cursor: 'pointer', color: MUTED, textAlign: 'center' }}>
+                      Change dates or room
+                    </button>
+                  </div>
+                </aside>
               </div>
             )}
           </motion.div>
         </AnimatePresence>
       </div>
+
       {upsellOpen && (
         <div role="presentation" onClick={() => setUpsellOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 1000 }}>
           <div role="dialog" aria-modal="true" aria-labelledby="walkin-upsell-title" onClick={e => e.stopPropagation()} style={{ ...card, maxWidth: 420, width: '100%' }}>
