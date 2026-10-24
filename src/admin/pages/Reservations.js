@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { db, auth } from '../../firebase/firebase';
 import { collection, getDocs, getDoc, setDoc, updateDoc, doc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
-import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
@@ -577,7 +576,7 @@ export default function Reservations() {
   const [search, setSearch]             = useState(initialBookingQuery);
   const [selectedId, setSelectedId]     = useState(null);
   const [autoOpened, setAutoOpened]     = useState(false);
-  const [loaded, setLoaded]             = useState(false);
+  const [, setLoaded]             = useState(false);
   const [now, setNow]                   = useState(() => new Date());
   const notifiedRef = useRef(new Set());
   const toastedRef  = useRef(false);
@@ -1007,7 +1006,6 @@ export default function Reservations() {
   const pendingModifications = reservations.filter(r =>
     ['requested', 'needs_review'].includes(String(r.modificationRequest?.status || '').toLowerCase()));
 
-  if (!loaded) return <PageLayout><DashboardSkeleton /></PageLayout>;
 
   return (
     <PageLayout>

@@ -3,7 +3,6 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { Navigate, useLocation } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
-import { Pattern } from '../../components/ui/v-skeleton-8.tsx';
 
 // The staff check needs Firebase to restore the login and read the user's
 // role, which takes a moment on every page load. The last confirmed result is
@@ -72,12 +71,10 @@ export default function RequireStaffRoute({ children, allowedRoles = ['admin', '
     };
   }, []);
 
+  // First sign-in check only (later pages use the remembered result): a
+  // plain background, no loading skeleton.
   if (access.loading) {
-    return (
-      <main role="status" aria-live="polite" style={{ minHeight: '100vh', padding: '20px', background: '#f4f6f4' }}>
-        <Pattern className="h-[calc(100vh-40px)] max-w-none" />
-      </main>
-    );
+    return <main aria-busy="true" style={{ minHeight: '100vh', background: 'var(--admin-bg, #f4f6f4)' }} />;
   }
 
   if (!access.role) {

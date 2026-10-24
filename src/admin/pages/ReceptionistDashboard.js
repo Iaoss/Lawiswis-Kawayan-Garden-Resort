@@ -6,7 +6,6 @@ import {
   doc, Timestamp, query, orderBy,
 } from 'firebase/firestore';
 import ReceptionistLayout from '../components/ReceptionistLayout';
-import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
 import { getOverstay, getOverstayStats, getPeriodRange, getReservationAverages, manilaDateKey } from '../../lib/reservationStatus';
@@ -70,7 +69,7 @@ export default function ReceptionistDashboard() {
   const [allReservations, setAllReservations] = useState([]);
 
   // ── Tasks (live) ──────────────────────────────────────────
-  const [loaded, setLoaded] = useState(false);
+  const [, setLoaded] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -227,7 +226,6 @@ export default function ReceptionistDashboard() {
     { label: 'Available Rooms', value: `${stats.availableRooms}/${stats.totalRooms}`, icon: 'ti-bed', to: '/receptionist/rooms' },
   ].filter(c => c.label !== 'Available Rooms' || settings.showOccupancyRate !== false);
 
-  if (!loaded) return <ReceptionistLayout><DashboardSkeleton /></ReceptionistLayout>;
 
   return (
     <ReceptionistLayout>

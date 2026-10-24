@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { collection, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import PageLayout from '../components/PageLayout';
-import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 
 export default function ContactInquiries() {
@@ -69,7 +68,6 @@ export default function ContactInquiries() {
     return date ? date.toLocaleString() : 'Date unavailable';
   };
 
-  if (loading) return <PageLayout><DashboardSkeleton /></PageLayout>;
 
   return (
     <PageLayout>

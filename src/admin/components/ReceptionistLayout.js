@@ -383,6 +383,7 @@ export default function ReceptionistLayout({ children }) {
     <AnimatedSidebarProvider
       open={!collapsed}
       onOpenChange={(open) => setCollapsed(!open)}
+      navigate={navigate}
       resizable
       defaultWidth={210}
       minWidth={180}

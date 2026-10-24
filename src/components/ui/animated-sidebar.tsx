@@ -157,6 +157,8 @@ interface AnimatedSidebarContextValue {
   state: SidebarState;
   toggleSidebar: () => void;
   triggerRef: React.RefObject<HTMLButtonElement | null>;
+  /** In-app navigation for internal links (no full page reload). */
+  navigate?: (href: string) => void;
   /** Drag-to-resize support (desktop). */
   resizable: boolean;
   sidebarWidth: number;
@@ -176,6 +178,23 @@ interface AnimatedSidebarPanelContextValue {
 
 const AnimatedSidebarPanelContext =
   createContext<AnimatedSidebarPanelContextValue | null>(null);
+
+// A plain left-click on an internal link ("/admin/...") switches pages in
+// the app instead of reloading everything. Ctrl/Cmd/Shift-click and
+// middle-click still open a new tab as usual.
+function routeInternalClick(
+  event: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>,
+  href: string | undefined,
+  target: string | undefined,
+  navigate: ((href: string) => void) | undefined,
+) {
+  if (!navigate || !href || event.defaultPrevented) return;
+  if (!href.startsWith('/') || href.startsWith('//')) return;
+  if (target && target !== '_self') return;
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  navigate(href);
+}
 
 export function useAnimatedSidebar() {
   const context = useContext(AnimatedSidebarContext);
@@ -211,6 +230,9 @@ export interface AnimatedSidebarProviderProps extends HTMLAttributes<HTMLDivElem
   defaultOpenMobile?: boolean;
   onOpenMobileChange?: (open: boolean) => void;
   style?: SidebarProviderStyle;
+  /** Called for internal link clicks instead of reloading the page
+   *  (e.g. react-router's navigate). */
+  navigate?: (href: string) => void;
   /** Let the user drag the sidebar edge to change its width (remembered). */
   resizable?: boolean;
   defaultWidth?: number;
@@ -229,6 +251,7 @@ export function AnimatedSidebarProvider({
   onOpenMobileChange,
   className,
   style,
+  navigate,
   resizable = false,
   defaultWidth = 256,
   minWidth = 180,
@@ -315,6 +338,7 @@ export function AnimatedSidebarProvider({
         state: desktopOpen ? "expanded" : "collapsed",
         toggleSidebar,
         triggerRef,
+        navigate,
         resizable,
         sidebarWidth,
         setSidebarWidth,
@@ -1006,6 +1030,7 @@ export function AnimatedSidebarMenuSubButton({
     }
     onSelect?.();
     if (context.isMobile && closeOnSelect) context.setOpenMobile(false);
+    routeInternalClick(event, href, target, context.navigate);
   };
 
   const content = (
@@ -1100,6 +1125,7 @@ export function AnimatedSidebarMenuButton({
       return;
     }
     onSelect?.();
+    routeInternalClick(event, href, target, context.navigate);
     const shouldCloseOnSelect = closeOnSelect ?? ariaExpanded === undefined;
     if (context.isMobile && shouldCloseOnSelect) {
       context.setOpenMobile(false);

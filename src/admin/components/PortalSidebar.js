@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { collection, collectionGroup, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
@@ -92,6 +93,7 @@ const searchableCollections = [
 ];
 
 function PortalGlobalSearch({ navItems, portalName }) {
+  const navigate = useNavigate();
   const { isMobile, state, setOpen, setOpenMobile } = useAnimatedSidebar();
   const [term, setTerm] = useState('');
   const [records, setRecords] = useState(null);
@@ -221,7 +223,7 @@ function PortalGlobalSearch({ navItems, portalName }) {
               setFocused(false);
               event.currentTarget.blur();
             }
-            if (event.key === 'Enter' && results[0]) window.location.href = results[0].path;
+            if (event.key === 'Enter' && results[0]) { openResult(); navigate(results[0].path); }
           }}
           placeholder="Search the system..."
           aria-label="Search pages, rooms, reservations, guests, payments, and messages"
@@ -241,6 +243,12 @@ function PortalGlobalSearch({ navItems, portalName }) {
                   key={result.id}
                   href={result.path}
                   onMouseDown={openResult}
+                  onClick={(event) => {
+                    // Switch pages inside the app instead of reloading it.
+                    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+                    event.preventDefault();
+                    navigate(result.path);
+                  }}
                   className="flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-foreground no-underline transition-colors hover:bg-muted"
                 >
                   <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground">

@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, onSnapshot, query, orderBy, updateDoc, doc, writeBatch } from 'firebase/firestore';
 import Layout from '../components/Layout';
-import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 
 /* ---------------------------------- icons --------------------------------- */
@@ -62,7 +61,7 @@ export default function Feedback() {
   const [subscribers, setSubscribers] = useState([]);
   const [subscriberError, setSubscriberError] = useState('');
   const [subscriberSaving, setSubscriberSaving] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [copied, setCopied] = useState(false);
 
@@ -199,7 +198,6 @@ export default function Feedback() {
     </div>
   );
 
-  if (loading) return <Layout><DashboardSkeleton /></Layout>;
 
   const tiles = [
     { label: 'Total Feedback', value: feedbacks.length, bg: GRADIENTS.total,    icon: <IconChat /> },

@@ -7,7 +7,6 @@ import {
   doc, Timestamp, query, orderBy,
 } from 'firebase/firestore';
 import Layout from '../components/Layout';
-import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 import { toMillis } from '../lib/listSort';
 import {
@@ -204,7 +203,7 @@ export default function AdminDashboard() {
     const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d;
   });
   const [selectedDay, setSelectedDay] = useState(() => new Date());
-  const [loaded, setLoaded] = useState(false);
+  const [, setLoaded] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -397,7 +396,6 @@ export default function AdminDashboard() {
     fontWeight: '600', cursor: 'pointer', background: bg, color,
   });
 
-  if (!loaded) return <Layout><DashboardSkeleton /></Layout>;
 
   return (
     <Layout>

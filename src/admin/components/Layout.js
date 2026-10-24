@@ -404,6 +404,7 @@ export default function Layout({ children }) {
     <AnimatedSidebarProvider
       open={!collapsed}
       onOpenChange={(open) => setCollapsed(!open)}
+      navigate={navigate}
       resizable
       defaultWidth={210}
       minWidth={180}
