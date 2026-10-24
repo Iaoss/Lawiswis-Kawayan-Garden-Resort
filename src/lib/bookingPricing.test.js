@@ -1,4 +1,4 @@
-import { calculateBookingPrice, getGuestCountViolation, getRoomBaseRate, getRoomCapacityPolicy, getRoomMaximumGuests, getCottageFee, getOccupiedEndDate, getResortNow, getStayDurationError, getTourCutoffError, isTourStartPassed, getStayUnits, isCoupleRoom, isSingleDayStay, stayRangesOverlap } from './bookingPricing';
+import { calculateBookingPrice, getGuestCountViolation, getRoomBaseRate, getRoomCapacityPolicy, getRoomMaximumGuests, areOvernightCheckInsClosed, getCottageFee, getOccupiedEndDate, getOvernightCutoffError, getResortNow, getStayDurationError, getTourCutoffError, isTourStartPassed, getStayUnits, isCoupleRoom, isSingleDayStay, stayRangesOverlap } from './bookingPricing';
 import { isPreferredContactMethod, PREFERRED_CONTACT_METHODS } from './preferredContactMethods';
 
 describe('stay duration guardrails', () => {
@@ -50,14 +50,34 @@ describe('same-day tour cutoff (Philippine time)', () => {
   });
 });
 
+describe('same-day overnight cutoff (Philippine time)', () => {
+  const lunchtime = new Date('2026-10-24T04:35:00Z'); // 12:35 PM in Manila
+  it('blocks check-in times that have passed today', () => {
+    expect(getOvernightCutoffError('2026-10-24', 'morning', lunchtime)).toMatch(/10:00 AM/);
+    expect(getOvernightCutoffError('2026-10-24', 'afternoon', lunchtime)).toBe('');
+    expect(getOvernightCutoffError('2026-10-25', 'morning', lunchtime)).toBe('');
+  });
+  it('closes today entirely after the last check-in time', () => {
+    const evening = new Date('2026-10-24T10:30:00Z'); // 6:30 PM in Manila
+    expect(areOvernightCheckInsClosed('2026-10-24', lunchtime)).toBe(false);
+    expect(areOvernightCheckInsClosed('2026-10-24', evening)).toBe(true);
+    expect(getOvernightCutoffError('2026-10-24', 'evening', evening)).toMatch(/All of today/);
+  });
+});
+
 describe('cottage selection', () => {
-  it('derives the fee from the chosen option on the server side', () => {
-    expect(getCottageFee('', 0)).toBe(0);
-    expect(getCottageFee('umbrella-hut', 1)).toBe(1000);
-    expect(getCottageFee('pavilion', 0)).toBe(3000);
-    expect(getCottageFee('pavilion', 1)).toBeNull();
-    expect(getCottageFee('bogus', 0)).toBeNull();
-    expect(getCottageFee('umbrella-hut', '0')).toBeNull();
+  it('uses the published cottage rates', () => {
+    expect(getCottageFee('')).toBe(0);
+    expect(getCottageFee('umbrella-hut')).toBe(500);
+    expect(getCottageFee('garden-cabana')).toBe(1000);
+    expect(getCottageFee('poolside-cabana')).toBe(1500);
+    expect(getCottageFee('pavilion')).toBe(3000);
+    expect(getCottageFee('bogus')).toBeNull();
+  });
+  it('still reprices bookings saved with the old cabana rates', () => {
+    const base = { room: { name: 'Couple Room' }, bookingType: 'overnight', nights: 1, adults: 2, children: 0 };
+    expect(calculateBookingPrice({ ...base, cottageId: 'cabana', cottageFee: 1500 }).cottageFee).toBe(1500);
+    expect(() => calculateBookingPrice({ ...base, cottageId: 'pavilion', cottageFee: 500 })).toThrow();
   });
 });
 

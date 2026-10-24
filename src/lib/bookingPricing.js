@@ -1,7 +1,8 @@
 export const OVERNIGHT_TIME_SLOTS = [
-  { id: 'morning', label: '10:00 AM / 11:00 AM check-in → 8:00 AM check-out', checkIn: '10:00 AM / 11:00 AM', checkOut: '8:00 AM' },
-  { id: 'afternoon', label: '2:00 PM / 3:00 PM check-in → 12:00 PM check-out', checkIn: '2:00 PM / 3:00 PM', checkOut: '12:00 PM' },
-  { id: 'evening', label: '6:00 PM / 7:00 PM check-in → 4:00 PM check-out', checkIn: '6:00 PM / 7:00 PM', checkOut: '4:00 PM' },
+  // startMinutes: minutes after midnight when check-in opens (used for same-day cutoffs).
+  { id: 'morning', label: '10:00 AM / 11:00 AM check-in → 8:00 AM check-out', checkIn: '10:00 AM / 11:00 AM', checkOut: '8:00 AM', startMinutes: 10 * 60 },
+  { id: 'afternoon', label: '2:00 PM / 3:00 PM check-in → 12:00 PM check-out', checkIn: '2:00 PM / 3:00 PM', checkOut: '12:00 PM', startMinutes: 14 * 60 },
+  { id: 'evening', label: '6:00 PM / 7:00 PM check-in → 4:00 PM check-out', checkIn: '6:00 PM / 7:00 PM', checkOut: '4:00 PM', startMinutes: 18 * 60 },
 ];
 
 export const DAYTOUR_TIME_SLOT = {
@@ -9,6 +10,7 @@ export const DAYTOUR_TIME_SLOT = {
   label: '8:00 AM check-in → 5:00 PM check-out',
   checkIn: '8:00 AM',
   checkOut: '5:00 PM',
+  startMinutes: 8 * 60,
 };
 
 export const NIGHTTOUR_TIME_SLOT = {
@@ -16,12 +18,12 @@ export const NIGHTTOUR_TIME_SLOT = {
   label: '5:00 PM check-in → 10:00 PM / 12:00 MN check-out',
   checkIn: '5:00 PM',
   checkOut: '10:00 PM / 12:00 MN',
+  startMinutes: 17 * 60,
 };
 
 // The resort's local time zone. Server code runs in UTC, so same-day
 // cutoffs are always checked against Philippine time.
 export const RESORT_TIME_ZONE = 'Asia/Manila';
-const TOUR_START_MINUTES = { day: 8 * 60, night: 17 * 60 };
 
 // Today's date (YYYY-MM-DD) and minutes past midnight at the resort.
 export function getResortNow(now = new Date()) {
@@ -31,11 +33,29 @@ export function getResortNow(now = new Date()) {
   return { dateKey: `${parts.year}-${parts.month}-${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute) };
 }
 
+// True when `date` is today at the resort and the slot's check-in time has passed.
+export function isCheckInPassed(date, slot, now = new Date()) {
+  const resortNow = getResortNow(now);
+  return Boolean(slot) && date === resortNow.dateKey && resortNow.minutes >= slot.startMinutes;
+}
+
 // True when `date` is today at the resort and that tour's check-in time has passed.
 export function isTourStartPassed(date, tourPeriod = 'day', now = new Date()) {
-  const resortNow = getResortNow(now);
-  return date === resortNow.dateKey
-    && resortNow.minutes >= TOUR_START_MINUTES[tourPeriod === 'night' ? 'night' : 'day'];
+  return isCheckInPassed(date, tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT : DAYTOUR_TIME_SLOT, now);
+}
+
+// True when every overnight check-in time for `date` has already passed.
+export function areOvernightCheckInsClosed(date, now = new Date()) {
+  return OVERNIGHT_TIME_SLOTS.every(slot => isCheckInPassed(date, slot, now));
+}
+
+// Error message when today's overnight check-in time has already passed, or ''.
+export function getOvernightCutoffError(date, slotId, now = new Date()) {
+  const slot = OVERNIGHT_TIME_SLOTS.find(item => item.id === slotId);
+  if (!isCheckInPassed(date, slot, now)) return '';
+  return areOvernightCheckInsClosed(date, now)
+    ? "All of today's overnight check-in times have passed. Please choose another check-in date."
+    : `Today's ${slot.checkIn} check-in time has passed. Please choose a later check-in time.`;
 }
 
 // Error message when a same-day tour is booked after its check-in time, or ''.
@@ -47,19 +67,30 @@ export function getTourCutoffError(date, tourPeriod = 'day', now = new Date()) {
 }
 
 export const COTTAGE_OPTIONS = [
-  { id: '', label: 'No cottage', prices: [0] },
-  { id: 'umbrella-hut', label: 'Umbrella Hut / Daybed (up to 6 guests)', prices: [500, 1000] },
-  { id: 'cabana', label: 'Garden / Poolside Cabana (up to 10 guests)', prices: [1000, 1500] },
-  { id: 'pavilion', label: 'Pavilion (up to 20 guests)', prices: [3000] },
+  { id: '', label: 'No cottage', price: 0 },
+  { id: 'umbrella-hut', label: 'Umbrella Hut (up to 6 guests)', price: 500 },
+  { id: 'garden-cabana', label: 'Garden Cabana (up to 10 guests)', price: 1000 },
+  { id: 'poolside-cabana', label: 'Poolside Cabana (up to 10 guests)', price: 1500 },
+  { id: 'pavilion', label: 'Pavilion (up to 20 guests)', price: 3000 },
 ];
 
-// Looks up a cottage fee from the option the guest picked (cottage id + the
-// index of its rate). Returns null for anything not on the list. The browser
-// only ever sends the choice, never the price.
-export function getCottageFee(cottageId, variant) {
+// Rates saved on bookings made before the cottage list changed. They're only
+// accepted when repricing those existing bookings (e.g. a date change).
+const LEGACY_COTTAGE_RATES = {
+  'umbrella-hut': [1000],
+  cabana: [1000, 1500],
+};
+
+// Looks up the fee for the cottage the guest picked, or null if it isn't on
+// the list. The browser only ever sends the cottage id, never the price.
+export function getCottageFee(cottageId) {
   const option = COTTAGE_OPTIONS.find(item => item.id === (cottageId || ''));
-  if (!option || !Number.isInteger(variant)) return null;
-  return option.prices[variant] ?? null;
+  return option ? option.price : null;
+}
+
+export function getCottageLabel(cottageId) {
+  if (cottageId === 'cabana') return 'Garden / Poolside Cabana (up to 10 guests)';
+  return COTTAGE_OPTIONS.find(item => item.id === cottageId)?.label || 'Cottage';
 }
 
 const ROOM_RATES = {
@@ -284,14 +315,15 @@ export function calculateBookingPrice({
       ? { adult: 475, child: 375 }
       : { adult: 375, child: 275 };
   const extraGuestCharge = (extraAdults * extraRate.adult + extraChildren * extraRate.child) * nights;
-  const cottage = COTTAGE_OPTIONS.find(option => option.id === cottageId);
   const fee = Number(cottageFee);
+  const validCottageFee = getCottageFee(cottageId) === fee
+    || Boolean(LEGACY_COTTAGE_RATES[cottageId]?.includes(fee));
 
   if (!Number.isInteger(nights) || nights < 1) throw new Error('Choose valid stay dates.');
   if (!Number.isInteger(adults) || adults < 1 || !Number.isInteger(children) || children < 0) {
     throw new Error('Guest counts must be whole numbers.');
   }
-  if (!cottage || !cottage.prices.includes(fee)) throw new Error('Choose a valid cottage rate.');
+  if (!validCottageFee) throw new Error('Choose a valid cottage rate.');
 
   return {
     baseRate,

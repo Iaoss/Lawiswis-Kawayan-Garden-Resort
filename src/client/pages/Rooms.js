@@ -6,7 +6,7 @@ import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS, FALLBACK_ROO
 import OccupancyBadge from '../components/OccupancyBadge';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
-import { isTourStartPassed } from '../../lib/bookingPricing';
+import { areOvernightCheckInsClosed, isTourStartPassed } from '../../lib/bookingPricing';
 
 /* ------------------------------------------------------------------ */
 /* Room catalog copied from lawiswiskawayanresort.com/regular-rooms    */
@@ -176,9 +176,11 @@ export default function Rooms() {
   // One tapped date is a single-day booking (day tour): it ends on the same date.
   const stayEnd = checkOut || checkIn;
   const singleDay = Boolean(checkIn) && !checkOut;
-  // Both of today's tours have started (night tour starts 5:00 PM, Philippine time).
+  // Today is closed once its last check-in time has passed (Philippine time):
+  // 5:00 PM for single-day tours, 6:00 PM for overnight stays.
   const todayToursClosed = singleDay && isTourStartPassed(checkIn, 'night');
-  const rangeIsValid = Boolean(checkIn && checkIn >= todayKey && stayEnd >= checkIn && stayEnd <= maxDateKey && !todayToursClosed);
+  const todayOvernightClosed = !singleDay && Boolean(checkIn) && areOvernightCheckInsClosed(checkIn);
+  const rangeIsValid = Boolean(checkIn && checkIn >= todayKey && stayEnd >= checkIn && stayEnd <= maxDateKey && !todayToursClosed && !todayOvernightClosed);
   const rangeLabel = singleDay ? `${checkIn} (single day)` : `${checkIn} to ${checkOut}`;
   useEffect(() => {
     if (!rangeIsValid) {
@@ -460,6 +462,11 @@ export default function Rooms() {
           {todayToursClosed && (
             <div role="alert" style={{ marginTop: '14px', color: '#b91c1c', font: `12px ${SANS}` }}>
               Today's day and night tours have already started, so a single-day booking for today is no longer available. Choose another date, or tap a later date for an overnight stay.
+            </div>
+          )}
+          {todayOvernightClosed && (
+            <div role="alert" style={{ marginTop: '14px', color: '#b91c1c', font: `12px ${SANS}` }}>
+              Today's last overnight check-in time (6:00 PM) has passed. Please choose a later check-in date.
             </div>
           )}
           {singleDay && !todayToursClosed && isTourStartPassed(checkIn, 'day') && (

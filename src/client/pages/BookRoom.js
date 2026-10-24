@@ -15,6 +15,9 @@ import {
   getStayDurationError,
   getStayUnits,
   getCottageFee,
+  getCottageLabel,
+  getOvernightCutoffError,
+  isCheckInPassed,
   getTourCutoffError,
   isSingleDayStay,
 } from '../../lib/bookingPricing';
@@ -199,7 +202,6 @@ export default function BookRoom() {
     tourPeriod: 'day',
     overnightTimeSlot: 'morning',
     cottageId: '',
-    cottageVariant: 0, // index into the cottage's price list; the server looks up the fee
     notes: '',
     paymentMethod: 'online',
     website: '', // honeypot — real guests leave this blank; see hidden field below
@@ -216,7 +218,10 @@ export default function BookRoom() {
   // Same-day tours can't be booked after their check-in time (checked in Philippine time).
   const dayTourClosed = Boolean(getTourCutoffError(form.checkIn, 'day'));
   const nightTourClosed = Boolean(getTourCutoffError(form.checkIn, 'night'));
-  const tourCutoffError = form.bookingType === 'daytour' ? getTourCutoffError(form.checkIn, form.tourPeriod) : '';
+  const tourCutoffError = form.bookingType === 'daytour'
+    ? getTourCutoffError(form.checkIn, form.tourPeriod)
+    : getOvernightCutoffError(form.checkIn, form.overnightTimeSlot);
+  const nextOpenOvernightSlot = OVERNIGHT_TIME_SLOTS.find(slot => !isCheckInPassed(form.checkIn, slot));
   const historyPagination = usePagination(bookingHistory, { pageSize: 5 });
   const stayUnit = form.bookingType === 'daytour' ? 'day' : 'night';
   const pricing = useMemo(() => room && nights > 0
@@ -228,9 +233,9 @@ export default function BookRoom() {
       children: Number(form.children),
       tourPeriod: form.tourPeriod,
       cottageId: form.cottageId,
-      cottageFee: getCottageFee(form.cottageId, Number(form.cottageVariant)) ?? 0,
+      cottageFee: getCottageFee(form.cottageId) ?? 0,
     })
-    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, form.cottageVariant]);
+    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId]);
   const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
@@ -276,6 +281,14 @@ export default function BookRoom() {
       setForm(previous => ({ ...previous, tourPeriod: 'night' }));
     }
   }, [form.bookingType, form.tourPeriod, dayTourClosed, nightTourClosed]);
+
+  // Same for overnight stays starting today: move to the next check-in time that hasn't passed.
+  useEffect(() => {
+    const current = OVERNIGHT_TIME_SLOTS.find(slot => slot.id === form.overnightTimeSlot);
+    if (form.bookingType === 'overnight' && isCheckInPassed(form.checkIn, current) && nextOpenOvernightSlot) {
+      setForm(previous => ({ ...previous, overnightTimeSlot: nextOpenOvernightSlot.id }));
+    }
+  }, [form.bookingType, form.checkIn, form.overnightTimeSlot, nextOpenOvernightSlot]);
 
   useEffect(() => {
     const fetchRoom = async () => {
@@ -579,7 +592,6 @@ export default function BookRoom() {
           bookingType: form.bookingType,
           tourPeriod: form.tourPeriod,
           cottageId: form.cottageId,
-          cottageVariant: Number(form.cottageVariant),
           notes: form.notes,
           paymentMethod: form.paymentMethod,
           promoCode: activePromo?.code || '',
@@ -950,7 +962,10 @@ export default function BookRoom() {
                     <label htmlFor="overnight-time-slot" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Check-in / Check-out Time</label>
                     <select id="overnight-time-slot" value={form.overnightTimeSlot} onChange={e => setForm(previous => ({ ...previous, overnightTimeSlot: e.target.value }))}
                       style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                      {OVERNIGHT_TIME_SLOTS.map(slot => <option key={slot.id} value={slot.id}>{slot.label}</option>)}
+                      {OVERNIGHT_TIME_SLOTS.map(slot => {
+                        const passed = isCheckInPassed(form.checkIn, slot);
+                        return <option key={slot.id} value={slot.id} disabled={passed}>{slot.label}{passed ? ' — passed for today' : ''}</option>;
+                      })}
                     </select>
                   </div>
                 ) : (
@@ -1054,17 +1069,17 @@ export default function BookRoom() {
               </div>
               <div style={{ marginTop: '14px' }}>
                 <label htmlFor="cottage-selection" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Optional Cottage</label>
-                <select id="cottage-selection" value={`${form.cottageId}:${form.cottageVariant}`} onChange={e => {
-                  // Option values are choices (cottage + rate number), never prices.
-                  const [cottageId, variant] = e.target.value.split(':');
-                  setForm(previous => ({ ...previous, cottageId, cottageVariant: Number(variant) }));
+                <select id="cottage-selection" value={form.cottageId} onChange={e => {
+                  // The option value is only the cottage id; the server looks up the price.
+                  const cottageId = e.target.value;
+                  setForm(previous => ({ ...previous, cottageId }));
                 }}
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                  {COTTAGE_OPTIONS.flatMap(option => option.prices.map((fee, variant) => (
-                    <option key={`${option.id}:${variant}`} value={`${option.id}:${variant}`}>
-                      {option.id ? `${option.label} · ₱${fee.toLocaleString()}` : option.label}
+                  {COTTAGE_OPTIONS.map(option => (
+                    <option key={option.id || 'none'} value={option.id}>
+                      {option.id ? `${option.label} · ₱${option.price.toLocaleString()}` : option.label}
                     </option>
-                  )))}
+                  ))}
                 </select>
               </div>
             </div>
@@ -1312,7 +1327,7 @@ export default function BookRoom() {
                   <span>₱{(pricing.extraChildren * pricing.extraChildRate * nights).toLocaleString()}</span>
                 </div>}
                 {pricing?.cottageFee > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
-                  <span>{COTTAGE_OPTIONS.find(option => option.id === pricing.cottageId)?.label || 'Cottage'}</span>
+                  <span>{getCottageLabel(pricing.cottageId)}</span>
                   <span>₱{pricing.cottageFee.toLocaleString()}</span>
                 </div>}
                 {activePromo && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#15803d', marginBottom: '8px' }}><span>Discount · {activePromo.code}</span><span>−₱{discountAmount.toLocaleString()}</span></div>}

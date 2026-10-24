@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { DEFAULT_CANCELLATION_POLICY, getCancellationPolicyOutcome, getDateRangeNights } from '../src/lib/cancellationPolicy';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
-import { getStayDurationError, getTourCutoffError } from '../src/lib/bookingPricing';
+import { OVERNIGHT_TIME_SLOTS, getOvernightCutoffError, getStayDurationError, getTourCutoffError } from '../src/lib/bookingPricing';
 import { calculateReservationModification } from '../lib/reservationModification';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
@@ -194,7 +194,11 @@ async function requestScheduleChange(reservation, body) {
     || (isDayTour ? checkOut !== checkIn : requestedEnd > maxDate)) {
     return { error: 'Choose valid dates within the next two months.' };
   }
-  const cutoffError = isDayTour ? getTourCutoffError(checkIn, data.tourPeriod || 'day') : '';
+  // Moving a booking to today is only allowed before its check-in time.
+  const overnightSlot = OVERNIGHT_TIME_SLOTS.find(slot => slot.checkIn === data.checkInTime);
+  const cutoffError = isDayTour
+    ? getTourCutoffError(checkIn, data.tourPeriod || 'day')
+    : getOvernightCutoffError(checkIn, overnightSlot?.id);
   if (cutoffError) return { error: cutoffError };
 
   let change = {

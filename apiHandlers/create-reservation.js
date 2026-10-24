@@ -30,6 +30,7 @@ import {
   calculateBookingPrice,
   getCottageFee,
   getTourCutoffError,
+  getOvernightCutoffError,
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
@@ -81,7 +82,6 @@ export default async function handler(req, res) {
       bookingType,
       tourPeriod,
       cottageId,
-      cottageVariant,
       notes,
       preferredContactMethod,
       paymentMethod,
@@ -151,7 +151,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Choose a valid swimming tour period.' });
     }
     // The guest only picks a cottage option; its price is looked up here.
-    const requestedCottageFee = getCottageFee(cottageId || '', cottageId ? cottageVariant : 0);
+    const requestedCottageFee = getCottageFee(cottageId || '');
     if (requestedCottageFee === null) {
       return res.status(400).json({ error: 'Choose a valid cottage option.' });
     }
@@ -176,9 +176,11 @@ export default async function handler(req, res) {
 
     const stayError = getStayDurationError(checkIn, checkOut, { allowSingleDay: singleDay });
     if (stayError) return res.status(400).json({ error: stayError });
-    // A day or night tour for today can't be booked once its check-in time has passed.
-    const cutoffError = bookingType === 'daytour' ? getTourCutoffError(checkIn, tourPeriod) : '';
-    if (cutoffError) return res.status(400).json({ error: cutoffError, code: 'TOUR_CUTOFF_PASSED' });
+    // A booking for today can't start after its check-in time has passed.
+    const cutoffError = bookingType === 'daytour'
+      ? getTourCutoffError(checkIn, tourPeriod)
+      : getOvernightCutoffError(checkIn, timeSlot.id);
+    if (cutoffError) return res.status(400).json({ error: cutoffError, code: 'CHECK_IN_CUTOFF_PASSED' });
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
