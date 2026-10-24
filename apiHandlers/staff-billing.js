@@ -25,9 +25,9 @@ import { verifyStaff } from '../lib/verifyStaff';
 import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
-import { stayRangesOverlap } from '../src/lib/bookingPricing';
+import { getCottageFee, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
-import { DEFAULT_CANCELLATION_POLICY, getStaffCancellationFee } from '../src/lib/cancellationPolicy';
+import { DEFAULT_CANCELLATION_POLICY, getDateChangeBlock, getStaffCancellationFee } from '../src/lib/cancellationPolicy';
 import { manilaDateKey } from '../src/lib/reservationStatus';
 
 export const COUNTER_PAYMENT_METHODS = ['cash', 'gcash', 'card', 'bank', 'online'];
@@ -209,6 +209,10 @@ async function createWalkIn({ staff, booking = {} }) {
   const paymentMethod = COUNTER_PAYMENT_METHODS.includes(booking.paymentMethod) ? booking.paymentMethod : '';
   const paymentStatus = WALK_IN_PAYMENT_STATUSES.includes(booking.paymentStatus) ? booking.paymentStatus : '';
   if (!paymentMethod || !paymentStatus) throw new BillingError(400, 'Choose a payment method and payment status.');
+  // Optional cottage: only its id comes from the form; the price is looked up here.
+  const cottageId = typeof booking.cottageId === 'string' ? booking.cottageId : '';
+  const cottageFee = getCottageFee(cottageId);
+  if (cottageFee === null) throw new BillingError(400, 'Choose a valid cottage.');
   const today = manilaDateKey();
 
   const roomRef = adminDb.collection('rooms').doc(roomId);
@@ -231,7 +235,7 @@ async function createWalkIn({ staff, booking = {} }) {
     // Priced exactly like an online booking (room rate + extra guests).
     let pricing;
     try {
-      pricing = priceBookingDetails(room, details);
+      pricing = priceBookingDetails(room, details, { cottageId, cottageFee });
     } catch (error) {
       throw new BillingError(409, error.message || `Room ${room.roomNumber} has no valid rate.`);
     }
@@ -255,6 +259,8 @@ async function createWalkIn({ staff, booking = {} }) {
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
+      cottageId,
+      cottageFee,
       subtotalAmount: totalAmount,
       totalAmount,
       amountPaid,
@@ -326,6 +332,11 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
       adults: changes.adults ?? reservation.adults,
       children: changes.children ?? reservation.children ?? 0,
     }, { room, keepStartDate: reservation.checkIn });
+    // Policy: dates can't move less than 30 days before arrival or once the
+    // stay has started (cancel and rebook instead). Extending or shortening
+    // the check-out isn't a date move.
+    const dateBlock = getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: details.checkIn });
+    if (dateBlock) throw new BillingError(409, dateBlock);
     if (await roomIsTaken(transaction, {
       roomId: reservation.roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut, ignoreId: reservationId,
     })) {
@@ -338,14 +349,19 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
     } catch (error) {
       throw new BillingError(409, error.message || 'This room has no valid rate.');
     }
-    // Any promo discount already given stays the same amount.
+    // Any promo discount already given stays the same amount. Policy:
+    // reductions (fewer guests, cheaper type, shorter stay) aren't refunded,
+    // so the total never drops below what was booked.
     const discount = Number(reservation.discountAmount || 0);
-    const totalAmount = money(Math.max(0, pricing.subtotalAmount - discount));
+    const repriced = money(Math.max(0, pricing.subtotalAmount - discount));
+    const totalAmount = Math.max(repriced, Number(reservation.totalAmount || 0));
     const extraCharges = Number(reservation.extraCharges || 0);
     const amountPaid = Number(reservation.amountPaid || 0);
     const balance = money(totalAmount + extraCharges - amountPaid);
     const quote = {
       details,
+      repricedTotal: repriced,
+      noRefundApplied: repriced < Number(reservation.totalAmount || 0),
       oldTotal: Number(reservation.totalAmount || 0),
       totalAmount,
       difference: money(totalAmount - Number(reservation.totalAmount || 0)),

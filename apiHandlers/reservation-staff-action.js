@@ -7,6 +7,7 @@ import { DEFAULT_CANCELLATION_POLICY, getDateRangeNights } from '../src/lib/canc
 import { getOnlinePaymentAmount } from '../src/lib/paymentPolicy';
 import { getStayUnits, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getRequestedBookingFields } from '../src/lib/bookingDetails';
+import { getDateChangeBlock } from '../src/lib/cancellationPolicy';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
 
@@ -322,6 +323,10 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     }
     const requestedCheckIn = request.requestedCheckIn;
     const requestedCheckOut = request.requestedCheckOut;
+    // Re-checked at approval time: the 30-day window may have passed since
+    // the guest asked.
+    const dateBlock = getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: requestedCheckIn });
+    if (dateBlock) throw new Error(`${dateBlock} Reject this request instead.`);
     const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
     let change;
     if (roomRef) {

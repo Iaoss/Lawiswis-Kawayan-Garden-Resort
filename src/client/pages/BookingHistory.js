@@ -4,6 +4,7 @@ import { Pagination, usePagination } from '../../components/ui/pagination';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import { OVERNIGHT_TIME_SLOTS, isCheckInPassed, isTourStartPassed } from '../../lib/bookingPricing';
+import { DATE_CHANGE_NOTICE_DAYS, getDaysBeforeArrival } from '../../lib/cancellationPolicy';
 
 const DARK = '#1a3a1a';
 const ACCENT = '#4a7c59';
@@ -158,6 +159,12 @@ export default function BookingHistory() {
   const canRequestRefund = booking => ['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase())
     && !booking.refundRequestStatus;
 
+  // Policy: dates can only move 30+ days before arrival.
+  const datesLocked = booking => {
+    const days = getDaysBeforeArrival(booking.checkIn);
+    return days !== null && days < DATE_CHANGE_NOTICE_DAYS;
+  };
+
   const renderBooking = (booking, allowModification = false) => (
     <article key={booking.bookingId} style={{ border: '1px solid #e5e7eb', borderRadius: 14, padding: 18, background: '#fff' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -210,8 +217,13 @@ export default function BookingHistory() {
               ))}
             </select>
           </label>
+          {datesLocked(booking) && (
+            <div style={{ gridColumn: '1 / -1', background: '#fff7ed', color: '#9a3412', borderRadius: 8, padding: 10, fontSize: 12, lineHeight: 1.6 }}>
+              Your arrival is less than {DATE_CHANGE_NOTICE_DAYS} days away, so the date can no longer be moved. You can still add guests or extend your stay. To travel on a different date, cancel this booking under the cancellation policy (50% penalty under 30 days, full charge under 7 days) and make a new booking.
+            </div>
+          )}
           <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>{changeIsTour ? 'New date' : 'New check-in'}
-            <input type="date" required min={todayLocal()} value={requestedChange.checkIn} onChange={event => { const value = event.target.value; setRequestedChange(current => ({ ...current, checkIn: value, checkOut: current.checkOut && current.checkOut <= value ? '' : current.checkOut })); }} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+            <input type="date" required min={todayLocal()} value={requestedChange.checkIn} disabled={datesLocked(booking)} onChange={event => { const value = event.target.value; setRequestedChange(current => ({ ...current, checkIn: value, checkOut: current.checkOut && current.checkOut <= value ? '' : current.checkOut })); }} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
           </label>
           {!changeIsTour && (
             <>
@@ -235,7 +247,7 @@ export default function BookingHistory() {
           </label>
           <DateOccupancy date={requestedChange.checkIn} focus={changeIsTour ? requestedChange.bookingOption : 'overnight'} colors={{ accent: DARK, background: '#fff' }} style={{ gridColumn: '1 / -1' }} />
           <p style={{ gridColumn: '1 / -1', margin: 0, color: '#6b7280', fontSize: 11, lineHeight: 1.6 }}>
-            The resort recalculates the price for your new booking. Staff review the request; if the new booking costs more you'll get a payment link, and if it costs less a refund is worked out under the cancellation policy.
+            The resort recalculates the price for your new booking and staff review the request. If it costs more you'll get a payment link for the difference. Under the resort policy, fewer guests, a cheaper booking type or a shorter stay aren't refunded.
           </p>
           <button type="submit" disabled={loading || !contact.trim()} style={{ border: 0, borderRadius: 8, padding: '10px 14px', background: DARK, color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>Request change</button>
         </form>

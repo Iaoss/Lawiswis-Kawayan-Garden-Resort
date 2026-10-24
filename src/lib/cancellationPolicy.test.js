@@ -1,38 +1,51 @@
-import { getStaffCancellationFee, getCancellationPolicyOutcome, getDateRangeNights, normalizeCancellationPolicy } from './cancellationPolicy';
+import {
+  getCancellationPolicyOutcome,
+  getDateChangeBlock,
+  getDateRangeNights,
+  getDaysBeforeArrival,
+  getStaffCancellationFee,
+  normalizeCancellationPolicy,
+} from './cancellationPolicy';
 
-describe('cancellation policy outcome', () => {
-  test('uses the configured policy rates and caps refund to paid amount', () => {
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    now.setDate(now.getDate() + 10);
-    const checkIn = now.toISOString().slice(0, 10);
-    const result = getCancellationPolicyOutcome({
-      policy: { moreThan7Days: 20, between4And7Days: 50, lessThan3Days: 100 },
-      checkIn,
-      amount: 10000,
-      amountPaid: 3000,
-    });
-    expect(result).toMatchObject({ outcome: 'eligible', policyRate: 20, feeAmount: 2000, refundableAmount: 3000 });
+// Noon, 24 Oct 2026, Philippine time.
+const now = new Date('2026-10-24T04:00:00Z');
+
+describe('Lawiswis Kawayan cancellation policy', () => {
+  test('counts days to arrival in Philippine time', () => {
+    expect(getDaysBeforeArrival('2026-10-24', now)).toBe(0);
+    expect(getDaysBeforeArrival('2026-11-23', now)).toBe(30);
+    expect(getDaysBeforeArrival('2026-10-22', now)).toBe(-2);
   });
 
-  test('classifies full-fee and unpaid bookings as not eligible with alternatives', () => {
-    const tomorrow = new Date();
-    tomorrow.setHours(0, 0, 0, 0);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const result = getCancellationPolicyOutcome({
-      policy: { moreThan7Days: 20, between4And7Days: 50, lessThan3Days: 100 },
-      checkIn: tomorrow.toISOString().slice(0, 10),
-      amount: 10000,
-      amountPaid: 5000,
-    });
-    expect(result.outcome).toBe('not_eligible');
-    expect(result.refundableAmount).toBe(0);
-    expect(result.alternatives).toHaveLength(2);
+  test('no penalty 30+ days out, 50% under 30 days, full charge under 7 days and on arrival', () => {
+    expect(getStaffCancellationFee({ checkIn: '2026-11-23', totalAmount: 6000, now })).toMatchObject({ rate: 0, fee: 0, refund: 6000 });
+    expect(getStaffCancellationFee({ checkIn: '2026-11-22', totalAmount: 6000, now })).toMatchObject({ daysBeforeCheckIn: 29, rate: 50, fee: 3000, refund: 3000 });
+    expect(getStaffCancellationFee({ checkIn: '2026-10-31', totalAmount: 6000, now })).toMatchObject({ daysBeforeCheckIn: 7, rate: 50 });
+    expect(getStaffCancellationFee({ checkIn: '2026-10-30', totalAmount: 6000, now })).toMatchObject({ daysBeforeCheckIn: 6, rate: 100, refund: 0 });
+    expect(getStaffCancellationFee({ checkIn: '2026-10-24', totalAmount: 6000, now })).toMatchObject({ rate: 100, noShow: true });
   });
 
-  test('routes invalid policy details to manual review', () => {
-    expect(normalizeCancellationPolicy({ moreThan7Days: 120, between4And7Days: 50, lessThan3Days: 100 })).toBeNull();
-    expect(getCancellationPolicyOutcome({ policy: null, checkIn: '2027-01-01', amount: 1000, amountPaid: 500 }).outcome).toBe('needs_review');
+  test('guest refunds are capped at what was paid', () => {
+    expect(getCancellationPolicyOutcome({ checkIn: '2026-11-22', amount: 10000, amountPaid: 3000, now }))
+      .toMatchObject({ outcome: 'eligible', policyRate: 50, feeAmount: 5000, refundableAmount: 3000 });
+    const late = getCancellationPolicyOutcome({ checkIn: '2026-10-26', amount: 10000, amountPaid: 5000, now });
+    expect(late).toMatchObject({ outcome: 'not_eligible', refundableAmount: 0 });
+    expect(getCancellationPolicyOutcome({ checkIn: '2026-10-24', amount: 10000, amountPaid: 5000, now }).reason).toMatch(/no-show/);
+  });
+
+  test('older saved settings fall back to the official rates; bad rates go to review', () => {
+    expect(normalizeCancellationPolicy({ moreThan7Days: 20, between4And7Days: 50, lessThan3Days: 100 }))
+      .toEqual({ atLeast30Days: 0, lessThan30Days: 50, lessThan7Days: 100 });
+    expect(normalizeCancellationPolicy({ lessThan30Days: 150, lessThan7Days: 100 })).toBeNull();
+    expect(getCancellationPolicyOutcome({ policy: { lessThan30Days: 150, lessThan7Days: 100 }, checkIn: '2027-01-01', amount: 1000, amountPaid: 500, now }).outcome).toBe('needs_review');
+  });
+
+  test('dates can only move 30+ days before arrival', () => {
+    expect(getDateChangeBlock({ originalCheckIn: '2026-12-01', newCheckIn: '2026-12-05', now })).toBe('');
+    expect(getDateChangeBlock({ originalCheckIn: '2026-11-10', newCheckIn: '2026-11-12', now })).toMatch(/30 days or more/);
+    expect(getDateChangeBlock({ originalCheckIn: '2026-10-24', newCheckIn: '2026-10-27', now })).toMatch(/on or after the arrival date/);
+    // Keeping the arrival date (e.g. extending the stay) isn't a date move.
+    expect(getDateChangeBlock({ originalCheckIn: '2026-10-24', newCheckIn: '2026-10-24', now })).toBe('');
   });
 });
 
@@ -42,18 +55,8 @@ describe('reservation date ranges', () => {
     expect(getDateRangeNights('2027-01-01', '2027-01-01')).toBeNull();
     expect(getDateRangeNights('not-a-date', '2027-01-04')).toBeNull();
   });
-});
 
-
-describe('staff cancellation fee', () => {
-  const policy = { moreThan7Days: 20, between4And7Days: 50, lessThan3Days: 100 };
-  const now = new Date('2026-10-24T04:00:00Z'); // noon in Manila
-  test('uses the policy tier for the days before check-in', () => {
-    expect(getStaffCancellationFee({ policy, checkIn: '2026-11-10', totalAmount: 5000, now })).toMatchObject({ rate: 20, fee: 1000, refund: 4000 });
-    expect(getStaffCancellationFee({ policy, checkIn: '2026-10-29', totalAmount: 5000, now })).toMatchObject({ daysBeforeCheckIn: 5, rate: 50, fee: 2500 });
-    expect(getStaffCancellationFee({ policy, checkIn: '2026-10-25', totalAmount: 5000, now })).toMatchObject({ rate: 100, refund: 0 });
-  });
-  test('rejects bad dates', () => {
-    expect(getStaffCancellationFee({ policy, checkIn: 'soon', totalAmount: 5000, now })).toBeNull();
+  test('rejects bad dates for staff fees', () => {
+    expect(getStaffCancellationFee({ checkIn: 'soon', totalAmount: 5000, now })).toBeNull();
   });
 });

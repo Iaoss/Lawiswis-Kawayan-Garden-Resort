@@ -5,7 +5,7 @@ import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { staffApi } from '../lib/staffApi';
-import { getStaffCancellationFee } from '../../lib/cancellationPolicy';
+import { DEFAULT_CANCELLATION_POLICY, getStaffCancellationFee, normalizeCancellationPolicy } from '../../lib/cancellationPolicy';
 
 // `embedded` is used when this renders inside the Settings page tab,
 // so it does not wrap itself in a second PageLayout.
@@ -42,7 +42,7 @@ export default function CancellationPolicy({ embedded = false }) {
   };
 
   const [reservations, setReservations] = useState([]);
-  const [policy, setPolicy] = useState({ moreThan7Days: 20, between4And7Days: 50, lessThan3Days: 100 });
+  const [policy, setPolicy] = useState({ ...DEFAULT_CANCELLATION_POLICY });
   const [selected, setSelected] = useState(null);
   const [cancelResult, setCancelResult] = useState(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -67,7 +67,8 @@ export default function CancellationPolicy({ embedded = false }) {
     const fetchData = async () => {
       await fetchReservations();
       const policySnap = await getDoc(doc(db, 'settings', 'cancellationPolicy'));
-      if (policySnap.exists()) setPolicy(policySnap.data());
+      // Older saved settings used other tiers; those fall back to the official policy.
+      if (policySnap.exists()) setPolicy(normalizeCancellationPolicy(policySnap.data()) || { ...DEFAULT_CANCELLATION_POLICY });
     };
     fetchData();
   }, []);
@@ -158,12 +159,15 @@ export default function CancellationPolicy({ embedded = false }) {
       {/* Policy editor */}
       {showPolicyEdit && (
         <div style={{ ...S.card, padding: '20px', marginBottom: '20px' }}>
-          <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '16px' }}>Cancellation fee policy</div>
+          <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '6px' }}>Cancellation fee policy</div>
+          <div style={{ fontSize: '12px', color: SUBTEXT, marginBottom: '16px' }}>
+            Official policy: no penalty 30+ days before arrival, 50% of the total accommodation charge less than 30 days before, and the full charge less than 7 days before or on arrival (no-show). Date changes are only allowed 30+ days before arrival.
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '16px' }}>
             {[
-              { label: 'More than 7 days', key: 'moreThan7Days', kind: 'green' },
-              { label: '4–7 days before', key: 'between4And7Days', kind: 'yellow' },
-              { label: '3 days or less', key: 'lessThan3Days', kind: 'red' },
+              { label: '30 days or more before', key: 'atLeast30Days', kind: 'green' },
+              { label: 'Less than 30 days before', key: 'lessThan30Days', kind: 'yellow' },
+              { label: 'Less than 7 days / no-show', key: 'lessThan7Days', kind: 'red' },
             ].map(f => (
               <div key={f.key} style={{ ...badge(f.kind), borderRadius: '12px', padding: '16px', textAlign: 'center' }}>
                 <div style={{ fontSize: '11px', opacity: 0.85, marginBottom: '8px' }}>{f.label}</div>

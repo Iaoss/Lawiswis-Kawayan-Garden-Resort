@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
-import { DEFAULT_CANCELLATION_POLICY, getCancellationPolicyOutcome } from '../src/lib/cancellationPolicy';
+import { DEFAULT_CANCELLATION_POLICY, getCancellationPolicyOutcome, getDateChangeBlock } from '../src/lib/cancellationPolicy';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
 import { getGuestCountViolation, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getBookingOptionId, normalizeBookingDetails } from '../src/lib/bookingDetails';
@@ -209,6 +209,11 @@ async function requestScheduleChange(reservation, body) {
     return { error: 'Choose valid dates within the next two months.' };
   }
 
+  // Policy: dates can't move less than 30 days before arrival (cancel and
+  // rebook instead), and never on or after the arrival date.
+  const dateBlock = getDateChangeBlock({ originalCheckIn: data.checkIn, newCheckIn: checkIn });
+  if (dateBlock) return { error: dateBlock };
+
   // Tell the guest straight away if the room is already taken.
   if (data.roomId && requested) {
     const roomBookings = await adminDb.collection('reservations').where('roomId', '==', data.roomId).get();
@@ -237,6 +242,7 @@ async function requestScheduleChange(reservation, body) {
       const capacityError = requested ? getGuestCountViolation(roomSnapshot.data(), requested.adults, requested.children) : '';
       if (capacityError) return { error: capacityError };
       change = calculateReservationModification(data, roomSnapshot.data(), checkIn, checkOut, policy, requested || {});
+      if (change.outcome === 'not_allowed') return { error: change.reason };
       change.checkIn = checkIn;
       change.checkOut = checkOut;
     }

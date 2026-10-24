@@ -10,6 +10,8 @@ import {
   MAX_STAY_NIGHTS, OVERNIGHT_TIME_SLOTS, getRoomBaseRate, getRoomMaximumGuests, isCheckInPassed, isCoupleRoom, isTourStartPassed, stayRangesOverlap,
 } from '../../lib/bookingPricing';
 import { BOOKING_OPTIONS, normalizeBookingDetails, priceBookingDetails } from '../../lib/bookingDetails';
+import { COTTAGE_OPTIONS, getCottageFee } from '../../lib/bookingPricing';
+import { groupTooLargeNote, suggestCottage, suggestRooms } from '../../lib/bookingSuggestions';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { staffApi } from '../lib/staffApi';
@@ -125,7 +127,7 @@ export default function WalkIn() {
   const [form, setForm] = useState({
     firstName: '', lastName: '', email: '', phone: '', address: '', preferredContactMethod: '',
     roomId: '', checkIn: '', checkOut: '',
-    bookingOption: 'overnight', overnightTimeSlot: 'morning',
+    bookingOption: 'overnight', overnightTimeSlot: 'morning', cottageId: '',
     adults: 1, children: 0,
     paymentMethod: 'cash', paymentStatus: 'paid', notes: '',
   });
@@ -171,7 +173,7 @@ export default function WalkIn() {
   // calculates the real total when the booking is saved.
   const totalAmount = (() => {
     if (!selectedRoom || !details) return 0;
-    try { return priceBookingDetails(selectedRoom, details).subtotalAmount; } catch { return 0; }
+    try { return priceBookingDetails(selectedRoom, details, { cottageId: form.cottageId, cottageFee: getCottageFee(form.cottageId) || 0 }).subtotalAmount; } catch { return 0; }
   })();
   // Today's times that have passed: move to the next open one.
   useEffect(() => {
@@ -197,6 +199,11 @@ export default function WalkIn() {
     const free = bookable.filter(r => !isBooked(reservations, r, form.checkIn, stayCheckOut));
     return { availableRooms: free, bookedCount: bookable.length - free.length };
   }, [rooms, reservations, datesReady, form.checkIn, stayCheckOut, today]);
+
+  // ── Smart suggestion: best-fitting free rooms and cottage for the group ──
+  const guestTotal = (Number(form.adults) || 0) + (Number(form.children) || 0);
+  const roomSuggestions = useMemo(() => suggestRooms(availableRooms, details), [availableRooms, details]);
+  const cottageSuggestion = guestTotal > 0 ? suggestCottage(guestTotal) : null;
 
   const categoryOf = (room) => WALK_IN_CATEGORIES.find(c => getRoomsForCategory([room], c).length > 0);
   const activeCategory = WALK_IN_CATEGORIES.find(c => c.category === catFilter);
@@ -284,7 +291,7 @@ export default function WalkIn() {
         confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
       }
       setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is ${arrivesToday ? 'now occupied' : `reserved for ${isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`}`}.${confirmationMessage}${receiptMessage}`);
-      setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
+      setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', cottageId:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
       setNameErrors({});
       setSelectedRoom(null);
       setCatFilter('all');
@@ -367,6 +374,17 @@ export default function WalkIn() {
                   {/* Dates */}
                   <div style={{ ...card, marginBottom: 16 }}>
                     <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Find a room 🏡</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 8 }}>How many guests?</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 14 }}>
+                      <div>
+                        <label style={label}>Adults *</label>
+                        <input type="number" min="1" value={form.adults} onChange={e => changeGuests('adults', e.target.value)} style={inp} />
+                      </div>
+                      <div>
+                        <label style={label}>Children (under 10)</label>
+                        <input type="number" min="0" value={form.children} onChange={e => changeGuests('children', e.target.value)} style={inp} />
+                      </div>
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, alignItems: 'end' }}>
                       <div>
                         <label style={label}>Booking type *</label>
@@ -421,6 +439,45 @@ export default function WalkIn() {
                       />
                     )}
                   </div>
+
+                  {/* Smart suggestion */}
+                  {datesReady && guestTotal > 0 && (
+                    <div style={{ ...card, marginBottom: 16, border: `1px solid ${ACCENT}` }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 4 }}>✨ Suggested for {guestTotal} guest{guestTotal === 1 ? '' : 's'}</div>
+                      <div style={{ fontSize: 11, color: MUTED, marginBottom: 12 }}>Free rooms that fit the whole group, cheapest first for this {isTour ? bookingOption.label.toLowerCase() : 'stay'} (estimate).</div>
+                      {roomSuggestions.length === 0 ? (
+                        <div style={{ fontSize: 12, color: '#b45309' }}>{groupTooLargeNote(availableRooms, details)}</div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          {roomSuggestions.map(({ room, total, reason }, index) => (
+                            <div key={room.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', background: CARD2, borderRadius: 10, padding: '10px 12px' }}>
+                              <div style={{ fontSize: 12, color: TEXT }}>
+                                <strong>{index === 0 ? 'Best fit: ' : ''}{room.roomNumber}</strong> · {normalizeRoomType(room.type) || room.type}
+                                <div style={{ fontSize: 11, color: MUTED }}>{reason} · est. ₱{total.toLocaleString()}</div>
+                              </div>
+                              <button type="button" onClick={() => handleSelectRoom(room)}
+                                style={{ background: selectedRoom?.id === room.id ? ACCENT : 'transparent', color: selectedRoom?.id === room.id ? ACCENT_TEXT : TEXT, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                                {selectedRoom?.id === room.id ? 'Selected' : 'Choose'}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {cottageSuggestion?.cottage && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: `1px solid ${BORDER}` }}>
+                          <div style={{ fontSize: 12, color: TEXT }}>
+                            Cottage: <strong>{cottageSuggestion.cottage.label}</strong> · ₱{cottageSuggestion.cottage.price.toLocaleString()}
+                            {cottageSuggestion.note && <div style={{ fontSize: 11, color: '#b45309' }}>{cottageSuggestion.note}</div>}
+                          </div>
+                          <button type="button"
+                            onClick={() => setForm(p => ({ ...p, cottageId: p.cottageId === cottageSuggestion.cottage.id ? '' : cottageSuggestion.cottage.id }))}
+                            style={{ background: form.cottageId === cottageSuggestion.cottage.id ? ACCENT : 'transparent', color: form.cottageId === cottageSuggestion.cottage.id ? ACCENT_TEXT : TEXT, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                            {form.cottageId === cottageSuggestion.cottage.id ? 'Added' : 'Add cottage'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Results */}
                   {!datesReady ? (
@@ -592,6 +649,19 @@ export default function WalkIn() {
                         <div>
                           <label style={label}>Children</label>
                           <input type="number" min="0" value={form.children} onChange={e => changeGuests('children', e.target.value)} style={inp} />
+                        </div>
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <label style={label}>Cottage (optional)</label>
+                          <select value={form.cottageId} onChange={e => setForm(p => ({ ...p, cottageId: e.target.value }))} style={inp}>
+                            {COTTAGE_OPTIONS.map(option => (
+                              <option key={option.id || 'none'} value={option.id}>
+                                {option.id ? `${option.label} · ₱${option.price.toLocaleString()}` : option.label}
+                              </option>
+                            ))}
+                          </select>
+                          {cottageSuggestion?.cottage && form.cottageId !== cottageSuggestion.cottage.id && (
+                            <div style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>Suggested for {guestTotal}: {cottageSuggestion.cottage.label}</div>
+                          )}
                         </div>
                       </div>
                     </div>

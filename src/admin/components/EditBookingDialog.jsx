@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import { OVERNIGHT_TIME_SLOTS, isCheckInPassed, isTourStartPassed } from '../../lib/bookingPricing';
+import { DATE_CHANGE_NOTICE_DAYS, getDaysBeforeArrival } from '../../lib/cancellationPolicy';
 import { staffApi } from '../lib/staffApi';
 
 const peso = value => `₱${Number(value || 0).toLocaleString()}`;
@@ -25,6 +26,9 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
   const [quoting, setQuoting] = useState(false);
   const [saving, setSaving] = useState(false);
   const isTour = form.bookingOption !== 'overnight';
+  // Policy: the arrival date can only move 30+ days ahead of it.
+  const daysToArrival = getDaysBeforeArrival(reservation.checkIn);
+  const arrivalLocked = daysToArrival !== null && daysToArrival < DATE_CHANGE_NOTICE_DAYS;
 
   const changes = {
     ...form,
@@ -89,7 +93,7 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
             </select>
           </label>
           <label style={field}>{isTour ? 'Date' : 'Check-in'}
-            <input type="date" required min={reservation.checkIn < todayKey ? reservation.checkIn : todayKey} value={form.checkIn}
+            <input type="date" required disabled={arrivalLocked} min={reservation.checkIn < todayKey ? reservation.checkIn : todayKey} value={form.checkIn}
               onChange={e => setForm(f => ({ ...f, checkIn: e.target.value }))} style={input} />
           </label>
           {!isTour && (
@@ -116,6 +120,13 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
           </label>
         </div>
 
+        {arrivalLocked && (
+          <div style={{ fontSize: 11, color: '#b45309', lineHeight: 1.5 }}>
+            {daysToArrival <= 0 ? 'The stay has started' : `Arrival is ${daysToArrival} day${daysToArrival === 1 ? '' : 's'} away`}, so the {isTour ? 'date' : 'check-in date'} can't be moved under the resort policy.
+            To change it, cancel the booking (with the policy penalty) and make a new one.
+          </div>
+        )}
+
         <DateOccupancy date={form.checkIn} focus={isTour ? form.bookingOption : 'overnight'}
           colors={{ text: c.TEXT, muted: c.MUTED, border: c.BORDER2, background: c.CARD2, accent: c.ACCENT }} />
 
@@ -134,6 +145,9 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
                 </div>
               )}
               <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.MUTED }}>Balance after change</span><span>{peso(quote.balance)}</span></div>
+              {quote.noRefundApplied && (
+                <div style={{ color: '#b45309' }}>Repriced at {peso(quote.repricedTotal)}, but reductions aren't refunded under the resort policy, so the full charge stays.</div>
+              )}
               {quote.overpaid > 0 && (
                 <div style={{ color: '#b45309' }}>The guest has paid {peso(quote.overpaid)} more than the new total. Arrange a refund after saving.</div>
               )}

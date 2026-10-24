@@ -49,18 +49,17 @@ describe('booking details rules (all portals)', () => {
 });
 
 describe('repricing a change of tour type or guests', () => {
-  const policy = { moreThan7Days: 20, between4And7Days: 50, lessThan3Days: 100 };
-  test('switching an overnight stay to a day tour with more guests reprices it', () => {
+  const policy = { atLeast30Days: 0, lessThan30Days: 50, lessThan7Days: 100 };
+  test('a cheaper change (overnight to day tour) keeps the full original charge', () => {
     const reservation = {
       roomId: 'r1', bookingType: 'overnight', checkIn: '2026-12-01', checkOut: '2026-12-02', nights: 1,
       adults: 2, children: 0, totalAmount: 3000, amountPaid: 1500,
     };
     const change = calculateReservationModification(reservation, couple, '2026-12-05', '2026-12-05', policy, {
-      bookingType: 'daytour', tourPeriod: 'day', adults: 2, children: 1,
+      bookingType: 'daytour', tourPeriod: 'day', adults: 2, children: 1, now,
     });
-    expect(change).toMatchObject({ outcome: 'eligible', updatedTotal: expect.any(Number) });
-    // New price ₱2,275 is cheaper, so the policy fee applies to the ₱725 reduction.
-    expect(change.difference).toBe(-725);
+    // New price ₱2,275 is cheaper, but reductions aren't refunded.
+    expect(change).toMatchObject({ outcome: 'eligible', updatedTotal: 3000, difference: 0, changeType: 'reduction_no_refund' });
   });
 });
 
@@ -78,5 +77,28 @@ describe('date occupancy indicator', () => {
     expect(occupancy.night).toEqual({ bookings: 1, guests: 4 });
     expect(occupancy.overnight).toEqual({ bookings: 1, guests: 2 });
     expect(occupancy.total).toEqual({ bookings: 3, guests: 9 });
+  });
+});
+
+describe('walk-in smart suggestions', () => {
+  // eslint-disable-next-line global-require
+  const { suggestCottage, suggestRooms } = require('./bookingSuggestions');
+  const rooms = [
+    { id: 'a', name: 'Couple Room', type: 'Deluxe' },
+    { id: 'b', name: 'Family Room for 4', type: 'FamilyRoom', baseCapacity: 4 },
+    { id: 'c', name: 'Family Room for 6', type: 'FamilyRoom', baseCapacity: 6 },
+    { id: 'd', name: 'Family Suite for 6', type: 'FamilySuite', baseCapacity: 6 },
+  ];
+  test('suggests rooms that fit the group, cheapest first', () => {
+    const { details } = normalizeBookingDetails({ bookingType: 'daytour', tourPeriod: 'day', checkIn: '2026-10-25', adults: 5 }, { now });
+    const ids = suggestRooms(rooms, details).map(item => item.room.id);
+    expect(ids[0]).toBe('c');
+    expect(ids).not.toContain('a');
+  });
+  test('suggests the smallest cottage that seats everyone', () => {
+    expect(suggestCottage(4).cottage.id).toBe('umbrella-hut');
+    expect(suggestCottage(8).cottage.id).toBe('garden-cabana');
+    expect(suggestCottage(15).cottage.id).toBe('pavilion');
+    expect(suggestCottage(25).note).toMatch(/another cottage/);
   });
 });

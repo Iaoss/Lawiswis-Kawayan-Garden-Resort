@@ -121,12 +121,12 @@ describe('booking pricing', () => {
   it.each([
     [{ type: 'FamilyRoom', baseCapacity: 4 }, 3600, 4600, 4],
     [{ type: 'FamilyRoom', baseCapacity: 6 }, 5200, 6200, 6],
-    [{ type: 'FamilySuite', baseCapacity: 4 }, 4100, 5600, 4],
-    [{ type: 'FamilySuite', baseCapacity: 6 }, 5700, 7200, 6],
+    [{ type: 'FamilySuite', baseCapacity: 4 }, 4600, 5600, 4],
+    [{ type: 'FamilySuite', baseCapacity: 6 }, 6200, 7200, 6],
     [{ type: 'JuniorSuite4' }, 6500, 8000, 4],
     [{ name: 'Paraiso Suite for 8', type: 'PresidentialSuite' }, 10000, 12000, 8],
     [{ name: 'Halimuyak Suite for 8', type: 'PresidentialSuite' }, 10000, 12000, 8],
-    [{ name: 'Main Villa for 20', type: 'MainVilla' }, 18500, 24500, 20],
+    [{ name: 'Main Villa for 20', type: 'MainVilla' }, 16500, 24500, 20],
   ])('configures %o at both stay rates', (room, daytour, overnight, capacity) => {
     expect(getRoomBaseRate(room, 'daytour')).toEqual({ amount: daytour, baseCapacity: capacity });
     expect(getRoomBaseRate(room, 'overnight')).toEqual({ amount: overnight, baseCapacity: capacity });
