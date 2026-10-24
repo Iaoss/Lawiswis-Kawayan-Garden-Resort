@@ -1,8 +1,9 @@
 import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
-import { DEFAULT_CANCELLATION_POLICY, getCancellationPolicyOutcome, getDateRangeNights } from '../src/lib/cancellationPolicy';
+import { DEFAULT_CANCELLATION_POLICY, getCancellationPolicyOutcome } from '../src/lib/cancellationPolicy';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
-import { OVERNIGHT_TIME_SLOTS, getOvernightCutoffError, getStayDurationError, getTourCutoffError } from '../src/lib/bookingPricing';
+import { getGuestCountViolation, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { getBookingOptionId, normalizeBookingDetails } from '../src/lib/bookingDetails';
 import { calculateReservationModification } from '../lib/reservationModification';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
@@ -28,6 +29,9 @@ function publicReservation(snapshot) {
     children: Number(reservation.children || 0),
     type: reservation.type || '',
     bookingType: reservation.bookingType || '',
+    tourPeriod: reservation.tourPeriod || '',
+    checkInTime: reservation.checkInTime || '',
+    checkOutTime: reservation.checkOutTime || '',
   };
 }
 
@@ -178,28 +182,45 @@ async function requestScheduleChange(reservation, body) {
     return { alreadyRequested: true, modificationRequest: data.modificationRequest };
   }
 
-  const { checkIn, checkOut } = body;
-  const isDayTour = data.bookingType === 'daytour';
-  const nights = isDayTour ? 1 : getDateRangeNights(checkIn, checkOut);
-  if (!isDayTour && getStayDurationError(checkIn, checkOut)) {
-    return { error: getStayDurationError(checkIn, checkOut) };
-  }
+  // The guest can change the dates, switch between overnight / day tour /
+  // night tour, and change the guest count. Anything not sent stays as is.
+  const isCorporate = data.type === 'corporate';
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
   const maxDate = new Date(today.getFullYear(), today.getMonth() + 2, today.getDate());
-  const requestedStart = new Date(`${checkIn}T00:00:00`);
-  const requestedEnd = new Date(`${checkOut}T00:00:00`);
-  if (!nights || Number.isNaN(requestedStart.getTime()) || Number.isNaN(requestedEnd.getTime())
-    || requestedStart < today || requestedStart > maxDate
-    || (isDayTour ? checkOut !== checkIn : requestedEnd > maxDate)) {
+  const maxDateKey = `${maxDate.getFullYear()}-${String(maxDate.getMonth() + 1).padStart(2, '0')}-${String(maxDate.getDate()).padStart(2, '0')}`;
+  const option = isCorporate ? '' : (body.bookingOption || getBookingOptionId(data));
+  const normalized = isCorporate
+    ? null
+    : normalizeBookingDetails({
+      bookingType: option === 'overnight' ? 'overnight' : 'daytour',
+      tourPeriod: option === 'night' ? 'night' : 'day',
+      overnightTimeSlot: body.overnightTimeSlot,
+      checkInTime: data.checkInTime,
+      checkIn: body.checkIn,
+      checkOut: body.checkOut,
+      adults: body.adults ?? data.adults,
+      children: body.children ?? data.children ?? 0,
+    }, { maxDate: maxDateKey });
+  if (normalized?.error) return { error: normalized.error };
+  const requested = normalized?.details;
+  const checkIn = requested ? requested.checkIn : body.checkIn;
+  const checkOut = requested ? requested.checkOut : body.checkOut;
+  if (isCorporate && (typeof checkIn !== 'string' || typeof checkOut !== 'string')) {
     return { error: 'Choose valid dates within the next two months.' };
   }
-  // Moving a booking to today is only allowed before its check-in time.
-  const overnightSlot = OVERNIGHT_TIME_SLOTS.find(slot => slot.checkIn === data.checkInTime);
-  const cutoffError = isDayTour
-    ? getTourCutoffError(checkIn, data.tourPeriod || 'day')
-    : getOvernightCutoffError(checkIn, overnightSlot?.id);
-  if (cutoffError) return { error: cutoffError };
+
+  // Tell the guest straight away if the room is already taken.
+  if (data.roomId && requested) {
+    const roomBookings = await adminDb.collection('reservations').where('roomId', '==', data.roomId).get();
+    const clash = roomBookings.docs.some(doc => {
+      if (doc.id === reservation.id) return false;
+      const other = doc.data();
+      return !['cancelled', 'checked-out', 'rejected'].includes(String(other.status || '').toLowerCase())
+        && typeof other.checkIn === 'string' && typeof other.checkOut === 'string'
+        && stayRangesOverlap(checkIn, checkOut, other.checkIn.slice(0, 10), other.checkOut.slice(0, 10));
+    });
+    if (clash) return { error: 'The room is already booked for that date. Please choose another date.' };
+  }
 
   let change = {
     outcome: 'needs_review',
@@ -213,7 +234,9 @@ async function requestScheduleChange(reservation, body) {
       readCancellationPolicy(),
     ]);
     if (roomSnapshot.exists) {
-      change = calculateReservationModification(data, roomSnapshot.data(), checkIn, checkOut, policy);
+      const capacityError = requested ? getGuestCountViolation(roomSnapshot.data(), requested.adults, requested.children) : '';
+      if (capacityError) return { error: capacityError };
+      change = calculateReservationModification(data, roomSnapshot.data(), checkIn, checkOut, policy, requested || {});
       change.checkIn = checkIn;
       change.checkOut = checkOut;
     }
@@ -228,6 +251,19 @@ async function requestScheduleChange(reservation, body) {
     requestedCheckOut: checkOut,
     originalCheckIn: data.checkIn,
     originalCheckOut: data.checkOut,
+    // New booking type, times and guests (applied when the change completes).
+    ...(requested ? {
+      requestedBookingType: requested.bookingType,
+      requestedTourPeriod: requested.tourPeriod,
+      requestedCheckInTime: requested.checkInTime,
+      requestedCheckOutTime: requested.checkOutTime,
+      requestedAdults: requested.adults,
+      requestedChildren: requested.children,
+      originalBookingType: data.bookingType || '',
+      originalTourPeriod: data.tourPeriod || '',
+      originalAdults: Number(data.adults || 0),
+      originalChildren: Number(data.children || 0),
+    } : {}),
     originalTotal: Number(data.totalAmount || 0),
     proposedTotal: change.updatedTotal ?? null,
     difference: change.difference ?? null,

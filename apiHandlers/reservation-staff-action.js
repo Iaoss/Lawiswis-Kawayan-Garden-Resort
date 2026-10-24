@@ -5,7 +5,8 @@ import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
 import { createPayMongoCheckoutSession } from '../lib/paymongoCheckout';
 import { DEFAULT_CANCELLATION_POLICY, getDateRangeNights } from '../src/lib/cancellationPolicy';
 import { getOnlinePaymentAmount } from '../src/lib/paymentPolicy';
-import { stayRangesOverlap } from '../src/lib/bookingPricing';
+import { getStayUnits, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { getRequestedBookingFields } from '../src/lib/bookingDetails';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
 
@@ -341,6 +342,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
       change = calculateReservationModification(
         reservation, roomSnapshot.data(), requestedCheckIn, requestedCheckOut,
         policySnapshot.exists ? policySnapshot.data() : DEFAULT_CANCELLATION_POLICY,
+        getRequestedBookingFields(request),
       );
     } else {
       change = { outcome: 'needs_review', reason: 'This reservation requires a staff-entered total.' };
@@ -367,8 +369,8 @@ async function decideModification({ reservationRef, reservationId, requestId, st
         paymentDue: difference > 0 ? getOnlinePaymentAmount(difference, 'deposit') : 0,
         refundDue: manualRefundDue,
         cancellationFee: Number(request.cancellationFee || 0),
-        nights: reservation.bookingType === 'daytour'
-          ? 1
+        nights: (request.requestedBookingType || reservation.bookingType) === 'daytour'
+          ? getStayUnits(requestedCheckIn, requestedCheckOut)
           : getDateRangeNights(requestedCheckIn, requestedCheckOut),
       };
     }
@@ -387,6 +389,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
       transaction.update(reservationRef, { modificationRequest: updatedRequest });
     } else {
       transaction.update(reservationRef, {
+        ...getRequestedBookingFields(request),
         checkIn: requestedCheckIn,
         checkOut: requestedCheckOut,
         totalAmount: change.updatedTotal,

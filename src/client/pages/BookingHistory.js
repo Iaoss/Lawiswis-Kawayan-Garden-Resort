@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Pagination, usePagination } from '../../components/ui/pagination';
+import DateOccupancy from '../../components/ui/date-occupancy';
+import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
+import { OVERNIGHT_TIME_SLOTS, isCheckInPassed, isTourStartPassed } from '../../lib/bookingPricing';
 
 const DARK = '#1a3a1a';
 const ACCENT = '#4a7c59';
@@ -39,7 +42,11 @@ export default function BookingHistory() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
-  const [requestedDates, setRequestedDates] = useState({ checkIn: '', checkOut: '' });
+  // The change a guest asks for: booking type, dates, check-in time and guests.
+  const [requestedChange, setRequestedChange] = useState({
+    bookingOption: 'overnight', checkIn: '', checkOut: '', overnightTimeSlot: 'morning', adults: 1, children: 0,
+  });
+  const changeIsTour = requestedChange.bookingOption !== 'overnight';
   const pagination = usePagination(bookings, { pageSize: 5 });
 
   useEffect(() => {
@@ -72,9 +79,14 @@ export default function BookingHistory() {
     try {
       const result = await sendGuestAction('lookup', reference.trim());
       setLookupResult(result.reservation);
-      setRequestedDates({
-        checkIn: result.reservation.checkIn || '',
-        checkOut: result.reservation.checkOut || '',
+      const found = result.reservation;
+      setRequestedChange({
+        bookingOption: getBookingOptionId(found),
+        checkIn: found.checkIn || '',
+        checkOut: found.checkOut || '',
+        overnightTimeSlot: OVERNIGHT_TIME_SLOTS.find(slot => slot.checkIn === found.checkInTime)?.id || 'morning',
+        adults: Math.max(1, Number(found.adults) || 1),
+        children: Math.max(0, Number(found.children) || 0),
       });
     } catch (lookupError) {
       setError(lookupError.message || 'Could not find this reservation.');
@@ -124,12 +136,18 @@ export default function BookingHistory() {
     setError('');
     setNotice('');
     try {
-      const result = await sendGuestAction('schedule-change', booking.bookingId, requestedDates);
+      // Tours are single-day, so their check-out is the same date.
+      const result = await sendGuestAction('schedule-change', booking.bookingId, {
+        ...requestedChange,
+        checkOut: changeIsTour ? requestedChange.checkIn : requestedChange.checkOut,
+        adults: Number(requestedChange.adults),
+        children: Number(requestedChange.children),
+      });
       const updated = { ...booking, modificationRequest: result.modificationRequest };
       if (lookupResult?.bookingId === booking.bookingId) setLookupResult(updated);
       setNotice(result.alreadyRequested
         ? 'A schedule-change request is already awaiting resort review.'
-        : `Your requested dates were sent to resort staff. ${result.modificationRequest?.reason || ''}`);
+        : `Your requested change was sent to resort staff. ${result.modificationRequest?.reason || ''}${result.modificationRequest?.proposedTotal != null ? ` New total: ₱${Number(result.modificationRequest.proposedTotal).toLocaleString()}.` : ''}`);
     } catch (requestError) {
       setError(requestError.message || 'Could not request a schedule change.');
     } finally {
@@ -166,7 +184,9 @@ export default function BookingHistory() {
       )}
       {booking.modificationRequest && (
         <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#f8faf8', color: '#4b5563', fontSize: 12 }}>
-          <strong>Schedule change:</strong> {booking.modificationRequest.status?.replaceAll('_', ' ')} · {booking.modificationRequest.requestedCheckIn} – {booking.modificationRequest.requestedCheckOut}
+          <strong>Requested change:</strong> {booking.modificationRequest.status?.replaceAll('_', ' ')} · {booking.modificationRequest.requestedCheckIn}{booking.modificationRequest.requestedCheckOut !== booking.modificationRequest.requestedCheckIn ? ` – ${booking.modificationRequest.requestedCheckOut}` : ''}
+          {booking.modificationRequest.requestedBookingType && <> · {BOOKING_OPTIONS.find(option => option.id === getBookingOptionId({ bookingType: booking.modificationRequest.requestedBookingType, tourPeriod: booking.modificationRequest.requestedTourPeriod }))?.label}</>}
+          {booking.modificationRequest.requestedAdults != null && <> · {booking.modificationRequest.requestedAdults} adult(s), {booking.modificationRequest.requestedChildren || 0} child(ren)</>}
           {booking.modificationRequest.reason && <div style={{ marginTop: 4 }}>{booking.modificationRequest.reason}</div>}
         </div>
       )}
@@ -179,13 +199,45 @@ export default function BookingHistory() {
         && (!booking.modificationRequest || ['rejected', 'completed'].includes(booking.modificationRequest.status))
         && ['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase()) && (
         <form onSubmit={event => requestScheduleChange(event, booking)} style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #e5e7eb', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, alignItems: 'end' }}>
-          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>New check-in
-            <input type="date" required min={todayLocal()} value={requestedDates.checkIn} onChange={event => { const value = event.target.value; setRequestedDates(current => ({ checkIn: value, checkOut: current.checkOut && current.checkOut <= value ? '' : current.checkOut })); }} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+          <div style={{ gridColumn: '1 / -1', color: DARK, fontSize: 13, fontWeight: 700 }}>Change this booking</div>
+          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>Booking type
+            <select value={requestedChange.bookingOption} onChange={event => setRequestedChange(current => ({ ...current, bookingOption: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }}>
+              {BOOKING_OPTIONS.map(option => (
+                <option key={option.id} value={option.id}
+                  disabled={option.id !== 'overnight' && isTourStartPassed(requestedChange.checkIn, option.tourPeriod)}>
+                  {option.label}{option.id !== 'overnight' && isTourStartPassed(requestedChange.checkIn, option.tourPeriod) ? ' — closed for today' : ''}
+                </option>
+              ))}
+            </select>
           </label>
-          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>New check-out
-            <input type="date" required min={requestedDates.checkIn || todayLocal()} value={requestedDates.checkOut} onChange={event => setRequestedDates(current => ({ ...current, checkOut: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>{changeIsTour ? 'New date' : 'New check-in'}
+            <input type="date" required min={todayLocal()} value={requestedChange.checkIn} onChange={event => { const value = event.target.value; setRequestedChange(current => ({ ...current, checkIn: value, checkOut: current.checkOut && current.checkOut <= value ? '' : current.checkOut })); }} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
           </label>
-          <button type="submit" disabled={loading || !contact.trim()} style={{ border: 0, borderRadius: 8, padding: '10px 14px', background: DARK, color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>Request date change</button>
+          {!changeIsTour && (
+            <>
+              <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>New check-out
+                <input type="date" required min={requestedChange.checkIn || todayLocal()} value={requestedChange.checkOut} onChange={event => setRequestedChange(current => ({ ...current, checkOut: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+              </label>
+              <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>Check-in time
+                <select value={requestedChange.overnightTimeSlot} onChange={event => setRequestedChange(current => ({ ...current, overnightTimeSlot: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }}>
+                  {OVERNIGHT_TIME_SLOTS.map(slot => (
+                    <option key={slot.id} value={slot.id} disabled={isCheckInPassed(requestedChange.checkIn, slot)}>{slot.label}</option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
+          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>Adults
+            <input type="number" min="1" max="40" required value={requestedChange.adults} onChange={event => setRequestedChange(current => ({ ...current, adults: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+          </label>
+          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>Children (under 10)
+            <input type="number" min="0" max="40" required value={requestedChange.children} onChange={event => setRequestedChange(current => ({ ...current, children: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
+          </label>
+          <DateOccupancy date={requestedChange.checkIn} focus={changeIsTour ? requestedChange.bookingOption : 'overnight'} colors={{ accent: DARK, background: '#fff' }} style={{ gridColumn: '1 / -1' }} />
+          <p style={{ gridColumn: '1 / -1', margin: 0, color: '#6b7280', fontSize: 11, lineHeight: 1.6 }}>
+            The resort recalculates the price for your new booking. Staff review the request; if the new booking costs more you'll get a payment link, and if it costs less a refund is worked out under the cancellation policy.
+          </p>
+          <button type="submit" disabled={loading || !contact.trim()} style={{ border: 0, borderRadius: 8, padding: '10px 14px', background: DARK, color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>Request change</button>
         </form>
       )}
     </article>

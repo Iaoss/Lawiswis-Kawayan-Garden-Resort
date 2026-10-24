@@ -13,8 +13,11 @@
 //     Cancels a booking and records the fee and refund from the resort's
 //     cancellation policy, calculated here.
 //   { action: 'create-walk-in', booking: {...} }
-//     Creates a walk-in reservation. The price is calculated here from the
-//     room's nightly rate, and the room is checked for double bookings.
+//     Creates a walk-in overnight stay, day tour or night tour, priced here
+//     with the same rules as online bookings and checked for double bookings.
+//   { action: 'edit-booking', reservationId, changes, preview? }
+//     Changes a booking's type, dates or guests and reprices it. With
+//     preview: true it only returns the new price.
 
 import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
@@ -22,12 +25,8 @@ import { verifyStaff } from '../lib/verifyStaff';
 import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
-import {
-  getRoomMaximumGuests,
-  getStayDurationError,
-  isCoupleRoom,
-  stayRangesOverlap,
-} from '../src/lib/bookingPricing';
+import { stayRangesOverlap } from '../src/lib/bookingPricing';
+import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
 import { DEFAULT_CANCELLATION_POLICY, getStaffCancellationFee } from '../src/lib/cancellationPolicy';
 import { manilaDateKey } from '../src/lib/reservationStatus';
 
@@ -163,29 +162,54 @@ const blockedRoomStatus = (status, checkIn, today) => {
   return value === 'cleaning' && checkIn === today; // cleaning only matters for same-day arrivals
 };
 
+// True if another active booking holds the room on any of these dates.
+// Matches by room id, or by room number for older bookings.
+async function roomIsTaken(transaction, { roomId, roomNumber, checkIn, checkOut, ignoreId = '' }) {
+  const [byId, byNumber] = await Promise.all([
+    transaction.get(adminDb.collection('reservations').where('roomId', '==', roomId)),
+    roomNumber
+      ? transaction.get(adminDb.collection('reservations').where('roomNumber', '==', roomNumber))
+      : Promise.resolve({ docs: [] }),
+  ]);
+  return [...byId.docs, ...byNumber.docs].some(doc => {
+    if (doc.id === ignoreId) return false;
+    const r = doc.data();
+    if (!isActive(r) || (r.roomId && r.roomId !== roomId) || typeof r.checkIn !== 'string') return false;
+    const end = typeof r.checkOut === 'string' && r.checkOut ? r.checkOut.slice(0, 10) : r.checkIn.slice(0, 10);
+    return stayRangesOverlap(checkIn, checkOut, r.checkIn.slice(0, 10), end);
+  });
+}
+
+// Turns the staff form's "overnight / day / night" choice into booking details.
+function detailsFromForm(form, options) {
+  const option = BOOKING_OPTIONS.find(item => item.id === form.bookingOption) || BOOKING_OPTIONS[0];
+  const result = normalizeBookingDetails({
+    bookingType: option.bookingType,
+    tourPeriod: option.tourPeriod,
+    overnightTimeSlot: form.overnightTimeSlot,
+    checkInTime: form.checkInTime,
+    checkIn: form.checkIn,
+    checkOut: form.checkOut,
+    adults: Number(form.adults),
+    children: Number(form.children || 0),
+  }, options);
+  if (result.error) throw new BillingError(400, result.error);
+  return result.details;
+}
+
 async function createWalkIn({ staff, booking = {} }) {
   const firstName = cleanText(booking.firstName, 35);
   const lastName = cleanText(booking.lastName, 35);
   if (!NAME_PATTERN.test(firstName) || !NAME_PATTERN.test(lastName)) {
     throw new BillingError(400, 'Enter a valid first and last name (2-35 letters each).');
   }
-  const { roomId, checkIn, checkOut } = booking;
-  const adults = Number(booking.adults);
-  const children = Number(booking.children);
+  const { roomId } = booking;
   if (typeof roomId !== 'string' || !roomId) throw new BillingError(400, 'Choose a room.');
-  if (typeof checkIn !== 'string' || typeof checkOut !== 'string') throw new BillingError(400, 'Choose check-in and check-out dates.');
-  const stayError = getStayDurationError(checkIn, checkOut);
-  if (stayError) throw new BillingError(400, stayError);
-  const today = manilaDateKey();
-  if (checkIn < today) throw new BillingError(400, 'Check-in can’t be in the past.');
-  if (!Number.isInteger(adults) || adults < 1 || !Number.isInteger(children) || children < 0) {
-    throw new BillingError(400, 'Guest counts must be whole numbers.');
-  }
   if (!isPreferredContactMethod(booking.preferredContactMethod)) throw new BillingError(400, 'Choose a preferred contact method.');
   const paymentMethod = COUNTER_PAYMENT_METHODS.includes(booking.paymentMethod) ? booking.paymentMethod : '';
   const paymentStatus = WALK_IN_PAYMENT_STATUSES.includes(booking.paymentStatus) ? booking.paymentStatus : '';
   if (!paymentMethod || !paymentStatus) throw new BillingError(400, 'Choose a payment method and payment status.');
-  const nights = Math.round((new Date(`${checkOut}T00:00:00Z`) - new Date(`${checkIn}T00:00:00Z`)) / 86400000);
+  const today = manilaDateKey();
 
   const roomRef = adminDb.collection('rooms').doc(roomId);
   const reservationRef = adminDb.collection('reservations').doc();
@@ -196,28 +220,22 @@ async function createWalkIn({ staff, booking = {} }) {
     const roomSnap = await transaction.get(roomRef);
     if (!roomSnap.exists) throw new BillingError(404, 'This room could not be found.');
     const room = roomSnap.data();
-    if (blockedRoomStatus(room.status, checkIn, today)) throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
-    if (isCoupleRoom(room) && adults + children > getRoomMaximumGuests(room)) {
-      throw new BillingError(400, 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, book the Family Suite for 6.');
+    // Same rules as online bookings: tours are single-day, nothing starts
+    // after today's check-in time, and the room's guest limit applies.
+    const details = detailsFromForm(booking, { room });
+    if (blockedRoomStatus(room.status, details.checkIn, today)) throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
+    if (await roomIsTaken(transaction, { roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut })) {
+      throw new BillingError(409, `Room ${room.roomNumber} was just booked for those dates. Please choose another room.`);
     }
-    // Double-booking guard: match by room id, or by room number for older bookings.
-    const [byId, byNumber] = await Promise.all([
-      transaction.get(adminDb.collection('reservations').where('roomId', '==', roomId)),
-      room.roomNumber
-        ? transaction.get(adminDb.collection('reservations').where('roomNumber', '==', room.roomNumber))
-        : Promise.resolve({ docs: [] }),
-    ]);
-    const clash = [...byId.docs, ...byNumber.docs].some(doc => {
-      const r = doc.data();
-      if (!isActive(r) || (r.roomId && r.roomId !== roomId) || typeof r.checkIn !== 'string') return false;
-      const end = typeof r.checkOut === 'string' && r.checkOut ? r.checkOut.slice(0, 10) : r.checkIn.slice(0, 10);
-      return stayRangesOverlap(checkIn, checkOut, r.checkIn.slice(0, 10), end);
-    });
-    if (clash) throw new BillingError(409, `Room ${room.roomNumber} was just booked for those dates. Please choose another room.`);
 
-    const rate = Number(room.price);
-    if (!Number.isFinite(rate) || rate <= 0) throw new BillingError(409, `Room ${room.roomNumber} has no nightly rate set.`);
-    const totalAmount = money(rate * nights);
+    // Priced exactly like an online booking (room rate + extra guests).
+    let pricing;
+    try {
+      pricing = priceBookingDetails(room, details);
+    } catch (error) {
+      throw new BillingError(409, error.message || `Room ${room.roomNumber} has no valid rate.`);
+    }
+    const totalAmount = money(pricing.subtotalAmount);
     const amountPaid = paymentStatus === 'paid' ? totalAmount : 0;
 
     transaction.set(reservationRef, {
@@ -233,11 +251,11 @@ async function createWalkIn({ staff, booking = {} }) {
       roomNumber: room.roomNumber || '',
       roomType: room.type || '',
       category: cleanText(booking.category, 80),
-      checkIn,
-      checkOut,
-      adults,
-      children,
-      nights,
+      ...details,
+      baseRate: pricing.baseRate,
+      baseCapacity: pricing.baseCapacity,
+      extraGuestCharge: pricing.extraGuestCharge,
+      subtotalAmount: totalAmount,
       totalAmount,
       amountPaid,
       paymentMethod,
@@ -259,8 +277,9 @@ async function createWalkIn({ staff, booking = {} }) {
       });
     }
     // Only mark the room occupied when the guest arrives today.
-    if (checkIn === today) transaction.update(roomRef, { status: 'occupied' });
-    return { totalAmount, amountPaid, roomNumber: room.roomNumber || '', arrivesToday: checkIn === today };
+    const arrivesToday = details.checkIn === today;
+    if (arrivesToday) transaction.update(roomRef, { status: 'occupied' });
+    return { totalAmount, amountPaid, roomNumber: room.roomNumber || '', arrivesToday };
   });
 
   let receipt = null;
@@ -273,6 +292,91 @@ async function createWalkIn({ staff, booking = {} }) {
     }
   }
   return { ...result, reservationId: reservationRef.id, receipt, receiptError };
+}
+
+const ACTIVE_CHANGE_REQUESTS = ['requested', 'needs_review', 'awaiting_payment', 'awaiting_refund'];
+
+// Staff edit of an existing booking: switch overnight / day tour / night
+// tour, move dates, or change guest counts. The server reprices it with the
+// same rules as a new booking. With `preview: true` it only returns the new
+// price, so staff can see it before saving.
+async function editBooking({ staff, reservationId, changes = {}, preview = false }) {
+  return adminDb.runTransaction(async transaction => {
+    const { ref, reservation } = await getReservation(transaction, reservationId);
+    if (!['pending', 'confirmed', 'checked-in'].includes(reservation.status)) {
+      throw new BillingError(409, 'Only pending, confirmed or checked-in bookings can be edited.');
+    }
+    if (reservation.type === 'corporate' || !reservation.roomId) {
+      throw new BillingError(409, 'Corporate and group bookings are priced by package and can’t be edited here.');
+    }
+    if (ACTIVE_CHANGE_REQUESTS.includes(String(reservation.modificationRequest?.status || ''))) {
+      throw new BillingError(409, 'This booking has a change request from the guest. Approve or reject it first.');
+    }
+    const roomRef = adminDb.collection('rooms').doc(reservation.roomId);
+    const roomSnap = await transaction.get(roomRef);
+    if (!roomSnap.exists) throw new BillingError(404, 'The booked room could not be found.');
+    const room = roomSnap.data();
+
+    const details = detailsFromForm({
+      bookingOption: changes.bookingOption || getBookingOptionId(reservation),
+      overnightTimeSlot: changes.overnightTimeSlot,
+      checkInTime: reservation.checkInTime,
+      checkIn: changes.checkIn ?? reservation.checkIn,
+      checkOut: changes.checkOut ?? reservation.checkOut,
+      adults: changes.adults ?? reservation.adults,
+      children: changes.children ?? reservation.children ?? 0,
+    }, { room, keepStartDate: reservation.checkIn });
+    if (await roomIsTaken(transaction, {
+      roomId: reservation.roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut, ignoreId: reservationId,
+    })) {
+      throw new BillingError(409, `Room ${room.roomNumber} is already booked for those dates.`);
+    }
+
+    let pricing;
+    try {
+      pricing = priceBookingDetails(room, details, { cottageId: reservation.cottageId || '', cottageFee: Number(reservation.cottageFee || 0) });
+    } catch (error) {
+      throw new BillingError(409, error.message || 'This room has no valid rate.');
+    }
+    // Any promo discount already given stays the same amount.
+    const discount = Number(reservation.discountAmount || 0);
+    const totalAmount = money(Math.max(0, pricing.subtotalAmount - discount));
+    const extraCharges = Number(reservation.extraCharges || 0);
+    const amountPaid = Number(reservation.amountPaid || 0);
+    const balance = money(totalAmount + extraCharges - amountPaid);
+    const quote = {
+      details,
+      oldTotal: Number(reservation.totalAmount || 0),
+      totalAmount,
+      difference: money(totalAmount - Number(reservation.totalAmount || 0)),
+      balance: Math.max(0, balance),
+      overpaid: Math.max(0, -balance),
+    };
+    if (preview) return { preview: true, ...quote };
+
+    transaction.update(ref, {
+      ...details,
+      baseRate: pricing.baseRate,
+      baseCapacity: pricing.baseCapacity,
+      extraGuestCharge: pricing.extraGuestCharge,
+      subtotalAmount: pricing.subtotalAmount,
+      totalAmount,
+      paymentStatus: paymentStatusFor(totalAmount + extraCharges, amountPaid),
+      editHistory: FieldValue.arrayUnion({
+        id: crypto.randomUUID(),
+        editedBy: staff.uid,
+        editedAt: new Date().toISOString(),
+        from: {
+          bookingType: reservation.bookingType || '', tourPeriod: reservation.tourPeriod || '',
+          checkIn: reservation.checkIn || '', checkOut: reservation.checkOut || '',
+          adults: Number(reservation.adults || 0), children: Number(reservation.children || 0),
+          totalAmount: Number(reservation.totalAmount || 0),
+        },
+        to: { ...details, totalAmount },
+      }),
+    });
+    return { saved: true, ...quote };
+  });
 }
 
 export default async function handler(req, res) {
@@ -291,6 +395,7 @@ export default async function handler(req, res) {
     else if (body.action === 'add-charge') result = await addCharge({ ...body, staff });
     else if (body.action === 'cancel-with-policy') result = await cancelWithPolicy({ ...body, staff });
     else if (body.action === 'create-walk-in') result = await createWalkIn({ staff, booking: body.booking });
+    else if (body.action === 'edit-booking') result = await editBooking({ ...body, staff });
     else return res.status(400).json({ error: 'Choose a valid billing action.' });
     return res.status(200).json({ ok: true, ...result });
   } catch (error) {

@@ -25,6 +25,7 @@ import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 import { recordPayMongoPayment } from '../lib/recordPayMongoPayment';
 import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
+import { getRequestedBookingFields } from '../src/lib/bookingDetails';
 
 // Signature verification needs the exact raw request body, so the
 // default JSON body-parser has to be turned off for this route.
@@ -119,6 +120,7 @@ async function completeModificationPayment(db, FieldValue, info) {
     const updatedTotal = Number(request.updatedTotal);
     const amountPaid = Number(reservation.amountPaid || 0);
     transaction.update(reservationRef, {
+      ...getRequestedBookingFields(request),
       checkIn: request.checkIn || request.requestedCheckIn,
       checkOut: request.checkOut || request.requestedCheckOut,
       totalAmount: updatedTotal,
@@ -220,6 +222,7 @@ async function processRecordedRefund(db, FieldValue, refundSnapshot, eventType, 
       const amountPaid = Math.max(0, Number(reservation.amountPaid || 0) - Number(request.refundDue || 0));
       const newTotal = Number(request.updatedTotal);
       transaction.update(reservationRef, {
+        ...getRequestedBookingFields(request),
         checkIn: request.requestedCheckIn,
         checkOut: request.requestedCheckOut,
         totalAmount: newTotal,

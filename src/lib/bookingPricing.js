@@ -15,9 +15,9 @@ export const DAYTOUR_TIME_SLOT = {
 
 export const NIGHTTOUR_TIME_SLOT = {
   id: 'night',
-  label: '5:00 PM check-in → 10:00 PM / 12:00 MN check-out',
+  label: '5:00 PM check-in → 10:00 PM check-out',
   checkIn: '5:00 PM',
-  checkOut: '10:00 PM / 12:00 MN',
+  checkOut: '10:00 PM',
   startMinutes: 17 * 60,
 };
 

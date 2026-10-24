@@ -6,6 +6,9 @@ import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
+import StatusStepper from '../components/StatusStepper';
+import EditBookingDialog from '../components/EditBookingDialog';
+import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import {
   DEFAULT_CHECKOUT_TIME,
   MAX_LATE_FEE,
@@ -536,6 +539,7 @@ export default function Reservations() {
   const [statusBusyId, setStatusBusyId] = useState('');
   const [lateFeeDialog, setLateFeeDialog] = useState(null); // { reservation, amount, note }
   const [lateFeeBusy, setLateFeeBusy] = useState(false);
+  const [editTarget, setEditTarget] = useState(null); // reservation being edited
   const [cancelReason, setCancelReason] = useState('');
   const [cancelBusy, setCancelBusy] = useState(false);
   const [decisionBusy, setDecisionBusy] = useState('');
@@ -673,9 +677,22 @@ export default function Reservations() {
     const reservation = reservations.find(r => r.id === id);
     if (!reservation || reservation.status === status) return;
     if (isReceptionist && reservation.status === 'cancelled') return;
+    let force = false;
+    let statusReason = reason;
+    if (status === 'checked-out' && hasOutstandingBalance(reservation)) {
+      const owedText = `₱${outstandingAmount(reservation).toLocaleString()}`;
+      if (!isAdmin) {
+        setToast({ type: 'error', text: `This guest still owes ${owedText}. Collect payment in Billing before checking out.` });
+        return;
+      }
+      const overrideReason = window.prompt(`This guest still owes ${owedText}. To check them out anyway, enter a reason (it is saved on the booking):`);
+      if (!overrideReason || !overrideReason.trim()) return;
+      force = true;
+      statusReason = overrideReason.trim();
+    }
     setStatusBusyId(id);
     try {
-      const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason });
+      const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason: statusReason, force });
       // Show the change right away; the live listener will confirm it.
       setReservations(list => list.map(r => (r.id === id ? { ...r, status } : r)));
       if (status === 'cancelled') return;
@@ -905,44 +922,35 @@ export default function Reservations() {
     color: TEXT, outline: 'none', cursor: 'pointer',
   };
 
-  // Status control shown on every row of the board (role rules unchanged)
-  const selectStyle = { background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 8px', fontSize: '11px', fontFamily: "'Poppins', sans-serif", cursor: 'pointer', color: TEXT, outline: 'none' };
-  const renderActions = (r) => {
-    if (isReceptionist) {
-      if (r.status === 'cancelled') {
-        return (
-          <span title="Cancelled bookings can only be changed by an admin" style={{ fontSize: '10px', color: MUTED, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            <i className="ti ti-lock" /> Cancelled – locked
-          </span>
-        );
-      }
-      if (r.cancellationRequested) return <span style={{ fontSize: '10px', color: MUTED }}>Cancellation requested</span>;
-      return (
-        <select value={r.status} style={selectStyle} disabled={statusBusyId === r.id} aria-busy={statusBusyId === r.id} onChange={e => {
-          if (e.target.value === 'cancelled') openCancellationDialog('request', r);
-          else updateStatus(r.id, e.target.value);
-        }}>
-          <option value="pending">Pending</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="checked-in">Checked-in</option>
-          <option value="checked-out" disabled={hasOutstandingBalance(r)}>Checked-out</option>
-          <option value="cancelled">Request Cancellation</option>
-        </select>
-      );
-    }
+  // Status stepper shown on every row and in the booking details. Clicking a
+  // step saves the new status through the server. Receptionists can't change
+  // cancelled bookings and request cancellations instead of cancelling.
+  const stepperColors = { text: TEXT, muted: MUTED, border: BORDER2, background: CARD, accent: ACCENT, accentText: ACCENT_TEXT };
+  const renderStepper = (r, compact) => {
+    const lockedReason = isReceptionist && r.status === 'cancelled'
+      ? 'Cancelled bookings can only be changed by an admin.'
+      : isReceptionist && r.cancellationRequested ? 'Cancellation requested — waiting for an admin.' : '';
+    const owes = hasOutstandingBalance(r);
     return (
-      <select value={r.status} style={selectStyle} disabled={statusBusyId === r.id} aria-busy={statusBusyId === r.id} onChange={e => {
-        if (e.target.value === 'cancelled') openCancellationDialog('cancel', r);
-        else updateStatus(r.id, e.target.value);
-      }}>
-        <option value="pending">Pending</option>
-        <option value="confirmed">Confirmed</option>
-        <option value="checked-in">Checked-in</option>
-        <option value="checked-out" disabled={hasOutstandingBalance(r)}>Checked-out</option>
-        <option value="cancelled">Cancelled</option>
-      </select>
+      <StatusStepper
+        status={r.status}
+        compact={compact}
+        busy={statusBusyId === r.id}
+        lockedReason={lockedReason}
+        colors={stepperColors}
+        stepNotes={owes ? {
+          'checked-out': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. Collect payment first${isAdmin ? ', or override with a reason' : ''}.`,
+        } : {}}
+        onSelect={status => updateStatus(r.id, status)}
+        onCancel={() => openCancellationDialog(isReceptionist ? 'request' : 'cancel', r)}
+        cancelLabel={isReceptionist ? 'Request cancellation' : 'Cancel booking'}
+      />
     );
   };
+  const renderActions = (r) => (
+    <div onClick={event => event.stopPropagation()} style={{ minWidth: 190 }}>{renderStepper(r, true)}</div>
+  );
+  const canEditBooking = r => ['pending', 'confirmed', 'checked-in'].includes(r.status) && r.type !== 'corporate' && Boolean(r.roomId);
 
   const pendingCancellations = reservations.filter(r => r.cancellationRequested);
   const pendingRefunds = isAdmin ? reservations.filter(r =>
@@ -961,6 +969,22 @@ export default function Reservations() {
             style={{ position: 'fixed', top: '18px', right: '18px', zIndex: 1000, maxWidth: '360px', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', background: toast.type === 'error' ? '#fee2e2' : '#dcfce7', color: toast.type === 'error' ? '#991b1b' : '#166534', border: `1px solid ${toast.type === 'error' ? '#fecaca' : '#bbf7d0'}`, boxShadow: '0 4px 14px rgba(0,0,0,0.12)', fontSize: '12px' }}>
             {toast.text}
           </div>
+        )}
+
+        {editTarget && (
+          <EditBookingDialog
+            reservation={editTarget}
+            colors={{ CARD, CARD2, BORDER, BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+            onClose={() => setEditTarget(null)}
+            onSaved={result => {
+              setEditTarget(null);
+              setToast({
+                type: 'success',
+                text: `Booking updated. New total ₱${Number(result.totalAmount).toLocaleString()}.${result.overpaid > 0 ? ` The guest overpaid ₱${Number(result.overpaid).toLocaleString()}; arrange a refund.` : ''}`,
+              });
+              fetchReservations();
+            }}
+          />
         )}
 
         {lateFeeDialog && (
@@ -1034,8 +1058,10 @@ export default function Reservations() {
             ['Email Address', s.email || 'Not provided'],
             ['Preferred Contact Method', s.preferredContactMethod || 'Not provided'],
             ['Room', [s.roomNumber, s.roomType].filter(Boolean).join(' · ') || '—'],
-            ['Check-in', s.checkIn || '—'],
-            ['Check-out', s.checkOut || '—'],
+            ['Booking Type', BOOKING_OPTIONS.find(option => option.id === getBookingOptionId(s))?.label || '—'],
+            ['Guests', `${Number(s.adults || 0)} adult(s), ${Number(s.children || 0)} child(ren)`],
+            ['Check-in', [s.checkIn, s.checkInTime].filter(Boolean).join(' · ') || '—'],
+            ['Check-out', [s.checkOut, s.checkOutTime].filter(Boolean).join(' · ') || '—'],
             ['Duration', nights(s)],
             ['Overstay', so ? `Overstayed by ${so.label}${s.overstay?.flaggedAt ? ' (flagged)' : ''}` : s.overstayMinutes ? 'Checked out late' : 'No'],
             ['Late Check-out Charges', getLateFeeTotal(s) > 0 ? money(getLateFeeTotal(s)) : 'None'],
@@ -1062,6 +1088,10 @@ export default function Reservations() {
                       style={{ border: `1px solid ${BORDER2}`, background: CARD2, color: TEXT, borderRadius: '8px', width: '30px', height: '30px', cursor: 'pointer', fontSize: '16px' }}>×</button>
                   </div>
                 </div>
+                <div style={{ background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '12px', padding: '14px', marginBottom: '16px' }}>
+                  <div style={{ fontSize: '11px', color: MUTED, marginBottom: '10px' }}>Status — click a step to change it</div>
+                  {renderStepper(s, false)}
+                </div>
                 <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px 18px', margin: 0 }}>
                   {rows.map(([label, value]) => (
                     <div key={label} style={{ gridColumn: label === 'Special Requests' ? '1 / -1' : undefined }}>
@@ -1070,7 +1100,11 @@ export default function Reservations() {
                     </div>
                   ))}
                 </dl>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px' }}>
+                  {canEditBooking(s) && (
+                    <button type="button" onClick={() => setEditTarget(s)}
+                      style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Edit booking</button>
+                  )}
                   <button type="button" onClick={() => setSelectedId(null)}
                     style={{ border: 'none', borderRadius: '8px', padding: '9px 16px', background: ACCENT, color: ACCENT_TEXT, fontWeight: 700, cursor: 'pointer' }}>Close</button>
                 </div>

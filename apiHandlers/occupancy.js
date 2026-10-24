@@ -1,5 +1,6 @@
 import { adminDb } from '../lib/firebaseAdmin';
 import { stayRangesOverlap } from '../src/lib/bookingPricing';
+import { getDateOccupancy } from '../src/lib/dateOccupancy';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CONFIRMED_STATUSES = new Set(['confirmed', 'checked-in', 'checked_in', 'checked out', 'checked-out']);
@@ -29,6 +30,17 @@ export default async function handler(req, res) {
   if (!adminDb) return res.status(503).json({ error: 'Occupancy information is unavailable.' });
 
   try {
+    // ?date=YYYY-MM-DD → bookings and guests already on that date, per slot.
+    // Only counts are returned, never guest details.
+    const queryDate = Array.isArray(req.query.date) ? req.query.date[0] : req.query.date;
+    if (queryDate !== undefined) {
+      const date = asDateKey(queryDate);
+      if (!date) return res.status(400).json({ error: 'Provide a valid date.' });
+      const snapshot = await adminDb.collection('reservations').get();
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json(getDateOccupancy(snapshot.docs.map(doc => doc.data()), date));
+    }
+
     const queryStart = Array.isArray(req.query.startDate) ? req.query.startDate[0] : req.query.startDate;
     const queryEnd = Array.isArray(req.query.endDate) ? req.query.endDate[0] : req.query.endDate;
     const startDate = queryStart && queryEnd

@@ -8,7 +8,10 @@
 //     Any status can move to any other status, except:
 //       - receptionists can't change cancelled bookings, or cancel directly
 //         (they send a cancellation request instead);
-//       - a guest can't be checked out while a balance is still owed.
+//       - a guest can't be checked out while a balance is still owed, unless
+//         an admin overrides it with a reason (send force: true).
+//     Moving between pending, confirmed, checked-in and checked-out is never
+//     blocked otherwise, in either direction.
 //   { action: 'flag-overstay', reservationId, note? }
 //     Marks a checked-in guest who is past check-out as overstayed.
 //   { action: 'add-late-fee', reservationId, amount, note? }
@@ -53,7 +56,7 @@ function paymentStatusFor(total, paid) {
   return paid > 0 ? 'partial' : 'pending';
 }
 
-async function setStatus({ transaction, reservationRef, reservation, staff, status, reason }) {
+async function setStatus({ transaction, reservationRef, reservation, staff, status, reason, force = false }) {
   if (!RESERVATION_STATUSES.includes(status)) throw new StatusError(400, 'Choose a valid reservation status.');
   const current = String(reservation.status || 'pending');
   if (staff.role === 'receptionist' && current === 'cancelled') {
@@ -66,7 +69,14 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
 
   const now = new Date();
   const overstay = getOverstay(reservation, now);
-  if (status === 'checked-out' && hasOutstandingBalance(reservation)) {
+  // An admin can still check a guest out with money owed, but must give a
+  // reason, and the unpaid amount is recorded on the booking.
+  const forcedWithBalance = status === 'checked-out' && hasOutstandingBalance(reservation)
+    && force === true && staff.role === 'admin';
+  if (forcedWithBalance && !reason) {
+    throw new StatusError(400, 'Give a reason for checking out a guest who still owes money.');
+  }
+  if (status === 'checked-out' && hasOutstandingBalance(reservation) && !forcedWithBalance) {
     throw new StatusError(409, overstay
       ? `Cannot check out: the guest overstayed by ${overstay.label} and still owes ₱${getOutstandingBalance(reservation).toLocaleString()}. Add any late check-out charge and collect payment first.`
       : 'The outstanding balance must be paid before checking out this guest.');
@@ -88,6 +98,10 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   if (status === 'checked-out') {
     updates.checkedOutAt = FieldValue.serverTimestamp();
     if (overstay) updates.overstayMinutes = overstay.minutes;
+    if (forcedWithBalance) {
+      updates.checkedOutWithBalance = getOutstandingBalance(reservation);
+      updates.checkedOutWithBalanceReason = reason;
+    }
   }
   transaction.update(reservationRef, updates);
   // Closing out a no-show (never checked in) leaves a vacant room as it is.
@@ -168,7 +182,7 @@ export default async function handler(req, res) {
       const reservation = snapshot.data();
       checkOutDate = reservation.checkOut || '';
       const context = { transaction, reservationRef, reservation, staff };
-      if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500) });
+      if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500), force: req.body?.force === true });
       if (action === 'flag-overstay') return flagOverstay({ ...context, note: cleanText(note, 300) });
       if (action === 'add-late-fee') return addLateFee({ ...context, amount, note: cleanText(note, 300) });
       throw new StatusError(400, 'Choose a valid reservation action.');

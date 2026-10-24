@@ -4,6 +4,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS, FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
+import DateOccupancy from '../../components/ui/date-occupancy';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
 import { areOvernightCheckInsClosed, isTourStartPassed } from '../../lib/bookingPricing';
@@ -473,6 +474,14 @@ export default function Rooms() {
             <div style={{ marginTop: '14px', color: '#777363', font: `12px ${SANS}` }}>
               Today's day tour started at 8:00 AM. The night tour (from 5:00 PM) can still be booked.
             </div>
+          )}
+          {checkIn && (
+            <DateOccupancy
+              date={checkIn}
+              focus={singleDay ? (isTourStartPassed(checkIn, 'day') ? 'night' : 'day') : 'overnight'}
+              colors={{ accent: FOREST, background: '#fff', border: LINE }}
+              style={{ marginTop: '14px', maxWidth: '480px', fontFamily: SANS }}
+            />
           )}
           {availabilityError && (
             <div role="alert" style={{ marginTop: '14px', color: '#b91c1c', font: `12px ${SANS}` }}>

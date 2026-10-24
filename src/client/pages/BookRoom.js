@@ -25,6 +25,7 @@ import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/p
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 import { Pagination, usePagination } from '../../components/ui/pagination';
+import DateOccupancy from '../../components/ui/date-occupancy';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 
@@ -979,7 +980,7 @@ export default function BookRoom() {
                     <select id="tour-period" value={form.tourPeriod} onChange={e => setForm(previous => ({ ...previous, tourPeriod: e.target.value }))}
                       style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
                       <option value="day" disabled={dayTourClosed}>Day swimming (8:00 AM–5:00 PM){dayTourClosed ? ' — closed for today' : ''}</option>
-                      <option value="night" disabled={nightTourClosed}>Night swimming (5:00 PM–10:00 PM / 12:00 MN){nightTourClosed ? ' — closed for today' : ''}</option>
+                      <option value="night" disabled={nightTourClosed}>Night swimming (5:00 PM–10:00 PM){nightTourClosed ? ' — closed for today' : ''}</option>
                     </select>
                   </div>
                 )}
@@ -988,6 +989,12 @@ export default function BookRoom() {
                     {tourCutoffError}
                   </div>
                 )}
+                <DateOccupancy
+                  date={form.checkIn}
+                  focus={form.bookingType === 'daytour' ? form.tourPeriod : 'overnight'}
+                  colors={{ accent: ACCENT, background: '#fff' }}
+                  style={{ gridColumn: '1 / -1' }}
+                />
                 {[
                   { key: 'adults', label: 'Adults', min: 1, rate: 800 },
                   { key: 'children', label: 'Children (under 10)', min: 0, rate: 400 },

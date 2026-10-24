@@ -6,7 +6,11 @@ import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
-import { getRoomMaximumGuests, isCoupleRoom, getStayDurationError, MAX_STAY_NIGHTS } from '../../lib/bookingPricing';
+import {
+  MAX_STAY_NIGHTS, OVERNIGHT_TIME_SLOTS, getRoomBaseRate, getRoomMaximumGuests, isCheckInPassed, isCoupleRoom, isTourStartPassed, stayRangesOverlap,
+} from '../../lib/bookingPricing';
+import { BOOKING_OPTIONS, normalizeBookingDetails, priceBookingDetails } from '../../lib/bookingDetails';
+import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { staffApi } from '../lib/staffApi';
 
@@ -28,9 +32,10 @@ const addDays = (iso, n) => {
 const isActiveReservation = (r) => !['cancelled', 'checked-out'].includes(String(r.status || '').toLowerCase());
 const sameRoom = (r, room) => (r.roomId ? r.roomId === room.id : !!r.roomNumber && r.roomNumber === room.roomNumber);
 const overlaps = (r, checkIn, checkOut) => {
-  if (!r.checkIn) return false;
-  const end = r.checkOut && r.checkOut > r.checkIn ? r.checkOut : addDays(r.checkIn, 1); // same-day bookings hold that night
-  return checkIn < end && checkOut > r.checkIn;
+  if (typeof r.checkIn !== 'string' || !r.checkIn) return false;
+  const end = typeof r.checkOut === 'string' && r.checkOut ? r.checkOut.slice(0, 10) : r.checkIn.slice(0, 10);
+  // Same-day bookings (tours) hold their whole date.
+  return stayRangesOverlap(checkIn, checkOut, r.checkIn.slice(0, 10), end);
 };
 const isBooked = (reservations, room, checkIn, checkOut) =>
   reservations.some(r => isActiveReservation(r) && sameRoom(r, room) && overlaps(r, checkIn, checkOut));
@@ -120,6 +125,7 @@ export default function WalkIn() {
   const [form, setForm] = useState({
     firstName: '', lastName: '', email: '', phone: '', address: '', preferredContactMethod: '',
     roomId: '', checkIn: '', checkOut: '',
+    bookingOption: 'overnight', overnightTimeSlot: 'morning',
     adults: 1, children: 0,
     paymentMethod: 'cash', paymentStatus: 'paid', notes: '',
   });
@@ -139,19 +145,58 @@ export default function WalkIn() {
     return () => { unsubRooms(); unsubRes(); };
   }, []);
 
-  // ── Dates ──
-  const stayError = form.checkIn && form.checkOut ? getStayDurationError(form.checkIn, form.checkOut) : '';
-  const datesReady = !!form.checkIn && !!form.checkOut && !stayError;
-  const nights = datesReady ? Math.round((new Date(form.checkOut) - new Date(form.checkIn)) / 86400000) : 0;
-  const totalAmount = selectedRoom && nights > 0 ? nights * Number(selectedRoom.price) : 0;
+  // ── Booking type & dates ──
+  // Day and night tours are single-day bookings (check-out = check-in date).
+  // Same checks as the server: tour hours, today's cutoffs, minimum one night.
+  const bookingOption = BOOKING_OPTIONS.find(option => option.id === form.bookingOption) || BOOKING_OPTIONS[0];
+  const isTour = bookingOption.bookingType === 'daytour';
+  const stayUnit = isTour ? 'day' : 'night';
+  const detailsCheck = form.checkIn && (isTour || form.checkOut)
+    ? normalizeBookingDetails({
+      bookingType: bookingOption.bookingType,
+      tourPeriod: bookingOption.tourPeriod,
+      overnightTimeSlot: form.overnightTimeSlot,
+      checkIn: form.checkIn,
+      checkOut: isTour ? form.checkIn : form.checkOut,
+      adults: Number(form.adults) || 1,
+      children: Number(form.children) || 0,
+    })
+    : null;
+  const stayError = detailsCheck?.error || '';
+  const details = detailsCheck?.details || null;
+  const datesReady = Boolean(details);
+  const stayCheckOut = details ? details.checkOut : form.checkOut;
+  const nights = details ? details.nights : 0;
+  // Estimate only, using the same price rules as the server; the server
+  // calculates the real total when the booking is saved.
+  const totalAmount = (() => {
+    if (!selectedRoom || !details) return 0;
+    try { return priceBookingDetails(selectedRoom, details).subtotalAmount; } catch { return 0; }
+  })();
+  // Today's times that have passed: move to the next open one.
+  useEffect(() => {
+    if (!form.checkIn) return;
+    if (form.bookingOption === 'day' && isTourStartPassed(form.checkIn, 'day') && !isTourStartPassed(form.checkIn, 'night')) {
+      setForm(p => ({ ...p, bookingOption: 'night' }));
+    }
+    if (form.bookingOption === 'overnight') {
+      const current = OVERNIGHT_TIME_SLOTS.find(slot => slot.id === form.overnightTimeSlot);
+      const next = OVERNIGHT_TIME_SLOTS.find(slot => !isCheckInPassed(form.checkIn, slot));
+      if (current && isCheckInPassed(form.checkIn, current) && next) setForm(p => ({ ...p, overnightTimeSlot: next.id }));
+    }
+  }, [form.checkIn, form.bookingOption, form.overnightTimeSlot]);
+
+  const rateOf = room => {
+    try { return getRoomBaseRate(room, bookingOption.bookingType).amount; } catch { return Number(room?.price) || 0; }
+  };
 
   // ── Rooms that are actually free for the chosen dates ──
   const { availableRooms, bookedCount } = useMemo(() => {
     if (!datesReady) return { availableRooms: [], bookedCount: 0 };
     const bookable = rooms.filter(r => !blockedByStatus(r, form.checkIn, today));
-    const free = bookable.filter(r => !isBooked(reservations, r, form.checkIn, form.checkOut));
+    const free = bookable.filter(r => !isBooked(reservations, r, form.checkIn, stayCheckOut));
     return { availableRooms: free, bookedCount: bookable.length - free.length };
-  }, [rooms, reservations, datesReady, form.checkIn, form.checkOut, today]);
+  }, [rooms, reservations, datesReady, form.checkIn, stayCheckOut, today]);
 
   const categoryOf = (room) => WALK_IN_CATEGORIES.find(c => getRoomsForCategory([room], c).length > 0);
   const activeCategory = WALK_IN_CATEGORIES.find(c => c.category === catFilter);
@@ -192,9 +237,7 @@ export default function WalkIn() {
     e.preventDefault();
     if (saving) return;
     if (!selectedRoom) return alert('Please select a room.');
-    const err = getStayDurationError(form.checkIn, form.checkOut);
-    if (err) return alert(err);
-    if (totalAmount <= 0) return alert('Check-out must be after check-in.');
+    if (stayError || !details) return alert(stayError || 'Choose the booking date first.');
     if (!isPreferredContactMethod(form.preferredContactMethod)) return alert('Please choose a preferred contact method.');
     if (coupleGuestLimit !== null && (Number(form.adults) || 0) + (Number(form.children) || 0) > coupleGuestLimit) {
       setUpsellOpen(true);
@@ -215,7 +258,7 @@ export default function WalkIn() {
       try {
         created = await staffApi('staff-billing', {
           action: 'create-walk-in',
-          booking: { ...form, category: categoryOf(selectedRoom)?.category || '' },
+          booking: { ...form, checkOut: stayCheckOut, category: categoryOf(selectedRoom)?.category || '' },
         });
       } catch (createError) {
         if (/just booked/.test(createError.message)) {
@@ -240,8 +283,8 @@ export default function WalkIn() {
       } catch (confirmationError) {
         confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
       }
-      setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is ${arrivesToday ? 'now occupied' : `reserved for ${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`}.${confirmationMessage}${receiptMessage}`);
-      setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
+      setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is ${arrivesToday ? 'now occupied' : `reserved for ${isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`}`}.${confirmationMessage}${receiptMessage}`);
+      setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
       setNameErrors({});
       setSelectedRoom(null);
       setCatFilter('all');
@@ -326,25 +369,57 @@ export default function WalkIn() {
                     <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Find a room 🏡</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, alignItems: 'end' }}>
                       <div>
-                        <label style={label}>Check-in *</label>
+                        <label style={label}>Booking type *</label>
+                        <select value={form.bookingOption} style={inp}
+                          onChange={e => setForm(p => ({ ...p, bookingOption: e.target.value }))}>
+                          {BOOKING_OPTIONS.map(option => {
+                            const closed = option.bookingType === 'daytour' && isTourStartPassed(form.checkIn, option.tourPeriod);
+                            return <option key={option.id} value={option.id} disabled={closed}>{option.label}{closed ? ' — closed for today' : ''}</option>;
+                          })}
+                        </select>
+                      </div>
+                      <div>
+                        <label style={label}>{isTour ? 'Date *' : 'Check-in *'}</label>
                         <input type="date" min={today} value={form.checkIn} style={inp}
                           onChange={e => {
                             const checkIn = e.target.value;
                             setForm(p => ({ ...p, checkIn, checkOut: p.checkOut && checkIn && p.checkOut <= checkIn ? '' : p.checkOut }));
                           }} />
                       </div>
-                      <div>
-                        <label style={label}>Check-out *</label>
-                        <input type="date" disabled={!form.checkIn}
-                          min={form.checkIn ? addDays(form.checkIn, 1) : today} max={maxCheckOut}
-                          value={form.checkOut} style={{ ...inp, opacity: form.checkIn ? 1 : 0.6 }}
-                          onChange={e => setForm(p => ({ ...p, checkOut: e.target.value }))} />
-                      </div>
+                      {!isTour && (
+                        <>
+                          <div>
+                            <label style={label}>Check-out *</label>
+                            <input type="date" disabled={!form.checkIn}
+                              min={form.checkIn ? addDays(form.checkIn, 1) : today} max={maxCheckOut}
+                              value={form.checkOut} style={{ ...inp, opacity: form.checkIn ? 1 : 0.6 }}
+                              onChange={e => setForm(p => ({ ...p, checkOut: e.target.value }))} />
+                          </div>
+                          <div>
+                            <label style={label}>Check-in time *</label>
+                            <select value={form.overnightTimeSlot} style={inp}
+                              onChange={e => setForm(p => ({ ...p, overnightTimeSlot: e.target.value }))}>
+                              {OVERNIGHT_TIME_SLOTS.map(slot => {
+                                const passed = isCheckInPassed(form.checkIn, slot);
+                                return <option key={slot.id} value={slot.id} disabled={passed}>{slot.label}{passed ? ' — passed for today' : ''}</option>;
+                              })}
+                            </select>
+                          </div>
+                        </>
+                      )}
                       <div style={{ fontSize: 12, color: MUTED, paddingBottom: 10 }}>
-                        {datesReady ? `${nights} night${nights !== 1 ? 's' : ''}` : 'Choose both dates'}
+                        {datesReady ? (isTour ? `Single-day ${bookingOption.label.toLowerCase()}` : `${nights} night${nights !== 1 ? 's' : ''}`) : isTour ? 'Choose the date' : 'Choose both dates'}
                       </div>
                     </div>
                     {stayError && <div role="alert" style={{ color: '#dc2626', fontSize: 11, marginTop: 8 }}>{stayError}</div>}
+                    {form.checkIn && (
+                      <DateOccupancy
+                        date={form.checkIn}
+                        focus={isTour ? bookingOption.tourPeriod : 'overnight'}
+                        colors={{ text: TEXT, muted: MUTED, border: BORDER2, background: CARD2, accent: ACCENT }}
+                        style={{ marginTop: 12 }}
+                      />
+                    )}
                   </div>
 
                   {/* Results */}
@@ -398,8 +473,8 @@ export default function WalkIn() {
                                   <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{normalizeRoomType(room.type) || room.type}</div>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                                     <div>
-                                      <span style={{ fontSize: 16, fontWeight: 800, color: ACCENT }}>₱{Number(room.price).toLocaleString()}</span>
-                                      <span style={{ fontSize: 10, color: MUTED }}> / night</span>
+                                      <span style={{ fontSize: 16, fontWeight: 800, color: ACCENT }}>₱{rateOf(room).toLocaleString()}</span>
+                                      <span style={{ fontSize: 10, color: MUTED }}> / {stayUnit}</span>
                                     </div>
                                     <span style={{ background: AVAIL_BG, color: AVAIL_TEXT, borderRadius: 20, padding: '2px 8px', fontSize: 9, fontWeight: 700 }}>Free</span>
                                   </div>
@@ -434,12 +509,12 @@ export default function WalkIn() {
                         {amenitiesOf(selectedRoom).map(a => <span key={a} style={tag}>{a.trim()}</span>)}
                       </div>
                       <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12, marginBottom: 12, fontSize: 12, color: MUTED }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Stay</span><span>{formatDate(form.checkIn)} → {formatDate(form.checkOut)}</span></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} night{nights !== 1 ? 's' : ''}</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{totalAmount.toLocaleString()}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{isTour ? bookingOption.label : 'Stay'}</span><span>{isTour ? formatDate(form.checkIn) : `${formatDate(form.checkIn)} → ${formatDate(form.checkOut)}`}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} {stayUnit}{nights !== 1 ? 's' : ''} · est.</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{totalAmount.toLocaleString()}</span></div>
                       </div>
                       <button type="button" onClick={() => setStep(2)}
                         style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 13, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                        Continue · ₱{Number(selectedRoom.price).toLocaleString()} / night
+                        Continue · ₱{rateOf(selectedRoom).toLocaleString()} / {stayUnit}
                       </button>
                     </>
                   )}
@@ -565,7 +640,7 @@ export default function WalkIn() {
                     <div style={{ fontWeight: 700, fontSize: 15, color: TEXT }}>{selectedRoom.roomNumber}</div>
                     <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 6px' }}>{selectedRoom.type}{categoryOf(selectedRoom) ? ` · ${categoryOf(selectedRoom).category}` : ''}</div>
                     <div style={{ fontSize: 20, fontWeight: 800, color: ACCENT }}>
-                      ₱{Number(selectedRoom.price).toLocaleString()}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/night</span>
+                      ₱{rateOf(selectedRoom).toLocaleString()}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/{stayUnit}</span>
                     </div>
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
@@ -573,13 +648,13 @@ export default function WalkIn() {
                   </div>
                   <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: MUTED, marginBottom: 6 }}>
-                      <span>Dates</span><span>{formatDate(form.checkIn)} → {formatDate(form.checkOut)}</span>
+                      <span>{isTour ? bookingOption.label : 'Dates'}</span><span>{isTour ? formatDate(form.checkIn) : `${formatDate(form.checkIn)} → ${formatDate(form.checkOut)}`}</span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: MUTED, marginBottom: 6 }}>
-                      <span>Duration</span><span>{nights} night{nights !== 1 ? 's' : ''}</span>
+                      <span>Duration</span><span>{nights} {stayUnit}{nights !== 1 ? 's' : ''}</span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700 }}>
-                      <span style={{ color: TEXT }}>Total</span><span style={{ color: ACCENT }}>₱{totalAmount.toLocaleString()}</span>
+                      <span style={{ color: TEXT }}>Estimated total</span><span style={{ color: ACCENT }}>₱{totalAmount.toLocaleString()}</span>
                     </div>
                     <button type="button" onClick={() => setStep(1)}
                       style={{ marginTop: 12, width: '100%', ...inp, cursor: 'pointer', color: MUTED, textAlign: 'center' }}>
