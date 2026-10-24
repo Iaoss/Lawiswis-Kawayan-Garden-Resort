@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
-import { collection, getDocs, updateDoc, doc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
+import { receiptNotice, staffApi } from '../lib/staffApi';
 
 export default function BookingTransactions() {
   const { settings, formatDate } = useSettings();
@@ -31,24 +32,25 @@ export default function BookingTransactions() {
   const totalPaid = (r) => Number(r.amountPaid || 0);
   const totalBalance = (r) => Number(r.totalAmount || 0) + Number(r.extraCharges || 0) - totalPaid(r);
 
+  // Saved by the server, which counts extra charges in the balance and
+  // refuses payments larger than what the guest owes.
+  const [paymentBusy, setPaymentBusy] = useState(false);
   const handlePayment = async () => {
-    if (!paymentAmount || !selected) return;
-    const newPaid = totalPaid(selected) + Number(paymentAmount);
-    const balance = Number(selected.totalAmount || 0) - newPaid;
-    const paymentStatus = balance <= 0 ? 'paid' : 'partial';
-    await updateDoc(doc(db, 'reservations', selected.id), { amountPaid: newPaid, paymentStatus });
-    await addDoc(collection(db, 'payments'), {
-      reservationId: selected.id,
-      guestName: selected.guestName,
-      roomNumber: selected.roomNumber,
-      amount: Number(paymentAmount),
-      method: paymentMethod,
-      createdAt: serverTimestamp(),
-    });
-    setSuccess(`Payment of ₱${Number(paymentAmount).toLocaleString()} recorded!`);
-    setPaymentAmount('');
-    fetchReservations();
-    setSelected(prev => ({ ...prev, amountPaid: newPaid, paymentStatus }));
+    if (!paymentAmount || !selected || paymentBusy) return;
+    setPaymentBusy(true);
+    try {
+      const result = await staffApi('staff-billing', {
+        action: 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: paymentMethod,
+      });
+      setSuccess(`Payment of ₱${Number(paymentAmount).toLocaleString()} recorded!${receiptNotice(result)}`);
+      setPaymentAmount('');
+      fetchReservations();
+      setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus }));
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setPaymentBusy(false);
+    }
   };
 
   const filtered = sortRecords(reservations.filter(r =>

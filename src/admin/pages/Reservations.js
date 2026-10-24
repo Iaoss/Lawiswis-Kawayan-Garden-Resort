@@ -559,17 +559,12 @@ export default function Reservations() {
     return () => clearInterval(t);
   }, []);
 
+  // Past bookings with nothing owed are closed out through the server, which
+  // re-checks the balance and sets the room to cleaning.
   const releaseExpiredRooms = useCallback(async (expired) => {
     await Promise.all(expired.map(async reservation => {
       try {
-        await updateDoc(doc(db, 'reservations', reservation.id), { status: 'checked-out' });
-        if (reservation.roomId) {
-          const roomRef = doc(db, 'rooms', reservation.roomId);
-          const roomSnap = await getDoc(roomRef);
-          if (roomSnap.exists() && roomSnap.data().status === 'occupied') {
-            await updateDoc(roomRef, { status: 'cleaning' });
-          }
-        }
+        await callReservationStatusApi({ action: 'set-status', reservationId: reservation.id, status: 'checked-out' });
       } catch (err) {
         console.warn('Expired room release skipped:', err.message);
       }

@@ -50,33 +50,27 @@ service cloud.firestore {
     }
 
     // ── Rooms ───────────────────────────────────────────────
+    // Room prices set walk-in totals, so only admins can change them.
+    // Receptionists can only change a room's status (e.g. mark it cleaned).
     match /rooms/{roomId} {
       allow read: if true;
-      allow update: if isStaff();
+      allow update: if isAdmin() || (isReceptionist() && changedKeys().hasOnly(['status']));
       allow create, delete: if isAdmin();
     }
 
     // ── Reservations ────────────────────────────────────────
-    // Guests book through the server (/api/create-reservation). Staff can
-    // still edit bookings from the portal, except:
-    //   - booking prices, which only the server calculates;
-    //   - overstay records, late check-out fees and check-in/out times, which
-    //     only /api/reservation-status writes;
-    //   - receptionists can't change a cancelled booking.
-    function serverOnlyReservationFields() {
-      return [
-        'totalAmount', 'subtotalAmount', 'discountAmount', 'promoCode', 'baseRate', 'nights',
-        'overstay', 'overstayMinutes', 'lateCheckoutChargeTotal', 'lateCheckoutCharges',
-        'checkedInAt', 'checkedOutAt', 'statusUpdatedAt', 'statusUpdatedBy',
-      ];
-    }
+    // Everything that changes money or status goes through the server:
+    // guest bookings (/api/create-reservation), walk-ins, payments, charges
+    // and policy cancellations (/api/staff-billing), and status changes,
+    // overstays and late fees (/api/reservation-status). From the browser,
+    // staff can only raise or clear a cancellation request.
     match /reservations/{reservationId} {
       allow read: if isStaff();
-      // Walk-in bookings are still created from the staff portal.
-      allow create: if isStaff()
-        && !request.resource.data.keys().hasAny(['overstay', 'overstayMinutes', 'lateCheckoutChargeTotal', 'lateCheckoutCharges']);
+      allow create: if false;
       allow update: if isStaff()
-        && !changedKeys().hasAny(serverOnlyReservationFields())
+        && changedKeys().hasOnly([
+             'cancellationRequested', 'cancellationRequestedBy', 'cancellationRequestedAt', 'cancellationReason',
+           ])
         && !(isReceptionist() && resource.data.get('status', '') == 'cancelled');
       allow delete: if isAdmin();
     }
@@ -108,15 +102,12 @@ service cloud.firestore {
     }
 
     // ── Payments ────────────────────────────────────────────
-    // Cash / counter payments recorded by staff. Online payments are recorded
-    // by the server after PayMongo confirms them.
+    // Only the server records payments: counter payments through
+    // /api/staff-billing (capped at the balance owed), online payments after
+    // PayMongo confirms them. Payment history can't be edited from a browser.
     match /payments/{paymentId} {
       allow read: if isStaff();
-      allow create: if isStaff()
-        && request.resource.data.amount is number
-        && request.resource.data.amount > 0
-        && request.resource.data.reservationId is string;
-      allow update, delete: if isAdmin();
+      allow create, update, delete: if false;
     }
 
     // ── Tasks ───────────────────────────────────────────────

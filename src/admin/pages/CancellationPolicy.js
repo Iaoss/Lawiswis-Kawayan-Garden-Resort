@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
-import { collection, getDocs, updateDoc, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
+import { staffApi } from '../lib/staffApi';
+import { getStaffCancellationFee } from '../../lib/cancellationPolicy';
 
 // `embedded` is used when this renders inside the Settings page tab,
 // so it does not wrap itself in a second PageLayout.
@@ -70,30 +72,10 @@ export default function CancellationPolicy({ embedded = false }) {
     fetchData();
   }, []);
 
-  const calculateFee = (reservation) => {
-    if (!reservation.checkIn) return null;
-    const today = new Date();
-    const checkIn = new Date(reservation.checkIn);
-    const daysBeforeCheckIn = Math.ceil((checkIn - today) / (1000 * 60 * 60 * 24));
-    const totalAmount = Number(reservation.totalAmount || 0);
-    let rate = 0;
-    let tier = '';
-
-    if (daysBeforeCheckIn > 7) {
-      rate = policy.moreThan7Days;
-      tier = 'More than 7 days before check-in';
-    } else if (daysBeforeCheckIn >= 4) {
-      rate = policy.between4And7Days;
-      tier = '4–7 days before check-in';
-    } else {
-      rate = policy.lessThan3Days;
-      tier = '3 days or less / same day';
-    }
-
-    const fee = (totalAmount * rate) / 100;
-    const refund = totalAmount - fee;
-    return { daysBeforeCheckIn, rate, fee, refund, tier, totalAmount };
-  };
+  // Preview only; the server recalculates the same fee when cancelling.
+  const calculateFee = (reservation) => getStaffCancellationFee({
+    policy, checkIn: reservation.checkIn, totalAmount: Number(reservation.totalAmount || 0),
+  });
 
   const handleSelect = (r) => {
     setSelected(r);
@@ -106,22 +88,11 @@ export default function CancellationPolicy({ embedded = false }) {
     if (!selected || !cancelResult || cancelBusy) return;
     setCancelBusy(true);
     try {
-      await updateDoc(doc(db, 'reservations', selected.id), {
-        status: 'cancelled',
-        cancellationRequested: false,
-        cancellationReason: cancelReason.trim(),
-        cancellationFee: cancelResult.fee,
-        refundAmount: cancelResult.refund,
-        cancelledAt: new Date().toISOString(),
+      // The server calculates and saves the fee and refund, and frees the room.
+      const result = await staffApi('staff-billing', {
+        action: 'cancel-with-policy', reservationId: selected.id, reason: cancelReason.trim(),
       });
-      if (selected.roomId) {
-        try {
-          await updateDoc(doc(db, 'rooms', selected.roomId), { status: 'vacant' });
-        } catch (roomError) {
-          console.error('Cancelled reservation room could not be released:', roomError);
-        }
-      }
-      setSuccess(`Reservation for ${selected.guestName} cancelled. Fee: ₱${cancelResult.fee.toLocaleString()} · Refund: ₱${cancelResult.refund.toLocaleString()}`);
+      setSuccess(`Reservation for ${selected.guestName} cancelled. Fee: ₱${result.fee.toLocaleString()} · Refund: ₱${result.refund.toLocaleString()}`);
       setCancelError('');
       setSelected(null);
       setCancelResult(null);

@@ -94,3 +94,31 @@ export function getDateRangeNights(checkIn, checkOut) {
   if (!start || !end || end <= start) return null;
   return Math.ceil((end.getTime() - start.getTime()) / 86400000);
 }
+
+// Cancellation fee and refund used by the staff Cancellation Policy page.
+// Both the page (for the preview) and the server (which saves it) use this,
+// so the amount shown is the amount recorded. Days are counted in
+// Philippine time.
+export function getStaffCancellationFee({ policy, checkIn, totalAmount, now = new Date() }) {
+  const normalizedPolicy = normalizeCancellationPolicy(policy) || DEFAULT_CANCELLATION_POLICY;
+  const arrival = parseCalendarDate(checkIn);
+  const total = Number(totalAmount);
+  if (!arrival || !Number.isFinite(total) || total < 0) return null;
+  const manilaToday = new Date(now.getTime() + 8 * 3600000);
+  const todayUtc = Date.UTC(manilaToday.getUTCFullYear(), manilaToday.getUTCMonth(), manilaToday.getUTCDate());
+  const daysBeforeCheckIn = Math.round((arrival.getTime() - todayUtc) / 86400000);
+  let rate;
+  let tier;
+  if (daysBeforeCheckIn > 7) {
+    rate = normalizedPolicy.moreThan7Days;
+    tier = 'More than 7 days before check-in';
+  } else if (daysBeforeCheckIn >= 4) {
+    rate = normalizedPolicy.between4And7Days;
+    tier = '4–7 days before check-in';
+  } else {
+    rate = normalizedPolicy.lessThan3Days;
+    tier = '3 days or less / same day';
+  }
+  const fee = Math.round(total * rate) / 100;
+  return { daysBeforeCheckIn, rate, tier, totalAmount: total, fee, refund: Math.max(0, total - fee) };
+}

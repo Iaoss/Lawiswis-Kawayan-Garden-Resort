@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../firebase/firebase';
-import { collection, getDocs, updateDoc, doc, addDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { createPayMongoCheckout, checkPayMongoCheckoutStatus } from '../../lib/paymongo';
 import { SortControls, sortRecords } from '../lib/listSort';
+import { receiptNotice, staffApi } from '../lib/staffApi';
 
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
@@ -69,18 +70,6 @@ export default function Billing() {
   const totalPaid = (r) => Number(r.amountPaid || 0);
   const totalBalance = (r) => Number(r.totalAmount || 0) + Number(r.extraCharges || 0) - totalPaid(r);
 
-  const sendReceipt = async (paymentDocumentId) => {
-    const token = await auth.currentUser.getIdToken();
-    const response = await fetch('/api/send-payment-receipt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ paymentDocumentId }),
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || 'Payment receipt email failed to send.');
-    return result;
-  };
-
   const selectReservation = (r) => {
     setSelected(r);
     setSuccess('');
@@ -90,58 +79,43 @@ export default function Billing() {
     setStatusResult('');
   };
 
+  // Charges and payments are saved by the server, which works out the new
+  // balance and refuses payments larger than what the guest owes.
+  const [billingBusy, setBillingBusy] = useState(false);
   const handleAddExtra = async () => {
-    if (!extraCharge.description || !extraCharge.amount) return;
-    const newExtra = Number(selected.extraCharges || 0) + Number(extraCharge.amount);
-    await updateDoc(doc(db, 'reservations', selected.id), { extraCharges: newExtra });
-    setExtraCharge({ description: '', amount: '' });
-    fetchReservations();
-    setSelected(prev => ({ ...prev, extraCharges: newExtra }));
-    setSuccess('Extra charge added.');
-  };
-
-  // Shared crediting logic so cash and reconciled-online payments post the
-  // same way: bump amountPaid, flip status, and log a row in /payments.
-  const creditPayment = async (amount, method) => {
-    const newPaid = totalPaid(selected) + Number(amount);
-    const balance = Number(selected.totalAmount || 0) + Number(selected.extraCharges || 0) - newPaid;
-    const paymentStatus = balance <= 0 ? 'paid' : 'partial';
-    await updateDoc(doc(db, 'reservations', selected.id), {
-      amountPaid: newPaid,
-      paymentStatus,
-    });
-    const paymentRef = await addDoc(collection(db, 'payments'), {
-      reservationId: selected.id,
-      guestName: selected.guestName,
-      roomNumber: selected.roomNumber,
-      amount: Number(amount),
-      method,
-      createdAt: serverTimestamp(),
-    });
-    let receipt;
-    let receiptError;
+    if (!extraCharge.description || !extraCharge.amount || billingBusy) return;
+    setBillingBusy(true);
     try {
-      receipt = await sendReceipt(paymentRef.id);
+      const result = await staffApi('staff-billing', {
+        action: 'add-charge', reservationId: selected.id, amount: Number(extraCharge.amount), description: extraCharge.description,
+      });
+      setExtraCharge({ description: '', amount: '' });
+      setSelected(prev => ({ ...prev, extraCharges: result.extraCharges }));
+      fetchReservations();
+      setSuccess('Extra charge added.');
     } catch (error) {
-      receiptError = error.message;
+      alert(error.message);
+    } finally {
+      setBillingBusy(false);
     }
-    fetchReservations();
-    setSelected(prev => ({ ...prev, amountPaid: newPaid, paymentStatus }));
-    return { newPaid, paymentStatus, receipt, receiptError };
   };
 
   const handlePayment = async () => {
-    if (!paymentAmount) return;
-    const { receipt, receiptError } = await creditPayment(paymentAmount, selected.paymentMethod || 'cash');
-    setPaymentAmount('');
-    const receiptNotice = receiptError
-      ? ` Receipt email failed: ${receiptError}`
-      : receipt?.sent
-        ? ` Receipt ${receipt.receiptNumber} emailed.`
-        : receipt?.alreadySent
-          ? ' Receipt email was already sent.'
-          : ' Receipt email is being sent.';
-    setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${receiptNotice}`);
+    if (!paymentAmount || billingBusy) return;
+    setBillingBusy(true);
+    try {
+      const result = await staffApi('staff-billing', {
+        action: 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: selected.paymentMethod || 'cash',
+      });
+      setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus }));
+      fetchReservations();
+      setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${receiptNotice(result)}`);
+      setPaymentAmount('');
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setBillingBusy(false);
+    }
   };
 
   const handleGeneratePayMongoLink = async () => {

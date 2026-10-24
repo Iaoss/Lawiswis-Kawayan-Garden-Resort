@@ -1,4 +1,4 @@
-import { getCancellationPolicyOutcome, getDateRangeNights, normalizeCancellationPolicy } from './cancellationPolicy';
+import { getStaffCancellationFee, getCancellationPolicyOutcome, getDateRangeNights, normalizeCancellationPolicy } from './cancellationPolicy';
 
 describe('cancellation policy outcome', () => {
   test('uses the configured policy rates and caps refund to paid amount', () => {
@@ -44,3 +44,16 @@ describe('reservation date ranges', () => {
   });
 });
 
+
+describe('staff cancellation fee', () => {
+  const policy = { moreThan7Days: 20, between4And7Days: 50, lessThan3Days: 100 };
+  const now = new Date('2026-10-24T04:00:00Z'); // noon in Manila
+  test('uses the policy tier for the days before check-in', () => {
+    expect(getStaffCancellationFee({ policy, checkIn: '2026-11-10', totalAmount: 5000, now })).toMatchObject({ rate: 20, fee: 1000, refund: 4000 });
+    expect(getStaffCancellationFee({ policy, checkIn: '2026-10-29', totalAmount: 5000, now })).toMatchObject({ daysBeforeCheckIn: 5, rate: 50, fee: 2500 });
+    expect(getStaffCancellationFee({ policy, checkIn: '2026-10-25', totalAmount: 5000, now })).toMatchObject({ rate: 100, refund: 0 });
+  });
+  test('rejects bad dates', () => {
+    expect(getStaffCancellationFee({ policy, checkIn: 'soon', totalAmount: 5000, now })).toBeNull();
+  });
+});

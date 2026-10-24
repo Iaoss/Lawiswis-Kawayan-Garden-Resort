@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { auth, db } from '../../firebase/firebase';
-import { collection, addDoc, getDocs, onSnapshot, serverTimestamp, updateDoc, doc } from 'firebase/firestore';
+import { db } from '../../firebase/firebase';
+import { collection, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
 import { getRoomMaximumGuests, isCoupleRoom, getStayDurationError, MAX_STAY_NIGHTS } from '../../lib/bookingPricing';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
+import { staffApi } from '../lib/staffApi';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
 
@@ -208,74 +209,36 @@ export default function WalkIn() {
 
     setSaving(true);
     try {
-      // Final check against fresh data so two staff (or an online guest) can't take the same room/dates.
-      const fresh = await getDocs(collection(db, 'reservations'));
-      const latest = fresh.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (isBooked(latest, selectedRoom, form.checkIn, form.checkOut)) {
-        setSelectedRoom(null);
-        setForm(f => ({ ...f, roomId: '' }));
-        setStep(1);
-        alert(`Room ${selectedRoom.roomNumber} was just booked for those dates. Please choose another room.`);
+      // The server re-checks the room for double bookings, calculates the
+      // price from the room's nightly rate, and records any payment.
+      let created;
+      try {
+        created = await staffApi('staff-billing', {
+          action: 'create-walk-in',
+          booking: { ...form, category: categoryOf(selectedRoom)?.category || '' },
+        });
+      } catch (createError) {
+        if (/just booked/.test(createError.message)) {
+          setSelectedRoom(null);
+          setForm(f => ({ ...f, roomId: '' }));
+          setStep(1);
+        }
+        alert(createError.message);
         return;
       }
+      const arrivesToday = created.arrivesToday;
+      const receiptMessage = created.amountPaid > 0
+        ? (created.receiptError ? ` Payment receipt failed: ${created.receiptError}` : ' Payment receipt emailed.')
+        : '';
 
-      const category = categoryOf(selectedRoom)?.category;
-      const reservationRef = await addDoc(collection(db, 'reservations'), {
-        ...form,
-        firstName: form.firstName.trim(),
-        lastName: form.lastName.trim(),
-        guestName,
-        roomNumber: selectedRoom.roomNumber,
-        roomType:   selectedRoom.type,
-        category,
-        totalAmount, nights,
-        amountPaid: form.paymentStatus === 'paid' ? totalAmount : 0,
-        type: 'walk-in', status: 'confirmed',
-        createdAt: serverTimestamp(),
-      });
-      // Only mark the room occupied when the guest arrives today; future stays are held by the reservation itself.
-      const arrivesToday = form.checkIn === today;
-      if (arrivesToday) await updateDoc(doc(db, 'rooms', form.roomId), { status: 'occupied' });
-
-      let receiptMessage = '';
       let confirmationMessage = '';
       try {
-        const token = await auth.currentUser.getIdToken();
-        const response = await fetch('/api/send-reservation-confirmation', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ reservationId: reservationRef.id }),
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.error || 'Confirmation email failed to send.');
+        const result = await staffApi('send-reservation-confirmation', { reservationId: created.reservationId });
         confirmationMessage = result.sent
           ? ' Confirmation email sent.'
           : result.alreadySent ? ' Confirmation email was already sent.' : ' Confirmation email is being sent.';
       } catch (confirmationError) {
         confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
-      }
-      if (form.paymentStatus === 'paid') {
-        try {
-          const paymentRef = await addDoc(collection(db, 'payments'), {
-            reservationId: reservationRef.id,
-            guestName,
-            roomNumber: selectedRoom.roomNumber,
-            amount: totalAmount,
-            method: form.paymentMethod,
-            createdAt: serverTimestamp(),
-          });
-          const token = await auth.currentUser.getIdToken();
-          const response = await fetch('/api/send-payment-receipt', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ paymentDocumentId: paymentRef.id }),
-          });
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(result.error || 'Receipt email failed to send.');
-          receiptMessage = result.sent ? ' Payment receipt emailed.' : ' Payment receipt was already sent.';
-        } catch (receiptError) {
-          receiptMessage = ` Payment receipt failed: ${receiptError.message || 'email delivery error'}`;
-        }
       }
       setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is ${arrivesToday ? 'now occupied' : `reserved for ${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`}.${confirmationMessage}${receiptMessage}`);
       setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });

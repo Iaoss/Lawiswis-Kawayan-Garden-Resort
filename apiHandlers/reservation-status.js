@@ -90,7 +90,9 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
     if (overstay) updates.overstayMinutes = overstay.minutes;
   }
   transaction.update(reservationRef, updates);
-  if (roomSnap?.exists && ROOM_STATUS_AFTER[status]) {
+  // Closing out a no-show (never checked in) leaves a vacant room as it is.
+  const noShowClose = status === 'checked-out' && current !== 'checked-in' && roomSnap?.data()?.status !== 'occupied';
+  if (roomSnap?.exists && ROOM_STATUS_AFTER[status] && !noShowClose) {
     transaction.update(roomRef, { status: ROOM_STATUS_AFTER[status] });
   }
   return { status, previousStatus: current, overstayMinutes: overstay?.minutes || 0 };
