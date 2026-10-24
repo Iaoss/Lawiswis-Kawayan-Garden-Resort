@@ -13,8 +13,11 @@ const STATUS_LABELS = { pending: 'Pending', confirmed: 'Confirmed', 'checked-in'
 
 // Returns why a status change isn't allowed, or '' when it is.
 // Rules (enforced on the server and shown in the stepper):
-//   - forward or back one step at a time, no skipping
+//   - forward one step at a time, no skipping
 //     (e.g. Pending → Checked out must go through Confirmed and Checked in);
+//   - back one step only to undo a check-in or check-out
+//     (Checked out → Checked in, Checked in → Confirmed). A confirmed
+//     booking never goes back to Pending: cancel it instead;
 //   - any booking can be cancelled except a finished (checked-out) stay;
 //   - a cancelled booking reopens as Pending.
 // Unrecognised old statuses can move anywhere, so they can be fixed.
@@ -25,7 +28,11 @@ export function getStatusTransitionError(from, to) {
   if (from === 'cancelled') return to === 'pending' ? '' : 'Reopen a cancelled booking as Pending first.';
   const fromIndex = STATUS_FLOW.indexOf(from);
   const toIndex = STATUS_FLOW.indexOf(to);
-  if (fromIndex === -1 || Math.abs(toIndex - fromIndex) === 1) return '';
+  if (fromIndex === -1) return '';
+  if (from === 'confirmed' && to === 'pending') {
+    return 'A confirmed booking can’t go back to Pending. Cancel it instead if it shouldn’t go ahead.';
+  }
+  if (Math.abs(toIndex - fromIndex) === 1) return '';
   return toIndex > fromIndex
     ? `Steps can't be skipped. Move this booking to ${STATUS_LABELS[STATUS_FLOW[fromIndex + 1]]} first.`
     : `Move back one step at a time. Go to ${STATUS_LABELS[STATUS_FLOW[fromIndex - 1]]} first.`;

@@ -84,9 +84,9 @@ describe('reservation analytics', () => {
 });
 
 describe('status steps', () => {
-  test('moves one step forward or back', () => {
+  test('moves forward one step, and back one step only to undo check-in/out', () => {
     expect(getStatusTransitionError('pending', 'confirmed')).toBe('');
-    expect(getStatusTransitionError('confirmed', 'pending')).toBe('');
+    expect(getStatusTransitionError('confirmed', 'pending')).toMatch(/can’t go back to Pending/);
     expect(getStatusTransitionError('confirmed', 'checked-in')).toBe('');
     expect(getStatusTransitionError('checked-in', 'checked-out')).toBe('');
     expect(getStatusTransitionError('checked-out', 'checked-in')).toBe('');
