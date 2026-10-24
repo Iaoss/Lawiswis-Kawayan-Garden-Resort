@@ -26,6 +26,7 @@ import { recordPayMongoPayment } from '../lib/recordPayMongoPayment';
 import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
 import { getRequestedBookingFields } from '../src/lib/bookingDetails';
+import { verifyPaidWithPayMongo } from '../lib/paymongoApi';
 
 // Signature verification needs the exact raw request body, so the
 // default JSON body-parser has to be turned off for this route.
@@ -42,12 +43,14 @@ function getRawBody(req) {
 
 // PayMongo's Paymongo-Signature header looks like:
 //   t=1234567890,te=<test_mode_signature>,li=<live_mode_signature>
-// Use `li` in live mode, `te` while testing with test-mode webhook keys.
-function verifySignature(rawBody, signatureHeader, webhookSecret) {
+// Live-mode events must carry a valid `li` signature and test-mode events
+// a valid `te` one, so a test signature is never accepted for a live event.
+function verifySignature(rawBody, signatureHeader, webhookSecret, livemode) {
   const parts = Object.fromEntries(signatureHeader.split(',').map(p => p.split('=')));
+  if (!parts.t) return false;
   const signedPayload = `${parts.t}.${rawBody}`;
   const expected = crypto.createHmac('sha256', webhookSecret).update(signedPayload).digest('hex');
-  const candidate = parts.li || parts.te;
+  const candidate = livemode ? parts.li : parts.te;
   if (!candidate) return false;
   const a = Buffer.from(expected);
   const b = Buffer.from(candidate);
@@ -378,9 +381,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing signature or webhook secret' });
   }
 
+  let event;
+  try {
+    event = JSON.parse(rawBody);
+  } catch {
+    return res.status(400).json({ error: 'Invalid JSON' });
+  }
   let validSignature = false;
   try {
-    validSignature = verifySignature(rawBody, signatureHeader, webhookSecret);
+    validSignature = verifySignature(rawBody, signatureHeader, webhookSecret, event.data?.attributes?.livemode === true);
   } catch {
     validSignature = false;
   }
@@ -388,7 +397,6 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
 
-  const event = JSON.parse(rawBody);
   const eventType = event.data?.attributes?.type;
   const resource = event.data?.attributes?.data;
 
@@ -409,7 +417,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ received: true });
     }
 
-    const info = extractPaymentInfo(eventType, resource);
+    let info = extractPaymentInfo(eventType, resource);
 
     if (!info) {
       // Event type we don't care about — acknowledge so PayMongo
@@ -423,6 +431,21 @@ export default async function handler(req, res) {
     }
 
     if (eventType === 'payment.paid' || eventType === 'checkout_session.payment.paid') {
+      // Don't trust the event body alone: confirm with PayMongo's API that
+      // this payment succeeded for this reservation, and record the amount
+      // PayMongo actually collected.
+      const verified = await verifyPaidWithPayMongo(info);
+      if (!verified) {
+        console.warn('PayMongo did not confirm payment for event', eventType, event.data?.id);
+        return res.status(200).json({ received: true, ignored: 'payment not confirmed by PayMongo' });
+      }
+      info = {
+        ...info,
+        paymentId: verified.paymentId,
+        amountPaid: verified.amountPaid,
+        paymentMethod: verified.paymentMethod,
+        modificationRequestId: verified.metadata.modificationRequestId || info.modificationRequestId,
+      };
       const result = await recordPayMongoPayment(db, FieldValue, {
         ...info,
         eventId: event.data?.id,

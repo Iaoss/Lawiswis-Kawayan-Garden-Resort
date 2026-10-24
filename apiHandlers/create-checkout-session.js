@@ -7,6 +7,7 @@
 import { adminDb } from '../lib/firebaseAdmin';
 import { getOnlinePaymentAmount } from '../src/lib/paymentPolicy';
 import { createPayMongoCheckoutSession } from '../lib/paymongoCheckout';
+import { verifyStaff } from '../lib/verifyStaff';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -37,6 +38,13 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Firebase Admin is not configured' });
   }
 
+  // Balance-payment links ("billing") take an amount typed by staff, so only
+  // signed-in staff may create them. Guest checkouts ("booking") never take
+  // an amount from the browser: it comes from the saved reservation.
+  if (checkoutType === 'billing' && !(await verifyStaff(req))) {
+    return res.status(401).json({ error: 'Only resort staff can create balance payment links.' });
+  }
+
   let checkoutAmount;
   let guestName;
   let guestEmail;
@@ -49,6 +57,9 @@ export default async function handler(req, res) {
     }
 
     const reservation = reservationSnap.data();
+    if (['cancelled', 'checked-out'].includes(String(reservation.status || '').toLowerCase())) {
+      return res.status(409).json({ error: 'This reservation can no longer be paid online.' });
+    }
     guestName = reservation.guestName || 'Guest';
     guestEmail = reservation.email || '';
     const units = Number(reservation.nights) || 1;
@@ -112,6 +123,19 @@ export default async function handler(req, res) {
       modificationRequestId,
       siteUrl,
     });
+    // Keep a record of what was asked for, so it can be matched to PayMongo later.
+    try {
+      await adminDb.collection('reservations').doc(reservationId).update({
+        lastCheckoutSession: {
+          id: session.checkoutSessionId,
+          amount: checkoutAmount,
+          type: checkoutType,
+          createdAt: new Date().toISOString(),
+        },
+      });
+    } catch (recordError) {
+      console.warn('Could not save checkout session reference:', recordError.message);
+    }
     return res.status(200).json({
       amount: checkoutAmount,
       checkoutUrl: session.checkoutUrl,
