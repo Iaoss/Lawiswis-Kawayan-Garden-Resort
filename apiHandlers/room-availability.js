@@ -1,4 +1,5 @@
 import { adminDb } from '../lib/firebaseAdmin';
+import { stayRangesOverlap } from '../src/lib/bookingPricing';
 
 function formatDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -16,10 +17,10 @@ function addMonthsClamped(date, months) {
   return result;
 }
 
+// start === end means a single-day (day tour) range.
 function overlaps(start, end, reservation) {
   return reservation.status !== 'cancelled'
-    && reservation.checkIn < end
-    && reservation.checkOut > start;
+    && stayRangesOverlap(start, end, reservation.checkIn, reservation.checkOut);
 }
 
 function unavailableStatus(status) {
@@ -46,7 +47,7 @@ export default async function handler(req, res) {
     if (hasStart && (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)
       || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)
       || startDate < todayKey
-      || endDate <= startDate
+      || endDate < startDate
       || endDate > maxDateKey)) {
       return res.status(400).json({ error: 'Choose a valid date range within the next two months.' });
     }

@@ -4,6 +4,7 @@ import { collection, getDocs, updateDoc, doc, addDoc, serverTimestamp } from 'fi
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
+import { Pagination, usePagination } from '../../components/ui/pagination';
 
 export default function BookingTransactions() {
   const { settings, formatDate } = useSettings();
@@ -54,6 +55,7 @@ export default function BookingTransactions() {
     r.guestName?.toLowerCase().includes(search.toLowerCase()) ||
     r.roomNumber?.includes(search)
   ), sortBy, sortDir);
+  const pagination = usePagination(filtered, { pageSize: 25, resetKey: `${search}|${sortBy}|${sortDir}` });
 
   const statusStyle = (s) => {
     const map = dark
@@ -114,7 +116,7 @@ export default function BookingTransactions() {
                 {filtered.length === 0 ? (
                   <tr><td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: MUTED, fontSize: '12px' }}>No transactions found.</td></tr>
                 ) : (
-                  filtered.map(r => {
+                  pagination.pageItems.map(r => {
                     const bal = totalBalance(r);
                     const st = statusStyle(r.paymentStatus);
                     return (
@@ -139,6 +141,12 @@ export default function BookingTransactions() {
                 )}
               </tbody>
             </table>
+            <Pagination
+              pagination={pagination}
+              itemLabel="transactions"
+              colors={{ text: TEXT, muted: MUTED, border: BORDER, background: CARD, accent: settings?.accentColor || '#9cb56f', accentText: '#0a1a0a' }}
+              style={{ borderTop: `1px solid ${BORDER}` }}
+            />
           </div>
 
           {/* Payment Panel */}

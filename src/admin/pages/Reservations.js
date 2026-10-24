@@ -5,6 +5,7 @@ import PageLayout from '../components/PageLayout';
 import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
+import { Pagination, usePagination } from '../../components/ui/pagination';
 
 const QUICK_VIEWS = {
   new: { label: 'New bookings', sortBy: 'booked', sortDir: 'desc' },
@@ -147,7 +148,6 @@ function ReservationBoard({
   const [type, setType] = useState('all');
   const [pay, setPay] = useState('all');
   const [room, setRoom] = useState('all');
-  const [limit, setLimit] = useState(12);
 
   const types = useMemo(() => [...new Set(reservations.map(r => r.type).filter(Boolean))], [reservations]);
   const rooms = useMemo(() => [...new Set(reservations.map(r => r.roomNumber).filter(Boolean))].sort(), [reservations]);
@@ -173,7 +173,8 @@ function ReservationBoard({
 
   const dayItems = items.filter(r => staysOn(r, selected));
   const listItems = scope === 'day' ? dayItems : items;
-  const visible = listItems.slice(0, limit);
+  const pagination = usePagination(listItems, { pageSize: 10, resetKey: `${type}|${pay}|${room}|${scope}|${selected}` });
+  const visible = pagination.pageItems;
   const filtersActive = type !== 'all' || pay !== 'all' || room !== 'all';
   const showNav = tab !== 'list' || scope === 'day';
 
@@ -211,7 +212,6 @@ function ReservationBoard({
     setCursor(new Date(d.getFullYear(), d.getMonth(), 1));
     if (tab === 'list') setScope('day');
     if (nextTab) setTab(nextTab);
-    setLimit(12);
   };
 
   const title = tab === 'month'
@@ -427,12 +427,12 @@ function ReservationBoard({
       {visible.length === 0
         ? empty(scope === 'day' ? 'No reservations on this day. Pick another date or switch to All dates.' : 'No reservations match these filters.')
         : visible.map(row)}
-      {listItems.length > visible.length && (
-        <button type="button" style={{ ...ctl, justifySelf: 'center', fontWeight: 600 }} onClick={() => setLimit(l => l + 12)}>
-          Show more ({listItems.length - visible.length} left)
-        </button>
-      )}
-      {visible.length > 0 && <div style={{ fontSize: 11, color: t.MUTED, textAlign: 'center' }}>Showing {visible.length} of {listItems.length}</div>}
+      <Pagination
+        pagination={pagination}
+        itemLabel="reservations"
+        colors={{ text: t.TEXT, muted: t.MUTED, border: t.BORDER2, background: t.CARD2, accent: t.ACCENT, accentText: t.ACCENT_TEXT }}
+        style={{ padding: '4px 0 0' }}
+      />
     </div>
   );
 
@@ -467,16 +467,16 @@ function ReservationBoard({
 
           {/* Filters */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-            <select aria-label="Booking type" value={type} onChange={e => { setType(e.target.value); setLimit(12); }} style={ctl}>
+            <select aria-label="Booking type" value={type} onChange={e => { setType(e.target.value); }} style={ctl}>
               <option value="all">All types</option>
               {types.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
-            <select aria-label="Payment" value={pay} onChange={e => { setPay(e.target.value); setLimit(12); }} style={ctl}>
+            <select aria-label="Payment" value={pay} onChange={e => { setPay(e.target.value); }} style={ctl}>
               <option value="all">Any payment</option>
               <option value="paid">Fully paid</option>
               <option value="unpaid">Unpaid balance</option>
             </select>
-            <select aria-label="Room" value={room} onChange={e => { setRoom(e.target.value); setLimit(12); }} style={ctl}>
+            <select aria-label="Room" value={room} onChange={e => { setRoom(e.target.value); }} style={ctl}>
               <option value="all">All rooms</option>
               {rooms.map(v => <option key={v} value={v}>Room {v}</option>)}
             </select>
@@ -486,7 +486,7 @@ function ReservationBoard({
             {tab === 'list' && (
               <div style={{ marginLeft: 'auto', display: 'inline-flex', background: t.CARD2, border: `1px solid ${t.BORDER2}`, borderRadius: 9, padding: 2 }}>
                 {[['all', 'All dates'], ['day', 'Selected day']].map(([id, label]) => (
-                  <button key={id} type="button" onClick={() => { setScope(id); setLimit(12); }}
+                  <button key={id} type="button" onClick={() => { setScope(id); }}
                     style={{
                       border: 'none', borderRadius: 7, padding: '5px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
                       background: scope === id ? t.CARD : 'transparent', color: scope === id ? t.TEXT : t.MUTED,

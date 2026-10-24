@@ -1,4 +1,4 @@
-import { calculateBookingPrice, getGuestCountViolation, getRoomBaseRate, getRoomCapacityPolicy, getRoomMaximumGuests, getStayDurationError, isCoupleRoom } from './bookingPricing';
+import { calculateBookingPrice, getGuestCountViolation, getRoomBaseRate, getRoomCapacityPolicy, getRoomMaximumGuests, getOccupiedEndDate, getStayDurationError, getStayUnits, isCoupleRoom, isSingleDayStay, stayRangesOverlap } from './bookingPricing';
 import { isPreferredContactMethod, PREFERRED_CONTACT_METHODS } from './preferredContactMethods';
 
 describe('stay duration guardrails', () => {
@@ -10,6 +10,27 @@ describe('stay duration guardrails', () => {
     expect(getStayDurationError('2026-01-01', '2226-01-01')).not.toBe('');
     expect(getStayDurationError('2026-01-05', '2026-01-05')).not.toBe('');
     expect(getStayDurationError('', '2026-01-05')).not.toBe('');
+  });
+});
+
+describe('single-day stays', () => {
+  it('accepts the same check-in and check-out date only when allowed', () => {
+    expect(getStayDurationError('2026-01-05', '2026-01-05', { allowSingleDay: true })).toBe('');
+    expect(getStayDurationError('2026-01-06', '2026-01-05', { allowSingleDay: true })).not.toBe('');
+    expect(isSingleDayStay('2026-01-05', '2026-01-05')).toBe(true);
+    expect(isSingleDayStay('2026-01-05', '2026-01-06')).toBe(false);
+  });
+  it('bills a single-day stay as one day', () => {
+    expect(getStayUnits('2026-01-05', '2026-01-05')).toBe(1);
+    expect(getStayUnits('2026-01-05', '2026-01-08')).toBe(3);
+    expect(getStayUnits('2026-01-08', '2026-01-05')).toBe(0);
+  });
+  it('treats a single-day stay as occupying its whole date', () => {
+    expect(getOccupiedEndDate('2026-01-31', '2026-01-31')).toBe('2026-02-01');
+    expect(stayRangesOverlap('2026-01-05', '2026-01-05', '2026-01-04', '2026-01-06')).toBe(true);
+    expect(stayRangesOverlap('2026-01-05', '2026-01-05', '2026-01-05', '2026-01-05')).toBe(true);
+    expect(stayRangesOverlap('2026-01-05', '2026-01-05', '2026-01-03', '2026-01-05')).toBe(false);
+    expect(stayRangesOverlap('2026-01-05', '2026-01-05', '2026-01-06', '2026-01-07')).toBe(false);
   });
 });
 

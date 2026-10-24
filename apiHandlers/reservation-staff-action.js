@@ -5,6 +5,7 @@ import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
 import { createPayMongoCheckoutSession } from '../lib/paymongoCheckout';
 import { DEFAULT_CANCELLATION_POLICY, getDateRangeNights } from '../src/lib/cancellationPolicy';
 import { getOnlinePaymentAmount } from '../src/lib/paymentPolicy';
+import { stayRangesOverlap } from '../src/lib/bookingPricing';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
 
@@ -332,7 +333,8 @@ async function decideModification({ reservationRef, reservationId, requestId, st
         if (doc.id === reservationId) return false;
         const other = doc.data();
         return !['cancelled', 'checked-out', 'rejected'].includes(String(other.status || '').toLowerCase())
-          && requestedCheckIn < other.checkOut && requestedCheckOut > other.checkIn;
+          && typeof other.checkIn === 'string' && typeof other.checkOut === 'string'
+          && stayRangesOverlap(requestedCheckIn, requestedCheckOut, other.checkIn.slice(0, 10), other.checkOut.slice(0, 10));
       });
       if (conflict) throw new Error('The requested dates are no longer available.');
       const policySnapshot = await transaction.get(adminDb.doc('settings/cancellationPolicy'));

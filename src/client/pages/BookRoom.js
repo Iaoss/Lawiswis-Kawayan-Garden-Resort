@@ -13,10 +13,13 @@ import {
   getGuestCountViolation,
   getRoomCapacityPolicy,
   getStayDurationError,
+  getStayUnits,
+  isSingleDayStay,
 } from '../../lib/bookingPricing';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
+import { Pagination, usePagination } from '../../components/ui/pagination';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 
@@ -189,7 +192,8 @@ export default function BookRoom() {
     checkOut: params.get('checkOut') || '',
     adults: 1,
     children: 0,
-    bookingType: 'overnight',
+    // Same-day dates can only be booked as a day tour.
+    bookingType: params.get('checkIn') && params.get('checkIn') === params.get('checkOut') ? 'daytour' : 'overnight',
     tourPeriod: 'day',
     overnightTimeSlot: 'morning',
     cottageId: '',
@@ -200,13 +204,14 @@ export default function BookRoom() {
     ...(location.state?.bookingForm || {}),
   }));
   const guestName = joinGuestName(form.firstName, form.lastName);
+  const singleDay = isSingleDayStay(form.checkIn, form.checkOut);
   const datesValid = Boolean(form.checkIn && form.checkOut
-    && form.checkIn >= today && form.checkOut > form.checkIn
+    && form.checkIn >= today && form.checkOut >= form.checkIn
     && form.checkIn <= maximumBookingDate && form.checkOut <= maximumBookingDate
-    && !getStayDurationError(form.checkIn, form.checkOut));
-  const nights = useMemo(() => form.checkIn && form.checkOut
-    ? Math.ceil((new Date(`${form.checkOut}T00:00:00`) - new Date(`${form.checkIn}T00:00:00`)) / (1000 * 60 * 60 * 24))
-    : 0, [form.checkIn, form.checkOut]);
+    && !getStayDurationError(form.checkIn, form.checkOut, { allowSingleDay: true }));
+  // A single-day booking counts as one billable day.
+  const nights = useMemo(() => getStayUnits(form.checkIn, form.checkOut), [form.checkIn, form.checkOut]);
+  const historyPagination = usePagination(bookingHistory, { pageSize: 5 });
   const stayUnit = form.bookingType === 'daytour' ? 'day' : 'night';
   const pricing = useMemo(() => room && nights > 0
     ? calculateBookingPrice({
@@ -251,6 +256,13 @@ export default function BookRoom() {
     const closestMatches = matchingRooms.filter(item => getRoomCapacityPolicy(item)?.maxGuests === closestCapacity);
     return (closestMatches.length >= 2 ? closestMatches : matchingRooms).slice(0, 2);
   }, [availableRooms, form.adults, form.children, room?.id]);
+
+  // Overnight stays need at least one night, so same-day dates switch to a day tour.
+  useEffect(() => {
+    if (singleDay && form.bookingType !== 'daytour') {
+      setForm(previous => ({ ...previous, bookingType: 'daytour' }));
+    }
+  }, [singleDay, form.bookingType]);
 
   useEffect(() => {
     const fetchRoom = async () => {
@@ -768,7 +780,7 @@ export default function BookRoom() {
               </>
             ) : (
               <div style={{ display: 'grid', gap: '12px' }}>
-                {bookingHistory.map(booking => (
+                {historyPagination.pageItems.map(booking => (
                   <article key={booking.bookingId} style={{ border: '1px solid #e5e7eb', borderRadius: '12px', padding: '18px', display: 'grid', gap: '12px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
                       <div>
@@ -790,13 +802,20 @@ export default function BookRoom() {
                     )}
                   </article>
                 ))}
+                <Pagination
+                  pagination={historyPagination}
+                  itemLabel="bookings"
+                  pageSizeOptions={[5, 10, 25]}
+                  colors={{ accent: DARK }}
+                  style={{ padding: '4px 0 0' }}
+                />
               </div>
             )}
           </section>
         ) : !datesValid ? (
           <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', padding: '32px', textAlign: 'center', maxWidth: '560px', margin: '0 auto' }}>
             <h1 style={{ color: '#111', fontSize: '20px', margin: '0 0 10px' }}>Choose stay dates first</h1>
-            <p style={{ color: '#6b7280', fontSize: '13px', lineHeight: 1.6 }}>Select valid available check-in and check-out dates before continuing to this room. You can still view your saved bookings from the tab above.</p>
+            <p style={{ color: '#6b7280', fontSize: '13px', lineHeight: 1.6 }}>Select valid available check-in and check-out dates (or a single date for a day tour) before continuing to this room. You can still view your saved bookings from the tab above.</p>
             <button onClick={() => navigate('/rooms')} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
           </div>
         ) : (
@@ -885,7 +904,9 @@ export default function BookRoom() {
               </div>
               <div className="responsive-grid-2" style={{ gap: '14px' }}>
                 <div style={{ gridColumn: '1 / -1', background: resortAvailable ? LIGHT : '#fef2f2', padding: '14px', borderRadius: '8px', color: resortAvailable ? '#355a42' : '#991b1b', fontSize: '13px' }}>
-                  <strong>Check-in:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> <strong>Check-out:</strong> {form.checkOut}
+                  {singleDay
+                    ? <><strong>Date:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> Single-day booking (day tour)</>
+                    : <><strong>Check-in:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> <strong>Check-out:</strong> {form.checkOut}</>}
                   {resortAvailable && <button type="button" onClick={() => { window.location.href = '/rooms'; }} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Edit dates</button>}
                   {!resortAvailable && <div style={{ marginTop: 5 }}>{availabilityError || unavailableReason || 'Reservations are temporarily closed.'}</div>}
                 </div>
@@ -893,7 +914,7 @@ export default function BookRoom() {
                   <label htmlFor="booking-type" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Booking Type</label>
                   <select id="booking-type" value={form.bookingType} onChange={e => setForm(previous => ({ ...previous, bookingType: e.target.value }))}
                     style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                    <option value="overnight">Overnight stay</option>
+                    <option value="overnight" disabled={singleDay}>Overnight stay{singleDay ? ' (needs a later check-out date)' : ''}</option>
                     <option value="daytour">Daytour (8:00 AM–5:00 PM)</option>
                   </select>
                 </div>
@@ -1275,7 +1296,7 @@ export default function BookRoom() {
 
               {nights > 0 && (
                 <div style={{ background: LIGHT, borderRadius: '10px', padding: '12px', marginTop: '14px', fontSize: '12px', color: ACCENT, textAlign: 'center', fontWeight: '600' }}>
-                  {nights} {stayUnit}{nights !== 1 ? 's' : ''} · {form.checkIn} → {form.checkOut}
+                  {nights} {stayUnit}{nights !== 1 ? 's' : ''} · {singleDay ? form.checkIn : `${form.checkIn} → ${form.checkOut}`}
                 </div>
               )}
 

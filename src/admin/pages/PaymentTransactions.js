@@ -4,6 +4,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
+import { Pagination, usePagination } from '../../components/ui/pagination';
 
 const paymentDateValue = payment => payment.paidAt || payment.paymentDate || payment.createdAt || payment.date;
 const paymentDateMillis = payment => {
@@ -76,7 +77,6 @@ export default function PaymentTransactions() {
   const [sortBy, setSortBy] = useState('booked');
   const [sortDir, setSortDir] = useState('desc');
   const [rangeId, setRangeId] = useState('30');
-  const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -166,7 +166,8 @@ export default function PaymentTransactions() {
     p.guestName?.toLowerCase().includes(search.toLowerCase()) ||
     p.roomNumber?.includes(search)
   ), sortBy, sortDir);
-  const rows = showAll ? filtered : filtered.slice(0, 8);
+  const pagination = usePagination(filtered, { pageSize: 10, resetKey: `${search}|${sortBy}|${sortDir}|${rangeId}` });
+  const rows = pagination.pageItems;
 
   /* ── shared styles ── */
   const panel = { background: CARD, borderRadius: '24px', border: `1px solid ${BORDER}`, boxShadow: dark ? '0 4px 16px rgba(0,0,0,0.3)' : '0 1px 3px rgba(0,0,0,0.06)' };
@@ -181,7 +182,7 @@ export default function PaymentTransactions() {
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '18px' }}>
           <h2 style={{ fontSize: '22px', fontWeight: 700, color: TEXT, margin: 0 }}>Payment Transactions</h2>
-          <select value={rangeId} onChange={e => { setRangeId(e.target.value); setShowAll(false); }} style={{ ...ctl, cursor: 'pointer' }} aria-label="Date range">
+          <select value={rangeId} onChange={e => setRangeId(e.target.value)} style={{ ...ctl, cursor: 'pointer' }} aria-label="Date range">
             {RANGES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
           </select>
         </div>
@@ -355,15 +356,12 @@ export default function PaymentTransactions() {
             </table>
           </div>
 
-          {filtered.length > 8 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', fontSize: '11px', color: MUTED }}>
-              <span>Showing {rows.length} of {filtered.length}</span>
-              <button onClick={() => setShowAll(v => !v)}
-                style={{ background: 'none', border: 'none', color: TEXT, fontWeight: 600, fontSize: '12px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
-                {showAll ? 'Show less' : 'View all ›'}
-              </button>
-            </div>
-          )}
+          <Pagination
+            pagination={pagination}
+            itemLabel="transactions"
+            colors={{ text: TEXT, muted: MUTED, border: BORDER, background: CARD, accent: TEXT, accentText: CARD }}
+            style={{ padding: '12px 0 0' }}
+          />
         </section>
       </div>
     </PageLayout>
