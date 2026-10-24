@@ -18,12 +18,49 @@ export const NIGHTTOUR_TIME_SLOT = {
   checkOut: '10:00 PM / 12:00 MN',
 };
 
+// The resort's local time zone. Server code runs in UTC, so same-day
+// cutoffs are always checked against Philippine time.
+export const RESORT_TIME_ZONE = 'Asia/Manila';
+const TOUR_START_MINUTES = { day: 8 * 60, night: 17 * 60 };
+
+// Today's date (YYYY-MM-DD) and minutes past midnight at the resort.
+export function getResortNow(now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: RESORT_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now).map(part => [part.type, part.value]));
+  return { dateKey: `${parts.year}-${parts.month}-${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute) };
+}
+
+// True when `date` is today at the resort and that tour's check-in time has passed.
+export function isTourStartPassed(date, tourPeriod = 'day', now = new Date()) {
+  const resortNow = getResortNow(now);
+  return date === resortNow.dateKey
+    && resortNow.minutes >= TOUR_START_MINUTES[tourPeriod === 'night' ? 'night' : 'day'];
+}
+
+// Error message when a same-day tour is booked after its check-in time, or ''.
+export function getTourCutoffError(date, tourPeriod = 'day', now = new Date()) {
+  if (!isTourStartPassed(date, tourPeriod, now)) return '';
+  return tourPeriod === 'night'
+    ? `Today's night tour started at ${NIGHTTOUR_TIME_SLOT.checkIn}, so it can no longer be booked. Please choose another date.`
+    : `Today's day tour started at ${DAYTOUR_TIME_SLOT.checkIn}, so it can no longer be booked. Please choose another date or the night swimming tour.`;
+}
+
 export const COTTAGE_OPTIONS = [
   { id: '', label: 'No cottage', prices: [0] },
   { id: 'umbrella-hut', label: 'Umbrella Hut / Daybed (up to 6 guests)', prices: [500, 1000] },
   { id: 'cabana', label: 'Garden / Poolside Cabana (up to 10 guests)', prices: [1000, 1500] },
   { id: 'pavilion', label: 'Pavilion (up to 20 guests)', prices: [3000] },
 ];
+
+// Looks up a cottage fee from the option the guest picked (cottage id + the
+// index of its rate). Returns null for anything not on the list. The browser
+// only ever sends the choice, never the price.
+export function getCottageFee(cottageId, variant) {
+  const option = COTTAGE_OPTIONS.find(item => item.id === (cottageId || ''));
+  if (!option || !Number.isInteger(variant)) return null;
+  return option.prices[variant] ?? null;
+}
 
 const ROOM_RATES = {
   couple: { baseCapacity: 2, daytour: 2000, overnight: 3000 },

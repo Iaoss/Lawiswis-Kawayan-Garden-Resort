@@ -1,4 +1,4 @@
-import { calculateBookingPrice, getGuestCountViolation, getRoomBaseRate, getRoomCapacityPolicy, getRoomMaximumGuests, getOccupiedEndDate, getStayDurationError, getStayUnits, isCoupleRoom, isSingleDayStay, stayRangesOverlap } from './bookingPricing';
+import { calculateBookingPrice, getGuestCountViolation, getRoomBaseRate, getRoomCapacityPolicy, getRoomMaximumGuests, getCottageFee, getOccupiedEndDate, getResortNow, getStayDurationError, getTourCutoffError, isTourStartPassed, getStayUnits, isCoupleRoom, isSingleDayStay, stayRangesOverlap } from './bookingPricing';
 import { isPreferredContactMethod, PREFERRED_CONTACT_METHODS } from './preferredContactMethods';
 
 describe('stay duration guardrails', () => {
@@ -31,6 +31,33 @@ describe('single-day stays', () => {
     expect(stayRangesOverlap('2026-01-05', '2026-01-05', '2026-01-05', '2026-01-05')).toBe(true);
     expect(stayRangesOverlap('2026-01-05', '2026-01-05', '2026-01-03', '2026-01-05')).toBe(false);
     expect(stayRangesOverlap('2026-01-05', '2026-01-05', '2026-01-06', '2026-01-07')).toBe(false);
+  });
+});
+
+describe('same-day tour cutoff (Philippine time)', () => {
+  // 2026-10-24 12:35 PM in Manila is 04:35 UTC.
+  const lunchtime = new Date('2026-10-24T04:35:00Z');
+  it('blocks today\'s day tour after 8:00 AM but allows the night tour', () => {
+    expect(getResortNow(lunchtime)).toEqual({ dateKey: '2026-10-24', minutes: 12 * 60 + 35 });
+    expect(isTourStartPassed('2026-10-24', 'day', lunchtime)).toBe(true);
+    expect(getTourCutoffError('2026-10-24', 'day', lunchtime)).toMatch(/8:00 AM/);
+    expect(getTourCutoffError('2026-10-24', 'night', lunchtime)).toBe('');
+    expect(getTourCutoffError('2026-10-25', 'day', lunchtime)).toBe('');
+  });
+  it('allows today\'s day tour before 8:00 AM and blocks the night tour after 5:00 PM', () => {
+    expect(getTourCutoffError('2026-10-24', 'day', new Date('2026-10-23T23:59:00Z'))).toBe('');
+    expect(getTourCutoffError('2026-10-24', 'night', new Date('2026-10-24T09:00:00Z'))).toMatch(/5:00 PM/);
+  });
+});
+
+describe('cottage selection', () => {
+  it('derives the fee from the chosen option on the server side', () => {
+    expect(getCottageFee('', 0)).toBe(0);
+    expect(getCottageFee('umbrella-hut', 1)).toBe(1000);
+    expect(getCottageFee('pavilion', 0)).toBe(3000);
+    expect(getCottageFee('pavilion', 1)).toBeNull();
+    expect(getCottageFee('bogus', 0)).toBeNull();
+    expect(getCottageFee('umbrella-hut', '0')).toBeNull();
   });
 });
 

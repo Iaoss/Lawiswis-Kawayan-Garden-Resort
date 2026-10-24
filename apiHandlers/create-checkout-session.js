@@ -13,11 +13,11 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Only the reservation id, payment choice and (for staff billing) an amount
+  // come from the browser. Names, descriptions and booking amounts are read
+  // from the stored reservation so they can't be altered in the page.
   const {
     reservationId,
-    guestName,
-    guestEmail,
-    description,
     amount,
     paymentType,
     paymentChoice,
@@ -38,6 +38,9 @@ export default async function handler(req, res) {
   }
 
   let checkoutAmount;
+  let guestName;
+  let guestEmail;
+  let description;
   try {
     const reservationRef = adminDb.collection('reservations').doc(reservationId);
     const reservationSnap = await reservationRef.get();
@@ -46,6 +49,15 @@ export default async function handler(req, res) {
     }
 
     const reservation = reservationSnap.data();
+    guestName = reservation.guestName || 'Guest';
+    guestEmail = reservation.email || '';
+    const units = Number(reservation.nights) || 1;
+    const unitLabel = reservation.bookingType === 'daytour' ? 'day' : 'night';
+    description = reservation.type === 'corporate'
+      ? `${reservation.packageName || 'Corporate'} corporate group booking · ${Number(reservation.totalGuests) || 0} guests`
+      : checkoutType === 'billing'
+        ? `Room ${reservation.roomNumber || ''} — ${guestName}`
+        : `Room ${reservation.roomNumber || ''} (${reservation.roomType || ''}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`;
     const balance = Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0) - Number(reservation.amountPaid || 0);
 
     if (checkoutType === 'booking') {
@@ -101,6 +113,7 @@ export default async function handler(req, res) {
       siteUrl,
     });
     return res.status(200).json({
+      amount: checkoutAmount,
       checkoutUrl: session.checkoutUrl,
       checkoutSessionId: session.checkoutSessionId,
     });

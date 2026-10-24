@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS, FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
+import { isTourStartPassed } from '../../lib/bookingPricing';
 
 /* ------------------------------------------------------------------ */
 /* Room catalog copied from lawiswiskawayanresort.com/regular-rooms    */
@@ -117,6 +118,7 @@ function decorateRoom(room, index) {
 
 export default function Rooms() {
   const location = useLocation();
+  const navigate = useNavigate();
   const { available: resortAvailable, error: availabilityStatusError, loading: resortStatusLoading } = useResortAvailability();
   const canBook = resortAvailable && !resortStatusLoading && !availabilityStatusError;
   const [rooms, setRooms] = useState([]);
@@ -142,7 +144,8 @@ export default function Rooms() {
   const maxDateKey = formatDate(maxDate);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [checkIn, setCheckIn] = useState(params.get('checkIn') || '');
-  const [checkOut, setCheckOut] = useState(params.get('checkOut') || '');
+  // An empty check-out means a single-day booking on the check-in date.
+  const [checkOut, setCheckOut] = useState(() => (params.get('checkOut') && params.get('checkOut') !== params.get('checkIn') ? params.get('checkOut') : ''));
 
   useEffect(() => {
     setFilter(new URLSearchParams(location.search).get('category') || 'all');
@@ -170,9 +173,12 @@ export default function Rooms() {
     return () => { active = false; };
   }, []);
 
-  // checkOut === checkIn is a single-day booking (day tour).
-  const rangeIsValid = Boolean(checkIn && checkOut && checkIn >= todayKey && checkOut >= checkIn && checkOut <= maxDateKey);
-  const singleDay = rangeIsValid && checkIn === checkOut;
+  // One tapped date is a single-day booking (day tour): it ends on the same date.
+  const stayEnd = checkOut || checkIn;
+  const singleDay = Boolean(checkIn) && !checkOut;
+  // Both of today's tours have started (night tour starts 5:00 PM, Philippine time).
+  const todayToursClosed = singleDay && isTourStartPassed(checkIn, 'night');
+  const rangeIsValid = Boolean(checkIn && checkIn >= todayKey && stayEnd >= checkIn && stayEnd <= maxDateKey && !todayToursClosed);
   const rangeLabel = singleDay ? `${checkIn} (single day)` : `${checkIn} to ${checkOut}`;
   useEffect(() => {
     if (!rangeIsValid) {
@@ -181,7 +187,7 @@ export default function Rooms() {
       setAvailabilityError(false);
       return undefined;
     }
-    const range = new URLSearchParams({ startDate: checkIn, endDate: checkOut });
+    const range = new URLSearchParams({ startDate: checkIn, endDate: stayEnd });
     let active = true;
     setAvailabilityLoading(true);
     setAvailabilityError(false);
@@ -194,7 +200,7 @@ export default function Rooms() {
       .catch(() => { if (active) { setAvailableRoomIds([]); setAvailabilityError(true); } })
       .finally(() => { if (active) setAvailabilityLoading(false); });
     return () => { active = false; };
-  }, [checkIn, checkOut, rangeIsValid]);
+  }, [checkIn, stayEnd, rangeIsValid]);
 
   // Close the detail dialog with Escape.
   useEffect(() => {
@@ -262,9 +268,10 @@ export default function Rooms() {
       setCheckOut('');
       return;
     }
-    // Clicking the check-in date again books just that one day.
+    // Tapping the selected date again clears it.
     if (dateKey === checkIn) {
-      setCheckOut(dateKey);
+      setCheckIn('');
+      setCheckOut('');
       return;
     }
     if (dateKey < checkIn) {
@@ -287,7 +294,7 @@ export default function Rooms() {
   const bookRoom = room => {
     if (!canBook) return;
     if (!rangeIsValid) { goToDates(); return; }
-    window.location.href = `/book/${room.id}?checkIn=${checkIn}&checkOut=${checkOut}`;
+    navigate(`/book/${room.id}?checkIn=${checkIn}&checkOut=${stayEnd}`);
   };
 
   const badgeFor = room => {
@@ -369,7 +376,7 @@ export default function Rooms() {
                   ? `Showing availability for ${rangeLabel}.`
                   : 'Sleep beneath the bamboo canopy, with room to gather, rest, and breathe.'}
               </p>
-              <OccupancyBadge startDate={checkIn || undefined} endDate={checkOut || undefined} style={{ fontFamily: SANS, background: 'rgba(255,255,255,0.9)' }} />
+              <OccupancyBadge startDate={checkIn || undefined} endDate={stayEnd || undefined} style={{ fontFamily: SANS, background: 'rgba(255,255,255,0.9)' }} />
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
@@ -410,7 +417,9 @@ export default function Rooms() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '18px', flexWrap: 'wrap' }}>
             <div>
               <div style={{ color: FOREST, font: `600 15px ${SANS}`, marginBottom: '5px' }}>Stay dates</div>
-              <div style={{ color: '#777363', font: `12px ${SANS}` }}>{checkIn ? (checkOut ? rangeLabel : 'Choose a check-out date, or tap the same date again for a single-day booking') : 'Choose a check-in date'}</div>
+              <div style={{ color: '#777363', font: `12px ${SANS}` }}>{checkIn
+                ? (checkOut ? rangeLabel : `${checkIn} · single-day booking (day tour). Tap a later date to make it an overnight stay.`)
+                : 'Tap one date for a single-day booking (day tour), or tap a check-in date and then a check-out date for an overnight stay.'}</div>
             </div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <button type="button" aria-label="Previous month" disabled={calendarMonth <= minMonth} onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} style={{ border: `1px solid ${LINE}`, background: '#fff', color: FOREST, width: '36px', height: '36px', cursor: calendarMonth <= minMonth ? 'not-allowed' : 'pointer' }}>‹</button>
@@ -446,11 +455,18 @@ export default function Rooms() {
             <span role={calendarError ? 'alert' : undefined} style={{ color: calendarError ? '#b91c1c' : '#777363', font: `11px ${SANS}` }}>
               {!canBook ? (resortStatusLoading ? 'Checking resort status…' : availabilityStatusError ? 'Booking status could not be checked. Refresh to try again.' : 'Reservations temporarily closed') : calendarError ? 'Availability could not be checked. Refresh to try again.' : 'Crossed-out dates are fully booked.'}
             </span>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-              {checkIn && !checkOut && <button type="button" className="rooms-link" onClick={() => setCheckOut(checkIn)}>Book this day only</button>}
-              {(checkIn || checkOut) && <button type="button" className="rooms-link" onClick={resetDates}>Clear dates</button>}
-            </div>
+            {(checkIn || checkOut) && <button type="button" className="rooms-link" onClick={resetDates}>Clear dates</button>}
           </div>
+          {todayToursClosed && (
+            <div role="alert" style={{ marginTop: '14px', color: '#b91c1c', font: `12px ${SANS}` }}>
+              Today's day and night tours have already started, so a single-day booking for today is no longer available. Choose another date, or tap a later date for an overnight stay.
+            </div>
+          )}
+          {singleDay && !todayToursClosed && isTourStartPassed(checkIn, 'day') && (
+            <div style={{ marginTop: '14px', color: '#777363', font: `12px ${SANS}` }}>
+              Today's day tour started at 8:00 AM. The night tour (from 5:00 PM) can still be booked.
+            </div>
+          )}
           {availabilityError && (
             <div role="alert" style={{ marginTop: '14px', color: '#b91c1c', font: `12px ${SANS}` }}>
               Room availability could not be verified. Please select your dates again.

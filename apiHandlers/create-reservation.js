@@ -28,7 +28,8 @@ import { evaluatePromo, normalizePromoCode } from '../lib/promoPolicy';
 import {
   getStayDurationError,
   calculateBookingPrice,
-  COTTAGE_OPTIONS,
+  getCottageFee,
+  getTourCutoffError,
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
@@ -80,7 +81,7 @@ export default async function handler(req, res) {
       bookingType,
       tourPeriod,
       cottageId,
-      cottageFee,
+      cottageVariant,
       notes,
       preferredContactMethod,
       paymentMethod,
@@ -149,9 +150,10 @@ export default async function handler(req, res) {
     if (bookingType === 'daytour' && !['day', 'night'].includes(tourPeriod)) {
       return res.status(400).json({ error: 'Choose a valid swimming tour period.' });
     }
-    const requestedCottageFee = Number(cottageFee || 0);
-    if (!COTTAGE_OPTIONS.some(option => option.id === (cottageId || '') && option.prices.includes(requestedCottageFee))) {
-      return res.status(400).json({ error: 'Choose a valid cottage rate.' });
+    // The guest only picks a cottage option; its price is looked up here.
+    const requestedCottageFee = getCottageFee(cottageId || '', cottageId ? cottageVariant : 0);
+    if (requestedCottageFee === null) {
+      return res.status(400).json({ error: 'Choose a valid cottage option.' });
     }
     if (paymentMethod !== 'online') {
       return res.status(400).json({ error: 'Reservations must be paid online through PayMongo.' });
@@ -174,6 +176,9 @@ export default async function handler(req, res) {
 
     const stayError = getStayDurationError(checkIn, checkOut, { allowSingleDay: singleDay });
     if (stayError) return res.status(400).json({ error: stayError });
+    // A day or night tour for today can't be booked once its check-in time has passed.
+    const cutoffError = bookingType === 'daytour' ? getTourCutoffError(checkIn, tourPeriod) : '';
+    if (cutoffError) return res.status(400).json({ error: cutoffError, code: 'TOUR_CUTOFF_PASSED' });
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);

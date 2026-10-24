@@ -153,9 +153,6 @@ export default function Billing() {
     try {
       const { checkoutUrl, checkoutSessionId: sessionId } = await createPayMongoCheckout({
         reservationId: selected.id,
-        guestName: selected.guestName,
-        guestEmail: selected.email || selected.guestEmail,
-        description: `Room ${selected.roomNumber} — ${selected.guestName}`,
         amount: Number(paymentAmount),
       });
       setPayLink(checkoutUrl);

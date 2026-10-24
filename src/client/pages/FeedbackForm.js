@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { splitGuestName } from '../../lib/nameValidation';
@@ -42,6 +43,7 @@ const WORDS = ['', 'Poor', 'Fair', 'Good', 'Very good', 'Excellent'];
 
 /* ------------------------------- component -------------------------------- */
 export default function FeedbackForm() {
+  const navigate = useNavigate();
   const [guest, setGuest] = useState({ firstName: '', lastName: '', email: '', roomName: '', comment: '' });
   const [roomNames, setRoomNames] = useState([]);
   const [scores, setScores] = useState({ ambience: 0, rooms: 0, staff: 0, facilities: 0 });
@@ -87,14 +89,6 @@ export default function FeedbackForm() {
     };
     fetchRoomNames();
     return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    if (document.getElementById('hp-fonts')) return;
-    const l = document.createElement('link');
-    l.id = 'hp-fonts'; l.rel = 'stylesheet';
-    l.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap';
-    document.head.appendChild(l);
   }, []);
 
   const given = Object.values(scores).filter(Boolean);
@@ -162,7 +156,7 @@ export default function FeedbackForm() {
           </div>
           <div className="lk-score-word">{WORDS[overallRounded]}</div>
         </div>
-        <button className="lk-submit" onClick={() => (window.location.href = '/home')}>Back to home</button>
+        <button className="lk-submit" onClick={() => (navigate('/home'))}>Back to home</button>
       </div>
     </div>
   );

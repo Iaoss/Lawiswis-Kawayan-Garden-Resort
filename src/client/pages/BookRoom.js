@@ -14,6 +14,8 @@ import {
   getRoomCapacityPolicy,
   getStayDurationError,
   getStayUnits,
+  getCottageFee,
+  getTourCutoffError,
   isSingleDayStay,
 } from '../../lib/bookingPricing';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
@@ -197,7 +199,7 @@ export default function BookRoom() {
     tourPeriod: 'day',
     overnightTimeSlot: 'morning',
     cottageId: '',
-    cottageFee: 0,
+    cottageVariant: 0, // index into the cottage's price list; the server looks up the fee
     notes: '',
     paymentMethod: 'online',
     website: '', // honeypot — real guests leave this blank; see hidden field below
@@ -211,6 +213,10 @@ export default function BookRoom() {
     && !getStayDurationError(form.checkIn, form.checkOut, { allowSingleDay: true }));
   // A single-day booking counts as one billable day.
   const nights = useMemo(() => getStayUnits(form.checkIn, form.checkOut), [form.checkIn, form.checkOut]);
+  // Same-day tours can't be booked after their check-in time (checked in Philippine time).
+  const dayTourClosed = Boolean(getTourCutoffError(form.checkIn, 'day'));
+  const nightTourClosed = Boolean(getTourCutoffError(form.checkIn, 'night'));
+  const tourCutoffError = form.bookingType === 'daytour' ? getTourCutoffError(form.checkIn, form.tourPeriod) : '';
   const historyPagination = usePagination(bookingHistory, { pageSize: 5 });
   const stayUnit = form.bookingType === 'daytour' ? 'day' : 'night';
   const pricing = useMemo(() => room && nights > 0
@@ -222,9 +228,9 @@ export default function BookRoom() {
       children: Number(form.children),
       tourPeriod: form.tourPeriod,
       cottageId: form.cottageId,
-      cottageFee: Number(form.cottageFee),
+      cottageFee: getCottageFee(form.cottageId, Number(form.cottageVariant)) ?? 0,
     })
-    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, form.cottageFee]);
+    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, form.cottageVariant]);
   const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
@@ -263,6 +269,13 @@ export default function BookRoom() {
       setForm(previous => ({ ...previous, bookingType: 'daytour' }));
     }
   }, [singleDay, form.bookingType]);
+
+  // Today's day tour closes at its 8:00 AM check-in, so move to the night tour while it's still open.
+  useEffect(() => {
+    if (form.bookingType === 'daytour' && form.tourPeriod === 'day' && dayTourClosed && !nightTourClosed) {
+      setForm(previous => ({ ...previous, tourPeriod: 'night' }));
+    }
+  }, [form.bookingType, form.tourPeriod, dayTourClosed, nightTourClosed]);
 
   useEffect(() => {
     const fetchRoom = async () => {
@@ -526,6 +539,7 @@ export default function BookRoom() {
       return;
     }
     if (!datesValid || nights <= 0) return alert('Please choose valid stay dates from the availability calendar first.');
+    if (tourCutoffError) { setErrorMsg(tourCutoffError); return; }
     if (!termsRead || !termsAccepted) return alert('Please read the full Terms and Agreement and confirm that you agree before continuing.');
 
     setSubmitting(true);
@@ -565,7 +579,7 @@ export default function BookRoom() {
           bookingType: form.bookingType,
           tourPeriod: form.tourPeriod,
           cottageId: form.cottageId,
-          cottageFee: Number(form.cottageFee),
+          cottageVariant: Number(form.cottageVariant),
           notes: form.notes,
           paymentMethod: form.paymentMethod,
           promoCode: activePromo?.code || '',
@@ -604,7 +618,7 @@ export default function BookRoom() {
         roomName: `Room ${room.roomNumber} (${room.type})`,
         checkIn: form.checkIn,
         checkOut: form.checkOut,
-        totalAmount: Number(data.totalAmount ?? bookingTotal),
+        totalAmount: Number(data.totalAmount || 0),
         status: 'Pending',
         createdAt: new Date().toISOString(),
       };
@@ -614,13 +628,26 @@ export default function BookRoom() {
         setErrorMsg('Reservation submitted, but the booking history could not be saved in this browser.');
       }
 
+      // The server priced this booking itself. If that differs from what this
+      // page showed (stale rates, or the page was edited), ask before paying.
+      const serverTotal = Number(data.totalAmount || 0);
+      if (Math.round(serverTotal * 100) !== Math.round(bookingTotal * 100)) {
+        const serverDue = getOnlinePaymentAmount(serverTotal, paymentChoice);
+        const proceed = window.confirm(
+          `The resort's price for this booking is ₱${serverTotal.toLocaleString()}, not the ₱${bookingTotal.toLocaleString()} shown on this page. `
+          + `Continue to pay ₱${serverDue.toLocaleString()} now?`,
+        );
+        if (!proceed) {
+          setErrorMsg(`Your reservation #${ref8} is saved but not paid. Its total is ₱${serverTotal.toLocaleString()}.`);
+          setSubmitting(false);
+          return;
+        }
+      }
+
       // PayMongo hosts card and e-wallet checkout; card data never enters this app.
+      // The amount charged is calculated on the server from the saved reservation.
       const { checkoutUrl } = await createPayMongoCheckout({
         reservationId,
-        guestName: profile.guestName,
-        guestEmail: profile.email,
-        description: `Room ${room.roomNumber} (${room.type}) — ${nights} ${stayUnit}${nights !== 1 ? 's' : ''}`,
-        amount: onlinePaymentAmount,
         paymentType: 'booking',
         paymentChoice,
       });
@@ -664,7 +691,7 @@ export default function BookRoom() {
         <div style={{ fontWeight: '600', color: '#111' }}>Room not found</div>
         {roomLoadError && <p role="alert" style={{ color: '#6b7280', fontSize: '12px', maxWidth: '320px' }}>{roomLoadError}</p>}
         <button type="button" onClick={() => setActiveTab('history')} style={{ marginTop: '8px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}>View My Bookings</button>
-        <button onClick={() => window.location.href = '/rooms'}
+        <button onClick={() => navigate('/rooms')}
           style={{ marginTop: '16px', background: ACCENT, color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 24px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
           Back to Rooms
         </button>
@@ -712,7 +739,7 @@ export default function BookRoom() {
         <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '20px' }}>
           Please keep your booking reference for your records.
         </p>
-        <button onClick={() => window.location.href = '/rooms'}
+        <button onClick={() => navigate('/rooms')}
           style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '12px', padding: '14px', fontSize: '14px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
           Browse More Rooms
         </button>
@@ -907,7 +934,7 @@ export default function BookRoom() {
                   {singleDay
                     ? <><strong>Date:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> Single-day booking (day tour)</>
                     : <><strong>Check-in:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> <strong>Check-out:</strong> {form.checkOut}</>}
-                  {resortAvailable && <button type="button" onClick={() => { window.location.href = '/rooms'; }} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Edit dates</button>}
+                  {resortAvailable && <button type="button" onClick={() => { navigate('/rooms'); }} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Edit dates</button>}
                   {!resortAvailable && <div style={{ marginTop: 5 }}>{availabilityError || unavailableReason || 'Reservations are temporarily closed.'}</div>}
                 </div>
                 <div>
@@ -936,9 +963,14 @@ export default function BookRoom() {
                     <label htmlFor="tour-period" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Swimming Tour</label>
                     <select id="tour-period" value={form.tourPeriod} onChange={e => setForm(previous => ({ ...previous, tourPeriod: e.target.value }))}
                       style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                      <option value="day">Day swimming (8:00 AM–5:00 PM)</option>
-                      <option value="night">Night swimming (5:00 PM–10:00 PM / 12:00 MN)</option>
+                      <option value="day" disabled={dayTourClosed}>Day swimming (8:00 AM–5:00 PM){dayTourClosed ? ' — closed for today' : ''}</option>
+                      <option value="night" disabled={nightTourClosed}>Night swimming (5:00 PM–10:00 PM / 12:00 MN){nightTourClosed ? ' — closed for today' : ''}</option>
                     </select>
+                  </div>
+                )}
+                {tourCutoffError && (
+                  <div role="alert" style={{ gridColumn: '1 / -1', background: '#fef2f2', color: '#991b1b', padding: '12px', borderRadius: '8px', fontSize: '12px' }}>
+                    {tourCutoffError}
                   </div>
                 )}
                 {[
@@ -1022,13 +1054,14 @@ export default function BookRoom() {
               </div>
               <div style={{ marginTop: '14px' }}>
                 <label htmlFor="cottage-selection" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Optional Cottage</label>
-                <select id="cottage-selection" value={`${form.cottageId}:${form.cottageFee}`} onChange={e => {
-                  const [cottageId, fee] = e.target.value.split(':');
-                  setForm(previous => ({ ...previous, cottageId, cottageFee: Number(fee) }));
+                <select id="cottage-selection" value={`${form.cottageId}:${form.cottageVariant}`} onChange={e => {
+                  // Option values are choices (cottage + rate number), never prices.
+                  const [cottageId, variant] = e.target.value.split(':');
+                  setForm(previous => ({ ...previous, cottageId, cottageVariant: Number(variant) }));
                 }}
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                  {COTTAGE_OPTIONS.flatMap(option => option.prices.map(fee => (
-                    <option key={`${option.id}:${fee}`} value={`${option.id}:${fee}`}>
+                  {COTTAGE_OPTIONS.flatMap(option => option.prices.map((fee, variant) => (
+                    <option key={`${option.id}:${variant}`} value={`${option.id}:${variant}`}>
                       {option.id ? `${option.label} · ₱${fee.toLocaleString()}` : option.label}
                     </option>
                   )))}

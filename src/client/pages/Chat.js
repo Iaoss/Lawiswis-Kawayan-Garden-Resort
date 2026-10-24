@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { collection, addDoc, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
@@ -23,6 +24,7 @@ function SendIcon({ size = 18 }) {
 }
 
 export default function GuestChat() {
+  const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
   const [newMsg, setNewMsg] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -189,10 +191,10 @@ export default function GuestChat() {
     <div style={{ fontFamily: "'Poppins', sans-serif", background: '#f9fafb', minHeight: '100vh' }}>
       {/* Navbar */}
       <nav style={{ background: DARK, padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '64px' }}>
-        <div style={{ fontWeight: '800', fontSize: '20px', color: '#fff', cursor: 'pointer' }} onClick={() => window.location.href = '/home'}>
+        <div style={{ fontWeight: '800', fontSize: '20px', color: '#fff', cursor: 'pointer' }} onClick={() => navigate('/home')}>
           Lawiswis Kawayan Garden Resort
         </div>
-        <button onClick={() => window.location.href = '/home'}
+        <button onClick={() => navigate('/home')}
           style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.3)', color: '#fff', borderRadius: '8px', padding: '8px 16px', fontSize: '12px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
           ← Back to Home
         </button>

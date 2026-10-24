@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { DEFAULT_CANCELLATION_POLICY, getCancellationPolicyOutcome, getDateRangeNights } from '../src/lib/cancellationPolicy';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
-import { getStayDurationError } from '../src/lib/bookingPricing';
+import { getStayDurationError, getTourCutoffError } from '../src/lib/bookingPricing';
 import { calculateReservationModification } from '../lib/reservationModification';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
@@ -194,6 +194,8 @@ async function requestScheduleChange(reservation, body) {
     || (isDayTour ? checkOut !== checkIn : requestedEnd > maxDate)) {
     return { error: 'Choose valid dates within the next two months.' };
   }
+  const cutoffError = isDayTour ? getTourCutoffError(checkIn, data.tourPeriod || 'day') : '';
+  if (cutoffError) return { error: cutoffError };
 
   let change = {
     outcome: 'needs_review',

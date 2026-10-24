@@ -1,43 +1,54 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import Login from './admin/pages/Login';
+import React, { Suspense, lazy } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
 import RequireStaffRoute from './admin/components/RequireStaffRoute';
-import AdminDashboard from './admin/pages/Dashboard';
-import RoomManagement from './admin/pages/RoomManagement';
-import WalkIn from './admin/pages/WalkIn';
-import Reservations from './admin/pages/Reservations';
-import Billing from './admin/pages/Billing';
-import PaymentTransactions from './admin/pages/PaymentTransactions';
-import CustomerManagement from './admin/pages/CustomerManagement';
-import ReservationHistory from './admin/pages/ReservationHistory';
-import Reports from './admin/pages/Reports';
-import UserManagement from './admin/pages/UserManagement';
-import Feedback from './admin/pages/Feedback';
-import ContactInquiries from './admin/pages/ContactInquiries';
-import CancellationPolicy from './admin/pages/CancellationPolicy';
-import Messages from './admin/pages/Messages';
-import ReceptionistDashboard from './admin/pages/ReceptionistDashboard';
 import Home from './client/pages/Home';
-import Rooms from './client/pages/Rooms';
-import BookRoom from './client/pages/BookRoom';
-import BookingHistory from './client/pages/BookingHistory';
-import GuestChat from './client/pages/Chat';
-import About from './client/pages/About';
-import Contact from './client/pages/Contact';
-import BookingTypeSelection from './client/pages/BookingTypeSelection';
-import CorporateBooking from './client/pages/CorporateBooking';
-import Amenities from './client/pages/Amenities';
-import Certifications from './client/pages/Certifications';
-import CustomerCarePage from './client/pages/CustomerCarePage';
-import FeedbackForm from './client/pages/FeedbackForm';
 import ClientLayout from './client/components/ClientLayout';
-import BookingTransactions from './admin/pages/BookingTransactions';
-import Settings from './admin/pages/Settings';
-import NewsManagement from './admin/pages/NewsManagement.js';
-import Email from './admin/pages/Email.js';
-import PromoCodes from './admin/pages/PromoCodes';
+
+// Pages load on demand, so guests never download the staff portal code.
+const Login = lazy(() => import('./admin/pages/Login'));
+const AdminDashboard = lazy(() => import('./admin/pages/Dashboard'));
+const RoomManagement = lazy(() => import('./admin/pages/RoomManagement'));
+const WalkIn = lazy(() => import('./admin/pages/WalkIn'));
+const Reservations = lazy(() => import('./admin/pages/Reservations'));
+const Billing = lazy(() => import('./admin/pages/Billing'));
+const PaymentTransactions = lazy(() => import('./admin/pages/PaymentTransactions'));
+const CustomerManagement = lazy(() => import('./admin/pages/CustomerManagement'));
+const ReservationHistory = lazy(() => import('./admin/pages/ReservationHistory'));
+const Reports = lazy(() => import('./admin/pages/Reports'));
+const UserManagement = lazy(() => import('./admin/pages/UserManagement'));
+const Feedback = lazy(() => import('./admin/pages/Feedback'));
+const ContactInquiries = lazy(() => import('./admin/pages/ContactInquiries'));
+const CancellationPolicy = lazy(() => import('./admin/pages/CancellationPolicy'));
+const Messages = lazy(() => import('./admin/pages/Messages'));
+const ReceptionistDashboard = lazy(() => import('./admin/pages/ReceptionistDashboard'));
+const Rooms = lazy(() => import('./client/pages/Rooms'));
+const BookRoom = lazy(() => import('./client/pages/BookRoom'));
+const BookingHistory = lazy(() => import('./client/pages/BookingHistory'));
+const GuestChat = lazy(() => import('./client/pages/Chat'));
+const About = lazy(() => import('./client/pages/About'));
+const Contact = lazy(() => import('./client/pages/Contact'));
+const BookingTypeSelection = lazy(() => import('./client/pages/BookingTypeSelection'));
+const CorporateBooking = lazy(() => import('./client/pages/CorporateBooking'));
+const Amenities = lazy(() => import('./client/pages/Amenities'));
+const Certifications = lazy(() => import('./client/pages/Certifications'));
+const CustomerCarePage = lazy(() => import('./client/pages/CustomerCarePage'));
+const FeedbackForm = lazy(() => import('./client/pages/FeedbackForm'));
+const BookingTransactions = lazy(() => import('./admin/pages/BookingTransactions'));
+const Settings = lazy(() => import('./admin/pages/Settings'));
+const NewsManagement = lazy(() => import('./admin/pages/NewsManagement.js'));
+const Email = lazy(() => import('./admin/pages/Email.js'));
+const PromoCodes = lazy(() => import('./admin/pages/PromoCodes'));
+
+function PageLoading() {
+  return (
+    <div role="status" aria-live="polite" style={{ minHeight: '60vh', display: 'grid', placeItems: 'center', color: '#6b7280', fontSize: '13px', fontFamily: "'Inter', sans-serif" }}>
+      Loading…
+    </div>
+  );
+}
 
 function BookingPaymentResult() {
+  const navigate = useNavigate();
   const cancelled = window.location.pathname === '/payment/cancelled';
   const reservationId = new URLSearchParams(window.location.search).get('reservationId') || '';
   const bookingRef = reservationId ? reservationId.slice(0, 8).toUpperCase() : '';
@@ -54,7 +65,7 @@ function BookingPaymentResult() {
         </p>
         {bookingRef && <p style={{ margin: '0 0 18px', fontSize: '12px', color: '#374151' }}>Booking reference <strong>#{bookingRef}</strong></p>}
         {!cancelled && <p role="status" style={{ background: '#f0f7f0', color: '#355a42', borderRadius: '8px', padding: '14px', fontSize: '12px', lineHeight: 1.7, margin: '0 0 22px' }}>Your official booking receipt and confirmation details will be sent to the email address provided.</p>}
-        <button onClick={() => { window.location.href = '/home'; }} style={{ background: '#1a3a1a', color: '#fff', border: 0, borderRadius: '8px', padding: '12px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Return to resort website</button>
+        <button onClick={() => { navigate('/home'); }} style={{ background: '#1a3a1a', color: '#fff', border: 0, borderRadius: '8px', padding: '12px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Return to resort website</button>
       </section>
     </main>
   );
@@ -63,6 +74,7 @@ function BookingPaymentResult() {
 function App() {
   return (
     <Router>
+      <Suspense fallback={<PageLoading />}>
       <Routes>
         <Route path="/admin/login" element={<Login />} />
 
@@ -134,6 +146,7 @@ function App() {
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
+      </Suspense>
     </Router>
   );
 }

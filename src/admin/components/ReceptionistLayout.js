@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
 import { doc, getDoc, collection, query, onSnapshot, where } from 'firebase/firestore';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
@@ -314,6 +315,7 @@ function NotificationBell({ dark, accent, soundAlerts }) {
 }
 
 export default function ReceptionistLayout({ children }) {
+  const navigate = useNavigate();
   const { settings, updateSetting } = useSettings();
   const [staffName, setStaffName] = useState('');
   const [staffRole, setStaffRole] = useState('');
@@ -344,19 +346,6 @@ export default function ReceptionistLayout({ children }) {
   }, [collapsed]);
 
   useEffect(() => {
-    if (!document.querySelector('link[href*="tabler-icons"]')) {
-      const link = document.createElement('link');
-      link.href = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css';
-      link.rel = 'stylesheet';
-      document.head.appendChild(link);
-    }
-    if (!document.querySelector('link[href*="fonts.googleapis"]')) {
-      const font = document.createElement('link');
-      font.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap';
-      font.rel = 'stylesheet';
-      document.head.appendChild(font);
-    }
-
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setStaffEmail(user.email || '');
@@ -473,7 +462,7 @@ export default function ReceptionistLayout({ children }) {
               icon="ti-settings"
               label="Settings"
               dark={dark}
-              onClick={() => { window.location.href = '/receptionist/settings'; }}
+              onClick={() => { navigate('/receptionist/settings'); }}
             />
 
             <AccountMenu

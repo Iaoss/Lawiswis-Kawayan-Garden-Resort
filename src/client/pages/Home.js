@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import OccupancyBadge from '../components/OccupancyBadge';
@@ -294,6 +295,7 @@ const builtFor = [
    MAIN HOME COMPONENT
 ───────────────────────────────────────────── */
 export default function Home() {
+  const navigate = useNavigate();
   const { available: resortAvailable, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const canBook = resortAvailable && !availabilityLoading && !availabilityError;
   const [rooms, setRooms] = useState([]);
@@ -338,17 +340,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!document.querySelector('link[href*="fonts.googleapis"][data-lk-font]')) {
-      const f = document.createElement('link');
-      f.href = 'https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,500&family=Inter:wght@400;500;600;700&display=swap';
-      f.rel = 'stylesheet'; f.dataset.lkFont = 'true'; document.head.appendChild(f);
-    }
-    if (!document.querySelector('link[href*="tabler-icons"]')) {
-      const t = document.createElement('link');
-      t.href = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css';
-      t.rel = 'stylesheet'; document.head.appendChild(t);
-    }
-
     const fetchRooms = async () => {
       const snap = await getDocs(collection(db, 'rooms'));
       setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => ['vacant', 'available'].includes(String(r.status || '').toLowerCase())));
@@ -443,11 +434,11 @@ export default function Home() {
                 onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
                 {canBook ? <>BOOK YOUR STAY <span>→</span></> : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}
               </button>
-              <button onClick={() => window.location.href = '/about-us'}
+              <button onClick={() => navigate('/about-us')}
                 style={{ background: 'transparent', color: '#fff', border: '1.5px solid rgba(255,255,255,0.5)', borderRadius: '3px', padding: '15px 30px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.05em', cursor: 'pointer', fontFamily: SANS }}>
                 OUR STORY
               </button>
-              <button onClick={() => window.location.href = '/my-bookings'}
+              <button onClick={() => navigate('/my-bookings')}
                 style={{ background: 'rgba(255,255,255,0.12)', color: '#fff', border: '1px solid rgba(255,255,255,0.6)', borderRadius: '3px', padding: '15px 20px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.035em', cursor: 'pointer', fontFamily: SANS }}>
                 ALREADY BOOKED? VIEW MY BOOKINGS
               </button>
@@ -469,7 +460,7 @@ export default function Home() {
       <div className="section-container" style={{ position: 'relative', zIndex: 10, marginTop: '-40px', marginBottom: '0' }}>
         <div className="responsive-grid-5" style={{ background: FOREST, borderRadius: '6px', boxShadow: '0 20px 50px rgba(0,0,0,0.22)', overflow: 'hidden' }}>
           {stayCategories.map((c, i) => (
-            <div key={c.label} onClick={() => window.location.href = '/rooms'} style={{
+            <div key={c.label} onClick={() => navigate('/rooms')} style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '26px 12px', textAlign: 'center', cursor: 'pointer',
               borderRight: i < stayCategories.length - 1 ? '1px solid rgba(255,255,255,0.12)' : 'none',
             }}>
@@ -503,11 +494,11 @@ export default function Home() {
             Our name, meaning "the murmur of bamboo," comes from a cherished song taught by our founder's late father. Eighteen years on, our 32 rooms still welcome families, corporate teams, and anyone in need of a seamless mix of work and play.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '14px' }}>
-            <button onClick={() => window.location.href = '/about-us'}
+            <button onClick={() => navigate('/about-us')}
               style={{ background: FOREST, color: '#fff', border: 'none', borderRadius: '3px', padding: '13px 28px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.04em', cursor: 'pointer', fontFamily: SANS }}>
               LEARN MORE
             </button>
-            <button onClick={() => window.location.href = '/rooms'}
+            <button onClick={() => navigate('/rooms')}
               style={{ background: 'transparent', color: FOREST, border: `1.5px solid ${FOREST}`, borderRadius: '3px', padding: '13px 28px', fontSize: '12.5px', fontWeight: '600', letterSpacing: '0.04em', cursor: 'pointer', fontFamily: SANS }}>
               VIEW ROOMS
             </button>
@@ -593,7 +584,7 @@ export default function Home() {
               <div style={{ fontSize: '11px', color: MOSS, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '12px', fontFamily: SANS }}>Accommodations</div>
               <h2 style={{ fontSize: '32px', fontWeight: '500', color: INK, fontFamily: SERIF }}>Available Rooms</h2>
             </div>
-            <button onClick={() => window.location.href = '/rooms'}
+            <button onClick={() => navigate('/rooms')}
               style={{ background: 'transparent', color: FOREST, border: `1.5px solid ${FOREST}`, borderRadius: '3px', padding: '12px 24px', fontSize: '12px', fontWeight: '600', letterSpacing: '0.04em', cursor: 'pointer', fontFamily: SANS }}>
               VIEW ALL ROOMS
             </button>
@@ -619,7 +610,7 @@ export default function Home() {
                       <span style={{ fontSize: '21px', fontWeight: '600', color: FOREST, fontFamily: SERIF }}>₱{Number(room.price).toLocaleString()}</span>
                       <span style={{ fontSize: '11px', color: '#9b9788', fontFamily: SANS }}> /night</span>
                     </div>
-                    <button disabled={!canBook} onClick={() => window.location.href = `/book/${room.id}`}
+                    <button disabled={!canBook} onClick={() => navigate(`/book/${room.id}`)}
                       style={{ background: FOREST, color: '#fff', border: 'none', borderRadius: '3px', padding: '10px 20px', fontSize: '11.5px', fontWeight: '600', letterSpacing: '0.03em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS }}>
                       {canBook ? 'BOOK NOW' : availabilityLoading ? 'CHECKING' : availabilityError ? 'UNAVAILABLE' : 'CLOSED'}
                     </button>

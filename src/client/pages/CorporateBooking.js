@@ -67,9 +67,6 @@ export default function CorporateBooking() {
   const startPayment = async reservationId => {
     const { checkoutUrl } = await createPayMongoCheckout({
       reservationId,
-      guestName,
-      guestEmail: form.email.trim(),
-      description: `${selectedPackage.name} corporate group booking · ${totalGuests} guests`,
       paymentType: 'booking',
       paymentChoice: 'deposit',
     });

@@ -301,7 +301,7 @@ export default function ReceptionistDashboard() {
           <div style={S.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Today's Arrivals</div>
-              <button type="button" onClick={() => window.location.href = '/receptionist/reservations'}
+              <button type="button" onClick={() => navigate('/receptionist/reservations')}
                 style={{ background: ACCENT, border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: ACCENT_TEXT }}>
                 View all
               </button>
@@ -340,7 +340,7 @@ export default function ReceptionistDashboard() {
           <div style={S.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Today's Departures</div>
-              <button type="button" onClick={() => window.location.href = '/receptionist/billing'}
+              <button type="button" onClick={() => navigate('/receptionist/billing')}
                 style={{ background: DARK_CHIP, color: ACCENT, border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
                 Billing
               </button>

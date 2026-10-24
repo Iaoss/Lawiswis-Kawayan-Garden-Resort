@@ -58,12 +58,7 @@ export default function ClientChrome({ children }) {
   useEffect(() => {
     document.documentElement.classList.remove('dark');
     document.documentElement.style.colorScheme = 'light';
-    if (document.querySelector('link[data-lk-font]')) return;
-    const font = document.createElement('link');
-    font.href = 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap';
-    font.rel = 'stylesheet';
-    font.dataset.lkFont = 'true';
-    document.head.appendChild(font);
+    // Fonts are loaded once in public/index.html.
   }, []);
   useEffect(() => setMobileMenuOpen(false), [path]);
   useEffect(() => {

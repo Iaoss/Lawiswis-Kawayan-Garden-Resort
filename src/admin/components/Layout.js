@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
 import { collection, doc, getDoc, query, onSnapshot, where } from 'firebase/firestore';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
@@ -333,6 +334,7 @@ function NotificationBell({ dark, accent, soundAlerts }) {
 
 // ── Main Layout ──────────────────────────────────────────────
 export default function Layout({ children }) {
+  const navigate = useNavigate();
   const { settings, updateSetting } = useSettings();
   const [adminName, setAdminName] = useState('');
   const [adminRole, setAdminRole] = useState('');
@@ -364,17 +366,6 @@ export default function Layout({ children }) {
   }, [collapsed]);
 
   useEffect(() => {
-    if (!document.querySelector('link[href*="tabler-icons"]')) {
-      const link = document.createElement('link');
-      link.href = 'https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css';
-      link.rel = 'stylesheet'; document.head.appendChild(link);
-    }
-    if (!document.querySelector('link[href*="fonts.googleapis"]')) {
-      const font = document.createElement('link');
-      font.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap';
-      font.rel = 'stylesheet'; document.head.appendChild(font);
-    }
-
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         const userDoc = await getDoc(doc(db, 'users', user.uid));
@@ -489,7 +480,7 @@ export default function Layout({ children }) {
               icon="ti-settings"
               label="Settings"
               dark={dark}
-              onClick={() => { window.location.href = '/admin/settings'; }}
+              onClick={() => { navigate('/admin/settings'); }}
             />
 
             <AccountMenu

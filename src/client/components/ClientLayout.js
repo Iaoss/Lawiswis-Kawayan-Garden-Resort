@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { Outlet } from 'react-router-dom';
 import ChatWidget from './ChatWidget';
 import ClientChrome from './ClientChrome';
@@ -10,7 +10,10 @@ export default function ClientLayout() {
     <ResortAvailabilityProvider>
       <ClientChrome>
         <ResortAvailabilityNotice />
-        <Outlet />
+        {/* Keeps the header and footer on screen while a page's code loads. */}
+        <Suspense fallback={<div role="status" style={{ minHeight: '60vh', display: 'grid', placeItems: 'center', color: '#6b7280', fontSize: '13px' }}>Loading…</div>}>
+          <Outlet />
+        </Suspense>
         <ChatWidget />
       </ClientChrome>
     </ResortAvailabilityProvider>
