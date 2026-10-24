@@ -1,7 +1,8 @@
 import React from 'react';
 
-// Booking progress, left to right. Clicking any step moves the booking there
-// (forwards or back). Cancelling is a separate action next to the steps.
+// Booking progress, left to right. Clicking a neighbouring step moves the
+// booking there (forwards or back); steps that would skip ahead are disabled
+// (see getStatusTransitionError). Cancelling is a separate action.
 export const STATUS_STEPS = [
   { id: 'pending', label: 'Pending', short: 'Pending' },
   { id: 'confirmed', label: 'Confirmed', short: 'Confirmed' },
@@ -27,11 +28,12 @@ const DEFAULT_COLORS = {
  *  busy          disables the steps while a change is saving
  *  lockedReason  when set, steps can't be clicked and this is shown instead
  *  stepNotes     { [stepId]: 'tooltip text' } e.g. why check-out needs payment
+ *  getStepError  (stepId) => '' if allowed, or why that step can't be chosen
  *  compact       smaller version for list rows
  */
 export default function StatusStepper({
   status, onSelect, onCancel, cancelLabel = 'Cancel booking', busy = false,
-  lockedReason = '', stepNotes = {}, compact = false, colors,
+  lockedReason = '', stepNotes = {}, getStepError, compact = false, colors,
 }) {
   const c = { ...DEFAULT_COLORS, ...colors };
   const cancelled = status === 'cancelled';
@@ -42,14 +44,15 @@ export default function StatusStepper({
     <div style={{ display: 'grid', gap: compact ? 4 : 8 }}>
       {cancelled && (
         <div style={{ fontSize: compact ? 10 : 12, fontWeight: 700, color: c.danger }}>
-          Cancelled{lockedReason ? '' : ' · pick a step to reopen'}
+          Cancelled{lockedReason ? '' : ' · click Pending to reopen'}
         </div>
       )}
       <ol aria-label="Booking status" style={{ display: 'flex', alignItems: 'flex-start', listStyle: 'none', margin: 0, padding: 0, opacity: cancelled ? 0.6 : 1 }}>
         {STATUS_STEPS.map((step, index) => {
           const done = !cancelled && index < currentIndex;
           const current = !cancelled && index === currentIndex;
-          const clickable = !current && !busy && !lockedReason && typeof onSelect === 'function';
+          const stepError = !current && getStepError ? getStepError(step.id) : '';
+          const clickable = !current && !busy && !lockedReason && !stepError && typeof onSelect === 'function';
           const note = stepNotes[step.id];
           return (
             <li key={step.id} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', position: 'relative', minWidth: compact ? 34 : 64 }}>
@@ -64,7 +67,7 @@ export default function StatusStepper({
                 disabled={!clickable}
                 aria-current={current ? 'step' : undefined}
                 aria-label={current ? `${step.label} (current)` : `Move to ${step.label}`}
-                title={lockedReason || note || (current ? 'Current status' : `Move to ${step.label}`)}
+                title={lockedReason || stepError || note || (current ? 'Current status' : `Move to ${step.label}`)}
                 onClick={() => clickable && onSelect(step.id)}
                 style={{
                   position: 'relative', zIndex: 1, width: size, height: size, borderRadius: '50%', padding: 0,
@@ -73,6 +76,7 @@ export default function StatusStepper({
                   color: current ? c.accentText : c.text,
                   fontSize: compact ? 9 : 11, fontWeight: 700, fontFamily: 'inherit',
                   cursor: clickable ? 'pointer' : current ? 'default' : 'not-allowed',
+                  opacity: stepError ? 0.45 : 1,
                 }}
               >
                 {done ? '✓' : index + 1}
@@ -89,7 +93,7 @@ export default function StatusStepper({
       </ol>
       {(onCancel || lockedReason) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {onCancel && !cancelled && !lockedReason && (
+          {onCancel && !cancelled && !lockedReason && (!getStepError || !getStepError('cancelled')) && (
             <button type="button" onClick={onCancel} disabled={busy}
               style={{ border: 'none', background: 'transparent', padding: 0, color: c.danger, fontSize: compact ? 10 : 12, fontWeight: 600, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit' }}>
               {cancelLabel}

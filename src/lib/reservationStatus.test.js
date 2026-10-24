@@ -5,6 +5,7 @@ import {
   getQuarterlyBreakdown,
   getReservationAverages,
   getScheduledCheckOutMs,
+  getStatusTransitionError,
   hadOverstay,
   hasOutstandingBalance,
   manilaDateKey,
@@ -79,5 +80,27 @@ describe('reservation analytics', () => {
     expect(stats.historicalCount).toBe(1);
     expect(stats.rate).toBeCloseTo(1 / 2);
     expect(stats.lateFeeTotal).toBe(500);
+  });
+});
+
+describe('status steps', () => {
+  test('moves one step forward or back', () => {
+    expect(getStatusTransitionError('pending', 'confirmed')).toBe('');
+    expect(getStatusTransitionError('confirmed', 'pending')).toBe('');
+    expect(getStatusTransitionError('confirmed', 'checked-in')).toBe('');
+    expect(getStatusTransitionError('checked-in', 'checked-out')).toBe('');
+    expect(getStatusTransitionError('checked-out', 'checked-in')).toBe('');
+  });
+  test('refuses to skip steps either way', () => {
+    expect(getStatusTransitionError('pending', 'checked-out')).toMatch(/Confirmed first/);
+    expect(getStatusTransitionError('pending', 'checked-in')).toMatch(/can't be skipped/);
+    expect(getStatusTransitionError('checked-out', 'pending')).toMatch(/Checked in first/);
+  });
+  test('cancelling and reopening', () => {
+    expect(getStatusTransitionError('confirmed', 'cancelled')).toBe('');
+    expect(getStatusTransitionError('checked-out', 'cancelled')).not.toBe('');
+    expect(getStatusTransitionError('cancelled', 'pending')).toBe('');
+    expect(getStatusTransitionError('cancelled', 'confirmed')).toMatch(/Pending first/);
+    expect(getStatusTransitionError('approved', 'checked-in')).toBe('');
   });
 });

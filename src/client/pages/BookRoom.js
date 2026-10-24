@@ -952,10 +952,21 @@ export default function BookRoom() {
                 </div>
                 <div>
                   <label htmlFor="booking-type" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Booking Type</label>
-                  <select id="booking-type" value={form.bookingType} onChange={e => setForm(previous => ({ ...previous, bookingType: e.target.value }))}
+                  {/* Picking Day tour / Night tour also sets the Swimming Tour below.
+                      Changing the Swimming Tour by hand updates this to match, since
+                      both read the same booking type + tour period. */}
+                  <select id="booking-type"
+                    value={form.bookingType === 'daytour' ? (form.tourPeriod === 'night' ? 'night' : 'day') : 'overnight'}
+                    onChange={e => {
+                      const choice = e.target.value;
+                      setForm(previous => (choice === 'overnight'
+                        ? { ...previous, bookingType: 'overnight' }
+                        : { ...previous, bookingType: 'daytour', tourPeriod: choice }));
+                    }}
                     style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
                     <option value="overnight" disabled={singleDay}>Overnight stay{singleDay ? ' (needs a later check-out date)' : ''}</option>
-                    <option value="daytour">Daytour (8:00 AM–5:00 PM)</option>
+                    <option value="day" disabled={dayTourClosed}>Day tour (8:00 AM–5:00 PM){dayTourClosed ? ' — closed for today' : ''}</option>
+                    <option value="night" disabled={nightTourClosed}>Night tour (5:00 PM–10:00 PM){nightTourClosed ? ' — closed for today' : ''}</option>
                   </select>
                 </div>
                 {form.bookingType === 'overnight' ? (

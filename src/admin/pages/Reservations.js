@@ -15,6 +15,7 @@ import {
   getLateFeeTotal,
   getOutstandingBalance as outstandingAmount,
   getOverstay,
+  getStatusTransitionError,
   hasOutstandingBalance,
 } from '../../lib/reservationStatus';
 
@@ -274,7 +275,7 @@ function ReservationBoard({
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
             <Tag t={t} c="green">Room {r.roomNumber || '—'}{r.roomType ? ` · ${r.roomType}` : ''}</Tag>
             {r.type && <Tag t={t} c="violet"><span style={{ textTransform: 'capitalize' }}>{r.type}</span></Tag>}
-            <Tag t={t}>{formatDate(r.checkIn)} – {formatDate(r.checkOut)}</Tag>
+            <Tag t={t}>{r.checkOut && r.checkOut !== r.checkIn ? `${formatDate(r.checkIn)} – ${formatDate(r.checkOut)}` : formatDate(r.checkIn)}</Tag>
             <Tag t={t}>{nights(r)}</Tag>
             <Tag t={t} c={unpaid ? 'amber' : 'green'}>{unpaid ? 'Unpaid' : 'Paid'}</Tag>
             {r.cancellationRequested && <Tag t={t} c="red">Cancellation requested</Tag>}
@@ -568,7 +569,7 @@ export default function Reservations() {
   const releaseExpiredRooms = useCallback(async (expired) => {
     await Promise.all(expired.map(async reservation => {
       try {
-        await callReservationStatusApi({ action: 'set-status', reservationId: reservation.id, status: 'checked-out' });
+        await callReservationStatusApi({ action: 'close-expired', reservationId: reservation.id });
       } catch (err) {
         console.warn('Expired room release skipped:', err.message);
       }
@@ -677,6 +678,13 @@ export default function Reservations() {
     const reservation = reservations.find(r => r.id === id);
     if (!reservation || reservation.status === status) return;
     if (isReceptionist && reservation.status === 'cancelled') return;
+    // Same one-step-at-a-time rule the server enforces.
+    const transitionError = getStatusTransitionError(reservation.status, status);
+    if (transitionError) {
+      setToast({ type: 'error', text: transitionError });
+      if (status === 'cancelled') throw new Error(transitionError);
+      return;
+    }
     let force = false;
     let statusReason = reason;
     if (status === 'checked-out' && hasOutstandingBalance(reservation)) {
@@ -890,8 +898,14 @@ export default function Reservations() {
     return n.getHours() * 60 + n.getMinutes() > hours * 60 + minutes;
   };
 
+  // Day / night tours show their tour type; overnight stays show nights.
   const nights = (r) => {
     if (!r.checkIn || !r.checkOut) return '—';
+    if (r.bookingType === 'daytour') {
+      const label = r.tourPeriod === 'night' ? 'Night tour' : 'Day tour';
+      const days = Math.max(1, Number(r.nights) || 1);
+      return days > 1 ? `${label} · ${days} days` : label;
+    }
     const n = Math.ceil((new Date(r.checkOut) - new Date(r.checkIn)) / (1000 * 60 * 60 * 24));
     return `${n} night${n !== 1 ? 's' : ''}`;
   };
@@ -941,6 +955,7 @@ export default function Reservations() {
         stepNotes={owes ? {
           'checked-out': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. Collect payment first${isAdmin ? ', or override with a reason' : ''}.`,
         } : {}}
+        getStepError={to => getStatusTransitionError(r.status, to)}
         onSelect={status => updateStatus(r.id, status)}
         onCancel={() => openCancellationDialog(isReceptionist ? 'request' : 'cancel', r)}
         cancelLabel={isReceptionist ? 'Request cancellation' : 'Cancel booking'}

@@ -10,8 +10,10 @@
 //         (they send a cancellation request instead);
 //       - a guest can't be checked out while a balance is still owed, unless
 //         an admin overrides it with a reason (send force: true).
-//     Moving between pending, confirmed, checked-in and checked-out is never
-//     blocked otherwise, in either direction.
+//     Statuses move one step at a time, forwards or back
+//     (pending ↔ confirmed ↔ checked-in ↔ checked-out); steps can't be skipped.
+//   { action: 'close-expired', reservationId }
+//     Closes a past pending/confirmed booking the guest never arrived for.
 //   { action: 'flag-overstay', reservationId, note? }
 //     Marks a checked-in guest who is past check-out as overstayed.
 //   { action: 'add-late-fee', reservationId, amount, note? }
@@ -26,6 +28,8 @@ import { verifyStaff } from '../lib/verifyStaff';
 import {
   MAX_LATE_FEE,
   RESERVATION_STATUSES,
+  getStatusTransitionError,
+  manilaDateKey,
   formatDuration,
   getOutstandingBalance,
   getOverstay,
@@ -56,7 +60,7 @@ function paymentStatusFor(total, paid) {
   return paid > 0 ? 'partial' : 'pending';
 }
 
-async function setStatus({ transaction, reservationRef, reservation, staff, status, reason, force = false }) {
+async function setStatus({ transaction, reservationRef, reservation, staff, status, reason, force = false, closingNoShow = false }) {
   if (!RESERVATION_STATUSES.includes(status)) throw new StatusError(400, 'Choose a valid reservation status.');
   const current = String(reservation.status || 'pending');
   if (staff.role === 'receptionist' && current === 'cancelled') {
@@ -66,6 +70,9 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
     throw new StatusError(403, 'Receptionists can request a cancellation, but only an admin can cancel.');
   }
   if (status === current) return { status, unchanged: true };
+  // One step at a time, forwards or back (see getStatusTransitionError).
+  const transitionError = closingNoShow ? '' : getStatusTransitionError(current, status);
+  if (transitionError) throw new StatusError(409, transitionError);
 
   const now = new Date();
   const overstay = getOverstay(reservation, now);
@@ -97,6 +104,7 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   if (status === 'checked-in' && !reservation.checkedInAt) updates.checkedInAt = FieldValue.serverTimestamp();
   if (status === 'checked-out') {
     updates.checkedOutAt = FieldValue.serverTimestamp();
+    if (closingNoShow) updates.closedAsNoShow = true;
     if (overstay) updates.overstayMinutes = overstay.minutes;
     if (forcedWithBalance) {
       updates.checkedOutWithBalance = getOutstandingBalance(reservation);
@@ -183,6 +191,16 @@ export default async function handler(req, res) {
       checkOutDate = reservation.checkOut || '';
       const context = { transaction, reservationRef, reservation, staff };
       if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500), force: req.body?.force === true });
+      // Closes a past booking the guest never arrived for (pending/confirmed,
+      // check-out date already passed, nothing owed). This is the only move
+      // allowed to go straight to checked-out.
+      if (action === 'close-expired') {
+        const checkOutKey = String(reservation.checkOut || '').slice(0, 10);
+        if (!['pending', 'confirmed'].includes(reservation.status) || !checkOutKey || checkOutKey >= manilaDateKey()) {
+          throw new StatusError(409, 'Only past bookings that never checked in can be closed this way.');
+        }
+        return setStatus({ ...context, status: 'checked-out', reason: 'Closed automatically: guest did not arrive.', closingNoShow: true });
+      }
       if (action === 'flag-overstay') return flagOverstay({ ...context, note: cleanText(note, 300) });
       if (action === 'add-late-fee') return addLateFee({ ...context, amount, note: cleanText(note, 300) });
       throw new StatusError(400, 'Choose a valid reservation action.');

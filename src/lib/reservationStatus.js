@@ -7,6 +7,30 @@
 
 export const RESERVATION_STATUSES = ['pending', 'confirmed', 'checked-in', 'checked-out', 'cancelled'];
 
+// A booking moves through these in order, one step at a time.
+export const STATUS_FLOW = ['pending', 'confirmed', 'checked-in', 'checked-out'];
+const STATUS_LABELS = { pending: 'Pending', confirmed: 'Confirmed', 'checked-in': 'Checked in', 'checked-out': 'Checked out', cancelled: 'Cancelled' };
+
+// Returns why a status change isn't allowed, or '' when it is.
+// Rules (enforced on the server and shown in the stepper):
+//   - forward or back one step at a time, no skipping
+//     (e.g. Pending → Checked out must go through Confirmed and Checked in);
+//   - any booking can be cancelled except a finished (checked-out) stay;
+//   - a cancelled booking reopens as Pending.
+// Unrecognised old statuses can move anywhere, so they can be fixed.
+export function getStatusTransitionError(from, to) {
+  if (from === to) return '';
+  if (!RESERVATION_STATUSES.includes(to)) return 'Choose a valid reservation status.';
+  if (to === 'cancelled') return from === 'checked-out' ? 'A finished stay can’t be cancelled.' : '';
+  if (from === 'cancelled') return to === 'pending' ? '' : 'Reopen a cancelled booking as Pending first.';
+  const fromIndex = STATUS_FLOW.indexOf(from);
+  const toIndex = STATUS_FLOW.indexOf(to);
+  if (fromIndex === -1 || Math.abs(toIndex - fromIndex) === 1) return '';
+  return toIndex > fromIndex
+    ? `Steps can't be skipped. Move this booking to ${STATUS_LABELS[STATUS_FLOW[fromIndex + 1]]} first.`
+    : `Move back one step at a time. Go to ${STATUS_LABELS[STATUS_FLOW[fromIndex - 1]]} first.`;
+}
+
 // Minutes after the scheduled check-out before a guest counts as overstaying.
 export const OVERSTAY_GRACE_MINUTES = 0;
 // Used when a reservation has no check-out time saved.
