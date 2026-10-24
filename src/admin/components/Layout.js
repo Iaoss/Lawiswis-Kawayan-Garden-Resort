@@ -89,7 +89,6 @@ function NotificationBell({ dark, accent, soundAlerts }) {
   const FAINT       = dark ? '#3a3a2a' : '#c9c9c9';
   const ROW_A       = dark ? '#1c1c1c' : '#ffffff';
   const ROW_B       = dark ? '#202020' : '#f9fafb';
-  const ROW_HOVER   = dark ? '#282827' : '#f3f4f6';
   const ICON_BG     = dark ? '#282827' : '#f3f4f6';
   const BTN_BG      = dark ? '#282827' : '#f3f4f6';
   const BTN_BORDER  = dark ? '#383837' : '#e5e7eb';
@@ -289,8 +288,6 @@ function NotificationBell({ dark, accent, soundAlerts }) {
                       background: i % 2 === 0 ? ROW_A : ROW_B,
                       display: 'flex', gap: '12px', alignItems: 'flex-start',
                     }}
-                    onMouseEnter={e => e.currentTarget.style.background = ROW_HOVER}
-                    onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? ROW_A : ROW_B}
                   >
                     <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: ICON_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <i className={`ti ${n.icon}`} style={{ fontSize: '17px', color: TEXT }} />

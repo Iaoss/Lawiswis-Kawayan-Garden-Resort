@@ -6,6 +6,14 @@ import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
+import {
+  DEFAULT_CHECKOUT_TIME,
+  MAX_LATE_FEE,
+  getLateFeeTotal,
+  getOutstandingBalance as outstandingAmount,
+  getOverstay,
+  hasOutstandingBalance,
+} from '../../lib/reservationStatus';
 
 const QUICK_VIEWS = {
   new: { label: 'New bookings', sortBy: 'booked', sortDir: 'desc' },
@@ -17,9 +25,7 @@ const QUICK_VIEWS = {
   overstayed: { label: 'Overstayed guests', status: 'checked-in', sortBy: 'checkin', sortDir: 'asc' },
 };
 
-// ── Overstay configuration ──
-const OVERSTAY_GRACE_MINUTES = 0;            // set e.g. 30 for a grace period
-const DEFAULT_CHECKOUT_TIME = '12:00 PM';    // used when r.checkOutTime is missing
+// Overstay rules (grace period, default check-out time) live in src/lib/reservationStatus.js.
 
 const localToday = () => {
   const d = new Date();
@@ -27,43 +33,21 @@ const localToday = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-const parseClock = (str, fallback) => {
-  const re = /(\d{1,2}):(\d{2})\s*(AM|PM)/i;
-  const m = re.exec(str || '') || re.exec(fallback);
-  let h = Number(m[1]) % 12;
-  if (m[3].toUpperCase() === 'PM') h += 12;
-  return { h, min: Number(m[2]) };
-};
-
-const scheduledCheckOut = (r) => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(r.checkOut || '');
-  if (!m) return null;
-  const { h, min } = parseClock(r.checkOutTime, DEFAULT_CHECKOUT_TIME);
-  return new Date(+m[1], +m[2] - 1, +m[3], h, min);
-};
-
-const formatDuration = (ms) => {
-  const mins = Math.floor(ms / 60000);
-  const d = Math.floor(mins / 1440);
-  const h = Math.floor((mins % 1440) / 60);
-  if (d) return `${d}d ${h}h`;
-  if (h) return `${h}h ${mins % 60}m`;
-  return `${mins}m`;
-};
-
-// Returns null when the guest is not overstaying.
-const getOverstay = (r, now) => {
-  if (r.status !== 'checked-in') return null;
-  const end = scheduledCheckOut(r);
-  if (!end) return null;
-  const ms = now - end - OVERSTAY_GRACE_MINUTES * 60000;
-  return ms > 0 ? { ms, label: formatDuration(ms) } : null;
-};
-
-const outstandingAmount = (reservation) =>
-  Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0) - Number(reservation.amountPaid || 0);
-
-const hasOutstandingBalance = (reservation) => Math.round(outstandingAmount(reservation) * 100) > 0;
+// Sends a staff status / overstay change to the server. Throws with the
+// server's message when it refuses (e.g. an unpaid balance at check-out).
+async function callReservationStatusApi(body) {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Your session has ended. Please sign in again.');
+  const token = await user.getIdToken();
+  const response = await fetch('/api/reservation-status', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'The reservation could not be updated.');
+  return result;
+}
 
 // Auto-release only applies to non-checked-in bookings. Checked-in guests past
 // checkout must be handled by staff (overstay), never silently checked out.
@@ -549,6 +533,9 @@ export default function Reservations() {
   const [reservations, setReservations] = useState([]);
   const [toast, setToast] = useState(null);
   const [cancelDialog, setCancelDialog] = useState(null);
+  const [statusBusyId, setStatusBusyId] = useState('');
+  const [lateFeeDialog, setLateFeeDialog] = useState(null); // { reservation, amount, note }
+  const [lateFeeBusy, setLateFeeBusy] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelBusy, setCancelBusy] = useState(false);
   const [decisionBusy, setDecisionBusy] = useState('');
@@ -683,61 +670,27 @@ export default function Reservations() {
     setCancelDialog({ kind, reservation });
   };
 
+  // Changes a reservation's status on the server. The server enforces the
+  // rules (unpaid balance at check-out, receptionist limits) and updates the
+  // room; the live listener then refreshes the list. Cancellations re-throw
+  // so the cancel dialog can show the error.
   const updateStatus = async (id, status, reason = '') => {
     const reservation = reservations.find(r => r.id === id);
-    if (isReceptionist && reservation?.status === 'cancelled') return;
-    if (status === 'cancelled') {
-      await updateDoc(doc(db, 'reservations', id), {
-        status: 'cancelled',
-        cancellationRequested: false,
-        cancellationReason: reason,
-      });
-      if (reservation?.roomId) {
-        try {
-          await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
-        } catch (roomErr) {
-          console.warn('Room status update skipped:', roomErr.message);
-        }
-      }
-      await fetchReservations();
-      return;
-    }
-    if (status === 'checked-out' && reservation) {
-      const overstay = getOverstay(reservation, new Date());
-      if (hasOutstandingBalance(reservation)) {
-        setToast({
-          type: 'error',
-          text: overstay
-            ? `Cannot check out: guest overstayed by ${overstay.label} and has an unpaid balance. Add the overstay charge and collect payment first.`
-            : 'The outstanding balance must be paid before checking out this guest.',
-        });
-        return;
-      }
-    }
+    if (!reservation || reservation.status === status) return;
+    if (isReceptionist && reservation.status === 'cancelled') return;
+    setStatusBusyId(id);
     try {
-      await updateDoc(doc(db, 'reservations', id), { status });
-
-      if (status === 'checked-out' && reservation) {
-        try {
-          await updateDoc(doc(db, 'notifications', `overstay-${id}-${reservation.checkOut}`), { resolved: true });
-        } catch { /* no notification existed, or no permission; safe to ignore */ }
+      const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason });
+      // Show the change right away; the live listener will confirm it.
+      setReservations(list => list.map(r => (r.id === id ? { ...r, status } : r)));
+      if (status === 'cancelled') return;
+      if (status === 'checked-out') {
+        setToast({
+          type: 'success',
+          text: `Guest has checked out${result.overstayMinutes ? ' (late check-out recorded)' : ''}. ${reservation.roomName || 'The room'} is now under cleaning/maintenance.`,
+        });
       }
-
-      if (reservation?.roomId) {
-        try {
-          if (status === 'checked-in') {
-            await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'occupied' });
-          } else if (status === 'checked-out') {
-            await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'cleaning' });
-            setToast({ type: 'success', text: `Guest has checked out. ${reservation.roomName || 'The room'} is now under cleaning/maintenance.` });
-          } else if (status === 'cancelled' || status === 'confirmed' || status === 'pending') {
-            await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
-          }
-        } catch (roomErr) {
-          console.warn('Room status update skipped:', roomErr.message);
-        }
-      }
-      if (status === 'checked-out' && reservation?.status !== 'checked-out') {
+      if (status === 'checked-out' && reservation.status !== 'checked-out') {
         try {
           const token = await auth.currentUser.getIdToken();
           await fetch('/api/send-thank-you', {
@@ -766,7 +719,47 @@ export default function Reservations() {
       }
       await fetchReservations();
     } catch (error) {
+      if (status === 'cancelled') throw error;
       setToast({ type: 'error', text: error.message || 'Reservation status could not be updated.' });
+    } finally {
+      setStatusBusyId('');
+    }
+  };
+
+  // ── Overstay handling ──
+  const flagOverstay = async (reservation) => {
+    setStatusBusyId(reservation.id);
+    try {
+      await callReservationStatusApi({ action: 'flag-overstay', reservationId: reservation.id });
+      setToast({ type: 'success', text: `${reservation.guestName || 'Guest'} is flagged as overstayed.` });
+    } catch (error) {
+      setToast({ type: 'error', text: error.message });
+    } finally {
+      setStatusBusyId('');
+    }
+  };
+
+  const submitLateFee = async () => {
+    if (!lateFeeDialog || lateFeeBusy) return;
+    const amount = Number(lateFeeDialog.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_LATE_FEE) {
+      setToast({ type: 'error', text: `Enter a late check-out charge between ₱1 and ₱${MAX_LATE_FEE.toLocaleString()}.` });
+      return;
+    }
+    setLateFeeBusy(true);
+    try {
+      const result = await callReservationStatusApi({
+        action: 'add-late-fee',
+        reservationId: lateFeeDialog.reservation.id,
+        amount,
+        note: lateFeeDialog.note,
+      });
+      setLateFeeDialog(null);
+      setToast({ type: 'success', text: `Late check-out charge of ₱${amount.toLocaleString()} added. Balance due: ₱${Math.max(0, result.balance).toLocaleString()}.` });
+    } catch (error) {
+      setToast({ type: 'error', text: error.message });
+    } finally {
+      setLateFeeBusy(false);
     }
   };
 
@@ -828,18 +821,7 @@ export default function Reservations() {
   };
 
   const approveCancellation = async (reservation, reason) => {
-    await updateDoc(doc(db, 'reservations', reservation.id), {
-      status: 'cancelled',
-      cancellationRequested: false,
-      cancellationReason: reason.trim(),
-    });
-    if (reservation.roomId) {
-      try {
-        await updateDoc(doc(db, 'rooms', reservation.roomId), { status: 'vacant' });
-      } catch (err) {
-        console.warn('Room status update skipped:', err.message);
-      }
-    }
+    await callReservationStatusApi({ action: 'set-status', reservationId: reservation.id, status: 'cancelled', reason: reason.trim() });
     await fetchReservations();
   };
 
@@ -941,7 +923,7 @@ export default function Reservations() {
       }
       if (r.cancellationRequested) return <span style={{ fontSize: '10px', color: MUTED }}>Cancellation requested</span>;
       return (
-        <select value={r.status} style={selectStyle} onChange={e => {
+        <select value={r.status} style={selectStyle} disabled={statusBusyId === r.id} aria-busy={statusBusyId === r.id} onChange={e => {
           if (e.target.value === 'cancelled') openCancellationDialog('request', r);
           else updateStatus(r.id, e.target.value);
         }}>
@@ -954,7 +936,7 @@ export default function Reservations() {
       );
     }
     return (
-      <select value={r.status} style={selectStyle} onChange={e => {
+      <select value={r.status} style={selectStyle} disabled={statusBusyId === r.id} aria-busy={statusBusyId === r.id} onChange={e => {
         if (e.target.value === 'cancelled') openCancellationDialog('cancel', r);
         else updateStatus(r.id, e.target.value);
       }}>
@@ -983,6 +965,38 @@ export default function Reservations() {
           <div role="status" onClick={() => setToast(null)}
             style={{ position: 'fixed', top: '18px', right: '18px', zIndex: 1000, maxWidth: '360px', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', background: toast.type === 'error' ? '#fee2e2' : '#dcfce7', color: toast.type === 'error' ? '#991b1b' : '#166534', border: `1px solid ${toast.type === 'error' ? '#fecaca' : '#bbf7d0'}`, boxShadow: '0 4px 14px rgba(0,0,0,0.12)', fontSize: '12px' }}>
             {toast.text}
+          </div>
+        )}
+
+        {lateFeeDialog && (
+          <div role="presentation" onClick={event => { if (event.target === event.currentTarget && !lateFeeBusy) setLateFeeDialog(null); }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: '16px' }}>
+            <form role="dialog" aria-modal="true" aria-labelledby="late-fee-title"
+              onSubmit={event => { event.preventDefault(); submitLateFee(); }}
+              style={{ width: '100%', maxWidth: '400px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '20px', display: 'grid', gap: '12px' }}>
+              <div id="late-fee-title" style={{ fontWeight: 700, fontSize: '15px', color: TEXT }}>Add late check-out charge</div>
+              <div style={{ fontSize: '12px', color: MUTED }}>
+                {lateFeeDialog.reservation.guestName || 'Guest'} · Room {lateFeeDialog.reservation.roomNumber || '—'}. The charge is added to the guest's bill and must be paid before check-out.
+              </div>
+              <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: MUTED }}>
+                Amount (₱)
+                <input type="number" min="1" max={MAX_LATE_FEE} step="0.01" required autoFocus value={lateFeeDialog.amount}
+                  onChange={e => setLateFeeDialog(d => ({ ...d, amount: e.target.value }))} style={inp} />
+              </label>
+              <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: MUTED }}>
+                Note (optional)
+                <input type="text" maxLength={300} value={lateFeeDialog.note}
+                  onChange={e => setLateFeeDialog(d => ({ ...d, note: e.target.value }))} style={inp} />
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button type="button" onClick={() => setLateFeeDialog(null)} disabled={lateFeeBusy}
+                  style={{ ...inp, fontWeight: 600 }}>Cancel</button>
+                <button type="submit" disabled={lateFeeBusy}
+                  style={{ background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: '10px', padding: '9px 14px', fontSize: '12px', fontWeight: 700, cursor: lateFeeBusy ? 'wait' : 'pointer' }}>
+                  {lateFeeBusy ? 'Adding…' : 'Add charge'}
+                </button>
+              </div>
+            </form>
           </div>
         )}
 
@@ -1028,7 +1042,8 @@ export default function Reservations() {
             ['Check-in', s.checkIn || '—'],
             ['Check-out', s.checkOut || '—'],
             ['Duration', nights(s)],
-            ['Overstay', so ? `Overstayed by ${so.label}` : 'No'],
+            ['Overstay', so ? `Overstayed by ${so.label}${s.overstay?.flaggedAt ? ' (flagged)' : ''}` : s.overstayMinutes ? 'Checked out late' : 'No'],
+            ['Late Check-out Charges', getLateFeeTotal(s) > 0 ? money(getLateFeeTotal(s)) : 'None'],
             ['Special Requests', s.notes || 'None'],
             ['Payment Status', s.paymentStatus || '—'],
             ['Payment Method', s.paymentMethod || '—'],
@@ -1130,14 +1145,24 @@ export default function Reservations() {
                   <div style={{ fontSize: '10px', color: MUTED }}>
                     Overstayed {info.label} · was due {formatDate(r.checkOut)} {r.checkOutTime || DEFAULT_CHECKOUT_TIME}
                     {r.phone ? ` · ${r.phone}` : ''}
-                    {hasOutstandingBalance(r) ? ' · Unpaid balance' : ''}
+                    {getLateFeeTotal(r) > 0 ? ` · Late fees ₱${getLateFeeTotal(r).toLocaleString()}` : ''}
+                    {hasOutstandingBalance(r) ? ` · Owes ₱${outstandingAmount(r).toLocaleString()}` : ''}
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button onClick={() => setSelectedId(r.id)}
                     style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>View</button>
-                  <button onClick={() => updateStatus(r.id, 'checked-out')}
-                    style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Check out</button>
+                  {r.overstay?.flaggedAt ? (
+                    <span style={{ alignSelf: 'center', fontSize: '10px', fontWeight: 700, color: dark ? '#fca5a5' : '#b91c1c' }}>Flagged</span>
+                  ) : (
+                    <button onClick={() => flagOverstay(r)} disabled={statusBusyId === r.id}
+                      style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Flag overstay</button>
+                  )}
+                  <button onClick={() => setLateFeeDialog({ reservation: r, amount: '', note: `Overstayed ${info.label}` })}
+                    style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Add late fee</button>
+                  <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
+                    title={hasOutstandingBalance(r) ? 'Collect the balance before checking out' : undefined}
+                    style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
                 </div>
               </div>
             ))}

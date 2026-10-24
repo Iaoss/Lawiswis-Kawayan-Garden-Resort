@@ -4,11 +4,19 @@ import { motion } from 'framer-motion';
 import { db } from '../../firebase/firebase';
 import {
   collection, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc,
-  doc, Timestamp, query, orderBy, limit,
+  doc, Timestamp, query, orderBy,
 } from 'firebase/firestore';
 import Layout from '../components/Layout';
 import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
+import { toMillis } from '../lib/listSort';
+import {
+  ANALYTICS_PERIODS,
+  getOverstayStats,
+  getPeriodRange,
+  getQuarterlyBreakdown,
+  getReservationAverages,
+} from '../../lib/reservationStatus';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
@@ -54,8 +62,8 @@ const statusColors = {
 // Vivid gradients (same look as the Payments page cards)
 const statCardGradients = [
   'linear-gradient(135deg, #a5b4fc 0%, #c4b5fd 100%)', // New Bookings: periwinkle → lavender
-  'linear-gradient(180deg, #a5b4fc 0%, #fdba74 100%)', // Check-In: blue → peach
-  'linear-gradient(135deg, #fdba74 0%, #fb7185 100%)', // Check-Out: orange → pink
+  'linear-gradient(180deg, #a5b4fc 0%, #fdba74 100%)', // Avg reservations: blue → peach
+  'linear-gradient(135deg, #fdba74 0%, #fb7185 100%)', // Overstays: orange → pink
   'linear-gradient(135deg, #89D7B7 0%, #67e8f9 100%)', // Total Revenue: mint → aqua
 ];
 
@@ -187,11 +195,9 @@ export default function AdminDashboard() {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDate, setNewTaskDate] = useState('');
 
-  // ── Activities (live) ────────────────────────────────────
-  const [activitiesList, setActivitiesList] = useState([]);
-  const [showActivityForm, setShowActivityForm] = useState(false);
-  const [newActivityTitle, setNewActivityTitle] = useState('');
-  const [newActivitySub, setNewActivitySub] = useState('');
+  // ── Reservation analytics ─────────────────────────────────
+  const [analyticsPeriod, setAnalyticsPeriod] = useState('30');
+  const [payments, setPayments] = useState([]);
 
   // ── Calendar ──────────────────────────────────────────────
   const [calMonth, setCalMonth] = useState(() => {
@@ -207,8 +213,9 @@ export default function AdminDashboard() {
       const paySnap   = await getDocs(collection(db, 'payments'));
       const rooms        = roomsSnap.docs.map(d => d.data());
       const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const payments     = paySnap.docs.map(d => d.data());
-      const revenue      = payments.reduce((s, p) => s + Number(p.amount || 0), 0);
+      const paymentRows  = paySnap.docs.map(d => d.data());
+      const revenue      = paymentRows.reduce((s, p) => s + Number(p.amount || 0), 0);
+      setPayments(paymentRows);
       setStats({
         totalReservations: reservations.length,
         checkedIn:         reservations.filter(r => r.status === 'checked-in').length,
@@ -232,14 +239,41 @@ export default function AdminDashboard() {
     return unsub;
   }, []);
 
-  // live activities
+  // Averages, seasonal breakdown and overstays for the chosen period.
+  // Re-checked every minute so "overstaying now" stays current.
+  const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const q = query(collection(db, 'activities'), orderBy('timestamp', 'desc'), limit(50));
-    const unsub = onSnapshot(q, snap => {
-      setActivitiesList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, err => console.error('activities listener error:', err));
-    return unsub;
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
   }, []);
+  const analytics = useMemo(() => {
+    const range = getPeriodRange(recent, analyticsPeriod, now);
+    return {
+      range,
+      averages: getReservationAverages(recent, range),
+      quarters: getQuarterlyBreakdown(recent, now),
+      overstays: getOverstayStats(recent, range, now),
+    };
+  }, [recent, analyticsPeriod, now]);
+
+  // Real month-over-month change (replaces the old placeholder percentages).
+  const monthTrends = useMemo(() => {
+    const today = new Date();
+    const thisStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
+    const lastStart = new Date(today.getFullYear(), today.getMonth() - 1, 1).getTime();
+    const inMonth = (ms, start, end) => ms >= start && ms < end;
+    const change = (current, previous) => (previous > 0 ? ((current - previous) / previous) * 100 : null);
+    const bookedMs = r => toMillis(r.createdAt);
+    const paidMs = p => toMillis(p.paidAt || p.createdAt || p.paymentDate || p.date || p.timestamp);
+    const bookings = change(
+      recent.filter(r => inMonth(bookedMs(r), thisStart, Infinity)).length,
+      recent.filter(r => inMonth(bookedMs(r), lastStart, thisStart)).length,
+    );
+    const sum = (start, end) => payments.filter(p => inMonth(paidMs(p), start, end)).reduce((s, p) => s + Number(p.amount || 0), 0);
+    return { bookings, revenue: change(sum(thisStart, Infinity), sum(lastStart, thisStart)) };
+  }, [recent, payments]);
+  const formatTrend = value => (value === null ? null : { up: value >= 0, text: `${Math.abs(value).toFixed(1)}%` });
+  const formatAverage = value => (value >= 10 ? Math.round(value).toLocaleString() : value.toFixed(1));
 
   const filtered = recent.filter(r => {
     const q = searchQ.toLowerCase();
@@ -284,27 +318,6 @@ export default function AdminDashboard() {
     catch (e) { console.error('Failed to delete task:', e); }
   };
 
-  // ── Activity actions ──────────────────────────────────────
-  const handleAddActivity = async () => {
-    if (!newActivityTitle.trim()) return;
-    try {
-      await addDoc(collection(db, 'activities'), {
-        title: newActivityTitle.trim(),
-        sub: newActivitySub.trim(),
-        timestamp: Timestamp.now(),
-      });
-      setNewActivityTitle('');
-      setNewActivitySub('');
-      setShowActivityForm(false);
-    } catch (e) {
-      console.error('Failed to add activity:', e);
-    }
-  };
-  const deleteActivity = async (id) => {
-    try { await deleteDoc(doc(db, 'activities', id)); }
-    catch (e) { console.error('Failed to delete activity:', e); }
-  };
-
   // task styling based on due date
   const getTaskStyle = (t) => {
     if (t.completed) return { bg: dark ? 'rgba(148,163,184,0.08)' : '#f3f4f6', color: MUTED };
@@ -316,31 +329,18 @@ export default function AdminDashboard() {
     return { bg: dark ? 'rgba(209,250,229,0.1)' : 'rgba(209,250,229,0.5)', color: '#6ee7b7' };
   };
 
-  const timeAgo = (ts) => {
-    const d = toJSDate(ts);
-    if (!d) return '';
-    const diffMs = Date.now() - d.getTime();
-    const mins = Math.round(diffMs / 60000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.round(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return formatDate(d);
-  };
-
   // ── Calendar data ─────────────────────────────────────────
   const eventMap = useMemo(() => {
     const map = {};
     const add = (key, type) => {
       if (!key) return;
-      if (!map[key]) map[key] = { tasks: 0, activities: 0, reservations: 0 };
+      if (!map[key]) map[key] = { tasks: 0, reservations: 0 };
       map[key][type]++;
     };
     tasks.forEach(t => add(dateKey(t.date), 'tasks'));
-    activitiesList.forEach(a => add(dateKey(a.timestamp), 'activities'));
     recent.forEach(r => add(dateKey(r.checkIn), 'reservations'));
     return map;
-  }, [tasks, activitiesList, recent]);
+  }, [tasks, recent]);
 
   const calCells = useMemo(() => {
     const year = calMonth.getFullYear();
@@ -358,7 +358,6 @@ export default function AdminDashboard() {
 
   const selectedKey = dateKey(selectedDay);
   const dayTasks = tasks.filter(t => dateKey(t.date) === selectedKey);
-  const dayActivities = activitiesList.filter(a => dateKey(a.timestamp) === selectedKey);
   const dayReservations = recent.filter(r => dateKey(r.checkIn) === selectedKey);
 
   // Memoized so their identity stays stable across renders (prevents inputs
@@ -404,18 +403,36 @@ export default function AdminDashboard() {
     <Layout>
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh' }}>
 
+        {/* ── Analytics period ── */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+          <label htmlFor="analytics-period" style={{ fontSize: '11px', color: MUTED }}>Analytics period</label>
+          <select id="analytics-period" value={analyticsPeriod} onChange={e => setAnalyticsPeriod(e.target.value)}
+            style={{ height: '30px', padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: '8px', fontSize: '11px', fontFamily: "'Poppins', sans-serif", background: CARD, color: TEXT, cursor: 'pointer' }}>
+            {ANALYTICS_PERIODS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+        </div>
+
         {/* ── Stat Cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${settings.showTotalRevenue === false ? 3 : 4},1fr)`, gap: '14px', marginBottom: '18px' }}>
           {[
-            { label: 'New Bookings',  show: true, value: stats.totalReservations, icon: 'ti-calendar-event', trend: '+8.70%', up: true,  to: '/admin/reservations?view=new' },
-            { label: 'Check-In',      show: true, value: stats.checkedIn,         icon: 'ti-login',          trend: '+3.56%', up: true,  to: '/admin/reservations?view=checked-in' },
-            { label: 'Check-Out',     show: true, value: stats.checkOuts,         icon: 'ti-logout',         trend: '-1.06%', up: false, to: '/admin/reservations?view=checked-out' },
-            { label: 'Total Revenue', show: settings.showTotalRevenue !== false, value: formatCurrency(stats.totalRevenue), icon: 'ti-currency-peso', trend: '+5.70%', up: true, to: '/admin/payments' },
+            { label: 'New Bookings', show: true, value: stats.totalReservations, icon: 'ti-calendar-event', trend: formatTrend(monthTrends.bookings), to: '/admin/reservations?view=new' },
+            {
+              label: 'Avg. Reservations / Day', show: true, value: formatAverage(analytics.averages.perDay), icon: 'ti-chart-bar', to: '/admin/reports',
+              detail: `${formatAverage(analytics.averages.perWeek)} / week · ${formatAverage(analytics.averages.perMonth)} / month`,
+              title: `${analytics.averages.count} reservations by check-in date, ${analytics.range.from} to ${analytics.range.to} (cancelled excluded)`,
+            },
+            {
+              label: 'Overstaying Now', show: true, value: analytics.overstays.activeCount, icon: 'ti-clock-exclamation', to: '/admin/reservations?view=overstayed',
+              detail: `${analytics.overstays.historicalCount} in period (${Math.round(analytics.overstays.rate * 100)}%) · ${formatCurrency(analytics.overstays.lateFeeTotal)} late fees`,
+              title: 'Overstays and late check-out charges for stays that ended in the selected period',
+            },
+            { label: 'Total Revenue', show: settings.showTotalRevenue !== false, value: formatCurrency(stats.totalRevenue), icon: 'ti-currency-peso', trend: formatTrend(monthTrends.revenue), to: '/admin/payments' },
           ].map((c, i) => !c.show ? null : (
             <div
               key={c.label}
               role="button"
               tabIndex={0}
+              title={c.title}
               onClick={() => navigate(c.to)}
               onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(c.to); } }}
               style={{
@@ -445,10 +462,16 @@ export default function AdminDashboard() {
                     {c.value}
                   </motion.div>
                   <motion.div variants={statItemVariants} style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <span style={{ color: '#fff', fontSize: '11px', fontWeight: '600' }}>
-                      {c.up ? '↑' : '↓'} {c.trend}
-                    </span>
-                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>Last month</span>
+                    {c.detail ? (
+                      <span style={{ color: '#fff', fontSize: '10px', fontWeight: '600' }}>{c.detail}</span>
+                    ) : c.trend ? (
+                      <>
+                        <span style={{ color: '#fff', fontSize: '11px', fontWeight: '600' }}>{c.trend.up ? '↑' : '↓'} {c.trend.text}</span>
+                        <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>vs last month</span>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>No data for last month</span>
+                    )}
                   </motion.div>
                 </div>
                 <motion.div variants={statItemVariants} style={{
@@ -755,57 +778,31 @@ export default function AdminDashboard() {
           </Card>
           )}
 
-          {/* ── Recent Activities (functional) ── */}
+          {/* ── Seasonal breakdown ── */}
           <Card>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Recent Activities</span>
-              <span
-                onClick={() => setShowActivityForm(s => !s)}
-                style={{ color: MUTED, fontSize: '18px', cursor: 'pointer', letterSpacing: '2px' }}
-              >
-                {showActivityForm ? '×' : '···'}
-              </span>
+            <div style={{ marginBottom: '12px' }}>
+              <div style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Seasonal Breakdown</div>
+              <div style={{ fontSize: '10px', color: MUTED, marginTop: '2px' }}>Average reservations per month in each quarter, all years on record</div>
             </div>
-
-            {showActivityForm && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
-                <input
-                  value={newActivityTitle}
-                  onChange={e => setNewActivityTitle(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddActivity(); } }}
-                  placeholder="Activity title..."
-                  style={inputStyle}
-                />
-                <input
-                  value={newActivitySub}
-                  onChange={e => setNewActivitySub(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddActivity(); } }}
-                  placeholder="Details (optional)..."
-                  style={inputStyle}
-                />
-                <button type="button" onClick={handleAddActivity} style={smallBtn(LIME, '#1a2e1a')}>Log Activity</button>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '260px', overflowY: 'auto' }}>
-              {activitiesList.length === 0 && (
-                <div style={{ fontSize: '11px', color: MUTED }}>No activity logged yet.</div>
-              )}
-              {activitiesList.slice(0, 8).map(a => (
-                <div key={a.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                  <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: dark ? 'rgba(110,231,183,0.1)' : '#d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <i className="ti ti-activity" style={{ fontSize: '15px', color: dark ? '#6ee7b7' : '#065f46' }} />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ fontSize: '10px', color: MUTED, marginBottom: '2px' }}>{timeAgo(a.timestamp)}</div>
-                      <span onClick={() => deleteActivity(a.id)} style={{ color: MUTED, fontSize: '11px', cursor: 'pointer' }} title="Delete">✕</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {analytics.quarters.map(q => {
+                const busiest = Math.max(...analytics.quarters.map(x => x.perMonth), 1);
+                return (
+                  <div key={q.id}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: '11px', marginBottom: '4px' }}>
+                      <span style={{ color: TEXT, fontWeight: '600' }}>
+                        {q.id} <span style={{ color: MUTED, fontWeight: '400' }}>{q.label}</span>
+                        {q.peak && <span style={{ marginLeft: '6px', background: dark ? 'rgba(200,240,110,0.15)' : LIME, color: dark ? LIME : '#1a2e1a', borderRadius: '20px', padding: '1px 8px', fontSize: '9px', fontWeight: '700' }}>PEAK</span>}
+                      </span>
+                      <span style={{ color: TEXT, fontWeight: '700' }}>{formatAverage(q.perMonth)}<span style={{ color: MUTED, fontWeight: '400' }}> / mo</span></span>
                     </div>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT }}>{a.title}</div>
-                    {a.sub && <div style={{ fontSize: '10px', color: MUTED, marginTop: '2px', lineHeight: 1.4 }}>{a.sub}</div>}
+                    <div style={{ height: '6px', borderRadius: '6px', background: dark ? 'rgba(255,255,255,0.06)' : '#eef2ea' }}>
+                      <div style={{ width: `${(q.perMonth / busiest) * 100}%`, height: '100%', borderRadius: '6px', background: q.peak ? LIME : TEAL }} />
+                    </div>
+                    <div style={{ fontSize: '9px', color: MUTED, marginTop: '3px' }}>{q.count} reservations over {q.months} month{q.months === 1 ? '' : 's'}</div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </Card>
         </div>
@@ -827,7 +824,6 @@ export default function AdminDashboard() {
             <div style={{ display: 'flex', gap: '14px', marginBottom: '10px' }}>
               {[
                 { color: '#6ee7b7', label: 'Tasks' },
-                { color: '#60a5fa', label: 'Activities' },
                 { color: LIME, label: 'Reservations' },
               ].map(l => (
                 <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -877,7 +873,6 @@ export default function AdminDashboard() {
                     {ev && (
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '2px', marginTop: '3px' }}>
                         {ev.tasks > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#6ee7b7' }} />}
-                        {ev.activities > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#60a5fa' }} />}
                         {ev.reservations > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: LIME }} />}
                       </div>
                     )}
@@ -892,7 +887,7 @@ export default function AdminDashboard() {
             <SectionTitle>{selectedDay.toLocaleDateString('default', { weekday: 'long', month: 'short', day: 'numeric' })}</SectionTitle>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '340px', overflowY: 'auto' }}>
 
-              {dayTasks.length === 0 && dayActivities.length === 0 && dayReservations.length === 0 && (
+              {dayTasks.length === 0 && dayReservations.length === 0 && (
                 <div style={{ fontSize: '11px', color: MUTED }}>Nothing on this day.</div>
               )}
 
@@ -903,15 +898,6 @@ export default function AdminDashboard() {
                     <div key={t.id} style={{ fontSize: '11px', color: TEXT, marginBottom: '4px', textDecoration: t.completed ? 'line-through' : 'none' }}>
                       • {t.title}
                     </div>
-                  ))}
-                </div>
-              )}
-
-              {dayActivities.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '10px', fontWeight: '700', color: '#60a5fa', marginBottom: '6px' }}>ACTIVITIES</div>
-                  {dayActivities.map(a => (
-                    <div key={a.id} style={{ fontSize: '11px', color: TEXT, marginBottom: '4px' }}>• {a.title}</div>
                   ))}
                 </div>
               )}

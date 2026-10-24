@@ -209,9 +209,19 @@ export default function Billing() {
 
   const handleCheckout = async () => {
     if (totalBalance(selected) > 0) return alert('Guest still has a balance. Settle it before checkout.');
-    await updateDoc(doc(db, 'reservations', selected.id), { status: 'checked-out' });
-    if (selected.roomId) {
-      await updateDoc(doc(db, 'rooms', selected.roomId), { status: 'cleaning' });
+    // The server re-checks the balance, records late check-outs, and sets the room to cleaning.
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const response = await fetch('/api/reservation-status', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'set-status', reservationId: selected.id, status: 'checked-out' }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'The guest could not be checked out.');
+    } catch (checkoutError) {
+      alert(checkoutError.message);
+      return;
     }
     try {
       const token = await auth.currentUser.getIdToken();

@@ -3,12 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import {
   collection, getDocs, onSnapshot, addDoc, updateDoc,
-  doc, Timestamp, query, orderBy, limit,
+  doc, Timestamp, query, orderBy,
 } from 'firebase/firestore';
 import ReceptionistLayout from '../components/ReceptionistLayout';
 import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
 import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
+import { getOverstay, getOverstayStats, getPeriodRange, getReservationAverages, manilaDateKey } from '../../lib/reservationStatus';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -75,11 +76,12 @@ export default function ReceptionistDashboard() {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDate, setNewTaskDate] = useState('');
 
-  // ── Activities (live) ────────────────────────────────────
-  const [activitiesList, setActivitiesList] = useState([]);
-  const [showActivityForm, setShowActivityForm] = useState(false);
-  const [newActivityTitle, setNewActivityTitle] = useState('');
-  const [newActivitySub, setNewActivitySub] = useState('');
+  // Re-checked every minute so the overstay list stays current.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   // ── Calendar ──────────────────────────────────────────────
   const [calMonth, setCalMonth] = useState(() => {
@@ -93,7 +95,7 @@ export default function ReceptionistDashboard() {
       const resSnap = await getDocs(collection(db, 'reservations'));
       const rooms = roomsSnap.docs.map(d => d.data());
       const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const today = new Date().toISOString().split('T')[0];
+      const today = manilaDateKey(); // Philippine date (toISOString would give the UTC date)
       const todayArrivals = reservations.filter(r => r.checkIn === today);
       const todayDepartures = reservations.filter(r => r.checkOut === today);
       setArrivals(todayArrivals);
@@ -120,14 +122,16 @@ export default function ReceptionistDashboard() {
     return unsub;
   }, []);
 
-  // live activities
-  useEffect(() => {
-    const q = query(collection(db, 'activities'), orderBy('timestamp', 'desc'), limit(50));
-    const unsub = onSnapshot(q, snap => {
-      setActivitiesList(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, err => console.error('activities listener error:', err));
-    return unsub;
-  }, []);
+  // Reservation averages and overstays over the last 30 days.
+  const analytics = useMemo(() => {
+    const range = getPeriodRange(allReservations, '30', now);
+    return {
+      averages: getReservationAverages(allReservations, range),
+      overstays: getOverstayStats(allReservations, range, now),
+      overstaying: allReservations.map(r => ({ r, info: getOverstay(r, now) })).filter(x => x.info),
+    };
+  }, [allReservations, now]);
+  const formatAverage = value => (value >= 10 ? Math.round(value).toLocaleString() : value.toFixed(1));
 
   // ── Task actions (receptionist: create/complete, no delete) ──
   const handleAddTask = async () => {
@@ -152,23 +156,6 @@ export default function ReceptionistDashboard() {
     catch (e) { console.error('Failed to update task:', e); }
   };
 
-  // ── Activity actions (receptionist: log only, no delete) ────
-  const handleAddActivity = async () => {
-    if (!newActivityTitle.trim()) return;
-    try {
-      await addDoc(collection(db, 'activities'), {
-        title: newActivityTitle.trim(),
-        sub: newActivitySub.trim(),
-        timestamp: Timestamp.now(),
-      });
-      setNewActivityTitle('');
-      setNewActivitySub('');
-      setShowActivityForm(false);
-    } catch (e) {
-      console.error('Failed to add activity:', e);
-    }
-  };
-
   const getTaskStyle = (t) => {
     if (t.completed) return { bg: dark ? 'rgba(148,163,184,0.08)' : '#f3f4f6', color: MUTED };
     const dt = toJSDate(t.date);
@@ -179,31 +166,18 @@ export default function ReceptionistDashboard() {
     return { bg: dark ? 'rgba(209,250,229,0.1)' : 'rgba(209,250,229,0.5)', color: '#6ee7b7' };
   };
 
-  const timeAgo = (ts) => {
-    const d = toJSDate(ts);
-    if (!d) return '';
-    const diffMs = Date.now() - d.getTime();
-    const mins = Math.round(diffMs / 60000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.round(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
-  };
-
   // ── Calendar data ─────────────────────────────────────────
   const eventMap = useMemo(() => {
     const map = {};
     const add = (key, type) => {
       if (!key) return;
-      if (!map[key]) map[key] = { tasks: 0, activities: 0, reservations: 0 };
+      if (!map[key]) map[key] = { tasks: 0, reservations: 0 };
       map[key][type]++;
     };
     tasks.forEach(t => add(dateKey(t.date), 'tasks'));
-    activitiesList.forEach(a => add(dateKey(a.timestamp), 'activities'));
     allReservations.forEach(r => add(dateKey(r.checkIn), 'reservations'));
     return map;
-  }, [tasks, activitiesList, allReservations]);
+  }, [tasks, allReservations]);
 
   const calCells = useMemo(() => {
     const year = calMonth.getFullYear();
@@ -221,7 +195,6 @@ export default function ReceptionistDashboard() {
 
   const selectedKey = dateKey(selectedDay);
   const dayTasks = tasks.filter(t => dateKey(t.date) === selectedKey);
-  const dayActivities = activitiesList.filter(a => dateKey(a.timestamp) === selectedKey);
   const dayReservations = allReservations.filter(r => dateKey(r.checkIn) === selectedKey);
 
   const inputStyle = {
@@ -241,8 +214,14 @@ export default function ReceptionistDashboard() {
   };
 
   const cards = [
-    { label: "Today's Arrivals", value: stats.todayArrivals, icon: 'ti-plane-arrival', to: '/receptionist/reservations?view=arrivals' },
-    { label: "Today's Departures", value: stats.todayDepartures, icon: 'ti-plane-departure', to: '/receptionist/reservations?view=departures' },
+    {
+      label: 'Avg. Reservations / Day', value: formatAverage(analytics.averages.perDay), icon: 'ti-chart-bar', to: '/receptionist/reservations?view=new',
+      detail: `${formatAverage(analytics.averages.perWeek)} / week · ${formatAverage(analytics.averages.perMonth)} / month (last 30 days)`,
+    },
+    {
+      label: 'Overstaying Now', value: analytics.overstays.activeCount, icon: 'ti-clock-exclamation', to: '/receptionist/reservations?view=overstayed',
+      detail: `${analytics.overstays.historicalCount} in last 30 days · ₱${analytics.overstays.lateFeeTotal.toLocaleString()} late fees`,
+    },
     { label: 'Currently Checked In', value: stats.checkedIn, icon: 'ti-home-check', to: '/receptionist/reservations?view=checked-in' },
     { label: 'Pending Payments', value: stats.pendingPayments, icon: 'ti-clock', to: '/receptionist/reservations?view=pending-payment' },
     { label: 'Available Rooms', value: `${stats.availableRooms}/${stats.totalRooms}`, icon: 'ti-bed', to: '/receptionist/rooms' },
@@ -285,6 +264,7 @@ export default function ReceptionistDashboard() {
               <div style={{ position: 'relative', zIndex: 1 }}>
                 <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.85)', marginBottom: '6px' }}>{c.label}</div>
                 <div style={{ fontSize: '28px', fontWeight: '700', color: '#fff', lineHeight: 1 }}>{c.value}</div>
+                {c.detail && <div style={{ marginTop: '8px', fontSize: '10px', fontWeight: '600', color: '#fff' }}>{c.detail}</div>}
                 <div style={{ marginTop: '14px' }}>
                   <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <i className={`ti ${c.icon}`} style={{ fontSize: '20px', color: '#fff' }} />
@@ -409,7 +389,7 @@ export default function ReceptionistDashboard() {
           </div>
         </div>
 
-        {/* ── Tasks + Activities ── */}
+        {/* ── Tasks + Overstaying guests ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px' }}>
 
           {/* Tasks */}
@@ -475,52 +455,24 @@ export default function ReceptionistDashboard() {
             </div>
           </div>
 
-          {/* Recent Activities */}
+          {/* Overstaying guests */}
           <div style={S.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Recent Activities</div>
-              <span
-                onClick={() => setShowActivityForm(s => !s)}
-                style={{ color: MUTED, fontSize: '18px', cursor: 'pointer', letterSpacing: '2px' }}
-              >
-                {showActivityForm ? '×' : '···'}
-              </span>
+              <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Overstaying Guests</div>
+              <button type="button" onClick={() => navigate('/receptionist/reservations?view=overstayed')}
+                style={{ background: 'transparent', border: 'none', color: MUTED, fontSize: '11px', cursor: 'pointer', fontFamily: 'inherit' }}>Manage ›</button>
             </div>
-
-            {showActivityForm && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
-                <input
-                  value={newActivityTitle}
-                  onChange={e => setNewActivityTitle(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddActivity(); } }}
-                  placeholder="Activity title..."
-                  style={inputStyle}
-                />
-                <input
-                  value={newActivitySub}
-                  onChange={e => setNewActivitySub(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddActivity(); } }}
-                  placeholder="Details (optional)..."
-                  style={inputStyle}
-                />
-                <button type="button" onClick={handleAddActivity} style={smallBtn(ACCENT, ACCENT_TEXT)}>Log Activity</button>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '260px', overflowY: 'auto' }}>
-              {activitiesList.length === 0 && (
-                <div style={{ fontSize: '11px', color: MUTED }}>No activity logged yet.</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '260px', overflowY: 'auto' }}>
+              {analytics.overstaying.length === 0 && (
+                <div style={{ fontSize: '11px', color: MUTED }}>No guests are past their check-out time.</div>
               )}
-              {activitiesList.slice(0, 8).map(a => (
-                <div key={a.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                  <div style={{ width: '30px', height: '30px', borderRadius: '8px', background: dark ? 'rgba(110,231,183,0.1)' : '#d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <i className="ti ti-activity" style={{ fontSize: '14px', color: dark ? '#6ee7b7' : '#065f46' }} />
+              {analytics.overstaying.map(({ r, info }) => (
+                <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '12px', color: TEXT }}>
+                  <div>
+                    <div style={{ fontWeight: '600' }}>{r.guestName || 'Guest'} · Room {r.roomNumber || '—'}</div>
+                    <div style={{ fontSize: '10px', color: MUTED }}>Due {r.checkOut} {r.checkOutTime || ''}{r.overstay?.flaggedAt ? ' · flagged' : ''}</div>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '10px', color: MUTED, marginBottom: '2px' }}>{timeAgo(a.timestamp)}</div>
-                    <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT }}>{a.title}</div>
-                    {a.sub && <div style={{ fontSize: '10px', color: MUTED, marginTop: '2px', lineHeight: 1.4 }}>{a.sub}</div>}
-                  </div>
+                  <span style={{ alignSelf: 'center', color: '#dc2626', fontWeight: '700', fontSize: '11px', whiteSpace: 'nowrap' }}>+{info.label}</span>
                 </div>
               ))}
             </div>
@@ -543,7 +495,6 @@ export default function ReceptionistDashboard() {
             <div style={{ display: 'flex', gap: '14px', marginBottom: '10px' }}>
               {[
                 { color: '#6ee7b7', label: 'Tasks' },
-                { color: '#60a5fa', label: 'Activities' },
                 { color: ACCENT, label: 'Reservations' },
               ].map(l => (
                 <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -587,7 +538,6 @@ export default function ReceptionistDashboard() {
                     {ev && (
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '2px', marginTop: '3px' }}>
                         {ev.tasks > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#6ee7b7' }} />}
-                        {ev.activities > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#60a5fa' }} />}
                         {ev.reservations > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: ACCENT }} />}
                       </div>
                     )}
@@ -604,7 +554,7 @@ export default function ReceptionistDashboard() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '320px', overflowY: 'auto' }}>
 
-              {dayTasks.length === 0 && dayActivities.length === 0 && dayReservations.length === 0 && (
+              {dayTasks.length === 0 && dayReservations.length === 0 && (
                 <div style={{ fontSize: '11px', color: MUTED }}>Nothing on this day.</div>
               )}
 
@@ -615,15 +565,6 @@ export default function ReceptionistDashboard() {
                     <div key={t.id} style={{ fontSize: '11px', color: TEXT, marginBottom: '4px', textDecoration: t.completed ? 'line-through' : 'none' }}>
                       • {t.title}
                     </div>
-                  ))}
-                </div>
-              )}
-
-              {dayActivities.length > 0 && (
-                <div>
-                  <div style={{ fontSize: '10px', fontWeight: '700', color: '#60a5fa', marginBottom: '6px' }}>ACTIVITIES</div>
-                  {dayActivities.map(a => (
-                    <div key={a.id} style={{ fontSize: '11px', color: TEXT, marginBottom: '4px' }}>• {a.title}</div>
                   ))}
                 </div>
               )}

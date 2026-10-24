@@ -24,6 +24,7 @@ import reservationStaffAction from '../apiHandlers/reservation-staff-action';
 import submitFeedback from '../apiHandlers/submit-feedback';
 import arrivalReminders from '../apiHandlers/arrival-reminders';
 import sendThankYou from '../apiHandlers/send-thank-you';
+import reservationStatus from '../apiHandlers/reservation-status';
 
 // The body parser is disabled for the whole function because the PayMongo
 // webhook needs the raw body for signature checks. Other routes get req.body
@@ -50,6 +51,7 @@ const handlers = {
   'resort-availability': resortAvailability,
   'reservation-guest-action': reservationGuestAction,
   'reservation-staff-action': reservationStaffAction,
+  'reservation-status': reservationStatus,
   'create-corporate-reservation': createCorporateReservation,
   'public-feedback': publicFeedback,
   'submit-feedback': submitFeedback,
