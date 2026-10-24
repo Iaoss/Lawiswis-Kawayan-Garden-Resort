@@ -1,8 +1,8 @@
 import React from 'react';
 
-// Booking progress, left to right. Clicking a neighbouring step moves the
-// booking there (forwards or back); steps that would skip ahead are disabled
-// (see getStatusTransitionError). Cancelling is a separate action.
+// Booking progress, left to right. Clicking the next step moves the booking
+// forward; earlier steps and skipped steps are disabled (see
+// getStatusTransitionError). Cancelling is a separate action.
 export const STATUS_STEPS = [
   { id: 'pending', label: 'Pending', short: 'Pending' },
   { id: 'confirmed', label: 'Confirmed', short: 'Confirmed' },
@@ -44,7 +44,7 @@ export default function StatusStepper({
     <div style={{ display: 'grid', gap: compact ? 4 : 8 }}>
       {cancelled && (
         <div style={{ fontSize: compact ? 10 : 12, fontWeight: 700, color: c.danger }}>
-          Cancelled{lockedReason ? '' : ' · click Pending to reopen'}
+          Cancelled
         </div>
       )}
       <ol aria-label="Booking status" style={{ display: 'flex', alignItems: 'flex-start', listStyle: 'none', margin: 0, padding: 0, opacity: cancelled ? 0.6 : 1 }}>

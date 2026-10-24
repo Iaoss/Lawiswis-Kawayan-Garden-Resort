@@ -13,29 +13,23 @@ const STATUS_LABELS = { pending: 'Pending', confirmed: 'Confirmed', 'checked-in'
 
 // Returns why a status change isn't allowed, or '' when it is.
 // Rules (enforced on the server and shown in the stepper):
-//   - forward one step at a time, no skipping
-//     (e.g. Pending → Checked out must go through Confirmed and Checked in);
-//   - back one step only to undo a check-in or check-out
-//     (Checked out → Checked in, Checked in → Confirmed). A confirmed
-//     booking never goes back to Pending: cancel it instead;
-//   - any booking can be cancelled except a finished (checked-out) stay;
-//   - a cancelled booking reopens as Pending.
+//   - forward only, one step at a time, no skipping
+//     (Pending → Confirmed → Checked in → Checked out);
+//   - statuses never go backwards (no undo);
+//   - any booking can be cancelled except a finished (checked-out) stay,
+//     and a cancelled booking stays cancelled.
 // Unrecognised old statuses can move anywhere, so they can be fixed.
 export function getStatusTransitionError(from, to) {
   if (from === to) return '';
   if (!RESERVATION_STATUSES.includes(to)) return 'Choose a valid reservation status.';
+  if (from === 'cancelled') return 'Cancelled bookings can’t be reopened. Make a new booking instead.';
   if (to === 'cancelled') return from === 'checked-out' ? 'A finished stay can’t be cancelled.' : '';
-  if (from === 'cancelled') return to === 'pending' ? '' : 'Reopen a cancelled booking as Pending first.';
   const fromIndex = STATUS_FLOW.indexOf(from);
   const toIndex = STATUS_FLOW.indexOf(to);
   if (fromIndex === -1) return '';
-  if (from === 'confirmed' && to === 'pending') {
-    return 'A confirmed booking can’t go back to Pending. Cancel it instead if it shouldn’t go ahead.';
-  }
-  if (Math.abs(toIndex - fromIndex) === 1) return '';
-  return toIndex > fromIndex
-    ? `Steps can't be skipped. Move this booking to ${STATUS_LABELS[STATUS_FLOW[fromIndex + 1]]} first.`
-    : `Move back one step at a time. Go to ${STATUS_LABELS[STATUS_FLOW[fromIndex - 1]]} first.`;
+  if (toIndex < fromIndex) return 'Statuses can’t go backwards.';
+  if (toIndex === fromIndex + 1) return '';
+  return `Steps can't be skipped. Move this booking to ${STATUS_LABELS[STATUS_FLOW[fromIndex + 1]]} first.`;
 }
 
 // Minutes after the scheduled check-out before a guest counts as overstaying.

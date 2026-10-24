@@ -10,9 +10,9 @@
 //         (they send a cancellation request instead);
 //       - a guest can't be checked out while a balance is still owed, unless
 //         an admin overrides it with a reason (send force: true).
-//     Statuses move forward one step at a time (no skipping); the only
-//     backward steps undo a check-in or check-out. Confirmed never returns
-//     to Pending. See getStatusTransitionError.
+//     Statuses only move forward, one step at a time (no skipping, no going
+//     back), and cancelled bookings stay cancelled. See
+//     getStatusTransitionError.
 //   { action: 'close-expired', reservationId }
 //     Closes a past pending/confirmed booking the guest never arrived for.
 //   { action: 'flag-overstay', reservationId, note? }

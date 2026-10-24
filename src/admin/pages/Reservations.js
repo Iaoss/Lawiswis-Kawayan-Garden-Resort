@@ -73,6 +73,27 @@ const matchesQuickView = (r, view, now = new Date()) => {
   return true;
 };
 
+// One line in the Notifications card: title, short explanation and count.
+// Click (or Enter/Space) to open the details and actions.
+function NotificationGroup({ title, detail, count, color, t, children }) {
+  return (
+    <details style={{ background: t.CARD2, border: `1px solid ${t.BORDER2}`, borderRadius: 10 }}>
+      <summary style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer', listStyle: 'none', fontSize: 12, color: t.TEXT }}>
+        <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', background: color, flex: '0 0 auto' }} />
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <strong>{title}</strong>
+          <span style={{ color: t.MUTED }}> · {detail}</span>
+        </span>
+        <span style={{ minWidth: 22, textAlign: 'center', borderRadius: 999, padding: '1px 8px', fontWeight: 700, background: color, color: '#fff' }}>{count}</span>
+        <span aria-hidden="true" style={{ color: t.MUTED, fontSize: 11 }}>Details ▾</span>
+      </summary>
+      <div style={{ display: 'grid', gap: 8, padding: '4px 12px 12px', borderTop: `1px solid ${t.BORDER}` }}>
+        {children}
+      </div>
+    </details>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════════
    Reservation board: List / Day / Week / Month views with filters
    ════════════════════════════════════════════════════════════════ */
@@ -1134,32 +1155,16 @@ export default function Reservations() {
             arrivals, requests), search and filters on the right. */}
         <div style={{ fontWeight: '700', fontSize: '18px', color: TEXT, marginBottom: '12px' }}>Reservation List</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '14px', marginBottom: '20px', alignItems: 'start' }}>
-          <div style={{ display: 'grid', gap: '14px', alignContent: 'start', minWidth: 0 }}>
-            <section aria-label="Needs attention" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '14px', display: 'grid', gap: '8px', alignContent: 'start' }}>
-              <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Needs attention</div>
-              {[
-                { id: 'attention-overstay', label: 'Overstayed guests', count: overstayed.length, color: '#dc2626' },
-                { id: 'attention-late', label: 'Late arrivals (not checked in)', count: lateArrivals.length, color: '#d97706' },
-                ...(isAdmin ? [{ id: 'attention-cancellations', label: 'Cancellation requests', count: pendingCancellations.length, color: '#d97706' }] : []),
-                ...(isAdmin ? [{ id: 'attention-requests', label: 'Refund requests', count: pendingRefunds.length, color: '#d97706' }] : []),
-                { id: 'attention-requests', label: 'Booking change requests', count: pendingModifications.length, color: '#2563eb' },
-              ].map(item => (
-                <button key={item.label} type="button" disabled={!item.count}
-                  onClick={() => document.getElementById(item.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '10px', padding: '8px 12px', fontSize: '12px', fontFamily: 'inherit', color: TEXT, cursor: item.count ? 'pointer' : 'default', textAlign: 'left' }}>
-                  <span>{item.label}</span>
-                  <span style={{ minWidth: 24, textAlign: 'center', borderRadius: 999, padding: '2px 8px', fontWeight: 700, background: item.count ? item.color : 'transparent', color: item.count ? '#fff' : MUTED }}>{item.count}</span>
-                </button>
-              ))}
-            </section>
+          {/* Notifications: one compact line per type with its count; click a
+              line to open the details and actions. Empty types are hidden. */}
+          <section aria-label="Notifications" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '12px 14px', display: 'grid', gap: '8px', alignContent: 'start', minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Notifications</div>
+            {lateArrivals.length + overstayed.length + (isAdmin ? pendingCancellations.length : 0) + pendingRefunds.length + pendingModifications.length === 0 && (
+              <div style={{ fontSize: '12px', color: MUTED }}>All clear — nothing needs action right now.</div>
+            )}
 
-            {/* Late arrivals — confirmed guests past their check-in time */}
             {lateArrivals.length > 0 && (
-              <section id="attention-late" aria-label="Late arrivals"
-                style={{ background: CARD, border: '1px solid #d97706', borderRadius: '14px', padding: '16px' }}>
-                <div style={{ fontWeight: 700, fontSize: '13px', color: dark ? '#fcd34d' : '#b45309', marginBottom: '10px' }}>
-                  Late arrivals ({lateArrivals.length})
-                </div>
+              <NotificationGroup title="Late arrivals" detail="Confirmed guests past their check-in time" count={lateArrivals.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
                 {lateArrivals.map(r => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: `1px solid ${BORDER}` }}>
                     <div style={{ fontSize: '12px', color: TEXT }}>
@@ -1170,144 +1175,138 @@ export default function Reservations() {
                       style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>View</button>
                   </div>
                 ))}
-              </section>
+              </NotificationGroup>
             )}
 
-          {/* Overstayed guests — admin and receptionist */}
-          {overstayed.length > 0 && (
-            <section id="attention-overstay" role="alert" aria-label="Overstayed guests"
-              style={{ background: dark ? '#3b1212' : '#fef2f2', border: '1px solid #dc2626', borderRadius: '14px', padding: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px', flexWrap: 'wrap' }}>
-                <div style={{ fontWeight: 700, fontSize: '13px', color: dark ? '#fca5a5' : '#b91c1c' }}>
-                  🚨 Overstayed Guests ({overstayed.length})
-                </div>
+            {overstayed.length > 0 && (
+              <NotificationGroup title="Overstayed guests" detail="Still checked in after check-out time" count={overstayed.length} color="#dc2626" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
                 {quickView !== 'overstayed' && (
                   <button onClick={() => { setQuickView('overstayed'); setFilter('checked-in'); }}
-                    style={{ ...inp, padding: '5px 10px', fontSize: '11px' }}>Filter list</button>
+                    style={{ ...inp, justifySelf: 'start', padding: '5px 10px', fontSize: '11px' }}>Show them in the list</button>
                 )}
-              </div>
-              {overstayed.map(({ r, info }) => (
-                <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: '1px solid rgba(220,38,38,0.25)' }}>
-                  <div style={{ fontSize: '12px', color: TEXT }}>
-                    <strong>{r.guestName}</strong> — Room {r.roomNumber}
-                    <div style={{ fontSize: '10px', color: MUTED }}>
-                      Overstayed {info.label} · was due {formatDate(r.checkOut)} {r.checkOutTime || DEFAULT_CHECKOUT_TIME}
-                      {r.phone ? ` · ${r.phone}` : ''}
-                      {getLateFeeTotal(r) > 0 ? ` · Late fees ₱${getLateFeeTotal(r).toLocaleString()}` : ''}
-                      {hasOutstandingBalance(r) ? ` · Owes ₱${outstandingAmount(r).toLocaleString()}` : ''}
+                {overstayed.map(({ r, info }) => (
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: '1px solid rgba(220,38,38,0.25)' }}>
+                    <div style={{ fontSize: '12px', color: TEXT }}>
+                      <strong>{r.guestName}</strong> — Room {r.roomNumber}
+                      <div style={{ fontSize: '10px', color: MUTED }}>
+                        Overstayed {info.label} · was due {formatDate(r.checkOut)} {r.checkOutTime || DEFAULT_CHECKOUT_TIME}
+                        {r.phone ? ` · ${r.phone}` : ''}
+                        {getLateFeeTotal(r) > 0 ? ` · Late fees ₱${getLateFeeTotal(r).toLocaleString()}` : ''}
+                        {hasOutstandingBalance(r) ? ` · Owes ₱${outstandingAmount(r).toLocaleString()}` : ''}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button onClick={() => setSelectedId(r.id)}
+                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>View</button>
+                      {r.overstay?.flaggedAt ? (
+                        <span style={{ alignSelf: 'center', fontSize: '10px', fontWeight: 700, color: dark ? '#fca5a5' : '#b91c1c' }}>Flagged</span>
+                      ) : (
+                        <button onClick={() => flagOverstay(r)} disabled={statusBusyId === r.id}
+                          style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Flag overstay</button>
+                      )}
+                      <button onClick={() => setLateFeeDialog({ reservation: r, amount: '', note: `Overstayed ${info.label}` })}
+                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Add late fee</button>
+                      <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
+                        title={hasOutstandingBalance(r) ? 'Collect the balance before checking out' : undefined}
+                        style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button onClick={() => setSelectedId(r.id)}
-                      style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>View</button>
-                    {r.overstay?.flaggedAt ? (
-                      <span style={{ alignSelf: 'center', fontSize: '10px', fontWeight: 700, color: dark ? '#fca5a5' : '#b91c1c' }}>Flagged</span>
-                    ) : (
-                      <button onClick={() => flagOverstay(r)} disabled={statusBusyId === r.id}
-                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Flag overstay</button>
-                    )}
-                    <button onClick={() => setLateFeeDialog({ reservation: r, amount: '', note: `Overstayed ${info.label}` })}
-                      style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Add late fee</button>
-                    <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
-                      title={hasOutstandingBalance(r) ? 'Collect the balance before checking out' : undefined}
-                      style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
-                  </div>
-                </div>
-              ))}
-            </section>
-          )}
+                ))}
+              </NotificationGroup>
+            )}
 
-          {/* Pending Cancellation Requests — admin only */}
-          {isAdmin && pendingCancellations.length > 0 && (
-            <div id="attention-cancellations" style={{ background: CARD, borderRadius: '16px', border: `1px solid ${BORDER}`, padding: '16px', marginBottom: '16px' }}>
-              <div style={{ fontWeight: '700', fontSize: '13px', color: TEXT, marginBottom: '12px' }}>
-                ⚠ Pending Cancellation Requests
-              </div>
-              {pendingCancellations.map(r => (
-                <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${ROWLINE}` }}>
-                  <div style={{ fontSize: '12px', color: TEXT }}>
-                    <strong>{r.guestName}</strong> — Room {r.roomNumber}
-                    <div style={{ fontSize: '10px', color: MUTED }}>Reason: {r.cancellationReason || 'No reason given'}</div>
+            {isAdmin && pendingCancellations.length > 0 && (
+              <NotificationGroup title="Cancellation requests" detail="Sent by receptionists for approval" count={pendingCancellations.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {pendingCancellations.map(r => (
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${ROWLINE}` }}>
+                    <div style={{ fontSize: '12px', color: TEXT }}>
+                      <strong>{r.guestName}</strong> — Room {r.roomNumber}
+                      <div style={{ fontSize: '10px', color: MUTED }}>Reason: {r.cancellationReason || 'No reason given'}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button onClick={() => openCancellationDialog('approve', r)}
+                        style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                        Approve
+                      </button>
+                      <button onClick={() => denyCancellation(r.id)}
+                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                        Deny
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button onClick={() => openCancellationDialog('approve', r)}
-                      style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
-                      Approve
-                    </button>
-                    <button onClick={() => denyCancellation(r.id)}
-                      style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
-                      Deny
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </NotificationGroup>
+            )}
 
-          {(pendingRefunds.length > 0 || pendingModifications.length > 0) && (
-            <section id="attention-requests" aria-label="Refund and schedule-change review" style={{ display: 'grid', gap: '12px', marginBottom: '16px' }}>
-              {pendingRefunds.map(r => (
-                <article key={`refund-${r.id}`} style={{ background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '16px' }}>
-                  <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Refund request · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
-                  <p style={{ margin: '8px 0', color: MUTED, fontSize: '12px' }}>
-                    {r.refundDecision?.reason || 'Staff review requested'} · Proposed refund ₱{Number(r.refundDecision?.refundableAmount || 0).toLocaleString()}
-                  </p>
-                  {r.refundDecision?.alternatives?.length > 0 && (
-                    <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '11px' }}>Options: {r.refundDecision.alternatives.join(' ')}</p>
-                  )}
-                  {r.refundRequestStatus === 'needs_review' && (
-                    <label style={{ display: 'inline-grid', gap: 4, margin: '0 10px 10px 0', color: MUTED, fontSize: 11 }}>
-                      Staff-verified refund amount (₱)
-                      <input type="number" min="0.01" step="0.01" value={manualRefunds[r.id] || ''}
-                        onChange={event => setManualRefunds(current => ({ ...current, [r.id]: event.target.value }))}
-                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 7, padding: '8px' }} />
-                    </label>
-                  )}
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    <button disabled={decisionBusy === r.id || (r.refundRequestStatus === 'needs_review' && !manualRefunds[r.id])}
-                      onClick={() => decideRequest('approve-refund', r, r.refundRequestStatus === 'needs_review' ? { amount: manualRefunds[r.id] } : {})}
-                      style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Approve &amp; refund</button>
-                    <button disabled={decisionBusy === r.id} onClick={() => decideRequest('reject-refund', r)}
-                      style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Reject</button>
-                    <button disabled={decisionBusy === r.id} onClick={() => decideRequest('review-refund', r)}
-                      style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Keep for manual review</button>
-                  </div>
-                </article>
-              ))}
-              {pendingModifications.map(r => {
-                const request = r.modificationRequest;
-                const requiresManualPrice = request.outcome === 'needs_review';
-                return (
-                  <article key={`modification-${r.id}`} style={{ background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '16px' }}>
-                    <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Schedule change · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
+            {pendingRefunds.length > 0 && (
+              <NotificationGroup title="Refund requests" detail="Guests asking for a refund" count={pendingRefunds.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {pendingRefunds.map(r => (
+                  <article key={`refund-${r.id}`} style={{ background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '16px' }}>
+                    <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Refund request · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
                     <p style={{ margin: '8px 0', color: MUTED, fontSize: '12px' }}>
-                      {request.originalCheckIn} – {request.originalCheckOut} → {request.requestedCheckIn} – {request.requestedCheckOut}
+                      {r.refundDecision?.reason || 'Staff review requested'} · Proposed refund ₱{Number(r.refundDecision?.refundableAmount || 0).toLocaleString()}
                     </p>
-                    <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '12px' }}>{request.reason}</p>
-                    {requiresManualPrice && (
+                    {r.refundDecision?.alternatives?.length > 0 && (
+                      <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '11px' }}>Options: {r.refundDecision.alternatives.join(' ')}</p>
+                    )}
+                    {r.refundRequestStatus === 'needs_review' && (
                       <label style={{ display: 'inline-grid', gap: 4, margin: '0 10px 10px 0', color: MUTED, fontSize: 11 }}>
-                        Staff-verified updated total (₱)
-                        <input type="number" min="1" step="0.01" value={manualTotals[r.id] || ''}
-                          onChange={event => setManualTotals(current => ({ ...current, [r.id]: event.target.value }))}
+                        Staff-verified refund amount (₱)
+                        <input type="number" min="0.01" step="0.01" value={manualRefunds[r.id] || ''}
+                          onChange={event => setManualRefunds(current => ({ ...current, [r.id]: event.target.value }))}
                           style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 7, padding: '8px' }} />
                       </label>
                     )}
-                    {request.paymentDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>50% deposit due on extension: ₱{Number(request.paymentDue).toLocaleString()}</p>}
-                    {request.refundDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>Calculated refund after reduction: ₱{Number(request.refundDue).toLocaleString()}</p>}
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <button disabled={decisionBusy === r.id} onClick={() => decideRequest(
-                        'approve-modification', r,
-                        requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {},
-                      )} style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Approve</button>
-                      <button disabled={decisionBusy === r.id} onClick={() => decideRequest('reject-modification', r)}
+                      <button disabled={decisionBusy === r.id || (r.refundRequestStatus === 'needs_review' && !manualRefunds[r.id])}
+                        onClick={() => decideRequest('approve-refund', r, r.refundRequestStatus === 'needs_review' ? { amount: manualRefunds[r.id] } : {})}
+                        style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Approve &amp; refund</button>
+                      <button disabled={decisionBusy === r.id} onClick={() => decideRequest('reject-refund', r)}
                         style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Reject</button>
+                      <button disabled={decisionBusy === r.id} onClick={() => decideRequest('review-refund', r)}
+                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Keep for manual review</button>
                     </div>
                   </article>
-                );
-              })}
-            </section>
-          )}
-          </div>
+                ))}
+              </NotificationGroup>
+            )}
+
+            {pendingModifications.length > 0 && (
+              <NotificationGroup title="Booking change requests" detail="Guests asking to change their booking" count={pendingModifications.length} color="#2563eb" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {pendingModifications.map(r => {
+                  const request = r.modificationRequest;
+                  const requiresManualPrice = request.outcome === 'needs_review';
+                  return (
+                    <article key={`modification-${r.id}`} style={{ background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '16px' }}>
+                      <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Schedule change · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
+                      <p style={{ margin: '8px 0', color: MUTED, fontSize: '12px' }}>
+                        {request.originalCheckIn} – {request.originalCheckOut} → {request.requestedCheckIn} – {request.requestedCheckOut}
+                      </p>
+                      <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '12px' }}>{request.reason}</p>
+                      {requiresManualPrice && (
+                        <label style={{ display: 'inline-grid', gap: 4, margin: '0 10px 10px 0', color: MUTED, fontSize: 11 }}>
+                          Staff-verified updated total (₱)
+                          <input type="number" min="1" step="0.01" value={manualTotals[r.id] || ''}
+                            onChange={event => setManualTotals(current => ({ ...current, [r.id]: event.target.value }))}
+                            style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 7, padding: '8px' }} />
+                        </label>
+                      )}
+                      {request.paymentDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>50% deposit due on extension: ₱{Number(request.paymentDue).toLocaleString()}</p>}
+                      {request.refundDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>Calculated refund after reduction: ₱{Number(request.refundDue).toLocaleString()}</p>}
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button disabled={decisionBusy === r.id} onClick={() => decideRequest(
+                          'approve-modification', r,
+                          requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {},
+                        )} style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Approve</button>
+                        <button disabled={decisionBusy === r.id} onClick={() => decideRequest('reject-modification', r)}
+                          style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Reject</button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </NotificationGroup>
+            )}
+          </section>
 
           <section aria-label="Find bookings" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '14px', display: 'grid', gap: '10px', alignContent: 'start', position: 'sticky', top: '16px' }}>
             <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Find bookings</div>

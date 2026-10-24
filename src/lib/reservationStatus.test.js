@@ -84,23 +84,24 @@ describe('reservation analytics', () => {
 });
 
 describe('status steps', () => {
-  test('moves forward one step, and back one step only to undo check-in/out', () => {
+  test('moves forward one step at a time', () => {
     expect(getStatusTransitionError('pending', 'confirmed')).toBe('');
-    expect(getStatusTransitionError('confirmed', 'pending')).toMatch(/can’t go back to Pending/);
     expect(getStatusTransitionError('confirmed', 'checked-in')).toBe('');
     expect(getStatusTransitionError('checked-in', 'checked-out')).toBe('');
-    expect(getStatusTransitionError('checked-out', 'checked-in')).toBe('');
   });
-  test('refuses to skip steps either way', () => {
+  test('never goes backwards', () => {
+    expect(getStatusTransitionError('confirmed', 'pending')).toMatch(/backwards/);
+    expect(getStatusTransitionError('checked-in', 'confirmed')).toMatch(/backwards/);
+    expect(getStatusTransitionError('checked-out', 'checked-in')).toMatch(/backwards/);
+  });
+  test('refuses to skip steps', () => {
     expect(getStatusTransitionError('pending', 'checked-out')).toMatch(/Confirmed first/);
     expect(getStatusTransitionError('pending', 'checked-in')).toMatch(/can't be skipped/);
-    expect(getStatusTransitionError('checked-out', 'pending')).toMatch(/Checked in first/);
   });
-  test('cancelling and reopening', () => {
+  test('cancelling is final', () => {
     expect(getStatusTransitionError('confirmed', 'cancelled')).toBe('');
     expect(getStatusTransitionError('checked-out', 'cancelled')).not.toBe('');
-    expect(getStatusTransitionError('cancelled', 'pending')).toBe('');
-    expect(getStatusTransitionError('cancelled', 'confirmed')).toMatch(/Pending first/);
+    expect(getStatusTransitionError('cancelled', 'pending')).toMatch(/can’t be reopened/);
     expect(getStatusTransitionError('approved', 'checked-in')).toBe('');
   });
 });
