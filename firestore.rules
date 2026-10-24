@@ -1,0 +1,240 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Note: the server code in /apiHandlers uses the Firebase Admin SDK, which
+    // ignores these rules. These rules only limit what a browser can do.
+
+    // ── Helpers ─────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    // Deactivated users (status == 'inactive') get no role, so they are locked out.
+    function userRole() {
+      let path = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(path) && get(path).data.get('status', 'active') != 'inactive'
+        ? get(path).data.role
+        : null;
+    }
+    function isAdmin() {
+      return isSignedIn() && userRole() == 'admin';
+    }
+    function isReceptionist() {
+      return isSignedIn() && userRole() == 'receptionist';
+    }
+    function isStaff() {
+      return isAdmin() || isReceptionist();
+    }
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // ── Users ───────────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if isAdmin();
+      allow update: if isAdmin()
+        || (isSignedIn() && request.auth.uid == userId
+            && changedKeys().hasOnly(['name', 'settings']));
+      allow delete: if isAdmin();
+    }
+
+    // ── FAQs / quick replies (staff chat) ───────────────────
+    match /faqs/{faqId} {
+      allow read: if isStaff();
+      allow create, update, delete: if isAdmin();
+    }
+    match /quickReplies/{replyId} {
+      allow read: if isStaff();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── Rooms ───────────────────────────────────────────────
+    match /rooms/{roomId} {
+      allow read: if true;
+      allow update: if isStaff();
+      allow create, delete: if isAdmin();
+    }
+
+    // ── Reservations ────────────────────────────────────────
+    // Guests book through the server (/api/create-reservation). Staff can
+    // still edit bookings from the portal, except:
+    //   - booking prices, which only the server calculates;
+    //   - overstay records, late check-out fees and check-in/out times, which
+    //     only /api/reservation-status writes;
+    //   - receptionists can't change a cancelled booking.
+    function serverOnlyReservationFields() {
+      return [
+        'totalAmount', 'subtotalAmount', 'discountAmount', 'promoCode', 'baseRate', 'nights',
+        'overstay', 'overstayMinutes', 'lateCheckoutChargeTotal', 'lateCheckoutCharges',
+        'checkedInAt', 'checkedOutAt', 'statusUpdatedAt', 'statusUpdatedBy',
+      ];
+    }
+    match /reservations/{reservationId} {
+      allow read: if isStaff();
+      // Walk-in bookings are still created from the staff portal.
+      allow create: if isStaff()
+        && !request.resource.data.keys().hasAny(['overstay', 'overstayMinutes', 'lateCheckoutChargeTotal', 'lateCheckoutCharges']);
+      allow update: if isStaff()
+        && !changedKeys().hasAny(serverOnlyReservationFields())
+        && !(isReceptionist() && resource.data.get('status', '') == 'cancelled');
+      allow delete: if isAdmin();
+    }
+
+    // ── Staff notifications (e.g. overstay alerts) ──────────
+    match /notifications/{notificationId} {
+      allow read, create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    // ── Contact inquiries (created by the server) ───────────
+    match /contacts/{contactId} {
+      allow read: if isStaff();
+      allow update: if isStaff();
+      allow delete: if isAdmin();
+      allow create: if false;
+    }
+
+    // ── Newsletter subscribers (created by the server) ──────
+    match /subscribers/{subscriberId} {
+      allow read: if isStaff();
+      allow update, delete: if isAdmin();
+      allow create: if false;
+    }
+    match /newsletterSubscribers/{subscriberId} {
+      allow read: if isStaff();
+      allow update, delete: if isAdmin();
+      allow create: if false;
+    }
+
+    // ── Payments ────────────────────────────────────────────
+    // Cash / counter payments recorded by staff. Online payments are recorded
+    // by the server after PayMongo confirms them.
+    match /payments/{paymentId} {
+      allow read: if isStaff();
+      allow create: if isStaff()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.reservationId is string;
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Tasks ───────────────────────────────────────────────
+    match /tasks/{taskId} {
+      allow read, create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    // ── Promos & Discounts ──────────────────────────────────
+    match /promoCodes/{code} {
+      allow read: if isStaff();
+      allow create, update, delete: if isAdmin();
+    }
+    match /promos/{promoId} {
+      allow read: if isStaff();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── Activities (old dashboard log, no longer shown) ─────
+    match /activities/{activityId} {
+      allow read: if isStaff();
+      allow create: if false;
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Settings ────────────────────────────────────────────
+    match /settings/{settingId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    // ── News ────────────────────────────────────────────────
+    match /news/{articleId} {
+      allow read: if isStaff()
+        || resource.data.status == 'published';
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── Feedback ────────────────────────────────────────────
+    // Guests submit feedback through the server (/api/submit-feedback), which
+    // validates it, so browsers can't write here directly.
+    match /feedback/{feedbackId} {
+      allow create: if false;
+      allow read, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    // ── Email (admin only) ──────────────────────────────────
+    match /emails/{emailId} {
+      allow read: if isAdmin();
+      allow update: if isAdmin() && changedKeys().hasOnly(['read']);
+      allow create, delete: if false;
+    }
+
+    // ── Conversations (guest chat via Firebase Anonymous Auth) ──
+    match /conversations/{conversationId} {
+
+      function validConversationCreate() {
+        let d = request.resource.data;
+        return isSignedIn()
+          && d.keys().hasOnly(['guestName', 'guestPhone', 'guestUid', 'lastMessage', 'lastMessageAt', 'unread'])
+          && d.keys().hasAll(['guestName', 'guestPhone', 'guestUid', 'lastMessage', 'unread'])
+          && d.guestUid == request.auth.uid
+          && d.guestName is string
+          && d.guestName.size() <= 80
+          && d.guestPhone is string
+          && d.guestPhone.size() <= 20
+          && d.lastMessage is string
+          && d.lastMessage.size() <= 2000
+          && d.unread is bool;
+      }
+
+      function isOwner() {
+        return isSignedIn() && resource.data.guestUid == request.auth.uid;
+      }
+
+      function validConversationUpdate() {
+        let incoming = request.resource.data;
+        let existing = resource.data;
+        return incoming.diff(existing).affectedKeys().hasOnly(['lastMessage', 'lastMessageAt', 'unread'])
+          && incoming.guestName == existing.guestName
+          && incoming.guestPhone == existing.guestPhone
+          && incoming.guestUid == existing.guestUid
+          && incoming.lastMessage is string
+          && incoming.lastMessage.size() <= 2000;
+      }
+
+      allow read: if isStaff() || isOwner();
+      allow create: if isStaff() || validConversationCreate();
+      allow update: if isStaff() || (isOwner() && validConversationUpdate());
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+
+        function ownsParent() {
+          return isSignedIn()
+            && get(/databases/$(database)/documents/conversations/$(conversationId)).data.guestUid == request.auth.uid;
+        }
+
+        function validGuestMessage() {
+          let d = request.resource.data;
+          return d.keys().hasOnly(['text', 'sender', 'timestamp'])
+            && d.sender == 'guest'
+            && d.text is string
+            && d.text.size() > 0
+            && d.text.size() <= 2000;
+        }
+
+        allow read: if isStaff() || ownsParent();
+        allow create: if isStaff() || (ownsParent() && validGuestMessage());
+        allow update, delete: if isStaff();
+      }
+    }
+
+    // ── Default deny ────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+  }
+}
