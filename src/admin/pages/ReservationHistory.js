@@ -4,6 +4,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
+import { Pagination, usePagination } from '../../components/ui/pagination';
 
 export default function ReservationHistory() {
   const { settings, formatDate } = useSettings();
@@ -45,6 +46,7 @@ export default function ReservationHistory() {
     const matchFilter = filter === 'all' || r.status === filter;
     return matchSearch && matchFilter;
   }), sortBy, sortDir);
+  const pagination = usePagination(filtered, { pageSize: 25, resetKey: `${search}|${filter}|${sortBy}|${sortDir}` });
 
   // Badge colors: dark = saturated bg + light text, light = tinted bg + saturated text
   const badge = (kind) => {
@@ -124,7 +126,7 @@ export default function ReservationHistory() {
               {filtered.length === 0 ? (
                 <tr><td colSpan="8" style={{ textAlign: 'center', padding: '32px 0', color: MUTED }}>No reservations found.</td></tr>
               ) : (
-                filtered.map(r => (
+                pagination.pageItems.map(r => (
                   <tr key={r.id} style={{ borderTop: `1px solid ${BORDER}`, transition: 'background 0.12s' }}
                     onMouseEnter={e => e.currentTarget.style.background = HOVER_BG}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
@@ -157,6 +159,12 @@ export default function ReservationHistory() {
               )}
             </tbody>
           </table>
+          <Pagination
+            pagination={pagination}
+            itemLabel="reservations"
+            colors={{ text: TEXT, muted: MUTED, border: BORDER, background: CARD, accent: ACCENT, accentText: ACCENT_TEXT }}
+            style={{ borderTop: `1px solid ${BORDER}` }}
+          />
         </div>
       </div>
     </PageLayout>

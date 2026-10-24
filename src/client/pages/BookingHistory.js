@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Pagination, usePagination } from '../../components/ui/pagination';
 
 const DARK = '#1a3a1a';
 const ACCENT = '#4a7c59';
@@ -39,6 +40,7 @@ export default function BookingHistory() {
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
   const [requestedDates, setRequestedDates] = useState({ checkIn: '', checkOut: '' });
+  const pagination = usePagination(bookings, { pageSize: 5 });
 
   useEffect(() => {
     const history = readStoredValue('booking_history', []);
@@ -201,7 +203,8 @@ export default function BookingHistory() {
         {bookings.length > 0 ? (
           <section aria-labelledby="saved-bookings-heading" style={{ display: 'grid', gap: 12, marginBottom: 32 }}>
             <h2 id="saved-bookings-heading" style={{ fontSize: 18, color: DARK, margin: '0 0 2px' }}>Saved on this device</h2>
-            {bookings.map(booking => renderBooking(booking))}
+            {pagination.pageItems.map(booking => renderBooking(booking))}
+            <Pagination pagination={pagination} itemLabel="bookings" pageSizeOptions={[5, 10, 25]} colors={{ accent: DARK }} style={{ padding: '4px 0 0' }} />
           </section>
         ) : (
           <section style={{ border: '1px solid #e5e7eb', borderRadius: 14, padding: 18, background: '#fff', marginBottom: 24 }}>

@@ -33,6 +33,9 @@ import {
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
   getGuestCountViolation,
+  getStayUnits,
+  isSingleDayStay,
+  stayRangesOverlap,
 } from '../src/lib/bookingPricing';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 
@@ -40,15 +43,17 @@ function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+// Normalizes a stored reservation date (string or Firestore Timestamp) to YYYY-MM-DD.
+function toDateKey(value) {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : dateKey(date);
+}
+
 function addMonthsClamped(date, months) {
   const result = new Date(date.getFullYear(), date.getMonth() + months, 1);
   result.setDate(Math.min(date.getDate(), new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate()));
   return result;
-}
-
-function datesOverlap(aStart, aEnd, bStart, bEnd) {
-  // Two date ranges overlap if one starts before the other ends, both ways.
-  return aStart < bEnd && aEnd > bStart;
 }
 
 export default async function handler(req, res) {
@@ -158,11 +163,16 @@ export default async function handler(req, res) {
     if (!datePattern.test(checkIn) || !datePattern.test(checkOut)
       || isNaN(checkInDate.getTime()) || isNaN(checkOutDate.getTime())
       || dateKey(checkInDate) !== checkIn || dateKey(checkOutDate) !== checkOut
-      || checkOut <= checkIn) {
+      || checkOut < checkIn) {
       return res.status(400).json({ error: 'Please select a valid check-in and check-out date.' });
     }
+    // Same-day check-in and check-out is only valid for day tours.
+    const singleDay = isSingleDayStay(checkIn, checkOut);
+    if (singleDay && bookingType !== 'daytour') {
+      return res.status(400).json({ error: 'Single-day bookings must be day tours. Choose a check-out date after check-in for an overnight stay.' });
+    }
 
-    const stayError = getStayDurationError(checkIn, checkOut);
+    const stayError = getStayDurationError(checkIn, checkOut, { allowSingleDay: singleDay });
     if (stayError) return res.status(400).json({ error: stayError });
 
     const today = new Date();
@@ -193,9 +203,10 @@ export default async function handler(req, res) {
     const hasOverlap = roomResSnap.docs.some((d) => {
       const r = d.data();
       if (r.status === 'cancelled') return false; // cancelled bookings free up the dates
-      const existingIn = new Date(r.checkIn);
-      const existingOut = new Date(r.checkOut);
-      return datesOverlap(checkInDate, checkOutDate, existingIn, existingOut);
+      const existingIn = toDateKey(r.checkIn);
+      const existingOut = toDateKey(r.checkOut);
+      if (!existingIn || !existingOut) return false;
+      return stayRangesOverlap(checkIn, checkOut, existingIn, existingOut);
     });
 
     if (hasOverlap) {
@@ -205,7 +216,7 @@ export default async function handler(req, res) {
     }
 
     // ---- 6. Create the reservation ---------------------------------------
-    const nights = Math.ceil((checkOutDate - checkInDate) / (1000 * 60 * 60 * 24));
+    const nights = getStayUnits(checkIn, checkOut);
     const pricing = calculateBookingPrice({
       room,
       bookingType,

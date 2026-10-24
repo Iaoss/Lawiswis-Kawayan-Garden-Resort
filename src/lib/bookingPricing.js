@@ -43,8 +43,43 @@ export const MAX_STAY_NIGHTS = 30;
 const MIN_STAY_YEAR = 2000;
 const MAX_STAY_YEAR = 2100;
 
+const toDateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+// A single-day booking (day tour) uses the same date for check-in and check-out.
+export function isSingleDayStay(checkIn, checkOut) {
+  return Boolean(checkIn) && checkIn === checkOut;
+}
+
+// Number of billable days/nights. A single-day stay counts as one day.
+export function getStayUnits(checkIn, checkOut) {
+  if (!checkIn || !checkOut) return 0;
+  const start = new Date(`${checkIn}T00:00:00`);
+  const end = new Date(`${checkOut}T00:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+  const days = Math.round((end - start) / 86400000);
+  if (days < 0) return 0;
+  return days === 0 ? 1 : days;
+}
+
+// Exclusive end date used for overlap checks. A single-day stay occupies its
+// whole date, so it blocks until the next day.
+export function getOccupiedEndDate(checkIn, checkOut) {
+  if (!isSingleDayStay(checkIn, checkOut)) return checkOut;
+  const start = new Date(`${checkIn}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return checkOut;
+  start.setDate(start.getDate() + 1);
+  return toDateKey(start);
+}
+
+// True when two stays share at least one occupied day. Dates are YYYY-MM-DD.
+export function stayRangesOverlap(aCheckIn, aCheckOut, bCheckIn, bCheckOut) {
+  return aCheckIn < getOccupiedEndDate(bCheckIn, bCheckOut)
+    && getOccupiedEndDate(aCheckIn, aCheckOut) > bCheckIn;
+}
+
 // Returns an error message for an invalid or overlong stay, or '' when valid.
-export function getStayDurationError(checkIn, checkOut) {
+// Pass { allowSingleDay: true } to accept the same check-in and check-out date.
+export function getStayDurationError(checkIn, checkOut, { allowSingleDay = false } = {}) {
   const start = new Date(`${checkIn}T00:00:00`);
   const end = new Date(`${checkOut}T00:00:00`);
   if (!checkIn || !checkOut || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
@@ -54,7 +89,9 @@ export function getStayDurationError(checkIn, checkOut) {
     return 'Please select dates within a valid year range.';
   }
   const nights = Math.round((end - start) / 86400000);
-  if (nights <= 0) return 'Check-out must be after check-in.';
+  if (nights === 0 && allowSingleDay) return '';
+  if (nights < 0) return 'Check-out cannot be before check-in.';
+  if (nights === 0) return 'Check-out must be after check-in.';
   if (nights > MAX_STAY_NIGHTS) return `A stay cannot exceed ${MAX_STAY_NIGHTS} consecutive nights.`;
   return '';
 }

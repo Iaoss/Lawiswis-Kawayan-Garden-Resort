@@ -1,4 +1,5 @@
 import { adminDb } from '../lib/firebaseAdmin';
+import { stayRangesOverlap } from '../src/lib/bookingPricing';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CONFIRMED_STATUSES = new Set(['confirmed', 'checked-in', 'checked_in', 'checked out', 'checked-out']);
@@ -37,7 +38,7 @@ export default async function handler(req, res) {
       ? asDateKey(queryEnd)
       : dateKey(new Date(Date.now() + 7 * MS_PER_DAY));
 
-    if (!startDate || !endDate || endDate <= startDate) {
+    if (!startDate || !endDate || endDate < startDate) {
       return res.status(400).json({ error: 'Provide a valid date range.' });
     }
 
@@ -49,7 +50,7 @@ export default async function handler(req, res) {
       if (typeof reservation.checkIn !== 'string' || typeof reservation.checkOut !== 'string') return total;
       const checkIn = asDateKey(reservation.checkIn);
       const checkOut = asDateKey(reservation.checkOut);
-      if (!checkIn || !checkOut || !(startDate < checkOut && endDate > checkIn)) return total;
+      if (!checkIn || !checkOut || checkOut < checkIn || !stayRangesOverlap(startDate, endDate, checkIn, checkOut)) return total;
       const adults = Number(reservation.adults);
       const children = Number(reservation.children);
       return total + (Number.isInteger(adults) && adults > 0 ? adults : 0)
