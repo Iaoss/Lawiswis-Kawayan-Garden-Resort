@@ -3,6 +3,7 @@ import PageLayout from '../components/PageLayout';
 import { useSettings, DEFAULT_SETTINGS, DASHBOARD_KEYS } from '../components/SettingsContext';
 import { auth } from '../../firebase/firebase';
 import QuickRepliesManager from '../components/QuickRepliesManager';
+import { appConfirm } from '../../components/ui/app-dialog';
 
 const ACCENT_COLORS = [
   { label: 'Lime',   value: '#9cb56f' },
@@ -178,10 +179,12 @@ export default function Settings() {
       setTimeout(() => setToast(''), 2500);
       return;
     }
-    if (window.confirm('Reset all settings to default?')) {
-      setLocal({ ...DEFAULT_SETTINGS });
-      resetAll();
-    }
+    appConfirm('Your theme, colours and display options go back to the defaults.', { title: 'Reset all settings?', tone: 'warning', confirmLabel: 'Reset' })
+      .then(confirmed => {
+        if (!confirmed) return;
+        setLocal({ ...DEFAULT_SETTINGS });
+        resetAll();
+      });
   };
 
   const saveAvailability = async () => {

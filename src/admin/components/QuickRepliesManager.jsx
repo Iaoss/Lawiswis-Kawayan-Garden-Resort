@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, onSnapshot, addDoc, setDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { DEFAULT_QUICK_REPLIES, sortQuickReplies } from './quickReplyDefaults';
+import { appConfirm } from '../../components/ui/app-dialog';
 
 const EMPTY = { question: '', answer: '' };
 
@@ -48,7 +49,7 @@ export default function QuickRepliesManager({ t }) {
   };
 
   const remove = async (item) => {
-    if (!window.confirm(`Delete the quick reply "${item.question}"?`)) return;
+    if (!(await appConfirm(`"${item.question}" will be removed for all staff.`, { title: 'Delete this quick reply?', tone: 'danger', confirmLabel: 'Delete' }))) return;
     try { await deleteDoc(doc(db, 'faqs', item.id)); } catch (e) { setError(e.message || 'Could not delete.'); }
   };
 

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { auth, db } from '../../firebase/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { appConfirm } from '../../components/ui/app-dialog';
 
 export const DEFAULT_SETTINGS = {
   darkMode:         false,
@@ -116,7 +117,8 @@ export function SettingsProvider({ children }) {
       clearTimeout(warnTimer);
 
       warnTimer = setTimeout(() => {
-        if (window.confirm('You will be signed out in 1 minute due to inactivity. Stay signed in?')) reset();
+        appConfirm('You will be signed out in 1 minute because of inactivity.', { title: 'Still there?', tone: 'warning', confirmLabel: 'Stay signed in', cancelLabel: 'Sign out later' })
+          .then(stay => { if (stay) reset(); });
       }, IDLE_LOGOUT_MS - IDLE_WARNING_MS);
 
       timer = setTimeout(() => {

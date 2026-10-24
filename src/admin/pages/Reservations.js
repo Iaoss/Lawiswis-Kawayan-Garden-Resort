@@ -19,6 +19,7 @@ import {
   getStatusTransitionError,
   hasOutstandingBalance,
 } from '../../lib/reservationStatus';
+import { appPrompt } from '../../components/ui/app-dialog';
 
 const QUICK_VIEWS = {
   new: { label: 'New bookings', sortBy: 'booked', sortDir: 'desc' },
@@ -716,8 +717,11 @@ export default function Reservations() {
         setToast({ type: 'error', text: `This guest still owes ${owedText}. Collect payment in Billing before checking out.` });
         return;
       }
-      const overrideReason = window.prompt(`This guest still owes ${owedText}. To check them out anyway, enter a reason (it is saved on the booking):`);
-      if (!overrideReason || !overrideReason.trim()) return;
+      const overrideReason = await appPrompt(
+        `This guest still owes ${owedText}. You can check them out anyway as an admin; the reason and the unpaid amount are saved on the booking.`,
+        { title: 'Check out with an unpaid balance?', tone: 'warning', required: true, confirmLabel: 'Check out anyway', placeholder: 'e.g. Guest will settle by bank transfer tomorrow' },
+      );
+      if (!overrideReason) return;
       force = true;
       statusReason = overrideReason.trim();
     }
@@ -827,8 +831,15 @@ export default function Reservations() {
     }
     let reason = '';
     if (['reject-refund', 'reject-modification', 'review-refund'].includes(action)) {
-      reason = window.prompt('Add a reason for the decision:') || '';
-      if (action !== 'review-refund' && !reason.trim()) return;
+      const required = action !== 'review-refund';
+      const answer = await appPrompt('This reason is shared with the guest in the decision email.', {
+        title: action === 'review-refund' ? 'Keep for manual review' : 'Reject this request?',
+        tone: required ? 'danger' : 'info',
+        required,
+        confirmLabel: action === 'review-refund' ? 'Keep for review' : 'Reject',
+      });
+      if (answer === null) return;
+      reason = answer;
     }
     setDecisionBusy(reservation.id);
     try {

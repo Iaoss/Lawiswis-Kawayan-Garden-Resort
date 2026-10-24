@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useNavigate }
 import RequireStaffRoute from './admin/components/RequireStaffRoute';
 import Home from './client/pages/Home';
 import ClientLayout from './client/components/ClientLayout';
+import { AppDialogHost } from './components/ui/app-dialog';
 
 // Pages load on demand, so guests never download the staff portal code.
 const Login = lazy(() => import('./admin/pages/Login'));
@@ -147,6 +148,7 @@ function App() {
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
       </Suspense>
+      <AppDialogHost />
     </Router>
   );
 }

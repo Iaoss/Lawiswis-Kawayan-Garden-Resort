@@ -4,6 +4,7 @@ import { collection, addDoc, serverTimestamp, query, where, getDocs } from 'fire
 import { db } from '../../firebase/firebase';
 import { useSettings } from './SettingsContext';
 import { normalizeRoomType, ROOM_TYPES } from '../utils/roomCatalog';
+import { appAlert } from '../../components/ui/app-dialog';
 
 // Expected columns in the Excel file
 const REQUIRED_COLS = ['roomName', 'type', 'price', 'capacity', 'status'];
@@ -125,7 +126,7 @@ export default function RoomExcelImport({ onImportComplete }) {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
-      if (raw.length === 0) return alert('The file is empty.');
+      if (raw.length === 0) return appAlert('The file has no rows to import.', { title: 'Empty file', tone: 'warning' });
 
       // Normalize supported header names so spreadsheets may use either
       // machine-readable fields or display names such as "Room Name".
@@ -159,7 +160,7 @@ export default function RoomExcelImport({ onImportComplete }) {
     if (!file) return;
     const ext = file.name.split('.').pop().toLowerCase();
     if (!['xlsx', 'xls', 'csv'].includes(ext))
-      return alert('Please upload an .xlsx, .xls, or .csv file.');
+      return appAlert('Please upload an .xlsx, .xls or .csv file.', { title: 'Unsupported file', tone: 'warning' });
     parseFile(file);
   };
 

@@ -15,6 +15,7 @@ import { groupTooLargeNote, suggestCottage, suggestRooms } from '../../lib/booki
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { staffApi } from '../lib/staffApi';
+import { appAlert } from '../../components/ui/app-dialog';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
 
@@ -243,9 +244,9 @@ export default function WalkIn() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (saving) return;
-    if (!selectedRoom) return alert('Please select a room.');
-    if (stayError || !details) return alert(stayError || 'Choose the booking date first.');
-    if (!isPreferredContactMethod(form.preferredContactMethod)) return alert('Please choose a preferred contact method.');
+    if (!selectedRoom) return appAlert('Choose a room for this guest first.', { title: 'No room selected', tone: 'warning' });
+    if (stayError || !details) return appAlert(stayError || 'Choose the booking date first.', { title: 'Check the dates', tone: 'warning' });
+    if (!isPreferredContactMethod(form.preferredContactMethod)) return appAlert('Choose how the guest prefers to be contacted.', { title: 'Contact method needed', tone: 'warning' });
     if (coupleGuestLimit !== null && (Number(form.adults) || 0) + (Number(form.children) || 0) > coupleGuestLimit) {
       setUpsellOpen(true);
       return;
@@ -273,7 +274,7 @@ export default function WalkIn() {
           setForm(f => ({ ...f, roomId: '' }));
           setStep(1);
         }
-        alert(createError.message);
+        appAlert(createError.message, { title: 'Couldn’t create the booking', tone: 'danger' });
         return;
       }
       const arrivesToday = created.arrivesToday;
@@ -297,7 +298,7 @@ export default function WalkIn() {
       setCatFilter('all');
       setStep(1);
     } catch (submitError) {
-      alert(`Could not save the reservation: ${submitError.message || 'unknown error'}`);
+      appAlert(submitError.message || 'Unknown error.', { title: 'Couldn’t save the reservation', tone: 'danger' });
     } finally {
       setSaving(false);
     }

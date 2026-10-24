@@ -5,6 +5,7 @@ import {
   addDoc, serverTimestamp, doc, updateDoc, setDoc, getDocs, deleteDoc
 } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
+import { appConfirm } from '../../components/ui/app-dialog';
 
 const ACCENT = '#9cb56f';
 const DARK   = '#1A312C';
@@ -137,7 +138,7 @@ export default function Messages() {
   };
 
   const handleDeleteFAQ = async (faq) => {
-    if (!window.confirm('Delete this quick reply?')) return;
+    if (!(await appConfirm('It will be removed for all staff.', { title: 'Delete this quick reply?', tone: 'danger', confirmLabel: 'Delete' }))) return;
     setFaqs(prev => prev.filter(f => f.id !== faq.id));
     try { await deleteDoc(doc(db, 'faqs', faq.id)); } catch (e) {}
   };

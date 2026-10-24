@@ -7,6 +7,7 @@ import { createPayMongoCheckout, checkPayMongoCheckoutStatus } from '../../lib/p
 import { SortControls, sortRecords } from '../lib/listSort';
 import { receiptNotice, staffApi } from '../lib/staffApi';
 import { SERVICES, getService, isRoomGuest, priceService } from '../../lib/services';
+import { appAlert } from '../../components/ui/app-dialog';
 
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
@@ -98,7 +99,7 @@ export default function Billing() {
       fetchReservations();
       setSuccess('Extra charge added.');
     } catch (error) {
-      alert(error.message);
+      appAlert(error.message, { title: 'Couldn’t save', tone: 'danger' });
     } finally {
       setBillingBusy(false);
     }
@@ -116,7 +117,7 @@ export default function Billing() {
       fetchReservations();
       setSuccess(`${result.description} added (${formatCurrency(result.amount)}).`);
     } catch (error) {
-      alert(error.message);
+      appAlert(error.message, { title: 'Couldn’t save', tone: 'danger' });
     } finally {
       setBillingBusy(false);
     }
@@ -134,7 +135,7 @@ export default function Billing() {
       setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${receiptNotice(result)}`);
       setPaymentAmount('');
     } catch (error) {
-      alert(error.message);
+      appAlert(error.message, { title: 'Couldn’t save', tone: 'danger' });
     } finally {
       setBillingBusy(false);
     }
@@ -204,7 +205,7 @@ export default function Billing() {
   };
 
   const handleCheckout = async () => {
-    if (totalBalance(selected) > 0) return alert('Guest still has a balance. Settle it before checkout.');
+    if (totalBalance(selected) > 0) return appAlert('Collect the remaining balance before checking this guest out.', { title: 'Balance still due', tone: 'warning' });
     // The server re-checks the balance, records late check-outs, and sets the room to cleaning.
     try {
       const token = await auth.currentUser.getIdToken();
@@ -216,7 +217,7 @@ export default function Billing() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'The guest could not be checked out.');
     } catch (checkoutError) {
-      alert(checkoutError.message);
+      appAlert(checkoutError.message, { title: 'Couldn’t check out', tone: 'danger' });
       return;
     }
     try {

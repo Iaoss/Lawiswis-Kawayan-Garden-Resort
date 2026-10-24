@@ -28,6 +28,7 @@ import { Pagination, usePagination } from '../../components/ui/pagination';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
+import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -458,7 +459,9 @@ export default function BookRoom() {
       setLookupError('Enter the phone number or email used for this booking to submit a refund request.');
       return;
     }
-    if (!window.confirm(`Send a cancellation/refund request for booking #${String(booking.bookingId).slice(0, 8).toUpperCase()}? The resort must review and confirm the request.`)) return;
+    if (!(await appConfirm(`The resort reviews the request under the cancellation policy and contacts you with the result.`, {
+      title: `Cancel booking #${String(booking.bookingId).slice(0, 8).toUpperCase()}?`, tone: 'warning', confirmLabel: 'Send request', cancelLabel: 'Keep booking',
+    }))) return;
     setLookupLoading(true);
     setLookupError('');
     try {
@@ -552,9 +555,9 @@ export default function BookRoom() {
       setErrorMsg(guestCountViolation);
       return;
     }
-    if (!datesValid || nights <= 0) return alert('Please choose valid stay dates from the availability calendar first.');
+    if (!datesValid || nights <= 0) return appAlert('Choose valid dates from the availability calendar first.', { title: 'Dates needed', tone: 'warning' });
     if (tourCutoffError) { setErrorMsg(tourCutoffError); return; }
-    if (!termsRead || !termsAccepted) return alert('Please read the full Terms and Agreement and confirm that you agree before continuing.');
+    if (!termsRead || !termsAccepted) return appAlert('Please read the full Terms and Agreement and tick the box to agree before continuing.', { title: 'Terms not accepted yet', tone: 'warning' });
 
     setSubmitting(true);
     setErrorMsg('');
@@ -646,9 +649,9 @@ export default function BookRoom() {
       const serverTotal = Number(data.totalAmount || 0);
       if (Math.round(serverTotal * 100) !== Math.round(bookingTotal * 100)) {
         const serverDue = getOnlinePaymentAmount(serverTotal, paymentChoice);
-        const proceed = window.confirm(
-          `The resort's price for this booking is ₱${serverTotal.toLocaleString()}, not the ₱${bookingTotal.toLocaleString()} shown on this page. `
-          + `Continue to pay ₱${serverDue.toLocaleString()} now?`,
+        const proceed = await appConfirm(
+          `The resort's price for this booking is ₱${serverTotal.toLocaleString()}, not the ₱${bookingTotal.toLocaleString()} shown on this page.\nContinue to pay ₱${serverDue.toLocaleString()} now?`,
+          { title: 'The price has changed', tone: 'warning', confirmLabel: `Pay ₱${serverDue.toLocaleString()}`, cancelLabel: 'Not now' },
         );
         if (!proceed) {
           setErrorMsg(`Your reservation #${ref8} is saved but not paid. Its total is ₱${serverTotal.toLocaleString()}.`);

@@ -6,6 +6,7 @@ import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
 import { receiptNotice, staffApi } from '../lib/staffApi';
+import { appAlert } from '../../components/ui/app-dialog';
 
 export default function BookingTransactions() {
   const { settings, formatDate } = useSettings();
@@ -47,7 +48,7 @@ export default function BookingTransactions() {
       fetchReservations();
       setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus }));
     } catch (error) {
-      alert(error.message);
+      appAlert(error.message, { title: 'Couldn’t record the payment', tone: 'danger' });
     } finally {
       setPaymentBusy(false);
     }

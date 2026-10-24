@@ -1,0 +1,92 @@
+/* Responsive layout for the staff portal and the guest site.
+   Most pages lay out with inline styles (fixed grid columns), which media
+   queries can't reach directly, so these rules adapt those grids by what
+   their inline style says. Calendars ("repeat(7, ...)") keep 7 columns. */
+
+html, body { max-width: 100%; overflow-x: hidden; }
+.portal-main-area { min-width: 0; }
+.portal-main-content img, .client-main img { max-width: 100%; height: auto; }
+
+/* ── Tablets (≤ 1024px) ───────────────────────────────── */
+@media (max-width: 1024px) {
+  /* 4–5 stat cards in a row → 2 per row */
+  .portal-main-content [style*="grid-template-columns: repeat(4"],
+  .portal-main-content [style*="grid-template-columns: repeat(5"] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  /* Layouts with a fixed-width side panel (e.g. "1fr 280px") stack. */
+  .portal-main-content [style*="grid-template-columns: 1fr 280px"],
+  .portal-main-content [style*="grid-template-columns: 1fr 300px"],
+  .portal-main-content [style*="grid-template-columns: 1fr 320px"],
+  .portal-main-content [style*="grid-template-columns: 1fr 360px"],
+  .portal-main-content [style*="grid-template-columns: 1fr 1fr 280px"],
+  .portal-main-content [style*="grid-template-columns: 1fr 1.5fr 280px"],
+  .portal-main-content [style*="grid-template-columns: 1.5fr 280px"],
+  .portal-main-content [style*="grid-template-columns: 1fr 280px"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  /* List + detail screens (Billing, Messages, Email) narrow the list. */
+  .portal-main-content [style*="grid-template-columns: 260px 1fr"],
+  .portal-main-content [style*="grid-template-columns: 280px 1fr"] {
+    grid-template-columns: 220px minmax(0, 1fr) !important;
+  }
+
+}
+
+/* ── Phones (≤ 767px) ─────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Every multi-column grid becomes one column, except calendars. */
+  .portal-main-content [style*="grid-template-columns"]:not([style*="repeat(7"]),
+  .client-main [style*="grid-template-columns"]:not([style*="repeat(7"]):not([style*="repeat(2, minmax(0"]) {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /* Full-height split panes (Messages, Email) grow naturally when stacked. */
+  .portal-main-content [style*="height: calc(100vh - 120px)"] { height: auto !important; }
+
+  /* Pages already sit inside padded content; drop their own side padding. */
+  .portal-main-content > div > [style*="min-height: 100vh"],
+  .portal-main-content > [style*="min-height: 100vh"] {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  /* Rows of controls wrap instead of overflowing. */
+  .portal-main-content [style*="display: flex"]:not([role="toolbar"]) {
+    flex-wrap: wrap;
+  }
+
+  /* Wide tables scroll sideways inside their card. */
+  .portal-main-content table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Calendars that need a minimum width scroll instead of squashing. */
+  .portal-main-content [style*="min-width: 840px"],
+  .portal-main-content [style*="min-width: 720px"] {
+    min-width: 640px !important;
+  }
+
+  /* Fixed-width inputs/selects fill the row. */
+  .portal-main-content input:not([type="checkbox"]):not([type="radio"]),
+  .portal-main-content select,
+  .portal-main-content textarea {
+    max-width: 100%;
+  }
+
+  /* Dialogs and overlays fit the screen. */
+  [role="dialog"], [role="alertdialog"] { max-width: calc(100vw - 24px) !important; }
+
+  /* Sticky side panels sit in the flow on phones. */
+  .portal-main-content [style*="position: sticky"] { position: static !important; }
+
+  /* Top bar: smaller buttons so everything fits. */
+  .topbar-dock { gap: 4px; }
+  .topbar-icon-btn { width: 34px !important; height: 34px !important; }
+
+  /* Headings shrink a little. */
+  .portal-main-content h1, .client-main h1 { font-size: clamp(22px, 7vw, 32px); }
+}
