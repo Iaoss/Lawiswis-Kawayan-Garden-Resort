@@ -66,17 +66,18 @@ describe('same-day overnight cutoff (Philippine time)', () => {
 });
 
 describe('cottage selection', () => {
-  it('uses the published cottage rates', () => {
+  it('uses the rate card cottage prices', () => {
     expect(getCottageFee('')).toBe(0);
-    expect(getCottageFee('umbrella-hut')).toBe(500);
-    expect(getCottageFee('garden-cabana')).toBe(1000);
-    expect(getCottageFee('poolside-cabana')).toBe(1500);
+    expect(getCottageFee('daybed')).toBe(1000);
+    expect(getCottageFee('cabana')).toBe(1500);
     expect(getCottageFee('pavilion')).toBe(3000);
+    expect(getCottageFee('umbrella-hut')).toBeNull();
     expect(getCottageFee('bogus')).toBeNull();
   });
   it('still reprices bookings saved with the old cabana rates', () => {
     const base = { room: { name: 'Couple Room' }, bookingType: 'overnight', nights: 1, adults: 2, children: 0 };
-    expect(calculateBookingPrice({ ...base, cottageId: 'cabana', cottageFee: 1500 }).cottageFee).toBe(1500);
+    expect(calculateBookingPrice({ ...base, cottageId: 'umbrella-hut', cottageFee: 500 }).cottageFee).toBe(500);
+    expect(calculateBookingPrice({ ...base, cottageId: 'cabana', cottageFee: 1000 }).cottageFee).toBe(1000);
     expect(() => calculateBookingPrice({ ...base, cottageId: 'pavilion', cottageFee: 500 })).toThrow();
   });
 });
@@ -121,12 +122,12 @@ describe('booking pricing', () => {
   it.each([
     [{ type: 'FamilyRoom', baseCapacity: 4 }, 3600, 4600, 4],
     [{ type: 'FamilyRoom', baseCapacity: 6 }, 5200, 6200, 6],
-    [{ type: 'FamilySuite', baseCapacity: 4 }, 4600, 5600, 4],
-    [{ type: 'FamilySuite', baseCapacity: 6 }, 6200, 7200, 6],
+    [{ type: 'FamilySuite', baseCapacity: 4 }, 4100, 5600, 4],
+    [{ type: 'FamilySuite', baseCapacity: 6 }, 5700, 7200, 6],
     [{ type: 'JuniorSuite4' }, 6500, 8000, 4],
     [{ name: 'Paraiso Suite for 8', type: 'PresidentialSuite' }, 10000, 12000, 8],
     [{ name: 'Halimuyak Suite for 8', type: 'PresidentialSuite' }, 10000, 12000, 8],
-    [{ name: 'Main Villa for 20', type: 'MainVilla' }, 16500, 24500, 20],
+    [{ name: 'Main Villa for 20', type: 'MainVilla' }, 18500, 24500, 20],
   ])('configures %o at both stay rates', (room, daytour, overnight, capacity) => {
     expect(getRoomBaseRate(room, 'daytour')).toEqual({ amount: daytour, baseCapacity: capacity });
     expect(getRoomBaseRate(room, 'overnight')).toEqual({ amount: overnight, baseCapacity: capacity });

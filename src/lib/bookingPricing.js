@@ -68,17 +68,24 @@ export function getTourCutoffError(date, tourPeriod = 'day', now = new Date()) {
 
 export const COTTAGE_OPTIONS = [
   { id: '', label: 'No cottage', price: 0, maxGuests: 0 },
-  { id: 'umbrella-hut', label: 'Umbrella Hut (up to 6 guests)', price: 500, maxGuests: 6 },
-  { id: 'garden-cabana', label: 'Garden Cabana (up to 10 guests)', price: 1000, maxGuests: 10 },
-  { id: 'poolside-cabana', label: 'Poolside Cabana (up to 10 guests)', price: 1500, maxGuests: 10 },
+  // Resort rate card: Daybed ₱1,000, Cabana ₱1,500, Pavilion ₱3,000.
+  { id: 'daybed', label: 'Daybed (up to 6 guests)', price: 1000, maxGuests: 6 },
+  { id: 'cabana', label: 'Cabana (up to 10 guests)', price: 1500, maxGuests: 10 },
   { id: 'pavilion', label: 'Pavilion (up to 20 guests)', price: 3000, maxGuests: 20 },
 ];
 
 // Rates saved on bookings made before the cottage list changed. They're only
 // accepted when repricing those existing bookings (e.g. a date change).
 const LEGACY_COTTAGE_RATES = {
-  'umbrella-hut': [1000],
-  cabana: [1000, 1500],
+  'umbrella-hut': [500, 1000],
+  'garden-cabana': [1000],
+  'poolside-cabana': [1500],
+  cabana: [1000],
+};
+const LEGACY_COTTAGE_LABELS = {
+  'umbrella-hut': 'Umbrella Hut / Daybed (up to 6 guests)',
+  'garden-cabana': 'Garden Cabana (up to 10 guests)',
+  'poolside-cabana': 'Poolside Cabana (up to 10 guests)',
 };
 
 // Looks up the fee for the cottage the guest picked, or null if it isn't on
@@ -89,22 +96,21 @@ export function getCottageFee(cottageId) {
 }
 
 export function getCottageLabel(cottageId) {
-  if (cottageId === 'cabana') return 'Garden / Poolside Cabana (up to 10 guests)';
-  return COTTAGE_OPTIONS.find(item => item.id === cottageId)?.label || 'Cottage';
+  return COTTAGE_OPTIONS.find(item => item.id === cottageId)?.label || LEGACY_COTTAGE_LABELS[cottageId] || 'Cottage';
 }
 
-// `daytour` is the room rate for both day tours and night tours (resort
-// day room rates). Extra guests are charged per person on top.
+// Resort rate card. `daytour` is the room rate for both day tours and night
+// tours; extra guests pay the swimming rate per person on top.
 const ROOM_RATES = {
   couple: { baseCapacity: 2, daytour: 2000, overnight: 3000 },
   familyRoom4: { baseCapacity: 4, daytour: 3600, overnight: 4600 },
   familyRoom6: { baseCapacity: 6, daytour: 5200, overnight: 6200 },
-  familySuite4: { baseCapacity: 4, daytour: 4600, overnight: 5600 },
-  familySuite6: { baseCapacity: 6, daytour: 6200, overnight: 7200 },
+  familySuite4: { baseCapacity: 4, daytour: 4100, overnight: 5600 },
+  familySuite6: { baseCapacity: 6, daytour: 5700, overnight: 7200 },
   hiwagaSuite4: { baseCapacity: 4, daytour: 6500, overnight: 8000 },
   paraisoSuite8: { baseCapacity: 8, daytour: 10000, overnight: 12000 },
   halimuyakSuite8: { baseCapacity: 8, daytour: 10000, overnight: 12000 },
-  mainVilla20: { baseCapacity: 20, daytour: 16500, overnight: 24500 },
+  mainVilla20: { baseCapacity: 20, daytour: 18500, overnight: 24500 },
 };
 
 const normalizeText = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');

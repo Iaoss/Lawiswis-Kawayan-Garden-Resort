@@ -222,6 +222,13 @@ service cloud.firestore {
       }
     }
 
+    // ── Staff search across every conversation's messages ───
+    // The sidebar search reads all messages at once (a "collection group"
+    // query), which needs its own rule. Staff only, read only.
+    match /{path=**}/messages/{messageId} {
+      allow read: if isStaff();
+    }
+
     // ── Default deny ────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

@@ -9,6 +9,8 @@
 //     be more than the guest still owes. A receipt is emailed.
 //   { action: 'add-charge', reservationId, amount, description }
 //     Adds an extra charge (minibar, damage, etc.) to the guest's bill.
+//   { action: 'add-service', reservationId, serviceId, hours, persons }
+//     Adds a spa session or photoshoot package, priced from the rate card.
 //   { action: 'cancel-with-policy', reservationId, reason }
 //     Cancels a booking and records the fee and refund from the resort's
 //     cancellation policy, calculated here.
@@ -29,6 +31,7 @@ import { getCottageFee, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
 import { DEFAULT_CANCELLATION_POLICY, getDateChangeBlock, getStaffCancellationFee } from '../src/lib/cancellationPolicy';
 import { manilaDateKey } from '../src/lib/reservationStatus';
+import { isRoomGuest, priceService } from '../src/lib/services';
 
 export const COUNTER_PAYMENT_METHODS = ['cash', 'gcash', 'card', 'bank', 'online'];
 const WALK_IN_PAYMENT_STATUSES = ['paid', 'partial', 'pending'];
@@ -124,6 +127,38 @@ async function addCharge({ staff, reservationId, amount, description }) {
       paymentStatus: paymentStatusFor(total, Number(reservation.amountPaid || 0)),
     });
     return { extraCharges, balance: money(total - Number(reservation.amountPaid || 0)) };
+  });
+}
+
+// Adds a rate-card service (spa, photoshoot package) to the bill. The price
+// is worked out here from the service rules; only the choices come from the
+// browser (service, hours, people).
+async function addService({ staff, reservationId, serviceId, hours, persons }) {
+  return adminDb.runTransaction(async transaction => {
+    const { ref, reservation } = await getReservation(transaction, reservationId);
+    if (['cancelled', 'checked-out'].includes(reservation.status)) {
+      throw new BillingError(409, 'Services can only be added to an active booking.');
+    }
+    const priced = priceService(serviceId, { hours, persons, roomGuest: isRoomGuest(reservation) });
+    if (priced.error) throw new BillingError(400, priced.error);
+    const charge = money(priced.amount);
+    const extraCharges = money(Number(reservation.extraCharges || 0) + charge);
+    const total = Number(reservation.totalAmount || 0) + extraCharges;
+    transaction.update(ref, {
+      extraCharges,
+      extraChargeItems: FieldValue.arrayUnion({
+        id: crypto.randomUUID(),
+        description: priced.description,
+        amount: charge,
+        serviceId,
+        hours: Number(hours) || null,
+        persons: Number(persons) || null,
+        addedBy: staff.uid,
+        addedAt: new Date().toISOString(),
+      }),
+      paymentStatus: paymentStatusFor(total, Number(reservation.amountPaid || 0)),
+    });
+    return { amount: charge, description: priced.description, extraCharges, balance: money(total - Number(reservation.amountPaid || 0)) };
   });
 }
 
@@ -409,6 +444,7 @@ export default async function handler(req, res) {
     let result;
     if (body.action === 'record-payment') result = await recordPayment({ ...body, staff });
     else if (body.action === 'add-charge') result = await addCharge({ ...body, staff });
+    else if (body.action === 'add-service') result = await addService({ ...body, staff });
     else if (body.action === 'cancel-with-policy') result = await cancelWithPolicy({ ...body, staff });
     else if (body.action === 'create-walk-in') result = await createWalkIn({ staff, booking: body.booking });
     else if (body.action === 'edit-booking') result = await editBooking({ ...body, staff });

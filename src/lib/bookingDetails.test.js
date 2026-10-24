@@ -96,9 +96,24 @@ describe('walk-in smart suggestions', () => {
     expect(ids).not.toContain('a');
   });
   test('suggests the smallest cottage that seats everyone', () => {
-    expect(suggestCottage(4).cottage.id).toBe('umbrella-hut');
-    expect(suggestCottage(8).cottage.id).toBe('garden-cabana');
+    expect(suggestCottage(4).cottage.id).toBe('daybed');
+    expect(suggestCottage(8).cottage.id).toBe('cabana');
     expect(suggestCottage(15).cottage.id).toBe('pavilion');
     expect(suggestCottage(25).note).toMatch(/another cottage/);
+  });
+});
+
+describe('rate-card services', () => {
+  // eslint-disable-next-line global-require
+  const { priceService } = require('./services');
+  test('spa is ₱1,000 per hour, 20% off for room guests', () => {
+    expect(priceService('spa', { hours: 2 }).amount).toBe(2000);
+    expect(priceService('spa', { hours: 2, roomGuest: true }).amount).toBe(1600);
+    expect(priceService('spa', { hours: 0 }).error).toBeTruthy();
+  });
+  test('photoshoot package: ₱3,500 for 5 people / 4 hours, then +₱300 per person and +₱500 per hour', () => {
+    expect(priceService('photoshoot', { persons: 5, hours: 4 }).amount).toBe(3500);
+    expect(priceService('photoshoot', { persons: 7, hours: 5 }).amount).toBe(3500 + 600 + 500);
+    expect(priceService('photoshoot', { persons: 5, hours: 10 }).error).toMatch(/8 AM–5 PM/);
   });
 });

@@ -383,6 +383,11 @@ export default function ReceptionistLayout({ children }) {
     <AnimatedSidebarProvider
       open={!collapsed}
       onOpenChange={(open) => setCollapsed(!open)}
+      resizable
+      defaultWidth={210}
+      minWidth={180}
+      maxWidth={360}
+      widthStorageKey="lkgr_receptionist_sidebar_width"
       className="min-h-screen"
       style={{ fontFamily: "'Poppins', sans-serif", background: BG, '--sidebar-width': '210px', '--sidebar-width-icon': '64px', '--sidebar-width-mobile': 'min(18rem, 88vw)' }}
     >

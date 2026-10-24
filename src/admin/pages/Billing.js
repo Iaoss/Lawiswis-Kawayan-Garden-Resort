@@ -6,6 +6,7 @@ import { useSettings } from '../components/SettingsContext';
 import { createPayMongoCheckout, checkPayMongoCheckoutStatus } from '../../lib/paymongo';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { receiptNotice, staffApi } from '../lib/staffApi';
+import { SERVICES, getService, isRoomGuest, priceService } from '../../lib/services';
 
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
@@ -34,6 +35,9 @@ export default function Billing() {
   const [sortDir, setSortDir] = useState('desc');
   const [selected, setSelected] = useState(null);
   const [extraCharge, setExtraCharge] = useState({ description: '', amount: '' });
+  const [search, setSearch] = useState('');
+  // Rate-card service being added (spa / photoshoot). Priced again on the server.
+  const [service, setService] = useState({ serviceId: 'spa', hours: 1, persons: 5 });
   const [paymentAmount, setPaymentAmount] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -93,6 +97,24 @@ export default function Billing() {
       setSelected(prev => ({ ...prev, extraCharges: result.extraCharges }));
       fetchReservations();
       setSuccess('Extra charge added.');
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const handleAddService = async () => {
+    if (billingBusy) return;
+    setBillingBusy(true);
+    try {
+      const result = await staffApi('staff-billing', {
+        action: 'add-service', reservationId: selected.id,
+        serviceId: service.serviceId, hours: Number(service.hours), persons: Number(service.persons),
+      });
+      setSelected(prev => ({ ...prev, extraCharges: result.extraCharges }));
+      fetchReservations();
+      setSuccess(`${result.description} added (${formatCurrency(result.amount)}).`);
     } catch (error) {
       alert(error.message);
     } finally {
@@ -233,6 +255,15 @@ export default function Billing() {
     </div>
   );
 
+  // Search by guest, room, phone, email or booking reference.
+  const searchTerm = search.trim().toLowerCase().replace(/^#/, '');
+  const shownReservations = sortRecords(reservations.filter(r => !searchTerm || [
+    r.guestName, r.roomNumber && `room ${r.roomNumber}`, r.roomNumber, r.phone, r.email, r.id,
+  ].some(value => String(value || '').toLowerCase().includes(searchTerm))), sortBy, sortDir);
+
+  const selectedService = getService(service.serviceId);
+  const servicePrice = selected ? priceService(service.serviceId, { ...service, roomGuest: isRoomGuest(selected) }) : null;
+
   return (
     <PageLayout>
       <div style={{ fontFamily: SANS, background: PAPER, minHeight: '100vh', padding: '28px' }}>
@@ -250,14 +281,18 @@ export default function Billing() {
           <div>
             <h3 style={{ fontWeight: '600', color: SUBINK, fontSize: '12px', margin: '0 0 10px', textTransform: 'none' }}>Active reservations</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
+              <input type="search" value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="Search guest, room, phone or #ref"
+                aria-label="Search reservations"
+                style={{ ...inp, padding: '8px 10px', fontSize: '12px' }} />
               <SortControls sortBy={sortBy} sortDir={sortDir} onSortBy={setSortBy} onSortDir={setSortDir}
                 style={{ border: `1px solid ${LINE}`, borderRadius: '6px', padding: '7px 8px', fontSize: '12px', fontFamily: SANS, background: SURFACE, color: INK, outline: 'none' }} />
             </div>
-            {reservations.length === 0 ? (
-              <p style={{ color: MUTED, fontSize: '13px', padding: '12px 0' }}>No active reservations.</p>
+            {shownReservations.length === 0 ? (
+              <p style={{ color: MUTED, fontSize: '13px', padding: '12px 0' }}>{reservations.length === 0 ? 'No active reservations.' : 'No reservations match your search.'}</p>
             ) : (
               <div style={{ borderTop: `1px solid ${LINE}` }}>
-                {sortRecords(reservations, sortBy, sortDir).map(r => (
+                {shownReservations.map(r => (
                   <div key={r.id} onClick={() => selectReservation(r)}
                     style={{
                       padding: '11px 10px', borderBottom: `1px solid ${LINE}`, cursor: 'pointer',
@@ -298,6 +333,15 @@ export default function Billing() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
                     <Receipt label="Room charge" value={formatCurrency(selected.totalAmount)} />
                     <Receipt label="Extra charges" value={formatCurrency(selected.extraCharges || 0)} />
+                    {Array.isArray(selected.extraChargeItems) && selected.extraChargeItems.length > 0 && (
+                      <div style={{ display: 'grid', gap: '4px', paddingLeft: '12px' }}>
+                        {selected.extraChargeItems.map(item => (
+                          <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: SUBINK }}>
+                            <span>{item.description}</span><span style={money}>{formatCurrency(item.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <Receipt label="Paid to date" value={`− ${formatCurrency(totalPaid(selected))}`} />
                     <div style={{ borderTop: `1px solid ${LINE}`, marginTop: '4px', paddingTop: '10px' }}>
                       <Receipt label="Balance due" value={formatCurrency(totalBalance(selected))} strong />
@@ -322,6 +366,46 @@ export default function Billing() {
                       Add
                     </button>
                   </div>
+                </div>
+
+                {/* Rate-card services */}
+                <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: '10px', padding: '18px 24px' }}>
+                  <h3 style={{ fontWeight: '600', color: INK, marginBottom: '4px', fontSize: '13px' }}>Add service</h3>
+                  <p style={{ fontSize: '11.5px', color: SUBINK, margin: '0 0 12px' }}>{selectedService?.summary}</p>
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <label style={{ display: 'grid', gap: '4px', fontSize: '11px', color: SUBINK }}>Service
+                      <select value={service.serviceId}
+                        onChange={e => setService({ serviceId: e.target.value, hours: e.target.value === 'spa' ? 1 : 4, persons: 5 })}
+                        style={{ ...inp, minWidth: '180px' }}>
+                        {SERVICES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                      </select>
+                    </label>
+                    <label style={{ display: 'grid', gap: '4px', fontSize: '11px', color: SUBINK }}>Hours
+                      <input type="number" min={service.serviceId === 'spa' ? 1 : 4} max={selectedService?.maxHours} value={service.hours}
+                        onChange={e => setService(prev => ({ ...prev, hours: e.target.value }))} style={{ ...inp, width: '90px' }} />
+                    </label>
+                    {service.serviceId === 'photoshoot' && (
+                      <label style={{ display: 'grid', gap: '4px', fontSize: '11px', color: SUBINK }}>People
+                        <input type="number" min="1" max={selectedService?.maxPersons} value={service.persons}
+                          onChange={e => setService(prev => ({ ...prev, persons: e.target.value }))} style={{ ...inp, width: '90px' }} />
+                      </label>
+                    )}
+                    <button onClick={handleAddService} disabled={billingBusy || !servicePrice || Boolean(servicePrice.error)}
+                      style={{ background: SURFACE2, color: INK, border: `1px solid ${LINE}`, borderRadius: '6px', padding: '9px 18px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', fontFamily: SANS }}>
+                      Add {servicePrice && !servicePrice.error ? formatCurrency(servicePrice.amount) : ''}
+                    </button>
+                  </div>
+                  {servicePrice?.error ? (
+                    <div style={{ marginTop: '8px', fontSize: '11.5px', color: BRICK }}>{servicePrice.error}</div>
+                  ) : servicePrice?.breakdown && (
+                    <div style={{ marginTop: '10px', display: 'grid', gap: '3px' }}>
+                      {servicePrice.breakdown.map(([label, amount]) => (
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: SUBINK }}>
+                          <span>{label}</span><span style={money}>{formatCurrency(amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Payment — two clearly separate lanes */}

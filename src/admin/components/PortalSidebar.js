@@ -112,7 +112,9 @@ function PortalGlobalSearch({ navItems, portalName }) {
       setLoading(true);
       setError('');
       if (!cacheRef.current) {
-        cacheRef.current = Promise.all(
+        // Each kind of record is loaded on its own: if one can't be read
+        // (permissions, offline), the others are still searchable.
+        cacheRef.current = Promise.allSettled(
           searchableCollections.map(async (config) => {
               const snapshot = await getDocs(
                 config.collectionGroup
@@ -126,7 +128,14 @@ function PortalGlobalSearch({ navItems, portalName }) {
                 data: document.data(),
               }));
           }),
-        ).then((groups) => groups.flat());
+        ).then((outcomes) => {
+          const loaded = outcomes.filter((outcome) => outcome.status === 'fulfilled');
+          outcomes.forEach((outcome, index) => {
+            if (outcome.status === 'rejected') console.warn(`Search skipped ${searchableCollections[index].name}:`, outcome.reason?.message);
+          });
+          if (!loaded.length) throw new Error('No records could be loaded for search.');
+          return loaded.flatMap((outcome) => outcome.value);
+        });
       }
 
       cacheRef.current

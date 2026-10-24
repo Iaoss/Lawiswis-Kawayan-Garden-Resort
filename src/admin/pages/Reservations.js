@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db, auth } from '../../firebase/firebase';
 import { collection, getDocs, getDoc, setDoc, updateDoc, doc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
@@ -499,6 +500,7 @@ function ReservationBoard({
    ════════════════════════════════════════════════════════════════ */
 
 export default function Reservations() {
+  const navigate = useNavigate();
   const { settings, formatDate } = useSettings();
   const dark = settings?.darkMode;
   const initialBookingQuery = (() => {
@@ -915,11 +917,10 @@ export default function Reservations() {
   const filtered = sortRecords(reservations.filter(r => {
     const matchFilter = filter === 'all' || r.status === filter;
     const matchQuick = !quickView || matchesQuickView(r, quickView, now);
-    const matchSearch =
-      r.guestName?.toLowerCase().includes(search.toLowerCase()) ||
-      r.roomNumber?.includes(search) ||
-      r.status?.includes(search.toLowerCase()) ||
-      r.id?.toLowerCase().includes(search.toLowerCase());
+    // Guest, room, phone, email, status or booking reference (with or without #).
+    const term = search.trim().toLowerCase().replace(/^#/, '');
+    const matchSearch = !term || [r.guestName, r.roomNumber, r.phone, r.email, r.status, r.id]
+      .some(value => String(value || '').toLowerCase().includes(term));
     return matchFilter && matchQuick && matchSearch;
   }), sortBy, sortDir);
 
@@ -1128,50 +1129,67 @@ export default function Reservations() {
           );
         })()}
 
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
-          <div style={{ fontWeight: '700', fontSize: '18px', color: TEXT }}>Reservation List</div>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* Header: two columns — finding bookings on the left, what needs
+            attention on the right — so both are visible without scrolling. */}
+        <div style={{ fontWeight: '700', fontSize: '18px', color: TEXT, marginBottom: '12px' }}>Reservation List</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '14px', marginBottom: '20px', alignItems: 'stretch' }}>
+          <section aria-label="Find bookings" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '14px', display: 'grid', gap: '10px', alignContent: 'start' }}>
             {/* Search */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '10px', padding: '8px 14px' }}>
               <i className="ti ti-search" style={{ fontSize: '14px', color: MUTED }} />
-              <input value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Search guest, status, etc"
-                style={{ border: 'none', outline: 'none', fontSize: '12px', fontFamily: "'Poppins', sans-serif", width: '180px', background: 'transparent', color: TEXT }} />
+              <input value={search} onChange={e => setSearch(e.target.value)} type="search"
+                placeholder="Search guest, room, phone, status or #ref"
+                aria-label="Search reservations"
+                style={{ border: 'none', outline: 'none', fontSize: '12px', fontFamily: "'Poppins', sans-serif", width: '100%', background: 'transparent', color: TEXT }} />
             </div>
-
-            {quickView && (
-              <button onClick={clearQuickView} title="Clear card filter"
-                style={{ ...inp, display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' }}>
-                {QUICK_VIEWS[quickView].label} <i className="ti ti-x" style={{ fontSize: '12px' }} />
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              {/* Filter */}
+              <select value={filter} onChange={e => setFilter(e.target.value)} style={inp} aria-label="Filter by status">
+                <option value="all">All status</option>
+                <option value="pending">Pending</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="checked-in">Checked-in</option>
+                <option value="checked-out">Checked-out</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+              <SortControls sortBy={sortBy} sortDir={sortDir}
+                onSortBy={v => setSortBy(v)}
+                onSortDir={v => setSortDir(v)} style={inp} />
+              {quickView && (
+                <button onClick={clearQuickView} title="Clear card filter"
+                  style={{ ...inp, display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600' }}>
+                  {QUICK_VIEWS[quickView].label} <i className="ti ti-x" style={{ fontSize: '12px' }} />
+                </button>
+              )}
+              {/* Add booking */}
+              <button onClick={() => navigate(isReceptionist ? '/receptionist/walkin' : '/admin/walkin')}
+                style={{ marginLeft: 'auto', background: ACCENT, border: 'none', borderRadius: '10px', padding: '10px 18px', fontSize: '12px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: ACCENT_TEXT }}>
+                + Add Booking
               </button>
-            )}
+            </div>
+          </section>
 
-            <SortControls sortBy={sortBy} sortDir={sortDir}
-              onSortBy={v => setSortBy(v)}
-              onSortDir={v => setSortDir(v)} style={inp} />
-
-            {/* Filter */}
-            <select value={filter} onChange={e => setFilter(e.target.value)} style={inp}>
-              <option value="all">All status</option>
-              <option value="pending">Pending</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="checked-in">Checked-in</option>
-              <option value="checked-out">Checked-out</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-
-            {/* Add booking */}
-            <button onClick={() => window.location.href = isReceptionist ? '/receptionist/walkin' : '/admin/walkin'}
-              style={{ background: ACCENT, border: 'none', borderRadius: '10px', padding: '10px 18px', fontSize: '12px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: ACCENT_TEXT }}>
-              + Add Booking
-            </button>
-          </div>
+          <section aria-label="Needs attention" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '14px', display: 'grid', gap: '8px', alignContent: 'start' }}>
+            <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Needs attention</div>
+            {[
+              { id: 'attention-overstay', label: 'Overstayed guests', count: overstayed.length, color: '#dc2626' },
+              ...(isAdmin ? [{ id: 'attention-cancellations', label: 'Cancellation requests', count: pendingCancellations.length, color: '#d97706' }] : []),
+              ...(isAdmin ? [{ id: 'attention-requests', label: 'Refund requests', count: pendingRefunds.length, color: '#d97706' }] : []),
+              { id: 'attention-requests', label: 'Booking change requests', count: pendingModifications.length, color: '#2563eb' },
+            ].map(item => (
+              <button key={item.label} type="button" disabled={!item.count}
+                onClick={() => document.getElementById(item.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '10px', padding: '8px 12px', fontSize: '12px', fontFamily: 'inherit', color: TEXT, cursor: item.count ? 'pointer' : 'default', textAlign: 'left' }}>
+                <span>{item.label}</span>
+                <span style={{ minWidth: 24, textAlign: 'center', borderRadius: 999, padding: '2px 8px', fontWeight: 700, background: item.count ? item.color : 'transparent', color: item.count ? '#fff' : MUTED }}>{item.count}</span>
+              </button>
+            ))}
+          </section>
         </div>
 
         {/* Overstayed guests — admin and receptionist */}
         {overstayed.length > 0 && (
-          <section role="alert" aria-label="Overstayed guests"
+          <section id="attention-overstay" role="alert" aria-label="Overstayed guests"
             style={{ background: dark ? '#3b1212' : '#fef2f2', border: '1px solid #dc2626', borderRadius: '14px', padding: '16px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', gap: '8px', flexWrap: 'wrap' }}>
               <div style={{ fontWeight: 700, fontSize: '13px', color: dark ? '#fca5a5' : '#b91c1c' }}>
@@ -1215,7 +1233,7 @@ export default function Reservations() {
 
         {/* Pending Cancellation Requests — admin only */}
         {isAdmin && pendingCancellations.length > 0 && (
-          <div style={{ background: CARD, borderRadius: '16px', border: `1px solid ${BORDER}`, padding: '16px', marginBottom: '16px' }}>
+          <div id="attention-cancellations" style={{ background: CARD, borderRadius: '16px', border: `1px solid ${BORDER}`, padding: '16px', marginBottom: '16px' }}>
             <div style={{ fontWeight: '700', fontSize: '13px', color: TEXT, marginBottom: '12px' }}>
               ⚠ Pending Cancellation Requests
             </div>
@@ -1241,7 +1259,7 @@ export default function Reservations() {
         )}
 
         {(pendingRefunds.length > 0 || pendingModifications.length > 0) && (
-          <section aria-label="Refund and schedule-change review" style={{ display: 'grid', gap: '12px', marginBottom: '16px' }}>
+          <section id="attention-requests" aria-label="Refund and schedule-change review" style={{ display: 'grid', gap: '12px', marginBottom: '16px' }}>
             {pendingRefunds.map(r => (
               <article key={`refund-${r.id}`} style={{ background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '16px' }}>
                 <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Refund request · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
