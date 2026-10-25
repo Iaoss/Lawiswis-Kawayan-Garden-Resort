@@ -373,17 +373,33 @@ export default function Home() {
           *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
         }
         @media (max-width: 700px) {
-          .lk-home-hero { height: auto !important; min-height: 810px !important; }
-          .lk-home-hero-content { align-items: flex-start !important; padding: 52px 22px 126px !important; box-sizing: border-box; }
+          .lk-home-hero { height: auto !important; min-height: 640px !important; }
+          .lk-home-hero-content { align-items: flex-start !important; padding: 96px 20px 110px !important; box-sizing: border-box; }
           .lk-home-hero-content > div { width: 100%; max-width: 560px !important; }
-          .lk-home-hero h1 { font-size: clamp(42px, 11vw, 56px) !important; margin-top: 0 !important; }
+          .lk-home-hero h1 { font-size: clamp(30px, 8.6vw, 40px) !important; line-height: 1.12 !important; margin-top: 0 !important; margin-bottom: 14px !important; }
+          .lk-home-hero-content p { font-size: 14px !important; line-height: 1.7 !important; margin-bottom: 18px !important; }
+          .lk-home-hero-content [class*="occupancy"], .lk-home-hero-content [role="status"] { font-size: 12px !important; }
           .lk-home-hero-ctas { gap: 10px !important; }
           .lk-home-hero-ctas button { padding: 13px 16px !important; }
-          .lk-home-rating { left: 16px !important; right: auto !important; bottom: 18px !important; padding: 9px 12px !important; }
-          .lk-home-rating > div:first-child { font-size: 16px !important; }
+          .lk-home-rating { display: none !important; }
+          /* Stats: a 2 × 2 grid on phones instead of one tall column. */
+          .lk-home-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 0 !important; }
+          .lk-home-stats > div { padding: 22px 10px !important; border-right: none !important; border-bottom: 1px solid #E3DCC5; }
+          .lk-home-stats > div:nth-child(odd) { border-right: 1px solid #E3DCC5 !important; }
+          .lk-home-stats > div:nth-child(n+3) { border-bottom: none; }
+          .lk-home-stats > div > div:first-child { font-size: 26px !important; }
+          .lk-est-badge { right: 12px !important; bottom: -18px !important; padding: 12px 16px !important; }
+          /* Room categories: one compact row under the hero instead of a tall
+             overlapping box. */
+          .lk-home-categories { margin-top: 16px !important; }
+          .lk-home-categories .responsive-grid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; }
+          .lk-home-cat { padding: 14px 4px !important; gap: 6px !important; border-right: 1px solid rgba(255,255,255,0.12) !important; }
+          .lk-home-cat:last-child { border-right: none !important; }
+          .lk-home-cat i { font-size: 19px !important; }
+          .lk-home-cat span { font-size: 9.5px !important; line-height: 1.3 !important; }
         }
         @media (max-width: 390px) {
-          .lk-home-hero { min-height: 850px !important; }
+          .lk-home-hero { min-height: 620px !important; }
           .lk-home-hero-content { padding-left: 17px !important; padding-right: 17px !important; }
           .lk-home-rating { display: none !important; }
         }
@@ -450,10 +466,10 @@ export default function Home() {
       </div>
 
       {/* STAY CATEGORY STRIP — overlaps the bottom of the hero */}
-      <div className="section-container" style={{ position: 'relative', zIndex: 10, marginTop: '-40px', marginBottom: '0' }}>
+      <div className="section-container lk-home-categories" style={{ position: 'relative', zIndex: 10, marginTop: '-40px', marginBottom: '0' }}>
         <div className="responsive-grid-5" style={{ background: FOREST, borderRadius: '6px', boxShadow: '0 20px 50px rgba(0,0,0,0.22)', overflow: 'hidden' }}>
           {stayCategories.map((c, i) => (
-            <div key={c.label} onClick={() => navigate('/rooms')} style={{
+            <div key={c.label} className="lk-home-cat" onClick={() => navigate('/rooms')} style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '26px 12px', textAlign: 'center', cursor: 'pointer',
               borderRight: i < stayCategories.length - 1 ? '1px solid rgba(255,255,255,0.12)' : 'none',
             }}>
@@ -469,7 +485,7 @@ export default function Home() {
         <Reveal delay={100} y={24}>
           <div style={{ position: 'relative' }}>
             <img src={photos.about} alt="Lawiswis Kawayan Garden Resort" style={{ width: '100%', height: '440px', objectFit: 'cover', borderRadius: '6px' }} />
-            <div style={{ position: 'absolute', bottom: '-22px', right: '-22px', background: PAPER, borderRadius: '6px', padding: '18px 22px', boxShadow: '0 12px 40px rgba(0,0,0,0.14)', border: `1px solid ${LINE}` }}>
+            <div className="lk-est-badge" style={{ position: 'absolute', bottom: '-22px', right: '-22px', background: PAPER, borderRadius: '6px', padding: '18px 22px', boxShadow: '0 12px 40px rgba(0,0,0,0.14)', border: `1px solid ${LINE}` }}>
               <div style={{ fontWeight: '600', fontSize: '20px', color: FOREST, fontFamily: SERIF }}>Est. 2006</div>
               <div style={{ fontSize: '11px', color: '#6b6a5c', fontFamily: SANS }}>Calumpit, Bulacan</div>
             </div>
@@ -502,7 +518,7 @@ export default function Home() {
       {/* STATS BAND */}
       <div className="section-container" style={{ margin: '0 auto 100px' }}>
         <Reveal>
-          <div className="responsive-grid-4" style={{ background: CREAM, borderRadius: '6px', overflow: 'hidden', border: `1px solid ${LINE}` }}>
+          <div className="responsive-grid-4 lk-home-stats" style={{ background: CREAM, borderRadius: '6px', overflow: 'hidden', border: `1px solid ${LINE}` }}>
             {[
               { value: '18+', label: 'Years Welcoming Guests' },
               { value: '32', label: 'Cozy Rooms & Suites' },

@@ -7,7 +7,9 @@
    breaking the sticky staff sidebar. */
 html, body { max-width: 100%; overflow-x: clip; }
 .portal-main-area { min-width: 0; }
-.portal-main-content img, .client-main img { max-width: 100%; height: auto; }
+/* Keep images inside their box. (No height:auto here: it breaks full-size
+   "cover" photos such as the hero slider and the About Us chapters.) */
+.portal-main-content img, .client-main img { max-width: 100%; }
 
 /* ── Tablets (≤ 1024px) ───────────────────────────────── */
 @media (max-width: 1024px) {
@@ -89,6 +91,8 @@ html, body { max-width: 100%; overflow-x: clip; }
   .topbar-dock { gap: 4px; }
   .topbar-icon-btn { width: 34px !important; height: 34px !important; }
 
-  /* Headings shrink a little. */
+  /* Headings shrink a little. Guest-site section headings have their size
+     set inline, so they need !important to scale down on phones. */
   .portal-main-content h1, .client-main h1 { font-size: clamp(22px, 7vw, 32px); }
+  .client-main h2 { font-size: clamp(24px, 7vw, 30px) !important; line-height: 1.2 !important; }
 }

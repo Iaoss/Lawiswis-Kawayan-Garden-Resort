@@ -124,14 +124,14 @@ export default function CinematicScroll({ chapters, className }: { chapters: Cha
       {/* Background and progress pill stay pinned while the chapters scroll past. */}
       <div className="sticky top-0 h-screen w-full overflow-hidden">
         <Background chapters={chapters} activeIndex={activeIndex} reduceMotion={reduceMotion} />
-        <div className="absolute bottom-6 left-1/2 z-40 -translate-x-1/2">
+        <div className="absolute bottom-4 left-1/2 z-40 -translate-x-1/2 scale-90 md:bottom-6 md:scale-100">
           <ProgressPill chapters={chapters} activeIndex={activeIndex} progress={scrollYProgress} />
         </div>
       </div>
 
       <div className="pointer-events-none absolute inset-0 z-30">
         {chapters.map(chapter => (
-          <div key={chapter.id} className="flex h-screen w-full items-center justify-start px-6 md:px-24">
+          <div key={chapter.id} className="flex h-screen w-full items-center justify-start px-5 pb-20 pt-24 md:px-24 md:py-0">
             <motion.div
               variants={textContainer}
               initial={reduceMotion ? 'visible' : 'hidden'}
@@ -139,25 +139,25 @@ export default function CinematicScroll({ chapters, className }: { chapters: Cha
               viewport={{ once: false, margin: '-20%' }}
               className="pointer-events-auto max-w-4xl"
             >
-              <motion.div variants={fadeIn} className="mb-6 flex items-center gap-4">
-                <div className="h-0.5 w-12" style={{ background: ACCENT }} />
-                <span className="text-xs font-bold uppercase tracking-[0.3em]" style={{ color: ACCENT }}>
+              <motion.div variants={fadeIn} className="mb-4 flex items-center gap-3 md:mb-6 md:gap-4">
+                <div className="h-0.5 w-8 md:w-12" style={{ background: ACCENT }} />
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] md:text-xs md:tracking-[0.3em]" style={{ color: ACCENT }}>
                   Chapter {chapter.id} · {chapter.eyebrow}
                 </span>
               </motion.div>
 
-              <div className="mb-6 overflow-hidden py-2">
+              <div className="mb-4 overflow-hidden py-2 md:mb-6">
                 <motion.h2
                   variants={textReveal}
-                  className="text-4xl font-medium leading-none tracking-tight text-white md:text-7xl"
+                  className="text-[30px] font-medium leading-[1.08] tracking-tight text-white sm:text-5xl md:text-7xl md:leading-none"
                   style={{ fontFamily: "'Fraunces', Georgia, serif" }}
                 >
                   {chapter.title}
                 </motion.h2>
               </div>
 
-              <motion.div variants={fadeIn} className="max-w-md rounded-2xl border border-white/10 bg-white/5 p-6 shadow-2xl backdrop-blur-md">
-                <p className="text-base font-light leading-relaxed text-white/85 md:text-lg">{chapter.description}</p>
+              <motion.div variants={fadeIn} className="max-w-md rounded-2xl border border-white/10 bg-black/25 p-4 shadow-2xl backdrop-blur-md md:bg-white/5 md:p-6">
+                <p className="text-sm font-light leading-relaxed text-white/90 md:text-lg">{chapter.description}</p>
               </motion.div>
 
               {chapter.action && (
@@ -167,7 +167,7 @@ export default function CinematicScroll({ chapters, className }: { chapters: Cha
                   whileHover={reduceMotion ? undefined : { scale: 1.04, x: 8 }}
                   whileTap={reduceMotion ? undefined : { scale: 0.96 }}
                   onClick={chapter.action.onClick}
-                  className="group mt-10 flex items-center gap-4 font-semibold text-white"
+                  className="group mt-6 flex items-center gap-4 font-semibold text-white md:mt-10"
                 >
                   <span className="relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-white/30">
                     <span className="absolute inset-0 translate-y-full bg-white transition-transform duration-300 group-hover:translate-y-0" />

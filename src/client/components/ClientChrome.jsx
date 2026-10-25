@@ -229,6 +229,17 @@ export default function ClientChrome({ children }) {
           .client-mobile-menu-toggle { display: inline-grid; place-items: center; flex-shrink: 0; }
           .client-announcement-bar { padding: 7px 16px !important; }
           .client-announcement-bar > div:first-child { gap: 8px 14px !important; }
+          footer > div:first-child { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        }
+        @media (max-width: 640px) {
+          /* One short line on phones: phone number and Facebook only. */
+          .client-announcement-bar { flex-wrap: nowrap !important; }
+          .client-announcement-bar > div:first-child > span:not(:nth-child(2)) { display: none; }
+          .client-header-wrap { padding: 10px 10px 0 !important; }
+          .client-header { padding: 6px 6px 6px 14px !important; gap: 8px !important; }
+          .client-header-logo { width: 118px !important; }
+          .client-header-cta { padding: 10px 14px !important; font-size: 10.5px !important; letter-spacing: 0.08em !important; }
+          .client-mobile-menu-toggle { width: 38px !important; height: 38px !important; font-size: 19px !important; }
           footer > div:first-child { grid-template-columns: 1fr !important; }
         }
       `}</style>

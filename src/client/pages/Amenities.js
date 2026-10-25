@@ -81,10 +81,10 @@ export default function Amenities() {
       <section className="mx-auto grid max-w-6xl items-center gap-12 px-6 pb-16 pt-14 lg:grid-cols-2 lg:pt-20">
         <Reveal>
           <div className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6B7A4F]" style={{ fontFamily: SANS }}>Our amenities</div>
-          <h1 className="m-0 mb-5 text-[clamp(40px,6vw,64px)] leading-[1.05] text-[#22261B]" style={{ fontFamily: SERIF }}>
+          <h1 className="m-0 mb-5 text-[clamp(30px,7.5vw,64px)] leading-[1.08] text-[#22261B]" style={{ fontFamily: SERIF }}>
             Unwind and explore — something for everyone.
           </h1>
-          <p className="m-0 mb-8 max-w-lg text-[15px] leading-8 text-[#5c5a4c]" style={{ fontFamily: SANS }}>
+          <p className="m-0 mb-8 max-w-lg text-[14px] leading-7 text-[#5c5a4c] md:text-[15px] md:leading-8" style={{ fontFamily: SANS }}>
             Whether it’s a thrilling team activity, a relaxing evening with friends, or a romantic escape, Lawiswis Kawayan Garden Resort &amp; Spa brings relaxation, fun and unique experiences together in one bamboo garden.
           </p>
           <div className="flex flex-wrap gap-3">
