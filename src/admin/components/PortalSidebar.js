@@ -44,7 +44,7 @@ const MENU_GROUPS = [
   {
     label: 'Management & Logs',
     icon: 'ti ti-settings-cog',
-    children: ['Reports', 'History', 'News Management', 'Users', 'Cancellation'],
+    children: ['Reports', 'History', 'Activity Log', 'News Management', 'Users', 'Cancellation'],
   },
 ];
 

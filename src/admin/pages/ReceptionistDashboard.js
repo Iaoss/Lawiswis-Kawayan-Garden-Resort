@@ -9,6 +9,7 @@ import ReceptionistLayout from '../components/ReceptionistLayout';
 import { useSettings } from '../components/SettingsContext';
 import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
 import { getOverstay, getOverstayStats, getPeriodRange, getReservationAverages, manilaDateKey } from '../../lib/reservationStatus';
+import { getFeedbackSummary } from '../../lib/dashboardMetrics';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -111,6 +112,14 @@ export default function ReceptionistDashboard() {
     };
     fetch().catch(err => console.error(err)).finally(() => setLoaded(true));
   }, []);
+
+  // Live guest feedback, so the front desk sees satisfaction as it comes in.
+  const [feedback, setFeedback] = useState([]);
+  useEffect(() => onSnapshot(collection(db, 'feedback'),
+    snap => setFeedback(snap.docs.map(d => d.data())),
+    err => console.error('feedback listener error:', err)), []);
+  const feedbackAll = useMemo(() => getFeedbackSummary(feedback), [feedback]);
+  const feedbackWeek = useMemo(() => getFeedbackSummary(feedback, { sinceMs: now.getTime() - 7 * 86400000 }), [feedback, now]);
 
   // live tasks
   useEffect(() => {
@@ -385,6 +394,55 @@ export default function ReceptionistDashboard() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Guest satisfaction (live from the QR feedback form) */}
+        <div style={{ ...S.card, marginTop: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
+            <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Guest Satisfaction</div>
+            <div style={{ fontSize: '11px', color: MUTED }}>Live from the feedback QR form</div>
+          </div>
+          {feedbackAll.ratedCount === 0 ? (
+            <p style={{ fontSize: '12px', color: MUTED, margin: 0 }}>No guest feedback yet.</p>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '18px' }}>
+              <div style={{ display: 'flex', gap: '18px', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: '34px', fontWeight: '800', color: TEXT, lineHeight: 1 }}>{feedbackAll.average.toFixed(1)}<span style={{ fontSize: '12px', color: MUTED, fontWeight: 500 }}> /5</span></div>
+                  <div style={{ fontSize: '11px', color: MUTED, marginTop: '4px' }}>{feedbackAll.word} · {feedbackAll.ratedCount} reviews</div>
+                </div>
+                <div style={{ fontSize: '11px', color: MUTED, lineHeight: 1.8 }}>
+                  <div>Last 7 days: <strong style={{ color: TEXT }}>{feedbackWeek.ratedCount ? `${feedbackWeek.average.toFixed(1)} (${feedbackWeek.ratedCount})` : 'none yet'}</strong></div>
+                  <div>Happy (4–5★): <strong style={{ color: TEXT }}>{feedbackAll.positive}</strong></div>
+                  <div>Unhappy (1–2★): <strong style={{ color: feedbackAll.negative ? '#ef4444' : TEXT }}>{feedbackAll.negative}</strong></div>
+                </div>
+              </div>
+              <div>
+                {feedbackAll.categories.map(c => (
+                  <div key={c.key} style={{ marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginBottom: '3px' }}>
+                      <span style={{ color: MUTED }}>{c.label}</span>
+                      <span style={{ color: TEXT, fontWeight: 600 }}>{c.count ? c.average.toFixed(1) : '—'}</span>
+                    </div>
+                    <div style={{ height: '4px', borderRadius: '2px', background: BORDER, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${(c.average / 5) * 100}%`, background: ACCENT }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: MUTED, marginBottom: '6px' }}>Latest comments</div>
+                {feedbackAll.latestComments.length === 0 ? (
+                  <div style={{ fontSize: '12px', color: MUTED }}>No written comments yet.</div>
+                ) : feedbackAll.latestComments.map((f, i) => (
+                  <div key={i} style={{ fontSize: '12px', color: TEXT, marginBottom: '8px', lineHeight: 1.5 }}>
+                    <span style={{ color: '#f59e0b' }}>{'★'.repeat(Math.round(Number(f.rating) || 0))}</span>{' '}
+                    “{f.comment.length > 120 ? `${f.comment.slice(0, 120)}…` : f.comment}”
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Tasks + Overstaying guests ── */}

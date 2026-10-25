@@ -1,6 +1,6 @@
 // Smart suggestions for walk-ins: given how many guests there are, which of
 // the free rooms fit them best, and which cottage size suits the group.
-import { COTTAGE_OPTIONS, getGuestCountViolation, getRoomMaximumGuests } from './bookingPricing';
+import { COTTAGE_OPTIONS, getGuestCountViolation, getRoomMaximumGuests, stayRangesOverlap } from './bookingPricing';
 import { priceBookingDetails } from './bookingDetails';
 
 // Rooms that can hold the whole group, cheapest first for this booking
@@ -45,4 +45,34 @@ export function groupTooLargeNote(rooms, details) {
   if (guests >= 15) return `Groups of ${guests} can be booked as a corporate / big group package, or split across several rooms.`;
   if (biggest && guests > biggest) return `No single free room holds ${guests} guests (largest free room: ${biggest}). Split the group across rooms with separate bookings.`;
   return 'No free room matches this group size for these dates. Try other dates or split the group.';
+}
+
+const shiftDateKey = (dateKey, days) => {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+const daysApart = (from, to) => Math.round((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86400000);
+
+// When the dates a guest asked for are taken, the closest free dates for the
+// same room and the same length of stay, nearest first (later dates win a
+// tie). `bookedRanges` are the room's other active bookings as
+// { checkIn, checkOut }; candidates must start on or after `minDate` and end
+// on or before `maxDate` (date keys).
+export function findNearestOpenDates({ checkIn, checkOut, bookedRanges = [], minDate, maxDate, count = 3, searchDays = 60 }) {
+  if (!checkIn || !checkOut) return [];
+  const length = Math.max(0, daysApart(checkIn, checkOut));
+  const isFree = (start, end) => !bookedRanges.some(range => range?.checkIn
+    && stayRangesOverlap(start, end, range.checkIn.slice(0, 10), String(range.checkOut || range.checkIn).slice(0, 10)));
+  const results = [];
+  for (let distance = 1; distance <= searchDays && results.length < count; distance += 1) {
+    for (const offset of [distance, -distance]) {
+      const start = shiftDateKey(checkIn, offset);
+      const end = shiftDateKey(start, length);
+      if ((minDate && start < minDate) || (maxDate && end > maxDate)) continue;
+      if (isFree(start, end)) results.push({ checkIn: start, checkOut: end, daysFromRequested: offset });
+      if (results.length >= count) break;
+    }
+  }
+  return results;
 }

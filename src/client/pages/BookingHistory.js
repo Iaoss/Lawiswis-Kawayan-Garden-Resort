@@ -48,6 +48,10 @@ export default function BookingHistory() {
     bookingOption: 'overnight', checkIn: '', checkOut: '', overnightTimeSlot: 'morning', adults: 1, children: 0,
   });
   const changeIsTour = requestedChange.bookingOption !== 'overnight';
+  // Cancellation cost shown before the guest confirms: { bookingId, preview }.
+  const [refundPreview, setRefundPreview] = useState(null);
+  // Closest free dates offered when the requested date is taken.
+  const [dateSuggestions, setDateSuggestions] = useState(null);
   const pagination = usePagination(bookings, { pageSize: 5 });
 
   useEffect(() => {
@@ -67,7 +71,11 @@ export default function BookingHistory() {
       body: JSON.stringify({ action, reference: bookingReference, contact: contact.trim(), ...details }),
     });
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || 'Could not process the reservation request.');
+    if (!response.ok) {
+      const failure = new Error(result.error || 'Could not process the reservation request.');
+      failure.suggestions = Array.isArray(result.suggestions) ? result.suggestions : [];
+      throw failure;
+    }
     return result;
   };
 
@@ -96,12 +104,33 @@ export default function BookingHistory() {
     }
   };
 
+  // Step 1: show what cancelling would cost. Nothing is sent to the resort yet.
+  const previewRefund = async booking => {
+    setLoading(true);
+    setError('');
+    setNotice('');
+    try {
+      const result = await sendGuestAction('refund-preview', booking.bookingId);
+      if (result.alreadyRequested) {
+        setNotice('A refund request for this reservation is already on file.');
+        return;
+      }
+      setRefundPreview({ bookingId: booking.bookingId, preview: result.preview });
+    } catch (previewError) {
+      setError(previewError.message || 'Could not work out the cancellation fee.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Step 2: the guest has seen the fee and refund, and confirms.
   const requestRefund = async booking => {
     setLoading(true);
     setError('');
     setNotice('');
     try {
       const result = await sendGuestAction('refund', booking.bookingId);
+      setRefundPreview(null);
       const update = item => item.bookingId === booking.bookingId
         ? { ...item, refundRequestStatus: result.outcome || 'requested' }
         : item;
@@ -136,6 +165,7 @@ export default function BookingHistory() {
     setLoading(true);
     setError('');
     setNotice('');
+    setDateSuggestions(null);
     try {
       // Tours are single-day, so their check-out is the same date.
       const result = await sendGuestAction('schedule-change', booking.bookingId, {
@@ -151,6 +181,7 @@ export default function BookingHistory() {
         : `Your requested change was sent to resort staff. ${result.modificationRequest?.reason || ''}${result.modificationRequest?.proposedTotal != null ? ` New total: ₱${Number(result.modificationRequest.proposedTotal).toLocaleString()}.` : ''}`);
     } catch (requestError) {
       setError(requestError.message || 'Could not request a schedule change.');
+      if (requestError.suggestions?.length) setDateSuggestions({ bookingId: booking.bookingId, list: requestError.suggestions });
     } finally {
       setLoading(false);
     }
@@ -197,11 +228,45 @@ export default function BookingHistory() {
           {booking.modificationRequest.reason && <div style={{ marginTop: 4 }}>{booking.modificationRequest.reason}</div>}
         </div>
       )}
-      {canRequestRefund(booking) && (
-        <button type="button" disabled={loading} onClick={() => requestRefund(booking)} style={{ marginTop: 16, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '10px 14px', color: DARK, background: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
-          Request Refund
+      {canRequestRefund(booking) && refundPreview?.bookingId !== booking.bookingId && (
+        <button type="button" disabled={loading} onClick={() => previewRefund(booking)} style={{ marginTop: 16, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '10px 14px', color: DARK, background: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
+          Cancel &amp; request refund
         </button>
       )}
+      {refundPreview?.bookingId === booking.bookingId && (() => {
+        const p = refundPreview.preview || {};
+        const peso = value => `₱${Number(value || 0).toLocaleString()}`;
+        const reviewOnly = p.outcome === 'needs_review';
+        return (
+          <section role="dialog" aria-label="Cancellation summary" style={{ marginTop: 16, border: '1px solid #f3c99b', background: '#fffaf3', borderRadius: 10, padding: 16, color: '#4b5563', fontSize: 13 }}>
+            <strong style={{ color: DARK, fontSize: 14 }}>Before you cancel</strong>
+            <dl style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px 16px', margin: '12px 0' }}>
+              <dt>Booking total</dt><dd style={{ margin: 0, fontWeight: 600 }}>{peso(p.totalAmount)}</dd>
+              <dt>Amount you paid</dt><dd style={{ margin: 0, fontWeight: 600 }}>{peso(p.amountPaid)}</dd>
+              {p.policyRate != null && (
+                <>
+                  <dt>Cancellation fee ({p.policyRate}%{p.daysBeforeCheckIn != null ? `, ${p.daysBeforeCheckIn} day${p.daysBeforeCheckIn === 1 ? '' : 's'} before arrival` : ''})</dt>
+                  <dd style={{ margin: 0, fontWeight: 600, color: '#b45309' }}>{peso(p.feeAmount)}</dd>
+                </>
+              )}
+              <dt style={{ fontWeight: 700, color: DARK }}>Refund to you</dt>
+              <dd style={{ margin: 0, fontWeight: 800, color: DARK }}>{reviewOnly ? 'Decided by staff' : peso(p.refundableAmount)}</dd>
+            </dl>
+            {p.reason && <p style={{ margin: '0 0 12px', fontSize: 12, lineHeight: 1.6 }}>{p.reason}</p>}
+            <p style={{ margin: '0 0 12px', fontSize: 12, lineHeight: 1.6 }}>
+              Resort staff approve every refund. Refunds go back to your original payment method. <Link to="/cancellation-policy" style={{ color: ACCENT }}>Read the cancellation policy</Link>.
+            </p>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button type="button" disabled={loading} onClick={() => requestRefund(booking)} style={{ border: 0, borderRadius: 8, padding: '10px 14px', background: '#b45309', color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
+                Confirm cancellation request
+              </button>
+              <button type="button" disabled={loading} onClick={() => setRefundPreview(null)} style={{ border: '1px solid #d1d5db', borderRadius: 8, padding: '10px 14px', background: '#fff', color: DARK, fontWeight: 700, cursor: 'pointer' }}>
+                Keep my booking
+              </button>
+            </div>
+          </section>
+        );
+      })()}
       {allowModification
         && (!booking.modificationRequest || ['rejected', 'completed'].includes(booking.modificationRequest.status))
         && ['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase()) && (
@@ -245,6 +310,21 @@ export default function BookingHistory() {
           <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>Children (under 10)
             <input type="number" min="0" max="40" required value={requestedChange.children} onChange={event => setRequestedChange(current => ({ ...current, children: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
           </label>
+          {dateSuggestions?.bookingId === booking.bookingId && dateSuggestions.list.length > 0 && (
+            <div style={{ gridColumn: '1 / -1', background: '#eff6f0', borderRadius: 8, padding: 12, fontSize: 12, color: DARK }}>
+              <strong>Closest available dates for this room</strong>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                {dateSuggestions.list.map((option, index) => (
+                  <button key={option.checkIn} type="button"
+                    onClick={() => { setRequestedChange(current => ({ ...current, checkIn: option.checkIn, checkOut: option.checkOut })); setDateSuggestions(null); setError(''); }}
+                    style={{ border: `1px solid ${ACCENT}`, borderRadius: 999, padding: '7px 12px', background: index === 0 ? DARK : '#fff', color: index === 0 ? '#fff' : DARK, fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+                    {index === 0 ? 'Closest: ' : ''}{formatMDY(option.checkIn)}{option.checkOut !== option.checkIn ? ` – ${formatMDY(option.checkOut)}` : ''}
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: 6, color: '#4b5563' }}>Pick one to fill in the dates, then press “Request change”.</div>
+            </div>
+          )}
           <DateOccupancy date={requestedChange.checkIn} focus={changeIsTour ? requestedChange.bookingOption : 'overnight'} colors={{ accent: DARK, background: '#fff' }} style={{ gridColumn: '1 / -1' }} />
           <p style={{ gridColumn: '1 / -1', margin: 0, color: '#6b7280', fontSize: 11, lineHeight: 1.6 }}>
             The resort recalculates the price for your new booking and staff review the request. If it costs more you'll get a payment link for the difference. Under the resort policy, fewer guests, a cheaper booking type or a shorter stay aren't refunded.

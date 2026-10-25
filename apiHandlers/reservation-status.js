@@ -26,6 +26,7 @@
 import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { verifyStaff } from '../lib/verifyStaff';
+import { logActivity } from '../lib/activityLog';
 import {
   MAX_LATE_FEE,
   RESERVATION_STATUSES,
@@ -185,11 +186,13 @@ export default async function handler(req, res) {
 
   try {
     let checkOutDate = '';
+    let guestName = '';
     const result = await adminDb.runTransaction(async transaction => {
       const snapshot = await transaction.get(reservationRef);
       if (!snapshot.exists) throw new StatusError(404, 'This reservation could not be found.');
       const reservation = snapshot.data();
       checkOutDate = reservation.checkOut || '';
+      guestName = reservation.guestName || '';
       const context = { transaction, reservationRef, reservation, staff };
       if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500), force: req.body?.force === true });
       // Closes a past booking the guest never arrived for (pending/confirmed,
@@ -212,6 +215,17 @@ export default async function handler(req, res) {
       try {
         await adminDb.collection('notifications').doc(`overstay-${reservationId}-${checkOutDate}`).update({ resolved: true });
       } catch { /* no alert was raised for this stay */ }
+    }
+    if (!result.unchanged) {
+      const ref = `#${reservationId.slice(0, 8).toUpperCase()}`;
+      const entry = action === 'add-late-fee'
+        ? { action: 'late_fee_added', summary: `Added ₱${Number(result.lateFeeAdded || 0).toLocaleString()} late check-out charge on booking ${ref}` }
+        : action === 'flag-overstay'
+          ? { action: 'overstay_flagged', summary: `Flagged an overstay on booking ${ref}` }
+          : action === 'close-expired'
+            ? { action: 'no_show_closed', summary: `Closed booking ${ref} as a no-show` }
+            : { action: 'status_changed', summary: `Changed booking ${ref} from ${result.previousStatus} to ${result.status}` };
+      await logActivity(staff, { ...entry, reservationId, guestName: guestName || '' });
     }
     return res.status(200).json({ ok: true, reservationId, ...result });
   } catch (error) {

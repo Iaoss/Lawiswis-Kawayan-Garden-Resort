@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { db, secondaryAuth } from '../../firebase/firebase';
+import { auth, db, secondaryAuth } from '../../firebase/firebase';
 import { collection, getDocs, updateDoc, doc, setDoc } from 'firebase/firestore';
-import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { createUserWithEmailAndPassword, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import Layout from '../components/Layout';
 import { useSettings } from '../components/SettingsContext';
+import { logStaffActivity } from '../lib/activityLog';
 
 export default function UserManagement() {
   const { settings } = useSettings();
@@ -43,6 +44,10 @@ export default function UserManagement() {
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'receptionist' });
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
+  // Row being edited: { id, name, role }.
+  const [editing, setEditing] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const myUid = auth.currentUser?.uid;
 
   const fetchUsers = async () => {
     const snap = await getDocs(collection(db, 'users'));
@@ -73,6 +78,7 @@ export default function UserManagement() {
         status: 'active',
       });
 
+      logStaffActivity('staff_account_created', `Created ${form.role} account for ${form.name} (${form.email})`);
       setSuccess(`User ${form.name} created successfully!`);
       setForm({ name: '', email: '', password: '', role: 'receptionist' });
       setShowForm(false);
@@ -82,10 +88,52 @@ export default function UserManagement() {
     }
   };
 
-  const toggleStatus = async (id, currentStatus) => {
+  const toggleStatus = async (user) => {
+    const currentStatus = user.status || 'active';
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
-    await updateDoc(doc(db, 'users', id), { status: newStatus });
-    fetchUsers();
+    setError(''); setSuccess('');
+    try {
+      await updateDoc(doc(db, 'users', user.id), { status: newStatus });
+      logStaffActivity('staff_account_status', `${newStatus === 'active' ? 'Reactivated' : 'Deactivated'} the account of ${user.name || user.email}`);
+      fetchUsers();
+    } catch (err) {
+      setError(err.message || 'Could not change the account status.');
+    }
+  };
+
+  // Admins can change a staff member's name and role. The email is their
+  // login, so it stays as is (create a new account for a new email).
+  const saveEdit = async () => {
+    const user = users.find(u => u.id === editing?.id);
+    const name = editing?.name.trim() || '';
+    if (!user) return;
+    if (name.length < 2 || name.length > 80) { setError('Enter a name between 2 and 80 characters.'); return; }
+    setSavingEdit(true); setError(''); setSuccess('');
+    try {
+      await updateDoc(doc(db, 'users', user.id), { name, role: editing.role });
+      const changes = [];
+      if (name !== user.name) changes.push(`name "${user.name || ''}" → "${name}"`);
+      if (editing.role !== user.role) changes.push(`role ${user.role} → ${editing.role}`);
+      if (changes.length) logStaffActivity('staff_account_edited', `Edited ${user.email}: ${changes.join(', ')}`);
+      setSuccess(`The account of ${name} was updated.`);
+      setEditing(null);
+      fetchUsers();
+    } catch (err) {
+      setError(err.message || 'Could not save the changes.');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const sendReset = async (user) => {
+    setError(''); setSuccess('');
+    try {
+      await sendPasswordResetEmail(auth, user.email);
+      logStaffActivity('staff_password_reset', `Sent a password reset email to ${user.email}`);
+      setSuccess(`Password reset email sent to ${user.email}.`);
+    } catch (err) {
+      setError(err.message || 'Could not send the reset email.');
+    }
   };
 
   /* ── shared styles ── */
@@ -168,16 +216,35 @@ export default function UserManagement() {
               ) : (
                 users.map(u => {
                   const active = (u.status || 'active') === 'active';
+                  const isMe = u.id === myUid;
+                  const isEditing = editing?.id === u.id;
+                  const smallBtn = {
+                    fontSize: '11px', padding: '6px 12px', borderRadius: '8px', fontWeight: '600',
+                    cursor: 'pointer', border: `1px solid ${BORDER}`, background: CARD2, color: SUBTEXT, fontFamily: "'Poppins', sans-serif",
+                  };
                   return (
                     <tr key={u.id} style={{ borderTop: `1px solid ${BORDER}`, transition: 'background 0.12s' }}
                       onMouseEnter={e => e.currentTarget.style.background = HOVER_BG}
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                      <td style={{ padding: '12px 16px', fontWeight: '600', color: TEXT }}>{u.name}</td>
+                      <td style={{ padding: '12px 16px', fontWeight: '600', color: TEXT }}>
+                        {isEditing ? (
+                          <input aria-label="Full name" value={editing.name} maxLength={80}
+                            onChange={e => setEditing({ ...editing, name: e.target.value })} style={{ ...inp, marginTop: 0 }} />
+                        ) : <>{u.name}{isMe && <span style={{ color: MUTED, fontWeight: 500 }}> (you)</span>}</>}
+                      </td>
                       <td style={{ padding: '12px 16px', color: MUTED }}>{u.email}</td>
                       <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>
-                        <span style={{ ...badgeStyle, ...badge(u.role === 'admin' ? 'purple' : 'blue') }}>
-                          {u.role}
-                        </span>
+                        {isEditing && !isMe ? (
+                          <select aria-label="Role" value={editing.role} onChange={e => setEditing({ ...editing, role: e.target.value })}
+                            style={{ ...inp, marginTop: 0, cursor: 'pointer', textTransform: 'capitalize' }}>
+                            <option value="receptionist">Receptionist</option>
+                            <option value="admin">Admin</option>
+                          </select>
+                        ) : (
+                          <span style={{ ...badgeStyle, ...badge(u.role === 'admin' ? 'purple' : 'blue') }}>
+                            {u.role}
+                          </span>
+                        )}
                       </td>
                       <td style={{ padding: '12px 16px' }}>
                         <span style={{ ...badgeStyle, ...badge(active ? 'green' : 'red') }}>
@@ -185,14 +252,35 @@ export default function UserManagement() {
                         </span>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
-                        <button onClick={() => toggleStatus(u.id, u.status || 'active')}
-                          style={{
-                            fontSize: '11px', padding: '6px 14px', borderRadius: '8px', fontWeight: '600',
-                            cursor: 'pointer', border: 'none', fontFamily: "'Poppins', sans-serif",
-                            ...(active ? badge('red') : badge('green')),
-                          }}>
-                          {active ? 'Deactivate' : 'Activate'}
-                        </button>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {isEditing ? (
+                            <>
+                              <button type="button" onClick={saveEdit} disabled={savingEdit}
+                                style={{ ...smallBtn, border: 'none', background: ACCENT, color: ACCENT_TEXT }}>
+                                {savingEdit ? 'Saving…' : 'Save'}
+                              </button>
+                              <button type="button" onClick={() => setEditing(null)} style={smallBtn}>Cancel</button>
+                            </>
+                          ) : (
+                            <>
+                              <button type="button" onClick={() => setEditing({ id: u.id, name: u.name || '', role: u.role || 'receptionist' })} style={smallBtn}>
+                                Edit
+                              </button>
+                              {u.email && (
+                                <button type="button" onClick={() => sendReset(u)} style={smallBtn} title="Email this person a link to set a new password">
+                                  Reset password
+                                </button>
+                              )}
+                              {/* Admins can't deactivate their own account. */}
+                              {!isMe && (
+                                <button type="button" onClick={() => toggleStatus(u)}
+                                  style={{ ...smallBtn, border: 'none', ...(active ? badge('red') : badge('green')) }}>
+                                  {active ? 'Deactivate' : 'Activate'}
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );

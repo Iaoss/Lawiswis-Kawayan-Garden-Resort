@@ -39,6 +39,7 @@ const Settings = lazy(() => import('./admin/pages/Settings'));
 const NewsManagement = lazy(() => import('./admin/pages/NewsManagement.js'));
 const Email = lazy(() => import('./admin/pages/Email.js'));
 const PromoCodes = lazy(() => import('./admin/pages/PromoCodes'));
+const ActivityLog = lazy(() => import('./admin/pages/ActivityLog'));
 
 // Opening another page (e.g. "Book room") starts at the top, not wherever
 // the previous page was scrolled to.
@@ -91,7 +92,8 @@ function App() {
       <Routes>
         <Route path="/admin/login" element={<Login />} />
 
-        <Route path="/admin" element={<RequireStaffRoute><Outlet /></RequireStaffRoute>}>
+        {/* Every /admin page is admin-only; receptionists use /receptionist. */}
+        <Route path="/admin" element={<RequireStaffRoute allowedRoles={['admin']}><Outlet /></RequireStaffRoute>}>
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<RequireStaffRoute allowedRoles={['admin']}><AdminDashboard /></RequireStaffRoute>} />
           <Route path="rooms" element={<RoomManagement />} />
@@ -104,6 +106,7 @@ function App() {
           <Route path="history" element={<ReservationHistory />} />
           <Route path="reports" element={<Reports />} />
           <Route path="users" element={<UserManagement />} />
+          <Route path="activity" element={<ActivityLog />} />
           <Route path="feedback" element={<Feedback />} />
           <Route path="contact-inquiries" element={<ContactInquiries />} />
           <Route path="cancellation" element={<CancellationPolicy />} />

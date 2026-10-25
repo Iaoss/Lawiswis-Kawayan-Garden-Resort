@@ -5,6 +5,8 @@ import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
 import { getGuestCountViolation, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getBookingOptionId, normalizeBookingDetails } from '../src/lib/bookingDetails';
 import { calculateReservationModification } from '../lib/reservationModification';
+import { findNearestOpenDates } from '../src/lib/bookingSuggestions';
+import { manilaDateKey } from '../src/lib/reservationStatus';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 const ACTIVE_REFUND_STATUSES = ['eligible', 'needs_review', 'approved', 'processing', 'awaiting_confirmation'];
@@ -57,16 +59,11 @@ async function readCancellationPolicy() {
   return policySnapshot.exists ? policySnapshot.data() : DEFAULT_CANCELLATION_POLICY;
 }
 
-async function requestRefund(reservation, contact) {
+// Works out the cancellation fee and refund for a booking from the policy and
+// the payments actually received. Used both for the preview the guest sees
+// before confirming and for the request itself, so the two always match.
+async function computeRefundDecision(reservation) {
   const data = reservation.data();
-  if (!['pending', 'confirmed', 'checked-in'].includes(String(data.status || '').toLowerCase())) {
-    return { error: 'A refund request cannot be submitted for this reservation status.' };
-  }
-  if (ACTIVE_REFUND_STATUSES.includes(String(data.refundRequestStatus || '').toLowerCase())
-    || ['refunded', 'rejected', 'not_eligible'].includes(String(data.refundRequestStatus || '').toLowerCase())) {
-    return { alreadyRequested: true, outcome: data.refundDecision?.outcome || data.refundRequestStatus };
-  }
-
   const [policy, paymentSnapshot, refundSnapshot] = await Promise.all([
     readCancellationPolicy(),
     adminDb.collection('payments').where('reservationId', '==', reservation.id).get(),
@@ -114,6 +111,20 @@ async function requestRefund(reservation, contact) {
       decision.reason = 'No refundable amount could be matched to the original payment method.';
     }
   }
+  return decision;
+}
+
+async function requestRefund(reservation, contact) {
+  const data = reservation.data();
+  if (!['pending', 'confirmed', 'checked-in'].includes(String(data.status || '').toLowerCase())) {
+    return { error: 'A refund request cannot be submitted for this reservation status.' };
+  }
+  if (ACTIVE_REFUND_STATUSES.includes(String(data.refundRequestStatus || '').toLowerCase())
+    || ['refunded', 'rejected', 'not_eligible'].includes(String(data.refundRequestStatus || '').toLowerCase())) {
+    return { alreadyRequested: true, outcome: data.refundDecision?.outcome || data.refundRequestStatus };
+  }
+
+  const decision = await computeRefundDecision(reservation);
 
   const requestId = crypto.randomUUID();
   const result = await adminDb.runTransaction(async transaction => {
@@ -172,6 +183,31 @@ async function requestRefund(reservation, contact) {
   return { alreadyRequested: false, outcome: decision.outcome, decision };
 }
 
+// What a cancellation would cost, shown to the guest before they confirm.
+// Nothing is saved.
+async function previewRefund(reservation) {
+  const data = reservation.data();
+  if (!['pending', 'confirmed', 'checked-in'].includes(String(data.status || '').toLowerCase())) {
+    return { error: 'A refund request cannot be submitted for this reservation status.' };
+  }
+  if (data.refundRequestStatus) {
+    return { alreadyRequested: true, outcome: data.refundDecision?.outcome || data.refundRequestStatus };
+  }
+  const decision = await computeRefundDecision(reservation);
+  return {
+    preview: {
+      outcome: decision.outcome,
+      reason: decision.reason || '',
+      totalAmount: Number(data.totalAmount || 0),
+      amountPaid: Number(data.amountPaid || 0),
+      policyRate: decision.policyRate ?? null,
+      feeAmount: decision.feeAmount ?? null,
+      refundableAmount: decision.refundableAmount ?? 0,
+      daysBeforeCheckIn: decision.daysBeforeCheckIn ?? null,
+    },
+  };
+}
+
 async function requestScheduleChange(reservation, body) {
   const data = reservation.data();
   if (!['pending', 'confirmed'].includes(String(data.status || '').toLowerCase())) {
@@ -217,14 +253,27 @@ async function requestScheduleChange(reservation, body) {
   // Tell the guest straight away if the room is already taken.
   if (data.roomId && requested) {
     const roomBookings = await adminDb.collection('reservations').where('roomId', '==', data.roomId).get();
-    const clash = roomBookings.docs.some(doc => {
-      if (doc.id === reservation.id) return false;
-      const other = doc.data();
-      return !['cancelled', 'checked-out', 'rejected'].includes(String(other.status || '').toLowerCase())
-        && typeof other.checkIn === 'string' && typeof other.checkOut === 'string'
-        && stayRangesOverlap(checkIn, checkOut, other.checkIn.slice(0, 10), other.checkOut.slice(0, 10));
-    });
-    if (clash) return { error: 'The room is already booked for that date. Please choose another date.' };
+    const bookedRanges = roomBookings.docs
+      .filter(doc => doc.id !== reservation.id)
+      .map(doc => doc.data())
+      .filter(other => !['cancelled', 'checked-out', 'rejected'].includes(String(other.status || '').toLowerCase())
+        && typeof other.checkIn === 'string' && typeof other.checkOut === 'string')
+      .map(other => ({ checkIn: other.checkIn.slice(0, 10), checkOut: other.checkOut.slice(0, 10) }));
+    const clash = bookedRanges.some(other => stayRangesOverlap(checkIn, checkOut, other.checkIn, other.checkOut));
+    if (clash) {
+      // Offer the closest free dates for the same room and length of stay.
+      const tomorrow = new Date(`${manilaDateKey()}T00:00:00Z`);
+      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+      const suggestions = findNearestOpenDates({
+        checkIn, checkOut, bookedRanges, minDate: tomorrow.toISOString().slice(0, 10), maxDate: maxDateKey,
+      });
+      return {
+        error: suggestions.length
+          ? 'The room is already booked for that date. The closest available dates are shown below.'
+          : 'The room is already booked for that date, and no nearby dates are free. Please choose another date or contact the resort.',
+        suggestions,
+      };
+    }
   }
 
   let change = {
@@ -345,6 +394,11 @@ export default async function handler(req, res) {
     if (action === 'lookup') {
       return res.status(200).json({ reservation: publicReservation(reservation) });
     }
+    if (action === 'refund-preview') {
+      const result = await previewRefund(reservation);
+      if (result.error) return res.status(409).json({ error: result.error });
+      return res.status(200).json(result);
+    }
     if (action === 'refund') {
       const result = await requestRefund(reservation, normalizedContact);
       if (result.error) return res.status(409).json({ error: result.error });
@@ -357,7 +411,7 @@ export default async function handler(req, res) {
     }
     if (action === 'schedule-change') {
       const result = await requestScheduleChange(reservation, req.body || {});
-      if (result.error) return res.status(400).json({ error: result.error });
+      if (result.error) return res.status(400).json({ error: result.error, suggestions: result.suggestions || [] });
       return res.status(200).json(result);
     }
     return res.status(400).json({ error: 'Choose a valid reservation action.' });

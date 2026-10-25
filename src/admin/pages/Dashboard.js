@@ -17,38 +17,15 @@ import {
   getReservationAverages,
 } from '../../lib/reservationStatus';
 import {
+  getDailyReservations,
+  getFeedbackSummary,
+  getMonthlyRevenue,
+  getRevenueBySource,
+} from '../../lib/dashboardMetrics';
+import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
-
-const revenueData = [
-  { m: 'Dec', v: 120000 }, { m: 'Jan', v: 180000 }, { m: 'Feb', v: 315060 },
-  { m: 'Mar', v: 260000 }, { m: 'Apr', v: 310000 }, { m: 'May', v: 290000 },
-];
-const reservationsData = [
-  { d: '12 Jun', booked: 70, cancelled: 20 },
-  { d: '13 Jun', booked: 80, cancelled: 15 },
-  { d: '14 Jun', booked: 60, cancelled: 30 },
-  { d: '15 Jun', booked: 90, cancelled: 10 },
-  { d: '16 Jun', booked: 75, cancelled: 25 },
-  { d: '17 Jun', booked: 85, cancelled: 12 },
-  { d: '18 Jun', booked: 65, cancelled: 18 },
-];
-const platformData = [
-  { name: 'Direct Booking', value: 61, color: '#89D7B7' },
-  { name: 'Booking.com',    value: 12, color: '#9cb56f' },
-  { name: 'Agoda',          value: 11, color: '#60a5fa' },
-  { name: 'Airbnb',         value: 9,  color: '#f472b6' },
-  { name: 'Hotels.com',     value: 5,  color: '#fb923c' },
-  { name: 'Others',         value: 2,  color: '#a78bfa' },
-];
-const ratingCategories = [
-  { label: 'Facilities',  score: 4.4 },
-  { label: 'Cleanliness', score: 4.7 },
-  { label: 'Services',    score: 4.6 },
-  { label: 'Comfort',     score: 4.8 },
-  { label: 'Location',    score: 4.5 },
-];
 
 const statusColors = {
   confirmed:    ['rgba(34,197,94,0.15)',  '#4ade80'],
@@ -197,6 +174,7 @@ export default function AdminDashboard() {
   // ── Reservation analytics ─────────────────────────────────
   const [analyticsPeriod, setAnalyticsPeriod] = useState('30');
   const [payments, setPayments] = useState([]);
+  const [feedback, setFeedback] = useState([]);
 
   // ── Calendar ──────────────────────────────────────────────
   const [calMonth, setCalMonth] = useState(() => {
@@ -225,6 +203,13 @@ export default function AdminDashboard() {
         pendingPayments:   reservations.filter(r => r.paymentStatus === 'pending').length,
       });
       setRecent([...reservations].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
+      // Feedback is loaded on its own so a problem there doesn't blank the dashboard.
+      try {
+        const feedbackSnap = await getDocs(collection(db, 'feedback'));
+        setFeedback(feedbackSnap.docs.map(d => d.data()));
+      } catch (feedbackError) {
+        console.error('Dashboard feedback load failed:', feedbackError);
+      }
     };
     fetchData().catch(err => console.error('Dashboard load failed:', err)).finally(() => setLoaded(true));
   }, []);
@@ -254,6 +239,13 @@ export default function AdminDashboard() {
       overstays: getOverstayStats(recent, range, now),
     };
   }, [recent, analyticsPeriod, now]);
+
+  // Charts from real records (these used to be sample numbers).
+  const revenueSeries = useMemo(() => getMonthlyRevenue(payments, now, 6), [payments, now]);
+  const reservationSeries = useMemo(() => getDailyReservations(recent, now, 7), [recent, now]);
+  const revenueSources = useMemo(() => getRevenueBySource(recent, analytics.range), [recent, analytics.range]);
+  const feedbackSummary = useMemo(() => getFeedbackSummary(feedback), [feedback]);
+  const periodLabel = (ANALYTICS_PERIODS.find(p => p.id === analyticsPeriod) || ANALYTICS_PERIODS[0]).label;
 
   // Real month-over-month change (replaces the old placeholder percentages).
   const monthTrends = useMemo(() => {
@@ -523,10 +515,10 @@ export default function AdminDashboard() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue</span>
-              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 6 Months ▾</Pill>
+              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 6 months</Pill>
             </div>
             <ResponsiveContainer width="100%" height={160}>
-              <AreaChart data={revenueData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+              <AreaChart data={revenueSeries} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
                 <defs>
                   <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%"  stopColor={TEAL} stopOpacity={0.3} />
@@ -546,28 +538,34 @@ export default function AdminDashboard() {
           )}
 
           <Card>
-            <SectionTitle action>Overall Rating</SectionTitle>
+            <SectionTitle>Guest Rating</SectionTitle>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
               <div>
-                <div style={{ fontSize: '36px', fontWeight: '800', color: TEXT, lineHeight: 1 }}>4.6</div>
+                <div style={{ fontSize: '36px', fontWeight: '800', color: TEXT, lineHeight: 1 }}>{feedbackSummary.average ? feedbackSummary.average.toFixed(1) : '—'}</div>
                 <div style={{ fontSize: '10px', color: MUTED }}>/5</div>
               </div>
               <div>
-                <div style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Impressive</div>
-                <div style={{ fontSize: '10px', color: MUTED }}>from 2546 reviews</div>
+                <div style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>{feedbackSummary.word}</div>
+                <div style={{ fontSize: '10px', color: MUTED }}>
+                  from {feedbackSummary.ratedCount.toLocaleString()} guest {feedbackSummary.ratedCount === 1 ? 'review' : 'reviews'}
+                </div>
               </div>
             </div>
-            {ratingCategories.map(r => (
-              <div key={r.label} style={{ marginBottom: '9px' }}>
+            {feedbackSummary.categories.map(r => (
+              <div key={r.key} style={{ marginBottom: '9px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                   <span style={{ fontSize: '11px', color: MUTED }}>{r.label}</span>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT }}>{r.score}</span>
+                  <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT }}>{r.count ? r.average.toFixed(1) : '—'}</span>
                 </div>
                 <div style={{ height: '4px', background: dark ? '#1e3a1e' : '#f0f0f0', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${(r.score / 5) * 100}%`, background: LIME, borderRadius: '2px' }} />
+                  <div style={{ height: '100%', width: `${(r.average / 5) * 100}%`, background: LIME, borderRadius: '2px' }} />
                 </div>
               </div>
             ))}
+            <button type="button" onClick={() => navigate('/admin/feedback')}
+              style={{ marginTop: '6px', background: 'none', border: 0, padding: 0, color: MUTED, fontSize: '11px', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit' }}>
+              See all feedback
+            </button>
           </Card>
         </div>
 
@@ -577,7 +575,7 @@ export default function AdminDashboard() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Reservations</span>
-              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 7 Days ▾</Pill>
+              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 7 days</Pill>
             </div>
             <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
               {[{ color: TEAL, label: 'Booked' }, { color: LIME, label: 'Cancelled' }].map(l => (
@@ -588,7 +586,7 @@ export default function AdminDashboard() {
               ))}
             </div>
             <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={reservationsData} barSize={12} barGap={2} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+              <BarChart data={reservationSeries} barSize={12} barGap={2} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
                 <XAxis dataKey="d" tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} />
                 <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px', background: CARD2, border: `1px solid ${BORDER}`, color: TEXT }} />
@@ -599,26 +597,40 @@ export default function AdminDashboard() {
           </Card>
 
           <Card>
-            <SectionTitle action>Booking by Platform</SectionTitle>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-              <PieChart width={130} height={130}>
-                <Pie data={platformData} cx={60} cy={60} innerRadius={38} outerRadius={60}
-                  dataKey="value" startAngle={90} endAngle={-270} paddingAngle={2}>
-                  {platformData.map((d, i) => <Cell key={i} fill={d.color} />)}
-                </Pie>
-              </PieChart>
-              <div style={{ flex: 1 }}>
-                {platformData.map(d => (
-                  <div key={d.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: d.color, flexShrink: 0 }} />
-                      <span style={{ fontSize: '11px', color: MUTED }}>{d.name}</span>
-                    </div>
-                    <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT }}>{d.value}%</span>
-                  </div>
-                ))}
-              </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px', gap: '8px' }}>
+              <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue by Source</span>
+              <span style={{ fontSize: '10px', color: MUTED }}>{periodLabel} · by check-in</span>
             </div>
+            {revenueSources.total > 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <PieChart width={130} height={130}>
+                  <Pie data={revenueSources.rows.filter(d => d.value > 0)} cx={60} cy={60} innerRadius={38} outerRadius={60}
+                    dataKey="value" startAngle={90} endAngle={-270} paddingAngle={2}>
+                    {revenueSources.rows.filter(d => d.value > 0).map(d => <Cell key={d.id} fill={d.color} />)}
+                  </Pie>
+                  <Tooltip formatter={(v, name, item) => [formatCurrency(v), item?.payload?.label || name]}
+                    contentStyle={{ fontSize: '11px', borderRadius: '8px', background: CARD2, border: `1px solid ${BORDER}`, color: TEXT }} />
+                </PieChart>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {revenueSources.rows.map(d => (
+                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                        <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: d.color, flexShrink: 0 }} />
+                        <span style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.label}</span>
+                      </div>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT, whiteSpace: 'nowrap' }} title={`${Math.round(d.share * 100)}%`}>
+                        {formatCurrency(d.value)}
+                      </span>
+                    </div>
+                  ))}
+                  <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: '6px', display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: '700', color: TEXT }}>
+                    <span>Total billed</span><span>{formatCurrency(revenueSources.total)}</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p style={{ fontSize: '12px', color: MUTED, margin: '20px 0' }}>No bookings with check-in dates in this period yet.</p>
+            )}
           </Card>
 
           {/* ── Tasks (functional) ── */}

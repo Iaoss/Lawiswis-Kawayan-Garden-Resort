@@ -1,5 +1,6 @@
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { verifyStaff } from '../lib/verifyStaff';
+import { logActivity } from '../lib/activityLog';
 import { calculateReservationModification } from '../lib/reservationModification';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
 import { createPayMongoCheckoutSession } from '../lib/paymongoCheckout';
@@ -501,6 +502,19 @@ export default async function handler(req, res) {
     } else {
       return res.status(400).json({ error: 'Choose a valid reservation action.' });
     }
+    const ref = `#${String(reservationId).slice(0, 8).toUpperCase()}`;
+    const summaries = {
+      'approve-refund': `Approved a refund on booking ${ref}`,
+      'reject-refund': `Rejected a refund request on booking ${ref}`,
+      'review-refund': `Sent a refund request on booking ${ref} back for review`,
+      'approve-modification': `Approved a date change on booking ${ref}`,
+      'reject-modification': `Rejected a date change on booking ${ref}`,
+    };
+    await logActivity(staff, {
+      action: action.replace('-', '_'),
+      summary: reason ? `${summaries[action]} (${reason.slice(0, 120)})` : summaries[action],
+      reservationId,
+    });
     return res.status(200).json(result);
   } catch (error) {
     console.error('Staff reservation action failed:', error);

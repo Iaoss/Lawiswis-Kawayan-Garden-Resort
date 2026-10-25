@@ -35,6 +35,7 @@ const navItems = [
   { label: 'Messages', path: '/admin/messages', icon: 'ti-message-circle-2' },
   { label: 'News Management',path: '/admin/news',           icon: 'ti-news' },
   { label: 'Users',          path: '/admin/users',         icon: 'ti-user-cog' },
+  { label: 'Activity Log',   path: '/admin/activity',      icon: 'ti-list-check' },
   { label: 'Cancellation',   path: '/admin/cancellation',  icon: 'ti-file-x' },
   { label: 'Settings',       path: '/admin/settings',       icon: 'ti-settings' },
 ];

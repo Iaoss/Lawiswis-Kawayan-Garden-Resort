@@ -39,6 +39,21 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ── Activity log ────────────────────────────────────────
+    // Most entries are written by the server. Staff may add an entry only
+    // for themselves (e.g. a room status change), stamped with the server
+    // time. Nobody can edit or delete entries; only admins can read them.
+    match /activityLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isStaff()
+        && request.resource.data.staffUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.keys().hasOnly(['action', 'summary', 'reservationId', 'guestName', 'details', 'staffUid', 'staffName', 'staffEmail', 'staffRole', 'createdAt'])
+        && request.resource.data.summary is string
+        && request.resource.data.summary.size() <= 300;
+      allow update, delete: if false;
+    }
+
     // ── FAQs / quick replies (staff chat) ───────────────────
     match /faqs/{faqId} {
       allow read: if isStaff();

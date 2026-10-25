@@ -4,6 +4,7 @@ import { db } from '../../firebase/firebase';
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import RoomExcelImport from '../components/RoomExcelImport';
+import { logStaffActivity } from '../lib/activityLog';
 import { useSettings } from '../components/SettingsContext';
 import { ROOM_TYPES, ROOM_TYPE_CATEGORY_MAP, normalizeRoomType } from '../utils/roomCatalog';
 import { resolveRoomImage } from '../../client/components/clientTheme';
@@ -112,6 +113,15 @@ const CAPACITY_OPTIONS = {
 
 const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
 
+// Activity Log line for a room save; price and status changes are spelled out.
+function describeRoomSave(before, after) {
+  if (!before) return `Added Room ${after.roomNumber} (${after.type}, ₱${Number(after.price || 0).toLocaleString()})`;
+  const changes = [];
+  if (Number(before.price) !== Number(after.price)) changes.push(`price ₱${Number(before.price || 0).toLocaleString()} → ₱${Number(after.price || 0).toLocaleString()}`);
+  if (before.status !== after.status) changes.push(`status ${badgeLabel(before.status)} → ${badgeLabel(after.status)}`);
+  return `Updated Room ${after.roomNumber}${changes.length ? `: ${changes.join(', ')}` : ''}`;
+}
+
 export default function RoomManagement() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
@@ -210,6 +220,7 @@ export default function RoomManagement() {
       const payload = { ...form, baseCapacity: Number(form.baseCapacity) || '', imageUrl };
       if (editRoom) await updateDoc(doc(db, 'rooms', editRoom.id), payload);
       else await addDoc(collection(db, 'rooms'), payload);
+      logStaffActivity(editRoom ? 'room_updated' : 'room_created', describeRoomSave(editRoom, payload));
 
       setForm(emptyForm);
       resetImageState();
@@ -236,6 +247,8 @@ export default function RoomManagement() {
   const confirmDelete = async () => {
     if (isReceptionist || !confirmDeleteId) return;
     await deleteDoc(doc(db, 'rooms', confirmDeleteId));
+    const deleted = rooms.find(r => r.id === confirmDeleteId);
+    logStaffActivity('room_deleted', `Deleted Room ${deleted?.roomNumber || confirmDeleteId}`);
     setOpenId(null);
     setConfirmDeleteId(null);
     fetchRooms();
@@ -243,6 +256,7 @@ export default function RoomManagement() {
 
   const markCleaned = async (room) => {
     await updateDoc(doc(db, 'rooms', room.id), { status: 'available' });
+    logStaffActivity('room_status_changed', `Marked Room ${room.roomNumber} as available (was ${room.status})`);
     fetchRooms();
   };
 

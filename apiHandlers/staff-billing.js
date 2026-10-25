@@ -24,6 +24,7 @@
 import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { verifyStaff } from '../lib/verifyStaff';
+import { describeBillingAction, logActivity } from '../lib/activityLog';
 import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
@@ -449,6 +450,17 @@ export default async function handler(req, res) {
     else if (body.action === 'create-walk-in') result = await createWalkIn({ staff, booking: body.booking });
     else if (body.action === 'edit-booking') result = await editBooking({ ...body, staff });
     else return res.status(400).json({ error: 'Choose a valid billing action.' });
+    // Previews change nothing, so they aren't logged.
+    const entry = result?.preview ? null : describeBillingAction(body, result || {});
+    if (entry) {
+      await logActivity(staff, {
+        ...entry,
+        reservationId: body.reservationId || result.reservationId || '',
+        guestName: body.action === 'create-walk-in'
+          ? `${body.booking?.firstName || ''} ${body.booking?.lastName || ''}`.trim()
+          : '',
+      });
+    }
     return res.status(200).json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof BillingError) return res.status(error.httpStatus).json({ error: error.message });
