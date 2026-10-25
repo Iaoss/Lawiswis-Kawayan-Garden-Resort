@@ -1,6 +1,46 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, RESORT_IMAGES, SERIF, SANS } from '../components/clientTheme';
+import CinematicScroll from '../../components/ui/scroll-triggered-video-hero.tsx';
+
+const PHOTOS = `${process.env.PUBLIC_URL || ''}/images/resort`;
+
+// The four chapters shown in the scrolling story at the top of the page.
+const storyChapters = navigate => [
+  {
+    id: '01',
+    eyebrow: 'Our name',
+    title: 'A song beneath the bamboo.',
+    description: 'Lawiswis Kawayan is named after a beloved Filipino song that founder Atty. Federico Aranas taught his children — a couple meeting beneath the swaying bamboo. The resort was built to be that place: peaceful, green, and made for coming together.',
+    image: `${PHOTOS}/bamboo-cabanas.jpg`,
+    alt: 'Curtained cabanas in the bamboo garden',
+  },
+  {
+    id: '02',
+    eyebrow: '2005 – 2006',
+    title: 'A garden takes root.',
+    description: 'Clearing began in 2005, followed by the pond, pavilion and the first pools with bamboo poolside cabanas. After a blessing ceremony, the resort welcomed its first guests on March 4, 2006.',
+    image: `${PHOTOS}/serenity-pool.jpg`,
+    alt: 'The Serenity pool surrounded by gardens',
+  },
+  {
+    id: '03',
+    eyebrow: '2007 – 2021',
+    title: 'Room for every gathering.',
+    description: 'The Main Villa, the spa, guest-room buildings, function and dining halls, and new couples’ and family suites — each added so families, couples and groups could find their own kind of rest.',
+    image: `${PHOTOS}/garden-terrace.jpg`,
+    alt: 'A couple sharing drinks on a garden terrace',
+  },
+  {
+    id: '04',
+    eyebrow: 'Today',
+    title: 'Evenings by the fire.',
+    description: 'A bubble pool, lantern-lit evenings and bonfires under the trees. The garden keeps growing, but the welcome stays the same.',
+    image: `${PHOTOS}/fireside-friends.jpg`,
+    alt: 'Friends roasting marshmallows by the fire pit',
+    action: { label: 'Browse rooms', onClick: () => navigate('/rooms') },
+  },
+];
 
 const values = [
   ['01', 'Genuine hospitality', 'Every guest is welcomed with the warmth and care we would offer family.'],
@@ -81,8 +121,8 @@ const journey = [
 export default function About() {
   const navigate = useNavigate();
   return <div style={{ background: PAPER }}>
-    <section style={{ minHeight: '540px', position: 'relative', display: 'flex', alignItems: 'end', padding: '70px 24px', overflow: 'hidden' }}><img src={RESORT_IMAGES.hero} alt="Lawiswis Kawayan garden" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /><div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, rgba(20,25,15,.75), rgba(20,25,15,.15))' }} /><div style={{ position: 'relative', maxWidth: '1100px', width: '100%', margin: '0 auto' }}><div style={{ color: '#e7dfc4', font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '14px' }}>Our story · Since 2006</div><h1 style={{ color: '#fff', font: `500 clamp(44px, 7vw, 78px)/1 ${SERIF}`, margin: '0 0 18px', maxWidth: '700px' }}>A garden shaped by love, memory, and bamboo.</h1><p style={{ color: 'rgba(255,255,255,.8)', font: `14px/1.8 ${SANS}`, maxWidth: '500px', margin: 0 }}>Lawiswis Kawayan is a peaceful hideaway in Calumpit, Bulacan, where the day slows down naturally.</p></div></section>
-    <section style={{ maxWidth: '1100px', margin: '0 auto', padding: '100px 24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '70px', alignItems: 'center' }}><img src={RESORT_IMAGES.garden} alt="Resort villa" style={{ width: '100%', height: '450px', objectFit: 'cover' }} /><div><div style={{ color: MOSS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '14px' }}>The meaning of Lawiswis Kawayan</div><h2 style={{ color: INK, font: `500 40px/1.15 ${SERIF}`, margin: '0 0 20px' }}>A quiet place to return to yourself.</h2><p style={{ color: '#5c5a4c', font: `14px/1.9 ${SANS}`, marginBottom: '16px' }}>The resort’s name was inspired by a beloved Filipino song that founder Atty. Federico Aranas taught his children. Its story of a couple meeting beneath the Lawiswis Kawayan reflects the resort’s vision: a peaceful place, surrounded by bamboo, where people can come together and make memories.</p><p style={{ color: '#5c5a4c', font: `14px/1.9 ${SANS}`, margin: 0 }}>The resort began in 2005 and was officially incorporated in 2006. Families, couples, and groups have since found their own version of rest here. The garden keeps growing, but the welcome stays the same.</p></div></section>
+    {/* Scroll through the resort's story: the photo changes chapter by chapter. */}
+    <CinematicScroll chapters={storyChapters(navigate)} />
     <section className="about-journey-section" style={{ background: '#fff', padding: '84px 24px' }}>
       <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
         <div className="about-journey-heading">

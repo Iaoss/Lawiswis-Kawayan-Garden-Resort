@@ -1,23 +1,25 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 
-// Photos from the resort's website (lawiswiskawayanresort.com).
-const UPLOADS = 'https://lawiswiskawayanresort.com/wp-content/uploads';
+// Resort photos, served from /public/images/resort.
+const PHOTOS = `${process.env.PUBLIC_URL || ''}/images/resort`;
 export const HERO_SLIDES = [
-  { src: `${UPLOADS}/2020/01/hero192x-scaled.jpg`, alt: 'Lawiswis Kawayan Garden Resort' },
-  { src: `${UPLOADS}/2024/09/Serenity-Springs-by-Nature-scaled-1.jpeg`, alt: 'Serenity Springs by Nature at Lawiswis Kawayan' },
-  { src: `${UPLOADS}/2020/01/Pavillion-Featured.jpg`, alt: 'The Pavilion' },
-  { src: `${UPLOADS}/2024/09/Paraiso-03-1400x700-1-1200x600.jpeg`, alt: 'Paraiso Suite' },
-  { src: `${UPLOADS}/2024/11/349573106_214182444757352_8525037380621928322_n-1200x800.jpg`, alt: 'Life at Lawiswis Kawayan' },
-  { src: `${UPLOADS}/2024/10/Himbing-01-1400x700-1.jpeg`, alt: 'Himbing room' },
-  { src: `${UPLOADS}/2024/10/2017-11.jpg`, alt: 'The resort grounds' },
+  { src: `${PHOTOS}/serenity-pool.jpg`, alt: 'The Serenity pool surrounded by gardens' },
+  { src: `${PHOTOS}/bamboo-cabanas.jpg`, alt: 'Curtained cabanas in the bamboo garden' },
+  { src: `${PHOTOS}/garden-terrace.jpg`, alt: 'A couple sharing drinks on a garden terrace' },
+  { src: `${PHOTOS}/veranda-lounge.jpg`, alt: 'Veranda lounge overlooking the trees' },
+  { src: `${PHOTOS}/lanterns-sunset.jpg`, alt: 'Lanterns glowing in the trees at sunset' },
+  { src: `${PHOTOS}/fireside-friends.jpg`, alt: 'Friends roasting marshmallows by the fire pit' },
+  { src: `${PHOTOS}/bonfire-gathering.jpg`, alt: 'Group gathering around the bonfire under string lights' },
+  { src: `${PHOTOS}/garden-walk.jpg`, alt: 'A couple walking the garden path' },
 ];
 
-const SLIDE_MS = 6000;
+const SLIDE_MS = 4000;
 
-// Auto-playing hero carousel: crossfade with a slow zoom, pauses on hover,
-// keyboard focus or when the tab is hidden, and has a pause button. With
-// "reduce motion" on it doesn't auto-play or zoom.
+// Auto-playing hero carousel (a new photo every 4 seconds): crossfade with a
+// slow zoom, dots to jump to a photo, and a pause button. Pauses on hover,
+// keyboard focus or when the tab is hidden. With "reduce motion" on it
+// doesn't auto-play or zoom.
 export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0 }) {
   const reduceMotion = useReducedMotion();
   const [index, setIndex] = useState(0);
@@ -84,8 +86,6 @@ export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0 }) {
 
       {count > 1 && (
         <>
-          <button type="button" aria-label="Previous photo" onClick={() => go(-1)} style={{ ...control, left: 16, top: '50%', transform: 'translateY(-50%)' }}>‹</button>
-          <button type="button" aria-label="Next photo" onClick={() => go(1)} style={{ ...control, right: 16, top: '50%', transform: 'translateY(-50%)' }}>›</button>
           <div style={{ position: 'absolute', zIndex: 3, left: '50%', bottom: 22, transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 8 }}>
             {slides.map((item, i) => (
               <button key={item.src} type="button" aria-label={`Show photo ${i + 1}: ${item.alt}`} aria-current={i === index ? 'true' : undefined}
