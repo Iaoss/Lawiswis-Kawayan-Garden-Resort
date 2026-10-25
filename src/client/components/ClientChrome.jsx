@@ -117,13 +117,14 @@ export default function ClientChrome({ children }) {
         { label: 'Regular Rooms', path: '/rooms?category=Regular%20Rooms' },
         { label: 'Suite Rooms', path: '/rooms?category=Suite%20Rooms' },
       ]} />
-      <NavDropdown label="Customer care" onNavigate={href => { onNavigate(); navigate(href); }} active={['/contact-us', '/faqs', '/safety-guidelines', '/health-and-wellness', '/cancellation-policy', '/privacy-policy'].includes(path)} items={[
+      <NavDropdown label="Customer care" onNavigate={href => { onNavigate(); navigate(href); }} active={['/contact-us', '/faqs', '/safety-guidelines', '/health-and-wellness', '/cancellation-policy', '/privacy-policy', '/terms-of-service'].includes(path)} items={[
         { label: 'Contact Us', path: '/contact-us' },
         { label: 'FAQs', path: '/faqs' },
         { label: 'Safety Guidelines', path: '/safety-guidelines' },
         { label: 'Health and Wellness', path: '/health-and-wellness' },
-        { label: 'Cancellation Policy', path: '/cancellation-policy' },
+        { label: 'Cancellation & Refund Policy', path: '/cancellation-policy' },
         { label: 'Privacy Policy', path: '/privacy-policy' },
+        { label: 'Terms of Service', path: '/terms-of-service' },
       ]} />
       {link('My bookings', '/my-bookings', onNavigate)}
     </>
@@ -181,10 +182,11 @@ export default function ClientChrome({ children }) {
       />
       <main className="client-main">{children}</main>
       <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>
-        <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '34px' }}>
+        <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '34px' }}>
           <div><img src={logo} alt="Lawiswis Kawayan" style={{ width: '180px', filter: 'brightness(0) invert(1)', marginBottom: '16px' }} /><p style={{ maxWidth: '300px', fontSize: '12px', lineHeight: 1.8, margin: 0 }}>A quiet bamboo garden hideaway in Calumpit, Bulacan, where work and play sit comfortably side by side.</p></div>
           <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>EXPLORE</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/rooms')} style={{ cursor: 'pointer' }}>Our rooms</span><span onClick={() => navigate('/about-us')} style={{ cursor: 'pointer' }}>Our story</span><span onClick={() => navigate('/amenities')} style={{ cursor: 'pointer' }}>Our amenities</span><span onClick={() => navigate('/contact-us')} style={{ cursor: 'pointer' }}>Contact us</span></div></div>
-          <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>VISIT</strong><p style={{ fontSize: '12px', lineHeight: 1.8, marginTop: '14px' }}>Open daily<br />Check-in 2:00 PM<br />Check-out 12:00 NN</p></div>
+          <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>POLICIES</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/privacy-policy')} style={{ cursor: 'pointer' }}>Privacy Policy</span><span onClick={() => navigate('/terms-of-service')} style={{ cursor: 'pointer' }}>Terms of Service</span><span onClick={() => navigate('/cancellation-policy')} style={{ cursor: 'pointer' }}>Cancellation &amp; Refund Policy</span></div></div>
+          <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>VISIT</strong><p style={{ fontSize: '12px', lineHeight: 1.8, marginTop: '14px' }}>Open daily<br />Day tour 8:00 AM – 5:00 PM<br />Night tour 5:00 PM – 10:00 PM<br />Overnight check-in 10 AM, 2 PM or 6 PM</p></div>
         </div>
         <div style={{ maxWidth: '1100px', borderTop: `1px solid ${LINE}33`, margin: '30px auto 0', paddingTop: '18px', fontSize: '10px' }}>© 2026 Lawiswis Kawayan Garden Resort</div>
       </footer>

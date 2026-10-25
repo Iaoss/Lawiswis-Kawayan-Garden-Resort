@@ -174,6 +174,9 @@ export default function BookRoom() {
   const [previewReservationRef, setPreviewReservationRef] = useState('');
   const [termsRead, setTermsRead] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+  // Saving the guest's details on this device is opt-in (off unless they
+  // already chose to save them before). See the Privacy Policy.
+  const [rememberDetails, setRememberDetails] = useState(() => Boolean(readLocalValue(GUEST_PROFILE_KEY, null)));
   const [promoInput, setPromoInput] = useState('');
   const [appliedPromo, setAppliedPromo] = useState(null);
   const [promoFeedback, setPromoFeedback] = useState(null);
@@ -480,6 +483,7 @@ export default function BookRoom() {
     try {
       window.localStorage.removeItem(GUEST_PROFILE_KEY);
       setSavedProfile(null);
+      setRememberDetails(false);
       setForm(previous => ({ ...previous, firstName: '', lastName: '', phone: '', email: '', address: '' }));
       setFieldErrors({});
     } catch (error) {
@@ -691,9 +695,15 @@ export default function BookRoom() {
         address: form.address.trim(),
         preferredContactMethod: form.preferredContactMethod,
       };
-      setSavedProfile(profile);
-      if (!writeLocalValue(GUEST_PROFILE_KEY, profile)) {
-        setErrorMsg('Reservation submitted, but the guest profile could not be saved in this browser.');
+      if (rememberDetails) {
+        setSavedProfile(profile);
+        if (!writeLocalValue(GUEST_PROFILE_KEY, profile)) {
+          setErrorMsg('Reservation submitted, but your details could not be saved in this browser.');
+        }
+      } else {
+        // Not remembered: make sure nothing from an earlier booking stays saved.
+        try { window.localStorage.removeItem(GUEST_PROFILE_KEY); } catch { /* storage unavailable */ }
+        setSavedProfile(null);
       }
 
       const historyEntry = {
@@ -989,7 +999,7 @@ export default function BookRoom() {
               {savedProfile && (
                 <div style={{ marginTop: '16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', background: LIGHT, color: '#355a42', borderRadius: '999px', padding: '9px 13px', fontSize: '11px' }}>
                   <span>Welcome back, {savedProfile.guestName || 'guest'}!</span>
-                  <button type="button" onClick={clearSavedProfile} style={{ border: 0, background: 'transparent', padding: 0, color: DARK, font: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}>Not you? Clear / switch</button>
+                  <button type="button" onClick={clearSavedProfile} style={{ border: 0, background: 'transparent', padding: 0, color: DARK, font: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}>Not you? Forget my details</button>
                 </div>
               )}
 
@@ -1333,13 +1343,13 @@ export default function BookRoom() {
                 style={{ height: '170px', overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '14px', color: '#4b5563', fontSize: '12px', lineHeight: '1.7', background: '#fafafa' }}
               >
                 <p style={{ marginTop: 0 }}><strong>1. Reservation details.</strong> The guest confirms that the information supplied in this booking is accurate and complete. The reservation is subject to room availability and resort confirmation.</p>
-                <p><strong>2. Check-in and check-out.</strong> Check-in is at 2:00 PM and check-out is at 12:00 NN unless the resort confirms another arrangement. Valid identification may be requested at check-in.</p>
+                <p><strong>2. Check-in and check-out.</strong> Your check-in and check-out times are the ones chosen above (day tour 8:00 AM–5:00 PM, night tour 5:00 PM–10:00 PM, or your selected overnight time). Valid identification may be requested at check-in, and staying past check-out may incur a late check-out charge.</p>
                 <p><strong>3. Payment.</strong> Online payments are processed securely by our payment provider. Pay the selected full amount or deposit through the hosted checkout.</p>
-                <p><strong>4. Cancellation.</strong> Cancellation fees and refunds follow the resort cancellation policy applicable to the selected booking dates.</p>
+                <p><strong>4. Cancellation.</strong> Cancellation fees, date changes and refunds follow the resort&apos;s <a href="/cancellation-policy" target="_blank" rel="noreferrer" style={{ color: ACCENT, fontWeight: 600 }}>Cancellation &amp; Refund Policy</a>: no penalty 30 days or more before arrival, 50% of the total less than 30 days before, and the full charge less than 7 days before or on arrival.</p>
                 <p><strong>5. Guest conduct.</strong> Guests agree to follow resort rules, respect other guests, and accept responsibility for damage or loss caused by their party.</p>
                 <p><strong>6. Privacy and information use.</strong> The resort collects the information provided in this form, including your name, contact details, address, stay dates, guest count, and requests, to process your reservation, communicate about your stay, provide support, and meet operational or legal requirements. We do not sell this information.</p>
                 <p><strong>7. Payment privacy.</strong> Card and e-wallet payment details are entered and processed through the secure payment provider&apos;s hosted checkout. The resort does not store your full card number, security code, or e-wallet credentials. We may receive payment status, transaction references, and limited payment details needed to confirm and reconcile your booking.</p>
-                <p style={{ marginBottom: 0 }}><strong>8. Agreement.</strong> By checking the box below, the guest confirms they have read and agree to these terms, the privacy practices above, and the resort&apos;s applicable policies.</p>
+                <p style={{ marginBottom: 0 }}><strong>8. Agreement.</strong> By checking the box below, the guest confirms they have read and agree to these terms, the full <a href="/terms-of-service" target="_blank" rel="noreferrer" style={{ color: ACCENT, fontWeight: 600 }}>Terms of Service</a>, the <a href="/privacy-policy" target="_blank" rel="noreferrer" style={{ color: ACCENT, fontWeight: 600 }}>Privacy Policy</a>, and the resort&apos;s applicable policies.</p>
               </div>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: '9px', marginTop: '14px', color: termsRead ? '#374151' : '#9ca3af', fontSize: '12px', lineHeight: '1.5', cursor: termsRead ? 'pointer' : 'not-allowed' }}>
                 <input
@@ -1350,6 +1360,10 @@ export default function BookRoom() {
                   style={{ marginTop: '2px', accentColor: ACCENT }}
                 />
                 <span>{termsRead ? 'I have read and agree to the Terms and Agreement.' : 'Scroll to the end of the agreement to enable acceptance.'}</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '9px', marginTop: '10px', color: '#374151', fontSize: '12px', lineHeight: '1.5', cursor: 'pointer' }}>
+                <input type="checkbox" checked={rememberDetails} onChange={event => setRememberDetails(event.target.checked)} style={{ marginTop: '2px', accentColor: ACCENT }} />
+                <span>Remember my details on this device so the form fills in next time. <span style={{ color: '#9ca3af' }}>Leave this off on shared or public computers.</span></span>
               </label>
             </div>
 

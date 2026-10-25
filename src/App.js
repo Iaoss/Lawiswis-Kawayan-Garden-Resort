@@ -148,6 +148,8 @@ function App() {
           <Route path="/health-and-wellness" element={<CustomerCarePage pageKey="health-and-wellness" />} />
           <Route path="/cancellation-policy" element={<CustomerCarePage pageKey="cancellation-policy" />} />
           <Route path="/privacy-policy" element={<CustomerCarePage pageKey="privacy-policy" />} />
+          <Route path="/terms-of-service" element={<CustomerCarePage pageKey="terms-of-service" />} />
+          <Route path="/refund-policy" element={<Navigate to="/cancellation-policy" replace />} />
           <Route path="/about" element={<Navigate to="/about-us" replace />} />
           <Route path="/contact" element={<Navigate to="/contact-us" replace />} />
         </Route>
