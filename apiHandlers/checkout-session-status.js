@@ -10,6 +10,7 @@
 
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { recordPayMongoPayment } from '../lib/recordPayMongoPayment';
+import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 
 export default async function handler(req, res) {
@@ -85,8 +86,17 @@ export default async function handler(req, res) {
         checkoutSessionId,
         amountPaid,
         paymentMethod: payment.source?.type || 'unknown',
+        paymentType: attrs.metadata?.paymentType || '',
+        modificationRequestId: attrs.metadata?.modificationRequestId || null,
       });
       recorded = result.recorded;
+      if (result.autoConfirmed) {
+        try {
+          await sendConfirmationEmailOnce(adminDb, FieldValue, reservationId);
+        } catch (emailErr) {
+          console.error('Auto-confirmation email failed:', emailErr);
+        }
+      }
       try {
         receipt = await sendPaymentReceipt(adminDb, FieldValue, result.paymentDocumentId);
       } catch (emailErr) {

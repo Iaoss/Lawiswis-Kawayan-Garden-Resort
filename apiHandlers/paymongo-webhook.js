@@ -27,6 +27,7 @@ import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
 import { getRequestedBookingFields } from '../src/lib/bookingDetails';
 import { verifyPaidWithPayMongo } from '../lib/paymongoApi';
+import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 
 // Signature verification needs the exact raw request body, so the
 // default JSON body-parser has to be turned off for this route.
@@ -445,6 +446,7 @@ export default async function handler(req, res) {
         amountPaid: verified.amountPaid,
         paymentMethod: verified.paymentMethod,
         modificationRequestId: verified.metadata.modificationRequestId || info.modificationRequestId,
+        paymentType: verified.metadata.paymentType || '',
       };
       const result = await recordPayMongoPayment(db, FieldValue, {
         ...info,
@@ -452,6 +454,15 @@ export default async function handler(req, res) {
       });
       const modification = await completeModificationPayment(db, FieldValue, info);
       await sendPaymentReceipt(db, FieldValue, result.paymentDocumentId);
+      // The payment confirmed the booking: send the confirmation email too.
+      // An email problem must not make PayMongo retry the payment.
+      if (result.autoConfirmed) {
+        try {
+          await sendConfirmationEmailOnce(db, FieldValue, info.reservationId);
+        } catch (emailError) {
+          console.error('Auto-confirmation email failed:', emailError);
+        }
+      }
       if (modification) {
         const updatedSnap = await db.collection('reservations').doc(info.reservationId).get();
         const updatedReservation = { id: updatedSnap.id, ...updatedSnap.data() };
