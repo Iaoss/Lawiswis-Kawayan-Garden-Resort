@@ -506,10 +506,12 @@ function ReservationBoard({
             )}
           </div>
 
-          {tab === 'list' && listView}
-          {tab === 'day' && dayView}
-          {tab === 'week' && weekView}
-          {tab === 'month' && monthView}
+          <div key={tab} className="lk-enter-soft">
+            {tab === 'list' && listView}
+            {tab === 'day' && dayView}
+            {tab === 'week' && weekView}
+            {tab === 'month' && monthView}
+          </div>
         </div>
       </div>
     </div>

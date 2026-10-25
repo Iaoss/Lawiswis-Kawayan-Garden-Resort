@@ -225,6 +225,66 @@ export default function BookRoom() {
     : getOvernightCutoffError(form.checkIn, form.overnightTimeSlot);
   const nextOpenOvernightSlot = OVERNIGHT_TIME_SLOTS.find(slot => !isCheckInPassed(form.checkIn, slot));
   const historyPagination = usePagination(bookingHistory, { pageSize: 5 });
+
+  // ── Change dates without leaving this page ──
+  // The new dates are checked against this room's availability; if it's free
+  // the booking form updates in place (and the address bar follows).
+  const [dateEditor, setDateEditor] = useState({ open: false, checkIn: '', checkOut: '', checking: false, error: '' });
+  const editorIsTour = form.bookingType === 'daytour';
+  const openDateEditor = () => setDateEditor({
+    open: true, checkIn: form.checkIn || today, checkOut: form.checkOut || '', checking: false, error: '',
+  });
+  const applyDates = async () => {
+    const checkIn = dateEditor.checkIn;
+    const checkOut = editorIsTour ? checkIn : dateEditor.checkOut;
+    const fail = error => setDateEditor(current => ({ ...current, checking: false, error }));
+    if (!checkIn || !checkOut) return fail(editorIsTour ? 'Choose a date.' : 'Choose both check-in and check-out dates.');
+    if (checkIn < today || checkOut > maximumBookingDate) return fail(`Choose dates from today through ${maximumBookingDate}.`);
+    const durationError = getStayDurationError(checkIn, checkOut, { allowSingleDay: true });
+    if (durationError) return fail(durationError);
+    setDateEditor(current => ({ ...current, checking: true, error: '' }));
+    try {
+      const response = await fetch(`/api/room-availability?${new URLSearchParams({ startDate: checkIn, endDate: checkOut })}`);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Availability could not be checked.');
+      if (!(result.availableRoomIds || []).includes(roomId)) {
+        return fail(`${room?.roomNumber ? `Room ${room.roomNumber}` : 'This room'} is already booked for those dates. Try other dates.`);
+      }
+      setForm(previous => ({ ...previous, checkIn, checkOut }));
+      navigate(`/book/${roomId}?checkIn=${encodeURIComponent(checkIn)}&checkOut=${encodeURIComponent(checkOut)}`, { replace: true });
+      setDateEditor({ open: false, checkIn: '', checkOut: '', checking: false, error: '' });
+    } catch (error) {
+      fail(error.message || 'Availability could not be checked. Please try again.');
+    }
+  };
+  const renderDateEditor = () => (
+    <form onSubmit={event => { event.preventDefault(); applyDates(); }}
+      style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', alignItems: 'end', marginTop: '12px', textAlign: 'left' }}>
+      <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: '#355a42' }}>{editorIsTour ? 'Date' : 'Check-in'}
+        <input type="date" required min={today} max={maximumBookingDate} value={dateEditor.checkIn}
+          onChange={event => { const value = event.target.value; setDateEditor(current => ({ ...current, checkIn: value, checkOut: current.checkOut && current.checkOut < value ? '' : current.checkOut, error: '' })); }}
+          style={{ border: '1px solid #d1d5db', borderRadius: '8px', padding: '9px', font: 'inherit', background: '#fff' }} />
+      </label>
+      {!editorIsTour && (
+        <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: '#355a42' }}>Check-out
+          <input type="date" required min={dateEditor.checkIn || today} max={maximumBookingDate} value={dateEditor.checkOut}
+            onChange={event => setDateEditor(current => ({ ...current, checkOut: event.target.value, error: '' }))}
+            style={{ border: '1px solid #d1d5db', borderRadius: '8px', padding: '9px', font: 'inherit', background: '#fff' }} />
+        </label>
+      )}
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button type="submit" disabled={dateEditor.checking}
+          style={{ flex: 1, border: 0, borderRadius: '8px', padding: '10px 14px', background: DARK, color: '#fff', fontWeight: 700, cursor: dateEditor.checking ? 'wait' : 'pointer', font: 'inherit' }}>
+          {dateEditor.checking ? 'Checking…' : 'Update dates'}
+        </button>
+        {form.checkIn && (
+          <button type="button" onClick={() => setDateEditor(current => ({ ...current, open: false, error: '' }))}
+            style={{ border: '1px solid #d1d5db', borderRadius: '8px', padding: '10px 12px', background: '#fff', color: '#374151', cursor: 'pointer', font: 'inherit' }}>Cancel</button>
+        )}
+      </div>
+      {dateEditor.error && <div role="alert" style={{ gridColumn: '1 / -1', color: '#b91c1c', fontSize: '12px' }}>{dateEditor.error}</div>}
+    </form>
+  );
   const stayUnit = form.bookingType === 'daytour' ? 'day' : 'night';
   const pricing = useMemo(() => room && nights > 0
     ? calculateBookingPrice({
@@ -269,6 +329,13 @@ export default function BookRoom() {
     const closestMatches = matchingRooms.filter(item => getRoomCapacityPolicy(item)?.maxGuests === closestCapacity);
     return (closestMatches.length >= 2 ? closestMatches : matchingRooms).slice(0, 2);
   }, [availableRooms, form.adults, form.children, room?.id]);
+
+  // Land at the top whenever the page moves to another step (bookings tab,
+  // payment preview, confirmation).
+  useEffect(() => {
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+  }, [activeTab, previewMode, success]);
 
   // Overnight stays need at least one night, so same-day dates switch to a day tour.
   useEffect(() => {
@@ -859,7 +926,13 @@ export default function BookRoom() {
           <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', padding: '32px', textAlign: 'center', maxWidth: '560px', margin: '0 auto' }}>
             <h1 style={{ color: '#111', fontSize: '20px', margin: '0 0 10px' }}>Choose stay dates first</h1>
             <p style={{ color: '#6b7280', fontSize: '13px', lineHeight: 1.6 }}>Select valid available check-in and check-out dates (or a single date for a day tour) before continuing to this room. You can still view your saved bookings from the tab above.</p>
-            <button onClick={() => navigate('/rooms')} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
+            {room && resortAvailable ? (
+              dateEditor.open ? renderDateEditor() : (
+                <button onClick={openDateEditor} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates here</button>
+              )
+            ) : (
+              <button onClick={() => navigate('/rooms')} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
+            )}
           </div>
         ) : (
         <div className="booking-layout">
@@ -950,7 +1023,8 @@ export default function BookRoom() {
                   {singleDay
                     ? <><strong>Date:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> Single-day booking (day tour)</>
                     : <><strong>Check-in:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> <strong>Check-out:</strong> {form.checkOut}</>}
-                  {resortAvailable && <button type="button" onClick={() => { navigate('/rooms'); }} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Edit dates</button>}
+                  {resortAvailable && !dateEditor.open && <button type="button" onClick={openDateEditor} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Change dates</button>}
+                  {resortAvailable && dateEditor.open && renderDateEditor()}
                   {!resortAvailable && <div style={{ marginTop: 5 }}>{availabilityError || unavailableReason || 'Reservations are temporarily closed.'}</div>}
                 </div>
                 <div>

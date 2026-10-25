@@ -499,7 +499,8 @@ export default function Layout({ children }) {
         </header>
 
         <div className="portal-main-content" style={{ flex: 1, padding: '28px', background: BG }}>
-          {children}
+          {/* Page content eases in (see src/motion.css). */}
+          <div className="lk-enter">{children}</div>
         </div>
       </AnimatedSidebarInset>
 

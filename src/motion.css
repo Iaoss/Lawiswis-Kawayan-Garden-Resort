@@ -1,0 +1,32 @@
+/* Entry animations used across the guest site and staff portal.
+   .lk-enter       fade + slide up when an element appears
+   .lk-enter-soft  fade only (for large containers)
+   --lk-delay      optional stagger, e.g. style={{ '--lk-delay': '60ms' }}
+   Everything is switched off for "reduce motion". */
+
+@keyframes lk-fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes lk-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.lk-enter {
+  /* "backwards": hidden during the delay, then hands transform back to
+     the element (so hover effects like the room-card lift still work). */
+  animation: lk-fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  animation-delay: var(--lk-delay, 0ms);
+}
+.lk-enter-soft {
+  animation: lk-fade 0.3s ease-out backwards;
+  animation-delay: var(--lk-delay, 0ms);
+}
+
+/* Open/close of notification details. */
+details[open] > :not(summary) { animation: lk-fade-up 0.25s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lk-enter, .lk-enter-soft, details[open] > :not(summary) { animation: none !important; }
+}

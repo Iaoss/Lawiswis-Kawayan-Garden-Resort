@@ -1,5 +1,5 @@
-import React, { Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
+import React, { Suspense, lazy, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import RequireStaffRoute from './admin/components/RequireStaffRoute';
 import Home from './client/pages/Home';
 import ClientLayout from './client/components/ClientLayout';
@@ -40,6 +40,17 @@ const NewsManagement = lazy(() => import('./admin/pages/NewsManagement.js'));
 const Email = lazy(() => import('./admin/pages/Email.js'));
 const PromoCodes = lazy(() => import('./admin/pages/PromoCodes'));
 
+// Opening another page (e.g. "Book room") starts at the top, not wherever
+// the previous page was scrolled to.
+function ScrollToTopOnPageChange() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+  }, [pathname]);
+  return null;
+}
+
 function PageLoading() {
   return (
     <div role="status" aria-live="polite" style={{ minHeight: '60vh', display: 'grid', placeItems: 'center', color: '#6b7280', fontSize: '13px', fontFamily: "'Inter', sans-serif" }}>
@@ -75,6 +86,7 @@ function BookingPaymentResult() {
 function App() {
   return (
     <Router>
+      <ScrollToTopOnPageChange />
       <Suspense fallback={<PageLoading />}>
       <Routes>
         <Route path="/admin/login" element={<Login />} />

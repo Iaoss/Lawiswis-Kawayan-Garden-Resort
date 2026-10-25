@@ -127,7 +127,8 @@ export default function Rooms() {
   const [availableRoomIds, setAvailableRoomIds] = useState([]);
   const [filter, setFilter] = useState(() => new URLSearchParams(window.location.search).get('category') || 'all');
   const [search, setSearch] = useState('');
-  const [onlyAvailable, setOnlyAvailable] = useState(false);
+  // Which rooms to show once dates are picked: 'available' (default), 'unavailable' or 'all'.
+  const [availabilityView, setAvailabilityView] = useState('available');
   const [loading, setLoading] = useState(true);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
@@ -205,6 +206,9 @@ export default function Rooms() {
     return () => { active = false; };
   }, [checkIn, stayEnd, rangeIsValid]);
 
+  // Picking new dates shows the available rooms first.
+  useEffect(() => { setAvailabilityView('available'); }, [checkIn, checkOut]);
+
   // Close the detail dialog with Escape.
   useEffect(() => {
     if (!selectedRoom) return undefined;
@@ -239,7 +243,10 @@ export default function Rooms() {
       || room.groupTitle === filter
       || (filter === 'Regular Rooms' && /^(standard|regular rooms?)$/i.test(roomType))
       || (filter === 'Suite Rooms' && /(suite|villa)/i.test(roomType));
-    const matchesDates = !(onlyAvailable && rangeIsValid) || statusOf(room) === 'available';
+    const status = statusOf(room);
+    // While availability is still loading (or failed), show every room.
+    const matchesDates = !rangeIsValid || availabilityView === 'all' || !['available', 'booked'].includes(status)
+      || (availabilityView === 'available' ? status === 'available' : status === 'booked');
     return matchesText && matchesGroup && matchesDates;
   });
 
@@ -287,7 +294,7 @@ export default function Rooms() {
   const resetDates = () => {
     setCheckIn('');
     setCheckOut('');
-    setOnlyAvailable(false);
+    setAvailabilityView('available');
   };
   const openRoom = room => { setPhotoIndex(0); setSelectedRoom(room); };
   const goToDates = () => {
@@ -494,7 +501,7 @@ export default function Rooms() {
         <div style={{ marginBottom: '20px' }}>
           <div className="rooms-tag" style={{ color: BRASS, marginBottom: '8px' }}>Our rooms</div>
           <h2 style={{ color: INK, margin: 0, font: `500 32px ${SERIF}` }}>
-            {rangeIsValid && onlyAvailable ? `${visible.length} available rooms` : 'Rooms & rates'}
+            {rangeIsValid && availabilityView !== 'all' ? `${visible.length} ${availabilityView === 'available' ? 'available' : 'unavailable'} room${visible.length === 1 ? '' : 's'}` : 'Rooms & rates'}
           </h2>
         </div>
 
@@ -514,10 +521,19 @@ export default function Rooms() {
             </button>
           ))}
           {rangeIsValid && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', color: FOREST, font: `600 12px ${SANS}`, cursor: 'pointer' }}>
-              <input type="checkbox" checked={onlyAvailable} onChange={event => setOnlyAvailable(event.target.checked)} />
-              Show available rooms only
-            </label>
+            <div role="radiogroup" aria-label="Room availability" style={{ display: 'inline-flex', marginLeft: 'auto', border: `1px solid ${LINE}`, borderRadius: '999px', padding: '3px', background: '#fff' }}>
+              {[
+                ['available', 'Available only'],
+                ['unavailable', 'Unavailable only'],
+                ['all', 'All rooms'],
+              ].map(([value, label]) => (
+                <button key={value} type="button" role="radio" aria-checked={availabilityView === value}
+                  onClick={() => setAvailabilityView(value)}
+                  style={{ border: 0, borderRadius: '999px', padding: '8px 14px', cursor: 'pointer', font: `600 11px ${SANS}`, background: availabilityView === value ? FOREST : 'transparent', color: availabilityView === value ? '#fff' : FOREST, transition: 'background .2s, color .2s' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
           )}
         </div>
 
@@ -536,10 +552,10 @@ export default function Rooms() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
-                {section.items.map(room => {
+                {section.items.map((room, roomIndex) => {
                   const badge = badgeFor(room);
                   return (
-                    <article key={room.id} className="rooms-card">
+                    <article key={room.id} className="rooms-card lk-enter" style={{ '--lk-delay': `${Math.min(roomIndex, 8) * 60}ms` }}>
                       <button type="button" className="rooms-card-photo" onClick={() => openRoom(room)} aria-label={`View ${room.title}`}>
                         <div style={{ height: '220px', position: 'relative', overflow: 'hidden' }}>
                           <img src={room.cover} alt={room.title} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import HeroSlider from '../components/HeroSlider';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
@@ -395,15 +396,12 @@ export default function Home() {
 
       {/* HERO */}
       <div className="lk-home-hero" style={{ position: 'relative', height: '92vh', minHeight: '600px', overflow: 'hidden' }}>
-        <img src={photos.hero} alt="Lawiswis Kawayan Garden Resort" style={{
-          width: '100%', height: '112%', objectFit: 'cover', objectPosition: 'center',
-          transform: `translateY(${Math.min(scrollY, 800) * -0.1}px) scale(1.06)`,
-          transition: 'transform 0.05s linear', willChange: 'transform',
-        }} />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(20,25,15,0.55) 0%, rgba(20,25,15,0.35) 45%, rgba(20,25,15,0.7) 100%)' }} />
+        {/* Auto-playing photo slider (photos from the resort's website). */}
+        <HeroSlider offsetY={Math.min(scrollY, 800) * -0.1} />
+        <div style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none', background: 'linear-gradient(180deg, rgba(20,25,15,0.55) 0%, rgba(20,25,15,0.35) 45%, rgba(20,25,15,0.7) 100%)' }} />
 
-        <div className="lk-home-hero-content" style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', padding: '0 60px' }}>
-          <div style={{ maxWidth: '620px' }}>
+        <div className="lk-home-hero-content" style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', display: 'flex', alignItems: 'center', padding: '0 60px' }}>
+          <div style={{ maxWidth: '620px', pointerEvents: 'auto' }}>
             <div style={{
               fontSize: '12px', color: '#e7dfc4', fontWeight: '500', letterSpacing: '0.18em', textTransform: 'uppercase', marginBottom: '18px', fontFamily: SANS,
               opacity: heroIn ? 1 : 0, transform: heroIn ? 'translateY(0)' : 'translateY(14px)', transition: 'opacity 0.9s cubic-bezier(0.16,1,0.3,1), transform 0.9s cubic-bezier(0.16,1,0.3,1)',

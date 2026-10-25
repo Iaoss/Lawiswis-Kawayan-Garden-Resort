@@ -3,7 +3,9 @@
    queries can't reach directly, so these rules adapt those grids by what
    their inline style says. Calendars ("repeat(7, ...)") keep 7 columns. */
 
-html, body { max-width: 100%; overflow-x: hidden; }
+/* "clip" (not "hidden") so the page never scrolls sideways without
+   breaking the sticky staff sidebar. */
+html, body { max-width: 100%; overflow-x: clip; }
 .portal-main-area { min-width: 0; }
 .portal-main-content img, .client-main img { max-width: 100%; height: auto; }
 

@@ -363,7 +363,7 @@ export default function AdminDashboard() {
   // inside <Card> from losing focus on every keystroke).
   const Card = useMemo(() => function Card({ children, style = {} }) {
     return (
-      <div style={{ background: CARD, borderRadius: '16px', border: `1px solid ${BORDER}`, padding: '18px 20px', ...style }}>
+      <div className="lk-enter" style={{ background: CARD, borderRadius: '16px', border: `1px solid ${BORDER}`, padding: '18px 20px', ...style }}>
         {children}
       </div>
     );
