@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import HeroSlider from '../components/HeroSlider';
+import { ServiceCarousel } from '../../components/ui/services-card.tsx';
+import { AMENITY_GROUPS } from '../lib/amenities';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
@@ -279,13 +281,6 @@ const stayCategories = [
   { icon: 'ti-confetti', label: 'Events & Function Hall' },
 ];
 
-const explore = [
-  { img: photos.pool1, icon: 'ti-ripple', title: 'Pool & Recreation', desc: 'An adult pool (3–6 ft), a kiddie pool, and a bubble pool, plus a poolside bar and shaded cabanas for lounging between dips.' },
-  { img: photos.hapag, icon: 'ti-chef-hat', title: 'Dining & Lounging', desc: 'A snack bar, al fresco lounge, and the Garden Resort Cafe — casual meals in the open air, under the bamboo canopy.' },
-  { img: photos.alfresco, icon: 'ti-building-pavilion', title: 'Function & Event Spaces', desc: 'An air-conditioned function hall for 150+ guests, a dining hall, and a pavilion built for reunions and celebrations.' },
-  { img: photos.halimuyak, icon: 'ti-flower', title: 'Lawiswis Kawayan Spa', desc: 'A quiet dressing area and tea room tucked away from the main grounds — reserved for slowing down.' },
-];
-
 const builtFor = [
   { img: photos.mainVilla, title: 'Main Villa', sub: 'Sleeps up to 25' },
   { img: photos.paraiso, title: 'Paraiso Suite', sub: 'Presidential, 2nd floor' },
@@ -523,28 +518,24 @@ export default function Home() {
         </Reveal>
       </div>
 
-      {/* EXPLORE THE RESORT */}
+      {/* EXPLORE THE RESORT — amenity cards carousel */}
       <div style={{ background: CREAM, padding: '90px 0' }}>
         <div className="section-container">
-          <Reveal style={{ textAlign: 'center', marginBottom: '52px' }}>
-            <div style={{ fontSize: '11px', color: MOSS, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '12px', fontFamily: SANS }}>Amenities</div>
-            <h2 style={{ fontSize: '34px', fontWeight: '500', color: INK, fontFamily: SERIF }}>Explore the Grounds</h2>
+          <Reveal style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '20px', flexWrap: 'wrap', marginBottom: '40px' }}>
+            <div>
+              <div style={{ fontSize: '11px', color: MOSS, fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '12px', fontFamily: SANS }}>Amenities</div>
+              <h2 style={{ fontSize: '34px', fontWeight: '500', color: INK, fontFamily: SERIF, margin: 0 }}>Explore the Grounds</h2>
+              <p style={{ fontSize: '13px', color: '#6b6a5c', lineHeight: 1.8, maxWidth: '520px', margin: '12px 0 0', fontFamily: SANS }}>
+                Three pools, a function hall for 150+ guests, bonfire evenings, a garden café and a quiet spa — all within the bamboo gardens.
+              </p>
+            </div>
+            <button onClick={() => navigate('/amenities')}
+              style={{ background: 'transparent', border: `1px solid ${FOREST}`, color: FOREST, borderRadius: '999px', padding: '11px 20px', cursor: 'pointer', font: `600 11px ${SANS}`, letterSpacing: '.08em' }}>
+              SEE ALL AMENITIES →
+            </button>
           </Reveal>
-          <div className="responsive-grid-2" style={{ gap: '24px' }}>
-            {explore.map(a => (
-              <div key={a.title} style={{ background: PAPER, borderRadius: '6px', overflow: 'hidden', border: `1px solid ${LINE}`, display: 'flex' }}>
-                <div style={{ width: '38%', minWidth: '140px', overflow: 'hidden' }}>
-                  <img src={a.img} alt={a.title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                </div>
-                <div style={{ padding: '22px 24px', flex: 1 }}>
-                  <i className={`ti ${a.icon}`} style={{ fontSize: '20px', color: BRASS, marginBottom: '10px', display: 'block' }} />
-                  <div style={{ fontWeight: '600', fontSize: '15px', color: INK, marginBottom: '8px', fontFamily: SERIF }}>{a.title}</div>
-                  <p style={{ fontSize: '12px', color: '#6b6a5c', lineHeight: '1.75', margin: 0, fontFamily: SANS }}>{a.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
+        <ServiceCarousel services={AMENITY_GROUPS} label="Resort amenities" />
       </div>
 
       {/* BUILT FOR TOGETHERNESS — dark section */}
