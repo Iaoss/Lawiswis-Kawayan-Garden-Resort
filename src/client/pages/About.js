@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, RESORT_IMAGES, SERIF, SANS } from '../components/clientTheme';
 import CinematicScroll from '../../components/ui/scroll-triggered-video-hero.tsx';
+import { Timeline } from '../../components/ui/timeline.tsx';
 
 const PHOTOS = `${process.env.PUBLIC_URL || ''}/images/resort`;
 
@@ -123,32 +124,25 @@ export default function About() {
   return <div style={{ background: PAPER }}>
     {/* Scroll through the resort's story: the photo changes chapter by chapter. */}
     <CinematicScroll chapters={storyChapters(navigate)} />
-    <section className="about-journey-section" style={{ background: '#fff', padding: '84px 24px' }}>
-      <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
-        <div className="about-journey-heading">
-          <div>
-            <div style={{ color: MOSS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '12px' }}>A legacy of growth and unforgettable experiences</div>
-            <h2 style={{ color: INK, font: `500 clamp(34px, 5vw, 46px) ${SERIF}`, margin: 0 }}>Our Journey</h2>
+    {/* Our Journey: timeline with a beam that fills as you scroll. */}
+    <Timeline
+      eyebrow="A legacy of growth and unforgettable experiences"
+      heading="Our Journey"
+      description="From humble beginnings in 2005 to new amenities in 2024, Lawiswis Kawayan Resort has grown into a tranquil oasis, blending nature, tradition, and modern comfort."
+      data={journey.map(milestone => ({
+        title: milestone.year,
+        content: (
+          <div className="lk-enter">
+            <h4 style={{ color: INK, font: `500 24px ${SERIF}`, margin: '0 0 10px' }}>{milestone.title}</h4>
+            <p style={{ color: '#5c5a4c', font: `14px/1.8 ${SANS}`, margin: '0 0 22px', maxWidth: '560px' }}>{milestone.description}</p>
+            {milestone.image && (
+              <img src={milestone.image} alt={milestone.imageAlt} loading="lazy"
+                style={{ display: 'block', width: '100%', maxWidth: '620px', height: 'clamp(180px, 28vw, 300px)', objectFit: 'cover', borderRadius: '14px', boxShadow: '0 16px 50px rgba(35,42,27,0.12)' }} />
+            )}
           </div>
-          <p style={{ color: '#5c5a4c', font: `14px/1.9 ${SANS}`, margin: 0 }}>
-            From humble beginnings in 2005 to new amenities in 2024, Lawiswis Kawayan Resort has grown into a tranquil oasis, blending nature, tradition, and modern comfort.
-          </p>
-        </div>
-        <div className="about-journey-timeline">
-          {journey.map((milestone, index) => (
-            <article key={milestone.year} className="about-journey-item">
-              <div className="about-journey-marker" aria-hidden="true">{String(index + 1).padStart(2, '0')}</div>
-              <div className="about-journey-copy">
-                <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: '8px' }}>{milestone.year}</div>
-                <h3 style={{ color: INK, font: `500 23px ${SERIF}`, margin: '0 0 9px' }}>{milestone.title}</h3>
-                <p style={{ color: '#6b6a5c', font: `13px/1.8 ${SANS}`, margin: 0 }}>{milestone.description}</p>
-              </div>
-              {milestone.image && <img src={milestone.image} alt={milestone.imageAlt} loading="lazy" className="about-journey-image" />}
-            </article>
-          ))}
-        </div>
-      </div>
-    </section>
+        ),
+      }))}
+    />
     <section style={{ background: CREAM, padding: '90px 24px' }}><div style={{ maxWidth: '1100px', margin: '0 auto' }}><div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '12px' }}>What guides us</div><h2 style={{ color: INK, font: `500 40px ${SERIF}`, margin: '0 0 40px' }}>A stay with substance.</h2><div className="about-values-grid">{values.map(value => <div key={value[0]} style={{ background: CREAM, padding: '30px 26px', minHeight: '180px' }}><div style={{ color: BRASS, font: `500 24px ${SERIF}`, marginBottom: '22px' }}>{value[0]}</div><h3 style={{ color: INK, font: `600 18px ${SERIF}`, margin: '0 0 10px' }}>{value[1]}</h3><p style={{ color: '#6b6a5c', font: `12px/1.8 ${SANS}`, margin: 0 }}>{value[2]}</p></div>)}</div></div></section>
     <section style={{ maxWidth: '1100px', margin: '0 auto', padding: '100px 24px' }}><div style={{ display: 'grid', gridTemplateColumns: '1.2fr .8fr', gap: '18px' }}><img src={RESORT_IMAGES.pool} alt="Resort pool" style={{ width: '100%', height: '300px', objectFit: 'cover' }} /><img src={RESORT_IMAGES.dining} alt="Resort dining" style={{ width: '100%', height: '300px', objectFit: 'cover' }} /></div><div style={{ marginTop: '46px', display: 'flex', justifyContent: 'space-between', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}><div><div style={{ color: MOSS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase' }}>Come find your pace</div><h2 style={{ color: INK, font: `500 34px ${SERIF}`, margin: '10px 0 0' }}>Your next quiet morning is waiting.</h2></div><button onClick={() => { navigate('/rooms'); }} style={{ background: FOREST, color: '#fff', border: 0, borderRadius: '3px', padding: '14px 24px', font: `600 11px ${SANS}`, letterSpacing: '.06em', cursor: 'pointer' }}>BROWSE ROOMS →</button></div></section>
     <style>{`

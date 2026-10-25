@@ -23,7 +23,7 @@ function NavDropdown({ label, items, onNavigate, active }) {
   }, []);
 
   return (
-    <div ref={ref} onMouseLeave={() => setOpen(false)} onKeyDown={event => { if (event.key === 'Escape') setOpen(false); }} style={{ position: 'relative' }}>
+    <div ref={ref} onMouseEnter={() => { if (window.matchMedia('(hover: hover)').matches) setOpen(true); }} onMouseLeave={() => setOpen(false)} onKeyDown={event => { if (event.key === 'Escape') setOpen(false); }} style={{ position: 'relative' }}>
       <button
         onClick={() => setOpen(value => !value)}
         className={`client-nav-link${active ? ' is-active' : ''}`}
@@ -33,13 +33,17 @@ function NavDropdown({ label, items, onNavigate, active }) {
         {label} <span style={{ fontSize: 9, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>▾</span>
       </button>
       {open && (
-        <div role="menu" className="client-dropdown" style={{ position: 'absolute', top: 'calc(100% + 10px)', left: '50%', transform: 'translateX(-50%)', background: NAV_BG, borderRadius: 16, padding: 6, minWidth: 220, boxShadow: '0 20px 50px rgba(0,0,0,0.35)', zIndex: 300, border: '1px solid rgba(255,255,255,0.08)' }}>
-          {items.map(item => (
-            <button key={item.label} onClick={() => { onNavigate(item.path); setOpen(false); }}
-              className="client-dropdown-link" role="menuitem">
-              {item.label}
-            </button>
-          ))}
+        // The outer box starts right under the button and its top padding
+        // bridges the gap, so moving the mouse down to the menu keeps it open.
+        <div className="client-dropdown-bridge" style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', paddingTop: 10, zIndex: 300 }}>
+          <div role="menu" className="client-dropdown client-glass" style={{ borderRadius: 18, padding: 6, minWidth: 220 }}>
+            {items.map(item => (
+              <button key={item.label} onClick={() => { onNavigate(item.path); setOpen(false); }}
+                className="client-dropdown-link" role="menuitem">
+                {item.label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -140,7 +144,7 @@ export default function ClientChrome({ children }) {
       {/* Floating pill navbar. On the home page it floats over the photo
           slider; elsewhere it sits at the top. It stays in view when scrolling. */}
       <div className={`client-header-wrap${overHero ? ' is-over-hero' : ''}`}>
-        <header className={`client-header${scrolled ? ' is-scrolled' : ''}`}>
+        <header className={`client-header client-glass${scrolled ? ' is-scrolled' : ''}`}>
           <img src={logo} alt="Lawiswis Kawayan Garden Resort" onClick={() => navigate('/home')} className="client-header-logo" />
           <nav className="client-desktop-nav" aria-label="Main navigation">
             {renderNavigation(() => {})}
@@ -188,8 +192,13 @@ export default function ClientChrome({ children }) {
         .client-header-wrap { position: sticky; top: 12px; z-index: 50; padding: 12px 16px 0; }
         .client-header-wrap.is-over-hero { height: 0; padding-top: 0; }
         .client-header-wrap.is-over-hero .client-header { transform: translateY(12px); }
-        .client-header { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; gap: 20px; background: ${NAV_BG}; border-radius: 999px; padding: 9px 9px 9px 26px; box-shadow: 0 10px 30px rgba(10, 18, 12, 0.22); transition: box-shadow 0.25s ease, background 0.25s ease; }
-        .client-header.is-scrolled { box-shadow: 0 14px 40px rgba(10, 18, 12, 0.35); }
+        /* Liquid glass: translucent dark tint, strong blur and saturation, a light
+           rim and an inner highlight so it reads as a curved glass pill. */
+        .client-glass { position: relative; isolation: isolate; background: linear-gradient(135deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.04) 45%, rgba(255,255,255,0.10) 100%), rgba(16, 26, 20, 0.42); -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%); border: 1px solid rgba(255,255,255,0.22); box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), inset 0 -1px 0 rgba(255,255,255,0.06), 0 10px 30px rgba(10, 18, 12, 0.22); }
+        .client-glass::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1; background: radial-gradient(120% 140% at 15% -20%, rgba(255,255,255,0.28), transparent 55%); }
+        @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .client-glass { background: rgba(16, 26, 20, 0.92); } }
+        .client-header { max-width: 1180px; margin: 0 auto; display: flex; align-items: center; gap: 20px; border-radius: 999px; padding: 9px 9px 9px 26px; transition: box-shadow 0.25s ease, background 0.25s ease; }
+        .client-header.is-scrolled { background: linear-gradient(135deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.03) 45%, rgba(255,255,255,0.08) 100%), rgba(16, 26, 20, 0.62); box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 14px 40px rgba(10, 18, 12, 0.35); }
         .client-header-logo { width: 150px; max-width: 40vw; cursor: pointer; filter: brightness(0) invert(1); flex-shrink: 0; }
         .client-desktop-nav { display: flex; align-items: center; justify-content: center; gap: 6px; flex: 1; }
         .client-nav-link { background: transparent; border: 0; border-radius: 999px; color: rgba(255,255,255,0.86); font: 500 13px ${SANS}; cursor: pointer; padding: 9px 14px; white-space: nowrap; transition: color 0.15s ease, background 0.15s ease; }
@@ -199,15 +208,16 @@ export default function ClientChrome({ children }) {
         .client-header-cta { flex-shrink: 0; margin-left: auto; border: 0; border-radius: 999px; padding: 13px 24px; background: ${NAV_CTA}; color: ${NAV_BG}; font: 700 12px ${SANS}; letter-spacing: 0.1em; cursor: pointer; white-space: nowrap; transition: transform 0.15s ease, background 0.15s ease; }
         .client-header-cta:hover:not(:disabled) { background: #fff6cf; transform: translateY(-1px); }
         .client-header-cta:disabled { opacity: 0.6; cursor: not-allowed; }
-        .client-dropdown { animation: client-dropdown-in 0.18s ease-out; }
-        @keyframes client-dropdown-in { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+        .client-dropdown { animation: client-dropdown-in 0.18s ease-out; background: linear-gradient(160deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04)), rgba(16, 26, 20, 0.72); }
+        @keyframes client-dropdown-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
         .client-dropdown-link { display: block; width: 100%; text-align: left; padding: 10px 14px; border: 0; border-radius: 10px; background: transparent; color: rgba(255,255,255,0.86); font: 13px ${SANS}; cursor: pointer; }
         .client-dropdown-link:hover { background: rgba(255,255,255,0.08); color: #fff; }
         .client-mobile-menu-toggle { display: none; border: 0; border-radius: 999px; background: rgba(255,255,255,0.1); color: #fff; width: 44px; height: 44px; font-size: 22px; line-height: 1; cursor: pointer; }
         .client-mobile-menu-backdrop { position: fixed; inset: 0; z-index: 200; background: rgba(10,18,12,0.62); }
         .client-mobile-nav { position: absolute; inset: 0 0 0 auto; width: min(360px, 88vw); overflow-y: auto; background: ${NAV_BG}; padding: 86px 24px 28px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; box-shadow: -16px 0 40px rgba(0,0,0,0.25); }
         .client-mobile-nav .client-nav-link { width: 100%; text-align: left; padding: 14px 12px; font-size: 14px; }
-        .client-mobile-nav .client-dropdown { transform: none !important; animation: none; background: rgba(255,255,255,0.04) !important; }
+        .client-mobile-nav .client-dropdown-bridge { position: static !important; transform: none !important; padding-top: 0 !important; }
+        .client-mobile-nav .client-dropdown { animation: none; background: rgba(255,255,255,0.04) !important; -webkit-backdrop-filter: none; backdrop-filter: none; box-shadow: none; }
         .client-mobile-nav [role="menu"] { position: static !important; min-width: 0 !important; box-shadow: none !important; margin-bottom: 6px; }
         .client-mobile-book-button { border: 0; border-radius: 999px; padding: 14px; margin-top: 12px; background: ${NAV_CTA}; color: ${NAV_BG}; font: 700 12px ${SANS}; letter-spacing: 0.1em; }
         @media (max-width: 1050px) {

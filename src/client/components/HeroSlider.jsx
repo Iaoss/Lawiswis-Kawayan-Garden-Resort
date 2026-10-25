@@ -17,14 +17,12 @@ export const HERO_SLIDES = [
 const SLIDE_MS = 4000;
 
 // Auto-playing hero carousel (a new photo every 4 seconds): crossfade with a
-// slow zoom, dots to jump to a photo, and a pause button. Pauses on hover,
-// keyboard focus or when the tab is hidden. With "reduce motion" on it
-// doesn't auto-play or zoom.
+// slow zoom, dots to jump to a photo, and a pause button. With "reduce
+// motion" on, photos still change but without the zoom.
 export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0 }) {
   const reduceMotion = useReducedMotion();
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
-  const [hovered, setHovered] = useState(false);
   const [hidden, setHidden] = useState(() => typeof document !== 'undefined' && document.hidden);
   const count = slides.length;
   const go = useCallback(step => setIndex(current => (current + step + count) % count), [count]);
@@ -35,7 +33,10 @@ export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0 }) {
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
-  const playing = !reduceMotion && !paused && !hovered && !hidden && count > 1;
+  // Keeps changing on its own. It only stops when the visitor presses pause
+  // or the tab is hidden. (It used to pause on hover, but the hero fills the
+  // screen, so the mouse was nearly always over it and it never moved.)
+  const playing = !paused && !hidden && count > 1;
   useEffect(() => {
     if (!playing) return undefined;
     const timer = setTimeout(() => go(1), SLIDE_MS);
@@ -60,10 +61,6 @@ export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0 }) {
       role="region"
       aria-roledescription="carousel"
       aria-label="Resort photos"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onFocus={() => setHovered(true)}
-      onBlur={() => setHovered(false)}
       style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}
     >
       <AnimatePresence initial={false}>
@@ -92,12 +89,10 @@ export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0 }) {
                 onClick={() => setIndex(i)}
                 style={{ width: i === index ? 26 : 9, height: 9, padding: 0, borderRadius: 999, border: 0, cursor: 'pointer', background: i === index ? '#fff' : 'rgba(255,255,255,0.5)', transition: 'width .3s, background .3s' }} />
             ))}
-            {!reduceMotion && (
-              <button type="button" aria-label={paused ? 'Play slideshow' : 'Pause slideshow'} onClick={() => setPaused(value => !value)}
-                style={{ ...control, position: 'static', width: 30, height: 30, fontSize: 11, marginLeft: 6 }}>
-                {paused ? '▶' : '❚❚'}
-              </button>
-            )}
+            <button type="button" aria-label={paused ? 'Play slideshow' : 'Pause slideshow'} onClick={() => setPaused(value => !value)}
+              style={{ ...control, position: 'static', width: 30, height: 30, fontSize: 11, marginLeft: 6 }}>
+              {paused ? '▶' : '❚❚'}
+            </button>
           </div>
         </>
       )}
