@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, onSnapshot, query, orderBy, updateDoc, doc, writeBatch } from 'firebase/firestore';
-import Layout from '../components/Layout';
+import Layout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 
 /* ---------------------------------- icons --------------------------------- */

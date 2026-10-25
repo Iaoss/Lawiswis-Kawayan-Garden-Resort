@@ -25,6 +25,16 @@ service cloud.firestore {
     function isStaff() {
       return isAdmin() || isReceptionist();
     }
+    // Extra access an admin gave a receptionist (users/{uid}.access), for a
+    // set time or until removed. See src/lib/staffAccess.js.
+    function hasAccess(feature) {
+      let grant = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('access', {}).get(feature, null);
+      return isReceptionist() && grant != null
+        && (grant.get('expiresAt', null) == null || grant.expiresAt > request.time);
+    }
+    function isAdminOr(feature) {
+      return isAdmin() || hasAccess(feature);
+    }
     function changedKeys() {
       return request.resource.data.diff(resource.data).affectedKeys();
     }
@@ -44,7 +54,7 @@ service cloud.firestore {
     // for themselves (e.g. a room status change), stamped with the server
     // time. Nobody can edit or delete entries; only admins can read them.
     match /activityLogs/{logId} {
-      allow read: if isAdmin();
+      allow read: if isAdminOr('activity');
       allow create: if isStaff()
         && request.resource.data.staffUid == request.auth.uid
         && request.resource.data.createdAt == request.time
@@ -112,7 +122,8 @@ service cloud.firestore {
     }
     match /newsletterSubscribers/{subscriberId} {
       allow read: if isStaff();
-      allow update, delete: if isAdmin();
+      allow update: if isAdminOr('feedback');
+      allow delete: if isAdmin();
       allow create: if false;
     }
 
@@ -134,11 +145,11 @@ service cloud.firestore {
     // ── Promos & Discounts ──────────────────────────────────
     match /promoCodes/{code} {
       allow read: if isStaff();
-      allow create, update, delete: if isAdmin();
+      allow create, update, delete: if isAdminOr('promos');
     }
     match /promos/{promoId} {
       allow read: if isStaff();
-      allow create, update, delete: if isAdmin();
+      allow create, update, delete: if isAdminOr('promos');
     }
 
     // ── Activities (old dashboard log, no longer shown) ─────
@@ -158,7 +169,7 @@ service cloud.firestore {
     match /news/{articleId} {
       allow read: if isStaff()
         || resource.data.status == 'published';
-      allow create, update, delete: if isAdmin();
+      allow create, update, delete: if isAdminOr('news');
     }
 
     // ── Feedback ────────────────────────────────────────────

@@ -25,7 +25,7 @@
 
 import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
-import { verifyStaff } from '../lib/verifyStaff';
+import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { logActivity } from '../lib/activityLog';
 import {
   MAX_LATE_FEE,
@@ -68,7 +68,7 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   if (staff.role === 'receptionist' && current === 'cancelled') {
     throw new StatusError(403, 'Cancelled bookings can only be changed by an admin.');
   }
-  if (staff.role === 'receptionist' && status === 'cancelled') {
+  if (staff.role === 'receptionist' && status === 'cancelled' && !staffCan(staff, 'cancel')) {
     throw new StatusError(403, 'Receptionists can request a cancellation, but only an admin can cancel.');
   }
   if (status === current) return { status, unchanged: true };
@@ -81,7 +81,7 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   // An admin can still check a guest out with money owed, but must give a
   // reason, and the unpaid amount is recorded on the booking.
   const forcedWithBalance = status === 'checked-out' && hasOutstandingBalance(reservation)
-    && force === true && staff.role === 'admin';
+    && force === true && staffCan(staff, 'checkoutOverride');
   if (forcedWithBalance && !reason) {
     throw new StatusError(400, 'Give a reason for checking out a guest who still owes money.');
   }

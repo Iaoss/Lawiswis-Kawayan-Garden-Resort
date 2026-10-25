@@ -14,6 +14,7 @@ import {
   AnimatedSidebarTrigger,
 } from '../../components/ui/animated-sidebar.tsx';
 import PortalSidebar from './PortalSidebar';
+import { useStaffAccess } from '../lib/useStaffAccess';
 import { AccountMenu, PulsingDot, TopbarIconButton, topbarButtonStyle } from './TopbarControls';
 import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
 
@@ -29,6 +30,18 @@ const navItems = [
   { label: 'Cancellation', path: '/receptionist/cancellation', icon: 'ti-file-x' },
   { label: 'Messages', path: '/receptionist/messages', icon: 'ti-message-circle-2' },
   { label: 'Settings', path: '/receptionist/settings', icon: 'ti-settings' },
+];
+
+// Admin pages that appear in the menu while an admin has given access.
+// Labels match the admin menu so they land in the same sidebar groups.
+const GRANTED_NAV = [
+  { feature: 'reports', label: 'Reports', path: '/receptionist/reports', icon: 'ti-chart-bar' },
+  { feature: 'payments', label: 'Payments', path: '/receptionist/payments', icon: 'ti-cash' },
+  { feature: 'promos', label: 'Promos & Discounts', path: '/receptionist/promos', icon: 'ti-discount-2' },
+  { feature: 'feedback', label: 'Feedback & QR', path: '/receptionist/feedback', icon: 'ti-star' },
+  { feature: 'inquiries', label: 'Contact Inquiries', path: '/receptionist/contact-inquiries', icon: 'ti-inbox' },
+  { feature: 'news', label: 'News Management', path: '/receptionist/news', icon: 'ti-news' },
+  { feature: 'activity', label: 'Activity Log', path: '/receptionist/activity', icon: 'ti-list-check' },
 ];
 
 const EXTRA_LABELS = {
@@ -314,6 +327,7 @@ function NotificationBell({ dark, accent, soundAlerts }) {
 export default function ReceptionistLayout({ children }) {
   const navigate = useNavigate();
   const { settings, updateSetting } = useSettings();
+  const access = useStaffAccess();
   const [staffName, setStaffName] = useState('');
   const [staffRole, setStaffRole] = useState('');
   const [staffEmail, setStaffEmail] = useState('');
@@ -377,7 +391,8 @@ export default function ReceptionistLayout({ children }) {
     ? staffName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : 'R';
 
-  const currentLabel = navItems.find(n => n.path === current)?.label || EXTRA_LABELS[current] || 'Dashboard';
+  const visibleNav = [...navItems, ...GRANTED_NAV.filter(item => access.can(item.feature))];
+  const currentLabel = visibleNav.find(n => n.path === current)?.label || EXTRA_LABELS[current] || 'Dashboard';
 
   return (
     <AnimatedSidebarProvider
@@ -393,7 +408,7 @@ export default function ReceptionistLayout({ children }) {
       style={{ fontFamily: "'Poppins', sans-serif", background: BG, '--sidebar-width': '210px', '--sidebar-width-icon': '64px', '--sidebar-width-mobile': 'min(18rem, 88vw)' }}
     >
       <PortalSidebar
-        navItems={navItems}
+        navItems={visibleNav}
         currentPath={current}
         unreadCount={unreadCount}
         logo={logo}

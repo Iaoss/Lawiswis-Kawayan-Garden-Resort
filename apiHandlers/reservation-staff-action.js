@@ -1,5 +1,5 @@
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
-import { verifyStaff } from '../lib/verifyStaff';
+import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { logActivity } from '../lib/activityLog';
 import { calculateReservationModification } from '../lib/reservationModification';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
@@ -146,7 +146,7 @@ async function submitModificationRefund(reservationRef, reservationId, requestId
 }
 
 async function approveRefund({ reservationRef, reservationId, requestId, staff, amountOverride }) {
-  if (staff.role !== 'admin') throw new Error('Only an administrator can approve refund requests.');
+  if (!staffCan(staff, 'refunds')) throw new Error('Only an administrator (or staff given refund access) can approve refund requests.');
   const claim = await adminDb.runTransaction(async transaction => {
     const snapshot = await transaction.get(reservationRef);
     if (!snapshot.exists) throw new Error('Reservation not found.');
@@ -249,7 +249,7 @@ async function approveRefund({ reservationRef, reservationId, requestId, staff, 
 }
 
 async function decideRefund({ reservationRef, reservationId, requestId, staff, action, reason }) {
-  if (staff.role !== 'admin') throw new Error('Only an administrator can decide refund requests.');
+  if (!staffCan(staff, 'refunds')) throw new Error('Only an administrator (or staff given refund access) can decide refund requests.');
   const status = action === 'reject-refund' ? 'rejected' : 'needs_review';
   let reservationData;
   await adminDb.runTransaction(async transaction => {
