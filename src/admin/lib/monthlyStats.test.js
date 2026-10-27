@@ -1,0 +1,91 @@
+import { computeMonthlyStats, getTrend, revenueByMonth, reservationsByDay } from './monthlyStats';
+
+const now = new Date(2026, 9, 27); // 27 Oct 2026
+const ts = (y, m, d) => ({ seconds: new Date(y, m, d, 12).getTime() / 1000 });
+
+const reservations = [
+  { createdAt: ts(2026, 9, 2), checkIn: '2026-10-05', checkOut: '2026-10-06', status: 'checked-out' },
+  { createdAt: ts(2026, 9, 26), checkIn: '2026-11-01', checkOut: '2026-11-02', status: 'cancelled' },
+  { createdAt: ts(2026, 8, 15), checkIn: '2026-09-20', checkOut: '2026-10-01', status: 'checked-out' },
+  { createdAt: ts(2026, 8, 20), checkIn: '2026-09-25', checkOut: '2026-09-26', status: 'checked-in' },
+];
+const payments = [
+  { amount: 3000, createdAt: ts(2026, 9, 3) },
+  { amount: 1000, paidAt: ts(2026, 8, 10) },
+  { amount: 500, createdAt: ts(2025, 9, 3) }, // same month, last year
+];
+
+test('counts only the current calendar month', () => {
+  const { current, previous } = computeMonthlyStats(reservations, payments, now);
+  expect(current).toEqual({ bookings: 2, checkIns: 1, checkOuts: 2, revenue: 3000 });
+  expect(previous).toEqual({ bookings: 2, checkIns: 2, checkOuts: 0, revenue: 1000 });
+});
+
+test('starts over on the 1st of the next month', () => {
+  const { current } = computeMonthlyStats(reservations, payments, new Date(2026, 10, 1));
+  expect(current).toEqual({ bookings: 0, checkIns: 0, checkOuts: 0, revenue: 0 });
+});
+
+test('trend compares with last month', () => {
+  expect(getTrend(3000, 1000)).toEqual({ label: '+200.00%', up: true });
+  expect(getTrend(1, 2)).toEqual({ label: '-50.00%', up: false });
+  expect(getTrend(5, 0)).toEqual({ label: 'New', up: true });
+  expect(getTrend(0, 0)).toEqual({ label: '0%', up: true });
+});
+
+test('charts use real data', () => {
+  const rev = revenueByMonth(payments, now, 6);
+  expect(rev.map(r => r.m)).toEqual(['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct']);
+  expect(rev[5].v).toBe(3000);
+  const days = reservationsByDay(reservations, now, 7);
+  expect(days[6].d).toBe('27 Oct');
+  expect(days[5]).toEqual({ d: '26 Oct', booked: 0, cancelled: 1 });
+});
+
+test('reservations chart filter changes the period', () => {
+  const { reservationsChartData } = require('./monthlyStats');
+  expect(reservationsChartData(reservations, now, '7d')).toHaveLength(7);
+  expect(reservationsChartData(reservations, now, '30d')).toHaveLength(30);
+  expect(reservationsChartData(reservations, now, 'month')).toHaveLength(27);
+  const sixMonths = reservationsChartData(reservations, now, '6m');
+  expect(sixMonths.map(r => r.d)).toEqual(['May 26', 'Jun 26', 'Jul 26', 'Aug 26', 'Sep 26', 'Oct 26']);
+  expect(sixMonths[5]).toEqual({ d: 'Oct 26', booked: 1, cancelled: 1 });
+  expect(sixMonths[4]).toEqual({ d: 'Sep 26', booked: 2, cancelled: 0 });
+  expect(reservationsChartData(reservations, now, '12m')).toHaveLength(12);
+});
+
+describe('dashboard card filters', () => {
+  const { revenueChartData, bookingsByPlatform, roomAvailabilityOn } = require('./monthlyStats');
+
+  test('revenue chart period', () => {
+    expect(revenueChartData(payments, now, '3m').map(r => r.m)).toEqual(['Aug', 'Sep', 'Oct']);
+    expect(revenueChartData(payments, now, '12m')).toHaveLength(12);
+    expect(revenueChartData(payments, now, 'year')).toHaveLength(10);
+  });
+
+  test('booking by platform uses the booking type and period', () => {
+    const list = [
+      { type: 'online', createdAt: ts(2026, 9, 20) },
+      { type: 'online', createdAt: ts(2026, 9, 21) },
+      { type: 'walk-in', createdAt: ts(2026, 9, 22) },
+      { type: 'corporate', createdAt: ts(2026, 5, 1) },
+      { type: 'online', createdAt: ts(2026, 9, 23), status: 'cancelled' },
+    ];
+    expect(bookingsByPlatform(list, now, 'month')).toEqual([
+      { name: 'Website (online)', color: '#89D7B7', count: 2, value: 67 },
+      { name: 'Walk-in', color: '#9cb56f', count: 1, value: 33 },
+    ]);
+    expect(bookingsByPlatform(list, now, 'all').map(p => p.count)).toEqual([2, 1, 1]);
+  });
+
+  test('room availability for a chosen date', () => {
+    const rooms = [{ id: 'a' }, { id: 'b' }, { id: 'c', status: 'maintenance' }, { id: 'd' }];
+    const stays = [
+      { roomId: 'a', checkIn: '2026-10-26', checkOut: '2026-10-28', status: 'checked-in' },
+      { roomId: 'b', checkIn: '2026-10-30', checkOut: '2026-10-30', status: 'confirmed' },
+      { roomId: 'd', checkIn: '2026-10-25', checkOut: '2026-10-27', status: 'cancelled' },
+    ];
+    expect(roomAvailabilityOn(rooms, stays, '2026-10-27')).toEqual({ occupied: 1, reserved: 0, available: 2, notReady: 1, total: 4 });
+    expect(roomAvailabilityOn(rooms, stays, '2026-10-30')).toEqual({ occupied: 0, reserved: 1, available: 2, notReady: 1, total: 4 });
+  });
+});

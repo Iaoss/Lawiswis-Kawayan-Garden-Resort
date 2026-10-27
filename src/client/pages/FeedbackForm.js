@@ -3,9 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { splitGuestName } from '../../lib/nameValidation';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
-const HERO_IMAGE =
-  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/09/About-Lawiswis-Kawayan-scaled-1.jpeg';
+const HERO_IMAGE = optimizeImage(
+  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/09/About-Lawiswis-Kawayan-scaled-1.jpeg',
+  IMAGE_WIDTHS.hero,
+);
 
 const RESORT = 'Lawiswis Kawayan';
 const TAGLINE = 'Garden Resort · Guest feedback';

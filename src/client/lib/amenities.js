@@ -1,6 +1,7 @@
 // Resort amenities, from lawiswiskawayanresort.com/our-amenities and the
 // resort rate card. Used by the Home page carousel and the Amenities page.
 import { Flame, Flower2, Leaf, PartyPopper, UtensilsCrossed, Waves, BedDouble } from 'lucide-react';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
 const UPLOADS = 'https://lawiswiskawayanresort.com/wp-content/uploads';
 const PHOTOS = `${process.env.PUBLIC_URL || ''}/images/resort`;
@@ -12,7 +13,7 @@ export const AMENITY_GROUPS = [
     title: 'Pool & Recreation',
     icon: Waves,
     gradient: 'from-[#e3efe4] to-[#cfe3d2]',
-    image: `${PHOTOS}/serenity-pool.jpg`,
+    image: `${PHOTOS}/serenity-pool.webp`,
     alt: 'The Serenity pool surrounded by gardens',
     description: 'Three pools for every age, with cabanas, daybeds and a poolside bar for lounging between dips.',
     highlights: ['Adult pool (3–6 ft)', 'Kiddie pool (18 in)', 'Bubble pool (2 ft)'],
@@ -24,7 +25,7 @@ export const AMENITY_GROUPS = [
     title: 'Function & Event Spaces',
     icon: PartyPopper,
     gradient: 'from-[#f3ead3] to-[#e9dbb6]',
-    image: `${PHOTOS}/bonfire-gathering.jpg`,
+    image: `${PHOTOS}/bonfire-gathering.webp`,
     alt: 'Group gathering around the bonfire under string lights',
     description: 'Room for reunions, weddings, seminars and team building — indoors or out in the gardens.',
     highlights: ['Function hall for 150+ guests', 'Dining hall & pavilion', 'KTV room'],
@@ -36,7 +37,7 @@ export const AMENITY_GROUPS = [
     title: 'Dining & Lounging',
     icon: UtensilsCrossed,
     gradient: 'from-[#f6e3d7] to-[#efcdb8]',
-    image: `${PHOTOS}/garden-terrace.jpg`,
+    image: `${PHOTOS}/garden-terrace.webp`,
     alt: 'A couple sharing drinks on a garden terrace',
     description: 'Casual meals in the open air, from the snack bar and café to grilling stations under the trees.',
     highlights: ['Garden Resort Café', 'Snack bar & al fresco lounge', 'Grilling stations'],
@@ -48,7 +49,7 @@ export const AMENITY_GROUPS = [
     title: 'Spa & Wellness',
     icon: Flower2,
     gradient: 'from-[#ece4f1] to-[#dccfe8]',
-    image: `${UPLOADS}/2020/01/Spa.jpeg`,
+    image: optimizeImage(`${UPLOADS}/2020/01/Spa.jpeg`, IMAGE_WIDTHS.card),
     alt: 'Lawiswis Kawayan Spa',
     description: 'A quiet spa tucked away from the main grounds. Room guests get 20% off all spa rates.',
     highlights: ['₱1,000 per hour', '20% off for room guests', 'Tea preparation room'],
@@ -60,7 +61,7 @@ export const AMENITY_GROUPS = [
     title: 'Activities & Evenings',
     icon: Flame,
     gradient: 'from-[#f7e7c6] to-[#f0d49a]',
-    image: `${PHOTOS}/fireside-friends.jpg`,
+    image: `${PHOTOS}/fireside-friends.webp`,
     alt: 'Friends roasting marshmallows by the fire pit',
     description: 'Bonfires with s’mores, open-air movies and old-school games — the resort comes alive after dark.',
     highlights: ['Bonfire & s’mores', 'Al fresco movie nights', 'Kadang-kadang (bamboo stilts)'],
@@ -72,7 +73,7 @@ export const AMENITY_GROUPS = [
     title: 'Rooms, Suites & Villa',
     icon: BedDouble,
     gradient: 'from-[#e1ebf0] to-[#c9dbe4]',
-    image: `${PHOTOS}/veranda-lounge.jpg`,
+    image: `${PHOTOS}/veranda-lounge.webp`,
     alt: 'Veranda lounge overlooking the trees',
     description: '30 guest rooms, 7 suites with kitchens, the four-bedroom Main Villa and a private house for big families.',
     highlights: ['23 standard rooms', '7 suites with kitchens', 'Main Villa (4 bedrooms)'],
@@ -84,7 +85,7 @@ export const AMENITY_GROUPS = [
     title: 'Grounds & Sustainability',
     icon: Leaf,
     gradient: 'from-[#e6eedb] to-[#d2e2bf]',
-    image: `${PHOTOS}/bamboo-cabanas.jpg`,
+    image: `${PHOTOS}/bamboo-cabanas.webp`,
     alt: 'Curtained cabanas in the bamboo garden',
     description: 'Bamboo gardens, grass-covered lawns and art displays — powered in part by the sun.',
     highlights: ['10 kWp solar installation', 'Parking for 30 cars', 'Bamboo gardens'],

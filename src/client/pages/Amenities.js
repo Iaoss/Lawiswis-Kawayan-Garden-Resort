@@ -98,9 +98,9 @@ export default function Amenities() {
         </Reveal>
 
         <div className="relative h-[380px] sm:h-[440px]" aria-hidden="true">
-          <motion.img {...float(0)} src={`${PHOTOS}/serenity-pool.jpg`} alt="" className="absolute left-0 top-6 h-[62%] w-[62%] rounded-[28px] object-cover shadow-2xl" />
-          <motion.img {...float(1.5)} src={`${PHOTOS}/lanterns-sunset.jpg`} alt="" className="absolute right-0 top-0 h-[44%] w-[48%] rounded-[24px] object-cover shadow-xl" />
-          <motion.img {...float(3)} src={`${PHOTOS}/bamboo-cabanas.jpg`} alt="" className="absolute bottom-0 right-6 h-[50%] w-[56%] rounded-[28px] border-4 border-[#F7F4EA] object-cover shadow-2xl" />
+          <motion.img {...float(0)} src={`${PHOTOS}/serenity-pool.webp`} alt="" className="absolute left-0 top-6 h-[62%] w-[62%] rounded-[28px] object-cover shadow-2xl" />
+          <motion.img {...float(1.5)} src={`${PHOTOS}/lanterns-sunset.webp`} alt="" className="absolute right-0 top-0 h-[44%] w-[48%] rounded-[24px] object-cover shadow-xl" />
+          <motion.img {...float(3)} src={`${PHOTOS}/bamboo-cabanas.webp`} alt="" className="absolute bottom-0 right-6 h-[50%] w-[56%] rounded-[28px] border-4 border-[#F7F4EA] object-cover shadow-2xl" />
         </div>
       </section>
 

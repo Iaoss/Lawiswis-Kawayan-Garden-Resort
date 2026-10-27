@@ -8,7 +8,10 @@ import {
 } from 'firebase/firestore';
 import Layout from '../components/Layout';
 import { useSettings } from '../components/SettingsContext';
-import { toMillis } from '../lib/listSort';
+import {
+  PLATFORM_RANGES, RESERVATION_CHART_RANGES, REVENUE_CHART_RANGES,
+  bookingsByPlatform, computeMonthlyStats, reservationsChartData, revenueChartData, roomAvailabilityOn,
+} from '../lib/monthlyStats';
 import {
   ANALYTICS_PERIODS,
   getOverstayStats,
@@ -16,16 +19,12 @@ import {
   getQuarterlyBreakdown,
   getReservationAverages,
 } from '../../lib/reservationStatus';
-import {
-  getDailyReservations,
-  getFeedbackSummary,
-  getMonthlyRevenue,
-  getRevenueBySource,
-} from '../../lib/dashboardMetrics';
+import { getFeedbackSummary, getRevenueBySource } from '../../lib/dashboardMetrics';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
+
 
 const statusColors = {
   confirmed:    ['rgba(34,197,94,0.15)',  '#4ade80'],
@@ -157,10 +156,6 @@ export default function AdminDashboard() {
   const LIME     = '#9cb56f';
   const TEAL     = '#89D7B7';
 
-  const [stats, setStats] = useState({
-    totalReservations: 0, checkedIn: 0, availableRooms: 0,
-    totalRevenue: 0, totalRooms: 0, pendingPayments: 0, checkOuts: 0,
-  });
   const [recent, setRecent]       = useState([]);
   const [searchQ, setSearchQ]     = useState('');
   const [statusFilter, setStatusFilter] = useState('All Status');
@@ -175,6 +170,7 @@ export default function AdminDashboard() {
   const [analyticsPeriod, setAnalyticsPeriod] = useState('30');
   const [payments, setPayments] = useState([]);
   const [feedback, setFeedback] = useState([]);
+  const [roomList, setRoomList] = useState([]);
 
   // ── Calendar ──────────────────────────────────────────────
   const [calMonth, setCalMonth] = useState(() => {
@@ -188,20 +184,11 @@ export default function AdminDashboard() {
       const roomsSnap = await getDocs(collection(db, 'rooms'));
       const resSnap   = await getDocs(collection(db, 'reservations'));
       const paySnap   = await getDocs(collection(db, 'payments'));
-      const rooms        = roomsSnap.docs.map(d => d.data());
+      const rooms        = roomsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const paymentRows  = paySnap.docs.map(d => d.data());
-      const revenue      = paymentRows.reduce((s, p) => s + Number(p.amount || 0), 0);
       setPayments(paymentRows);
-      setStats({
-        totalReservations: reservations.length,
-        checkedIn:         reservations.filter(r => r.status === 'checked-in').length,
-        checkOuts:         reservations.filter(r => r.status === 'checked-out').length,
-        availableRooms:    rooms.filter(r => r.status === 'vacant' || r.status === 'available').length,
-        totalRooms:        rooms.length,
-        totalRevenue:      revenue,
-        pendingPayments:   reservations.filter(r => r.paymentStatus === 'pending').length,
-      });
+      setRoomList(rooms);
       setRecent([...reservations].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
       // Feedback is loaded on its own so a problem there doesn't blank the dashboard.
       try {
@@ -240,30 +227,51 @@ export default function AdminDashboard() {
     };
   }, [recent, analyticsPeriod, now]);
 
-  // Charts from real records (these used to be sample numbers).
-  const revenueSeries = useMemo(() => getMonthlyRevenue(payments, now, 6), [payments, now]);
-  const reservationSeries = useMemo(() => getDailyReservations(recent, now, 7), [recent, now]);
+  // This month's numbers. They start over on the 1st of every month; `now`
+  // ticks every minute, so this also happens if the page is left open.
+  const monthKeyNow = `${now.getFullYear()}-${now.getMonth()}`;
+  const dayKeyNow = `${monthKeyNow}-${now.getDate()}`;
+  const monthly = useMemo(
+    () => computeMonthlyStats(recent, payments, new Date()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recent, payments, monthKeyNow],
+  );
+  // Trend vs last month; null when last month had nothing to compare with.
+  const formatTrend = key => (monthly.previous[key] > 0
+    ? { up: monthly.trends[key].up, text: monthly.trends[key].label.replace(/^[+-]/, '') }
+    : null);
+
+  // Charts use real data.
+  const [revenueRange, setRevenueRange] = useState('6m');
+  const revenueData = useMemo(
+    () => revenueChartData(payments, new Date(), revenueRange),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [payments, revenueRange, monthKeyNow],
+  );
+  const [platformRange, setPlatformRange] = useState('month');
+  const platformData = useMemo(
+    () => bookingsByPlatform(recent, new Date(), platformRange),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recent, platformRange, dayKeyNow],
+  );
+  // Room availability for a chosen date (defaults to today).
+  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const [availabilityDate, setAvailabilityDate] = useState('');
+  const availabilityDay = availabilityDate || todayIso;
+  const roomCounts = useMemo(
+    () => roomAvailabilityOn(roomList, recent, availabilityDay),
+    [roomList, recent, availabilityDay],
+  );
+  const [reservationRange, setReservationRange] = useState('7d');
+  const reservationsData = useMemo(
+    () => reservationsChartData(recent, new Date(), reservationRange),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recent, reservationRange, dayKeyNow],
+  );
+  // Billed revenue by source, and guest ratings, from real records.
   const revenueSources = useMemo(() => getRevenueBySource(recent, analytics.range), [recent, analytics.range]);
   const feedbackSummary = useMemo(() => getFeedbackSummary(feedback), [feedback]);
   const periodLabel = (ANALYTICS_PERIODS.find(p => p.id === analyticsPeriod) || ANALYTICS_PERIODS[0]).label;
-
-  // Real month-over-month change (replaces the old placeholder percentages).
-  const monthTrends = useMemo(() => {
-    const today = new Date();
-    const thisStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
-    const lastStart = new Date(today.getFullYear(), today.getMonth() - 1, 1).getTime();
-    const inMonth = (ms, start, end) => ms >= start && ms < end;
-    const change = (current, previous) => (previous > 0 ? ((current - previous) / previous) * 100 : null);
-    const bookedMs = r => toMillis(r.createdAt);
-    const paidMs = p => toMillis(p.paidAt || p.createdAt || p.paymentDate || p.date || p.timestamp);
-    const bookings = change(
-      recent.filter(r => inMonth(bookedMs(r), thisStart, Infinity)).length,
-      recent.filter(r => inMonth(bookedMs(r), lastStart, thisStart)).length,
-    );
-    const sum = (start, end) => payments.filter(p => inMonth(paidMs(p), start, end)).reduce((s, p) => s + Number(p.amount || 0), 0);
-    return { bookings, revenue: change(sum(thisStart, Infinity), sum(lastStart, thisStart)) };
-  }, [recent, payments]);
-  const formatTrend = value => (value === null ? null : { up: value >= 0, text: `${Math.abs(value).toFixed(1)}%` });
   const formatAverage = value => (value >= 10 ? Math.round(value).toLocaleString() : value.toFixed(1));
 
   const filtered = recent.filter(r => {
@@ -275,11 +283,8 @@ export default function AdminDashboard() {
     return matchQ && matchS;
   });
 
-  const occupied  = stats.checkedIn;
-  const reserved  = Math.max(0, stats.totalReservations - stats.checkedIn - stats.checkOuts);
-  const available = stats.availableRooms;
-  const notReady  = Math.max(0, stats.totalRooms - occupied - reserved - available);
-  const total     = stats.totalRooms || 1;
+  const { occupied, reserved, available, notReady } = roomCounts;
+  const total     = roomCounts.total || 1;
   const pct = v => `${Math.round((v / total) * 100)}%`;
 
   // ── Task actions ──────────────────────────────────────────
@@ -370,13 +375,12 @@ export default function AdminDashboard() {
     );
   }, [TEXT, MUTED]);
 
-  const Pill = useMemo(() => function Pill({ children, color = LIME, textColor = '#1a2e1a' }) {
-    return (
-      <span style={{ background: color, color: textColor, borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '600' }}>
-        {children}
-      </span>
-    );
-  }, []);
+  const filterSelectStyle = {
+    background: dark ? 'rgba(200,240,110,0.15)' : LIME, color: dark ? LIME : '#1a2e1a', border: 'none',
+    borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '600', fontFamily: 'inherit',
+    cursor: 'pointer', outline: 'none',
+  };
+  const optionStyle = { color: '#1a2e1a', background: '#fff' };
 
   const inputStyle = {
     width: '100%', padding: '7px 10px', borderRadius: '8px',
@@ -405,7 +409,7 @@ export default function AdminDashboard() {
         {/* ── Stat Cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${settings.showTotalRevenue === false ? 3 : 4},1fr)`, gap: '14px', marginBottom: '18px' }}>
           {[
-            { label: 'New Bookings', show: true, value: stats.totalReservations, icon: 'ti-calendar-event', trend: formatTrend(monthTrends.bookings), to: '/admin/reservations?view=new' },
+            { label: `New Bookings · ${monthly.monthLabel}`, show: true, value: monthly.current.bookings, icon: 'ti-calendar-event', trend: formatTrend('bookings'), to: '/admin/reservations?view=new' },
             {
               label: 'Avg. Reservations / Day', show: true, value: formatAverage(analytics.averages.perDay), icon: 'ti-chart-bar', to: '/admin/reports',
               detail: `${formatAverage(analytics.averages.perWeek)} / week · ${formatAverage(analytics.averages.perMonth)} / month`,
@@ -416,7 +420,7 @@ export default function AdminDashboard() {
               detail: `${analytics.overstays.historicalCount} in period (${Math.round(analytics.overstays.rate * 100)}%) · ${formatCurrency(analytics.overstays.lateFeeTotal)} late fees`,
               title: 'Overstays and late check-out charges for stays that ended in the selected period',
             },
-            { label: 'Total Revenue', show: settings.showTotalRevenue !== false, value: formatCurrency(stats.totalRevenue), icon: 'ti-currency-peso', trend: formatTrend(monthTrends.revenue), to: '/admin/payments' },
+            { label: `Revenue · ${monthly.monthLabel}`, show: settings.showTotalRevenue !== false, value: formatCurrency(monthly.current.revenue), icon: 'ti-currency-peso', trend: formatTrend('revenue'), to: '/admin/payments' },
           ].map((c, i) => !c.show ? null : (
             <div
               key={c.label}
@@ -481,7 +485,21 @@ export default function AdminDashboard() {
 
           {settings.showOccupancyRate !== false && (
           <Card>
-            <SectionTitle action>Room Availability</SectionTitle>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Room Availability</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <input
+                  type="date"
+                  aria-label="Room availability date"
+                  value={availabilityDay}
+                  onChange={e => setAvailabilityDate(e.target.value)}
+                  style={{ ...filterSelectStyle, padding: '2px 8px', colorScheme: dark ? 'dark' : 'light' }}
+                />
+                {availabilityDay !== todayIso && (
+                  <button type="button" onClick={() => setAvailabilityDate('')} style={{ ...filterSelectStyle, background: 'transparent', color: MUTED }}>Today</button>
+                )}
+              </div>
+            </div>
             <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', height: '36px', marginBottom: '16px', gap: '2px' }}>
               {[
                 { w: pct(occupied),  bg: TEAL,      label: 'Occupied' },
@@ -515,10 +533,12 @@ export default function AdminDashboard() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue</span>
-              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 6 months</Pill>
+              <select aria-label="Revenue chart period" value={revenueRange} onChange={e => setRevenueRange(e.target.value)} style={filterSelectStyle}>
+                {REVENUE_CHART_RANGES.map(r => <option key={r.id} value={r.id} style={optionStyle}>{r.label}</option>)}
+              </select>
             </div>
             <ResponsiveContainer width="100%" height={160}>
-              <AreaChart data={revenueSeries} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+              <AreaChart data={revenueData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
                 <defs>
                   <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%"  stopColor={TEAL} stopOpacity={0.3} />
@@ -575,7 +595,14 @@ export default function AdminDashboard() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Reservations</span>
-              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 7 days</Pill>
+              <select
+                aria-label="Reservations chart period"
+                value={reservationRange}
+                onChange={e => setReservationRange(e.target.value)}
+                style={filterSelectStyle}
+              >
+                {RESERVATION_CHART_RANGES.map(r => <option key={r.id} value={r.id} style={optionStyle}>{r.label}</option>)}
+              </select>
             </div>
             <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
               {[{ color: TEAL, label: 'Booked' }, { color: LIME, label: 'Cancelled' }].map(l => (
@@ -586,9 +613,9 @@ export default function AdminDashboard() {
               ))}
             </div>
             <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={reservationSeries} barSize={12} barGap={2} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <XAxis dataKey="d" tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} />
+              <BarChart data={reservationsData} barSize={reservationsData.length > 14 ? 5 : 12} barGap={2} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                <XAxis dataKey="d" tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={8} />
+                <YAxis tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px', background: CARD2, border: `1px solid ${BORDER}`, color: TEXT }} />
                 <Bar dataKey="booked"    fill={TEAL} radius={[4, 4, 0, 0]} />
                 <Bar dataKey="cancelled" fill={LIME} radius={[4, 4, 0, 0]} />
@@ -597,39 +624,34 @@ export default function AdminDashboard() {
           </Card>
 
           <Card>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px', gap: '8px' }}>
-              <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue by Source</span>
-              <span style={{ fontSize: '10px', color: MUTED }}>{periodLabel} · by check-in</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Booking by Platform</span>
+              <select aria-label="Booking by platform period" value={platformRange} onChange={e => setPlatformRange(e.target.value)} style={filterSelectStyle}>
+                {PLATFORM_RANGES.map(r => <option key={r.id} value={r.id} style={optionStyle}>{r.label}</option>)}
+              </select>
             </div>
-            {revenueSources.total > 0 ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                <PieChart width={130} height={130}>
-                  <Pie data={revenueSources.rows.filter(d => d.value > 0)} cx={60} cy={60} innerRadius={38} outerRadius={60}
-                    dataKey="value" startAngle={90} endAngle={-270} paddingAngle={2}>
-                    {revenueSources.rows.filter(d => d.value > 0).map(d => <Cell key={d.id} fill={d.color} />)}
-                  </Pie>
-                  <Tooltip formatter={(v, name, item) => [formatCurrency(v), item?.payload?.label || name]}
-                    contentStyle={{ fontSize: '11px', borderRadius: '8px', background: CARD2, border: `1px solid ${BORDER}`, color: TEXT }} />
-                </PieChart>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {revenueSources.rows.map(d => (
-                    <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: '6px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
-                        <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: d.color, flexShrink: 0 }} />
-                        <span style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.label}</span>
-                      </div>
-                      <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT, whiteSpace: 'nowrap' }} title={`${Math.round(d.share * 100)}%`}>
-                        {formatCurrency(d.value)}
-                      </span>
-                    </div>
-                  ))}
-                  <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: '6px', display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: '700', color: TEXT }}>
-                    <span>Total billed</span><span>{formatCurrency(revenueSources.total)}</span>
-                  </div>
-                </div>
-              </div>
+            {platformData.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '36px 0', color: MUTED, fontSize: '12px' }}>No bookings in this period.</div>
             ) : (
-              <p style={{ fontSize: '12px', color: MUTED, margin: '20px 0' }}>No bookings with check-in dates in this period yet.</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <PieChart width={130} height={130}>
+                <Pie data={platformData} cx={60} cy={60} innerRadius={38} outerRadius={60}
+                  dataKey="count" startAngle={90} endAngle={-270} paddingAngle={2}>
+                  {platformData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                </Pie>
+              </PieChart>
+              <div style={{ flex: 1 }}>
+                {platformData.map(d => (
+                  <div key={d.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: d.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: '11px', color: MUTED }}>{d.name}</span>
+                    </div>
+                    <span title={`${d.count} booking${d.count === 1 ? '' : 's'}`} style={{ fontSize: '11px', fontWeight: '600', color: TEXT }}>{d.value}% <span style={{ color: MUTED, fontWeight: 500 }}>({d.count})</span></span>
+                  </div>
+                ))}
+              </div>
+            </div>
             )}
           </Card>
 
@@ -703,6 +725,44 @@ export default function AdminDashboard() {
             </div>
           </Card>
         </div>
+
+        {/* ── Revenue by source ── */}
+        <Card style={{ marginBottom: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue by Source</span>
+            <span style={{ fontSize: '10px', color: MUTED }}>{periodLabel} · billed, by check-in date</span>
+          </div>
+          {revenueSources.total > 0 ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+              <PieChart width={130} height={130}>
+                <Pie data={revenueSources.rows.filter(d => d.value > 0)} cx={60} cy={60} innerRadius={38} outerRadius={60}
+                  dataKey="value" startAngle={90} endAngle={-270} paddingAngle={2}>
+                  {revenueSources.rows.filter(d => d.value > 0).map(d => <Cell key={d.id} fill={d.color} />)}
+                </Pie>
+                <Tooltip formatter={(v, name, item) => [formatCurrency(v), item?.payload?.label || name]}
+                  contentStyle={{ fontSize: '11px', borderRadius: '8px', background: CARD2, border: `1px solid ${BORDER}`, color: TEXT }} />
+              </PieChart>
+              <div style={{ flex: 1, minWidth: '220px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', columnGap: '24px' }}>
+                {revenueSources.rows.map(d => (
+                  <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', padding: '5px 0', borderBottom: `1px solid ${BORDER}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                      <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: d.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.label}</span>
+                    </div>
+                    <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT, whiteSpace: 'nowrap' }}>
+                      {formatCurrency(d.value)} <span style={{ color: MUTED, fontWeight: 500 }}>({Math.round(d.share * 100)}%)</span>
+                    </span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '12px', fontWeight: '700', color: TEXT }}>
+                  <span>Total billed</span><span>{formatCurrency(revenueSources.total)}</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p style={{ fontSize: '12px', color: MUTED, margin: '12px 0' }}>No bookings with check-in dates in this period yet.</p>
+          )}
+        </Card>
 
         {/* ── Row 4 ── */}
         <div style={{ display: 'grid', gridTemplateColumns: settings.showRecentReservations === false ? '1fr' : '1fr 280px', gap: '14px', marginBottom: '14px' }}>

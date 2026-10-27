@@ -16,6 +16,7 @@ import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { staffApi } from '../lib/staffApi';
 import { appAlert } from '../../components/ui/app-dialog';
+import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
 
@@ -49,7 +50,7 @@ const blockedByStatus = (room, checkIn, today) => {
 };
 
 // Same real room photos used in RoomManagement — keyed by room name/number (lowercased).
-const ROOM_IMAGES = {
+const ROOM_IMAGES = optimizeImageMap({
   himbing:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Himbing-01-1400x700-1.jpeg',
   tahimik:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tahimik-02-1400x700-1.jpeg',
   minamahal:  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/MInamahal-01-1400x700-1.jpeg',
@@ -78,7 +79,7 @@ const ROOM_IMAGES = {
   halimuyak:  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Halimuyak-04-1400x700-1.jpeg',
   paraiso:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Paraiso-03-1400x700-1.jpeg',
   'main villa': 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Main-Villa-08-1400x700-1.jpeg',
-};
+}, IMAGE_WIDTHS.card);
 const getRoomImage = (name) => (name ? ROOM_IMAGES[name.trim().toLowerCase()] || null : null);
 
 const gridItemVariants = {
