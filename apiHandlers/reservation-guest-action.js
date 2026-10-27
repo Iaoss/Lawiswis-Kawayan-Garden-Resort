@@ -6,6 +6,7 @@ import { getGuestCountViolation, stayRangesOverlap } from '../src/lib/bookingPri
 import { getBookingOptionId, normalizeBookingDetails } from '../src/lib/bookingDetails';
 import { calculateReservationModification } from '../lib/reservationModification';
 import { findNearestOpenDates } from '../src/lib/bookingSuggestions';
+import { getGroupAdvanceNoticeError } from '../src/lib/corporatePackages';
 import { manilaDateKey } from '../src/lib/reservationStatus';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
@@ -243,6 +244,11 @@ async function requestScheduleChange(reservation, body) {
   const checkOut = requested ? requested.checkOut : body.checkOut;
   if (isCorporate && (typeof checkIn !== 'string' || typeof checkOut !== 'string')) {
     return { error: 'Choose valid dates within the next two months.' };
+  }
+  // Group bookings moved to a new date still need a week's notice.
+  if (isCorporate && checkIn !== data.checkIn) {
+    const noticeError = getGroupAdvanceNoticeError(checkIn);
+    if (noticeError) return { error: noticeError };
   }
 
   // Policy: dates can't move less than 30 days before arrival (cancel and

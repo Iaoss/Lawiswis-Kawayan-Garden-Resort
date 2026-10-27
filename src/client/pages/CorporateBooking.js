@@ -1,7 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
-import { getCorporatePackage, CORPORATE_FEATURE_ROWS, CORPORATE_PACKAGES, isCorporateFeatureIncluded } from '../../lib/corporatePackages';
+import {
+  formatLongDate, getCorporatePackage, getEarliestGroupDate, getGroupAdvanceNoticeError, getGroupGuestError,
+  CORPORATE_FEATURE_ROWS, CORPORATE_PACKAGES, GROUP_ADVANCE_DAYS, MAX_GROUP_GUESTS, MIN_GROUP_GUESTS, isCorporateFeatureIncluded,
+} from '../../lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
 import { PREFERRED_CONTACT_METHODS } from '../../lib/preferredContactMethods';
 import { CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
@@ -17,8 +20,9 @@ const addMonths = (date, months) => {
 
 export default function CorporateBooking() {
   const { available, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
-  const today = formatDate(new Date());
   const maxDate = formatDate(addMonths(new Date(), 2));
+  // Groups book at least a week ahead (Philippine date).
+  const earliestDate = getEarliestGroupDate();
   const [form, setForm] = useState({
     companyName: '',
     firstName: '',
@@ -46,8 +50,10 @@ export default function CorporateBooking() {
   const guestName = joinGuestName(form.firstName, form.lastName);
   const depositAmount = selectedPackage ? getOnlinePaymentAmount(selectedPackage.totalAmount, 'deposit') : 0;
   const dateValid = Boolean(form.checkIn && (form.bookingType === 'daytour'
-    ? form.checkIn >= today && form.checkIn <= maxDate
-    : form.checkOut > form.checkIn && form.checkIn >= today && form.checkOut <= maxDate));
+    ? form.checkIn >= earliestDate && form.checkIn <= maxDate
+    : form.checkOut > form.checkIn && form.checkIn >= earliestDate && form.checkOut <= maxDate));
+  const guestError = form.totalGuests === '' ? '' : getGroupGuestError(totalGuests);
+  const noticeError = form.checkIn ? getGroupAdvanceNoticeError(form.checkIn) : '';
 
   const packageFeatures = useMemo(() => selectedPackage
     ? CORPORATE_FEATURE_ROWS.filter(row => isCorporateFeatureIncluded(selectedPackage.id, nights, row.id))
@@ -81,11 +87,15 @@ export default function CorporateBooking() {
       return;
     }
     if (!selectedPackage) {
-      setErrorMessage('Corporate packages start at 15 guests.');
+      setErrorMessage(getGroupGuestError(totalGuests));
+      return;
+    }
+    if (noticeError) {
+      setErrorMessage(noticeError);
       return;
     }
     if (!dateValid) {
-      setErrorMessage('Choose valid dates within the next two months.');
+      setErrorMessage(`Choose dates from ${formatLongDate(earliestDate)} through ${formatLongDate(maxDate)}.`);
       return;
     }
     if (!NAME_PATTERN.test(form.firstName.trim()) || !NAME_PATTERN.test(form.lastName.trim())) {
@@ -139,14 +149,15 @@ export default function CorporateBooking() {
     <main style={{ background: PAPER, minHeight: '100vh', paddingBottom: '88px' }}>
       <style>{`
         @media (max-width: 800px) {
-          .corporate-booking-layout { grid-template-columns: 1fr !important; }
+          .corporate-booking-layout { grid-template-columns: minmax(0, 1fr) !important; padding: 24px 16px !important; }
+          .corporate-booking-layout > *, .corporate-booking-layout form > section { min-width: 0; }
           .corporate-booking-summary { position: static !important; }
         }
       `}</style>
       <header style={{ background: FOREST_DEEP, color: '#fff', padding: '64px 24px 56px' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
           <button type="button" onClick={openBookingTypeModal} style={{ border: 0, background: 'transparent', color: '#e4d4a7', padding: 0, marginBottom: '24px', cursor: 'pointer', font: `600 11px ${SANS}` }}>← CHANGE BOOKING TYPE</button>
-          <div style={{ color: '#e4d4a7', font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '12px' }}>Corporate / Big Group Booking · 15+ Guests</div>
+          <div style={{ color: '#e4d4a7', font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '12px' }}>Corporate / Big Group Booking · {MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS} Guests</div>
           <h1 style={{ margin: '0 0 12px', font: `500 clamp(38px, 6vw, 64px)/1.05 ${SERIF}` }}>Bring your whole team.</h1>
           <p style={{ maxWidth: '650px', color: 'rgba(255,255,255,.76)', font: `14px/1.8 ${SANS}`, margin: 0 }}>Select your group size and dates to see the Bamboo package tier and per-person pricing. A {RESERVATION_DEPOSIT_PERCENTAGE}% deposit reserves your request.</p>
         </div>
@@ -158,7 +169,7 @@ export default function CorporateBooking() {
             <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 18px' }}>Your group</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px' }}>
               <label style={labelStyle}>Company / organization<input required maxLength={120} name="companyName" value={form.companyName} onChange={changeField} style={inputStyle} /></label>
-              <label style={labelStyle}>Number of guests<input required type="number" min="15" step="1" name="totalGuests" value={form.totalGuests} onChange={changeField} style={inputStyle} /></label>
+              <label style={labelStyle}>Number of guests ({MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS})<input required type="number" min={MIN_GROUP_GUESTS} max={MAX_GROUP_GUESTS} step="1" name="totalGuests" value={form.totalGuests} onChange={changeField} aria-invalid={Boolean(guestError)} style={inputStyle} />{guestError && <span role="alert" style={{ color: '#b42318', font: `500 11px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none' }}>{guestError}</span>}</label>
               <label style={labelStyle}>Contact first name<input required minLength="2" maxLength="35" name="firstName" value={form.firstName} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Contact last name<input required minLength="2" maxLength="35" name="lastName" value={form.lastName} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Email address<input required type="email" maxLength="254" name="email" value={form.email} onChange={changeField} style={inputStyle} /></label>
@@ -171,9 +182,12 @@ export default function CorporateBooking() {
             <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 18px' }}>Dates and stay</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px' }}>
               <label style={labelStyle}>Booking format<select name="bookingType" value={form.bookingType} onChange={changeField} style={inputStyle}><option value="overnight">Overnight stay</option><option value="daytour">Day tour</option></select></label>
-              <label style={labelStyle}>{form.bookingType === 'daytour' ? 'Event date' : 'Check-in'}<input required type="date" name="checkIn" min={today} max={maxDate} value={form.checkIn} onChange={changeField} style={inputStyle} /></label>
-              {form.bookingType === 'overnight' && <label style={labelStyle}>Check-out<input required type="date" name="checkOut" min={form.checkIn || today} max={maxDate} value={form.checkOut} onChange={changeField} style={inputStyle} /></label>}
+              <label style={labelStyle}>{form.bookingType === 'daytour' ? 'Event date' : 'Check-in'}<input required type="date" name="checkIn" min={earliestDate} max={maxDate} value={form.checkIn} onChange={changeField} aria-invalid={Boolean(noticeError)} style={inputStyle} /></label>
+              {form.bookingType === 'overnight' && <label style={labelStyle}>Check-out<input required type="date" name="checkOut" min={form.checkIn || earliestDate} max={maxDate} value={form.checkOut} onChange={changeField} style={inputStyle} /></label>}
             </div>
+            <p role={noticeError ? 'alert' : undefined} style={{ margin: '14px 0 0', padding: '10px 12px', background: noticeError ? '#fef3f2' : CREAM, color: noticeError ? '#b42318' : '#626355', font: `12px/1.6 ${SANS}` }}>
+              {noticeError || `Group and corporate bookings must be made at least ${GROUP_ADVANCE_DAYS} days before check-in, so the resort can inspect and prepare the areas. The earliest date you can choose is ${formatLongDate(earliestDate)}.`}
+            </p>
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '18px', color: '#626355', font: `12px/1.6 ${SANS}` }}>
               <input type="checkbox" name="accommodationInterest" checked={form.accommodationInterest} onChange={changeField} style={{ marginTop: '3px' }} />
               Please include optional accommodation and meal package options (without meals, plated meals, or managed buffet meals) in our follow-up.

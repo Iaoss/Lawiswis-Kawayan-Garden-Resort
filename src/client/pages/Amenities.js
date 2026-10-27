@@ -161,7 +161,7 @@ export default function Amenities() {
         <Reveal className="grid gap-6 md:grid-cols-2">
           {[
             { icon: Users, title: 'Personal Booking', tag: 'Less than 15 guests', text: 'For overnight stays, family gatherings, day tours and intimate small celebrations.', action: 'Book a room', to: '/rooms', dark: true },
-            { icon: Building2, title: 'Corporate / Big Group Booking', tag: '15 guests or more', text: 'For team building, seminars and company retreats, with function spaces and group packages.', action: 'Plan a group booking', to: '/corporate-booking', dark: false },
+            { icon: Building2, title: 'Corporate / Big Group Booking', tag: '15 to 250 guests', text: 'For team building, seminars and company retreats, with function spaces and group packages. Book at least 1 week ahead.', action: 'Plan a group booking', to: '/corporate-booking', dark: false },
           ].map(card => {
             const Icon = card.icon;
             return (
