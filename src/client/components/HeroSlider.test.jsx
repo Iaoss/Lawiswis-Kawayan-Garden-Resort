@@ -25,3 +25,9 @@ describe('HeroSlider', () => {
     expect(screen.queryByAltText(HERO_SLIDES[1].alt)).toBeNull();
   });
 });
+
+test('can hide the dots and pause button', () => {
+  render(<HeroSlider showControls={false} />);
+  expect(screen.queryByLabelText('Pause slideshow')).toBeNull();
+  expect(screen.queryByLabelText(/Show photo 1/)).toBeNull();
+});

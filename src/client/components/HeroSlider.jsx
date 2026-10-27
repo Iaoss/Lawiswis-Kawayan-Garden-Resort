@@ -19,7 +19,8 @@ const SLIDE_MS = 4000;
 // Auto-playing hero carousel (a new photo every 4 seconds): crossfade with a
 // slow zoom, dots to jump to a photo, and a pause button. With "reduce
 // motion" on, photos still change but without the zoom.
-export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0 }) {
+// showControls={false} hides the dots and pause button; photos still change on their own.
+export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0, showControls = true }) {
   const reduceMotion = useReducedMotion();
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -84,7 +85,7 @@ export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0 }) {
         />
       </AnimatePresence>
 
-      {count > 1 && (
+      {showControls && count > 1 && (
         <>
           <div style={{ position: 'absolute', zIndex: 3, left: '50%', bottom: 22, transform: 'translateX(-50%)', display: 'flex', alignItems: 'center', gap: 8 }}>
             {slides.map((item, i) => (

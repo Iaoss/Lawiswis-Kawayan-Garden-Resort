@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { HERO_SLIDES } from '../components/HeroSlider';
+import HeroSlider from '../components/HeroSlider';
 import { ServiceCarousel } from '../../components/ui/services-card.tsx';
 import { AMENITY_GROUPS } from '../lib/amenities';
 import { useNavigate } from 'react-router-dom';
@@ -411,17 +411,9 @@ export default function Home() {
 
       {/* HERO */}
       <div className="lk-home-hero" style={{ position: 'relative', height: '92vh', minHeight: '600px', overflow: 'hidden' }}>
-        {/* One still photo (the slider was removed). Swap in <HeroSlider /> to bring it back. */}
-        <img
-          src={HERO_SLIDES[0].src}
-          alt={HERO_SLIDES[0].alt}
-          fetchpriority="high"
-          decoding="async"
-          style={{
-            position: 'absolute', inset: 0, width: '100%', height: '112%', objectFit: 'cover', objectPosition: 'center',
-            top: Math.min(scrollY, 800) * -0.1,
-          }}
-        />
+        {/* Auto-playing photo slideshow. Dots and pause button are hidden so they
+            don't cover the hero buttons on phones. */}
+        <HeroSlider offsetY={Math.min(scrollY, 800) * -0.1} showControls={false} />
         <div style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none', background: 'linear-gradient(180deg, rgba(20,25,15,0.55) 0%, rgba(20,25,15,0.35) 45%, rgba(20,25,15,0.7) 100%)' }} />
 
         <div className="lk-home-hero-content" style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'none', display: 'flex', alignItems: 'center', padding: '0 60px' }}>
