@@ -3,6 +3,7 @@ import { db } from '../../firebase/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 
 const normalizeStatus = status => String(status || 'pending').toLowerCase().trim().replace(/[\s_]+/g, '-');
 const dateKey = value => {
@@ -164,9 +165,14 @@ export default function CustomerManagement() {
                   }}
                   onMouseEnter={e => { if (selected?.phone !== c.phone) e.currentTarget.style.background = HOVER_BG; }}
                   onMouseLeave={e => { if (selected?.phone !== c.phone) e.currentTarget.style.background = 'transparent'; }}>
-                  <p style={{ fontWeight: '600', fontSize: '13px', color: TEXT, margin: 0 }}>{c.guestName}</p>
-                  <p style={{ fontSize: '11px', color: MUTED, margin: '2px 0 0' }}>{c.phone}</p>
-                  <p style={{ fontSize: '11px', color: MUTED2, margin: '2px 0 0' }}>{c.stays.length} stay(s)</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <BeamAvatar seed={guestAvatarSeed(c)} size={34} />
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ fontWeight: '600', fontSize: '13px', color: TEXT, margin: 0 }}>{c.guestName}</p>
+                      <p style={{ fontSize: '11px', color: MUTED, margin: '2px 0 0' }}>{c.phone}</p>
+                      <p style={{ fontSize: '11px', color: MUTED2, margin: '2px 0 0' }}>{c.stays.length} stay(s)</p>
+                    </div>
+                  </div>
                 </div>
               ))
             )}
@@ -181,7 +187,10 @@ export default function CustomerManagement() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div style={{ ...card, padding: '22px' }}>
-                  <h3 style={{ fontWeight: '600', color: TEXT, marginBottom: '14px', fontSize: '14px' }}>Guest Profile</h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+                    <BeamAvatar seed={guestAvatarSeed(selected)} size={48} title={`${selected.guestName || 'Guest'}'s avatar`} />
+                    <h3 style={{ fontWeight: '600', color: TEXT, margin: 0, fontSize: '14px' }}>Guest Profile</h3>
+                  </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', fontSize: '13px' }}>
                     <div>
                       <p style={{ color: MUTED, margin: 0 }}>Full Name</p>

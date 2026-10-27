@@ -19,6 +19,9 @@ import {
   AnimatedSidebarRail,
   useAnimatedSidebar,
 } from '../../components/ui/animated-sidebar.tsx';
+import { StaffAvatar } from '../../components/ui/beam-avatar.tsx';
+import AvatarPickerDialog, { openAvatarPicker } from './AvatarPickerDialog';
+import { useStaffAccess } from '../lib/useStaffAccess';
 
 const MENU_GROUPS = [
   {
@@ -273,25 +276,43 @@ function PortalGlobalSearch({ navItems, portalName }) {
   );
 }
 
-function SidebarAccount({ name, role, email, initials, onLogout }) {
+function SidebarAccount({ name, role, email, onLogout }) {
   const { isMobile, state } = useAnimatedSidebar();
   const collapsed = !isMobile && state === 'collapsed';
+  const { user } = useStaffAccess();
+  const avatar = user?.avatar || '';
 
   return (
     <AnimatedSidebarFooter className="gap-3">
       {!collapsed && (
-        <div className="flex min-w-0 items-center gap-2.5 px-1">
-          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--accent)] text-xs font-bold text-[var(--accent-foreground)]">
-            {initials}
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-xs font-semibold text-foreground">{name}</div>
-            <div className="truncate text-[10px] capitalize text-muted-foreground">{role}</div>
-            {email && <div className="max-w-[150px] truncate text-[9px] text-muted-foreground">{email}</div>}
-          </div>
-        </div>
+        <button
+          type="button"
+          onClick={openAvatarPicker}
+          title="Edit avatar"
+          className="group flex min-w-0 items-center gap-2.5 rounded-lg px-1 py-1 text-left hover:bg-muted"
+        >
+          <span className="relative shrink-0">
+            <StaffAvatar seed={avatar} name={name} size={36} />
+            <span aria-hidden="true" className="absolute -bottom-0.5 -right-0.5 grid h-4 w-4 place-items-center rounded-full border border-border bg-background text-[9px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+              <i className="ti ti-pencil" />
+            </span>
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-semibold text-foreground">{name}</span>
+            <span className="block truncate text-[10px] capitalize text-muted-foreground">{role}</span>
+            {email && <span className="block max-w-[150px] truncate text-[9px] text-muted-foreground">{email}</span>}
+          </span>
+        </button>
       )}
       <AnimatedSidebarMenu>
+        <AnimatedSidebarMenuItem>
+          <AnimatedSidebarMenuButton
+            icon={collapsed ? <StaffAvatar seed={avatar} name={name} size={22} /> : <i className="ti ti-mood-smile" />}
+            onSelect={openAvatarPicker}
+          >
+            {avatar ? 'Edit avatar' : 'Choose avatar'}
+          </AnimatedSidebarMenuButton>
+        </AnimatedSidebarMenuItem>
         <AnimatedSidebarMenuItem>
           <AnimatedSidebarMenuButton
             icon={<i className="ti ti-logout" />}
@@ -445,9 +466,9 @@ export default function PortalSidebar({
         name={name || portalName}
         role={role}
         email={email}
-        initials={initials}
         onLogout={onLogout}
       />
+      <AvatarPickerDialog />
       <AnimatedSidebarRail aria-label="Collapse or expand sidebar" />
     </AnimatedSidebar>
   );

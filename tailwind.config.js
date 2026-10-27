@@ -8,9 +8,15 @@ module.exports = {
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         border: 'hsl(var(--border))',
-        muted: 'hsl(var(--muted))',
+        muted: 'hsl(var(--muted) / <alpha-value>)',
         'muted-foreground': 'hsl(var(--muted-foreground))',
         ring: 'hsl(var(--ring))',
+        card: 'hsl(var(--card) / <alpha-value>)',
+        'card-foreground': 'hsl(var(--card-foreground))',
+        primary: {
+          DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
+          foreground: 'hsl(var(--primary-foreground))',
+        },
       },
       keyframes: {
         blob: {

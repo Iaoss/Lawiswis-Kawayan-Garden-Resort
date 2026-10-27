@@ -45,7 +45,9 @@ service cloud.firestore {
       allow create: if isAdmin();
       allow update: if isAdmin()
         || (isSignedIn() && request.auth.uid == userId
-            && changedKeys().hasOnly(['name', 'settings']));
+            && changedKeys().hasOnly(['name', 'settings', 'avatar'])
+            && (!('avatar' in request.resource.data)
+                || (request.resource.data.avatar is string && request.resource.data.avatar.size() <= 60)));
       allow delete: if isAdmin();
     }
 

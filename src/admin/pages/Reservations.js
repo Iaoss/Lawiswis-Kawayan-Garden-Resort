@@ -20,6 +20,7 @@ import {
 } from '../../lib/reservationStatus';
 import { appPrompt } from '../../components/ui/app-dialog';
 import { useStaffAccess } from '../lib/useStaffAccess';
+import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 
 const QUICK_VIEWS = {
   new: { label: 'New bookings', sortBy: 'booked', sortDir: 'desc' },
@@ -120,8 +121,6 @@ const fromIso = s => {
 const shortDate = d => `${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()}`;
 // A stay covers every day from check-in through check-out (inclusive).
 const staysOn = (r, day) => (r.checkIn && r.checkOut ? r.checkIn <= day && day <= r.checkOut : r.checkIn === day);
-const initials = (name = '') =>
-  name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || 'G';
 
 const monthGrid = (cursor) => {
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
@@ -307,7 +306,7 @@ function ReservationBoard({
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 150, flex: '0 0 auto' }}>
-          <span style={{ width: 30, height: 30, borderRadius: 999, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, color: '#fff', background: color }}>{initials(r.guestName)}</span>
+          <BeamAvatar seed={guestAvatarSeed(r)} size={30} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: t.TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.phone || 'No phone'}</div>
             <div style={{ fontSize: 10, color: t.MUTED, textTransform: 'capitalize' }}>{r.status}</div>

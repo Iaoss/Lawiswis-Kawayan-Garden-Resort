@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import './topbar.css';
+import { BeamAvatar } from '../../components/ui/beam-avatar.tsx';
+import { openAvatarPicker } from './AvatarPickerDialog';
+import { useStaffAccess } from '../lib/useStaffAccess';
 
 export const topbarButtonStyle = dark => ({
   border: `1px solid ${dark ? '#383837' : '#e5e7eb'}`,
@@ -34,6 +37,8 @@ export function PulsingDot({ color }) {
 
 export function AccountMenu({ initials, name, role, dark, accent, accentText, onSignOut }) {
   const [open, setOpen] = useState(false);
+  const { user } = useStaffAccess();
+  const avatar = user?.avatar || '';
   const rootRef = useRef(null);
 
   useEffect(() => {
@@ -56,10 +61,10 @@ export function AccountMenu({ initials, name, role, dark, accent, accentText, on
       <button type="button" aria-label="Account menu" aria-haspopup="menu" aria-expanded={open}
         onClick={() => setOpen(value => !value)}
         style={{
-          width: '36px', height: '36px', borderRadius: '50%', background: accent, border: 'none',
+          width: '36px', height: '36px', borderRadius: '50%', background: avatar ? 'transparent' : accent, border: 'none',
           display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-          fontWeight: 700, fontSize: '13px', color: accentText, padding: 0,
-        }}>{initials}</button>
+          fontWeight: 700, fontSize: '13px', color: accentText, padding: 0, overflow: 'hidden',
+        }}>{avatar ? <BeamAvatar seed={avatar} size={36} /> : initials}</button>
       <div>
         <div style={{ fontWeight: 600, fontSize: '13px', color: text }}>{name}</div>
         <div style={{ fontSize: '11px', color: muted, textTransform: 'capitalize' }}>{role}</div>
@@ -70,6 +75,10 @@ export function AccountMenu({ initials, name, role, dark, accent, accentText, on
           border: `1px solid ${dark ? '#383837' : '#e5e7eb'}`,
           boxShadow: dark ? '0 20px 60px rgba(0,0,0,0.5)' : '0 20px 60px rgba(0,0,0,0.15)',
         }}>
+          <button type="button" role="menuitem" className="topbar-account__item" style={{ color: dark ? '#e8e8d8' : '#111827' }}
+            onClick={() => { setOpen(false); openAvatarPicker(); }}>
+            <i className="ti ti-mood-smile" /> {avatar ? 'Edit Avatar' : 'Choose Avatar'}
+          </button>
           <button type="button" role="menuitem" className="topbar-account__item" style={{ color: '#ef4444' }}
             onClick={() => { setOpen(false); onSignOut(); }}>
             <i className="ti ti-logout" /> Sign Out
