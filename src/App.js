@@ -41,7 +41,6 @@ const NewsManagement = lazy(() => import('./admin/pages/NewsManagement.js'));
 const Email = lazy(() => import('./admin/pages/Email.js'));
 const PromoCodes = lazy(() => import('./admin/pages/PromoCodes'));
 const ActivityLog = lazy(() => import('./admin/pages/ActivityLog'));
-const GrillPOS = lazy(() => import('./admin/pages/GrillPOS'));
 
 // Opening another page (e.g. "Book room") starts at the top, not wherever
 // the previous page was scrolled to.
@@ -101,7 +100,6 @@ function App() {
           <Route path="rooms" element={<RoomManagement />} />
           <Route path="promos" element={<RequireStaffRoute allowedRoles={['admin']}><PromoCodes /></RequireStaffRoute>} />
           <Route path="walkin" element={<WalkIn />} />
-          <Route path="grill-pos" element={<GrillPOS />} />
           <Route path="reservations" element={<Reservations />} />
           <Route path="billing" element={<Billing />} />
           <Route path="payments" element={<PaymentTransactions />} />
@@ -125,7 +123,6 @@ function App() {
           <Route path="dashboard" element={<ReceptionistDashboard />} />
           <Route path="reservations" element={<Reservations />} />
           <Route path="walkin" element={<WalkIn />} />
-          <Route path="grill-pos" element={<GrillPOS />} />
           <Route path="rooms" element={<RoomManagement />} />
           <Route path="billing" element={<Billing />} />
           <Route path="customers" element={<CustomerManagement />} />

@@ -27,7 +27,7 @@ const MENU_GROUPS = [
   {
     label: 'Front Desk / Operations',
     icon: 'ti ti-building-store',
-    children: ['Reservations', 'Walk-in', 'Ihaw-Ihaw POS', 'Room Management', 'Booking Transactions'],
+    children: ['Reservations', 'Walk-in', 'Room Management', 'Booking Transactions'],
   },
   {
     label: 'Financials',
