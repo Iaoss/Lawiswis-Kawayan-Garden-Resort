@@ -8,7 +8,7 @@ import {
 } from 'firebase/firestore';
 import Layout from '../components/Layout';
 import { useSettings } from '../components/SettingsContext';
-import { toMillis } from '../lib/listSort';
+import { RESERVATION_CHART_RANGES, computeMonthlyStats, revenueByMonth, reservationsChartData } from '../lib/monthlyStats';
 import {
   ANALYTICS_PERIODS,
   getOverstayStats,
@@ -21,19 +21,6 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
 
-const revenueData = [
-  { m: 'Dec', v: 120000 }, { m: 'Jan', v: 180000 }, { m: 'Feb', v: 315060 },
-  { m: 'Mar', v: 260000 }, { m: 'Apr', v: 310000 }, { m: 'May', v: 290000 },
-];
-const reservationsData = [
-  { d: '12 Jun', booked: 70, cancelled: 20 },
-  { d: '13 Jun', booked: 80, cancelled: 15 },
-  { d: '14 Jun', booked: 60, cancelled: 30 },
-  { d: '15 Jun', booked: 90, cancelled: 10 },
-  { d: '16 Jun', booked: 75, cancelled: 25 },
-  { d: '17 Jun', booked: 85, cancelled: 12 },
-  { d: '18 Jun', booked: 65, cancelled: 18 },
-];
 const platformData = [
   { name: 'Direct Booking', value: 61, color: '#89D7B7' },
   { name: 'Booking.com',    value: 12, color: '#9cb56f' },
@@ -255,23 +242,32 @@ export default function AdminDashboard() {
     };
   }, [recent, analyticsPeriod, now]);
 
-  // Real month-over-month change (replaces the old placeholder percentages).
-  const monthTrends = useMemo(() => {
-    const today = new Date();
-    const thisStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
-    const lastStart = new Date(today.getFullYear(), today.getMonth() - 1, 1).getTime();
-    const inMonth = (ms, start, end) => ms >= start && ms < end;
-    const change = (current, previous) => (previous > 0 ? ((current - previous) / previous) * 100 : null);
-    const bookedMs = r => toMillis(r.createdAt);
-    const paidMs = p => toMillis(p.paidAt || p.createdAt || p.paymentDate || p.date || p.timestamp);
-    const bookings = change(
-      recent.filter(r => inMonth(bookedMs(r), thisStart, Infinity)).length,
-      recent.filter(r => inMonth(bookedMs(r), lastStart, thisStart)).length,
-    );
-    const sum = (start, end) => payments.filter(p => inMonth(paidMs(p), start, end)).reduce((s, p) => s + Number(p.amount || 0), 0);
-    return { bookings, revenue: change(sum(thisStart, Infinity), sum(lastStart, thisStart)) };
-  }, [recent, payments]);
-  const formatTrend = value => (value === null ? null : { up: value >= 0, text: `${Math.abs(value).toFixed(1)}%` });
+  // This month's numbers. They start over on the 1st of every month; `now`
+  // ticks every minute, so this also happens if the page is left open.
+  const monthKeyNow = `${now.getFullYear()}-${now.getMonth()}`;
+  const dayKeyNow = `${monthKeyNow}-${now.getDate()}`;
+  const monthly = useMemo(
+    () => computeMonthlyStats(recent, payments, new Date()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recent, payments, monthKeyNow],
+  );
+  // Trend vs last month; null when last month had nothing to compare with.
+  const formatTrend = key => (monthly.previous[key] > 0
+    ? { up: monthly.trends[key].up, text: monthly.trends[key].label.replace(/^[+-]/, '') }
+    : null);
+
+  // Charts use real data.
+  const revenueData = useMemo(
+    () => revenueByMonth(payments, new Date(), 6),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [payments, monthKeyNow],
+  );
+  const [reservationRange, setReservationRange] = useState('7d');
+  const reservationsData = useMemo(
+    () => reservationsChartData(recent, new Date(), reservationRange),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recent, reservationRange, dayKeyNow],
+  );
   const formatAverage = value => (value >= 10 ? Math.round(value).toLocaleString() : value.toFixed(1));
 
   const filtered = recent.filter(r => {
@@ -413,7 +409,7 @@ export default function AdminDashboard() {
         {/* ── Stat Cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${settings.showTotalRevenue === false ? 3 : 4},1fr)`, gap: '14px', marginBottom: '18px' }}>
           {[
-            { label: 'New Bookings', show: true, value: stats.totalReservations, icon: 'ti-calendar-event', trend: formatTrend(monthTrends.bookings), to: '/admin/reservations?view=new' },
+            { label: `New Bookings · ${monthly.monthLabel}`, show: true, value: monthly.current.bookings, icon: 'ti-calendar-event', trend: formatTrend('bookings'), to: '/admin/reservations?view=new' },
             {
               label: 'Avg. Reservations / Day', show: true, value: formatAverage(analytics.averages.perDay), icon: 'ti-chart-bar', to: '/admin/reports',
               detail: `${formatAverage(analytics.averages.perWeek)} / week · ${formatAverage(analytics.averages.perMonth)} / month`,
@@ -424,7 +420,7 @@ export default function AdminDashboard() {
               detail: `${analytics.overstays.historicalCount} in period (${Math.round(analytics.overstays.rate * 100)}%) · ${formatCurrency(analytics.overstays.lateFeeTotal)} late fees`,
               title: 'Overstays and late check-out charges for stays that ended in the selected period',
             },
-            { label: 'Total Revenue', show: settings.showTotalRevenue !== false, value: formatCurrency(stats.totalRevenue), icon: 'ti-currency-peso', trend: formatTrend(monthTrends.revenue), to: '/admin/payments' },
+            { label: `Revenue · ${monthly.monthLabel}`, show: settings.showTotalRevenue !== false, value: formatCurrency(monthly.current.revenue), icon: 'ti-currency-peso', trend: formatTrend('revenue'), to: '/admin/payments' },
           ].map((c, i) => !c.show ? null : (
             <div
               key={c.label}
@@ -523,7 +519,7 @@ export default function AdminDashboard() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue</span>
-              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 6 Months ▾</Pill>
+              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 6 Months</Pill>
             </div>
             <ResponsiveContainer width="100%" height={160}>
               <AreaChart data={revenueData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
@@ -577,7 +573,14 @@ export default function AdminDashboard() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Reservations</span>
-              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 7 Days ▾</Pill>
+              <select
+                aria-label="Reservations chart period"
+                value={reservationRange}
+                onChange={e => setReservationRange(e.target.value)}
+                style={{ background: dark ? 'rgba(200,240,110,0.15)' : LIME, color: dark ? LIME : '#1a2e1a', border: 'none', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '600', fontFamily: 'inherit', cursor: 'pointer', outline: 'none' }}
+              >
+                {RESERVATION_CHART_RANGES.map(r => <option key={r.id} value={r.id} style={{ color: '#1a2e1a', background: '#fff' }}>{r.label}</option>)}
+              </select>
             </div>
             <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
               {[{ color: TEAL, label: 'Booked' }, { color: LIME, label: 'Cancelled' }].map(l => (
@@ -588,9 +591,9 @@ export default function AdminDashboard() {
               ))}
             </div>
             <ResponsiveContainer width="100%" height={160}>
-              <BarChart data={reservationsData} barSize={12} barGap={2} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <XAxis dataKey="d" tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} />
+              <BarChart data={reservationsData} barSize={reservationsData.length > 14 ? 5 : 12} barGap={2} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                <XAxis dataKey="d" tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} interval="preserveStartEnd" minTickGap={8} />
+                <YAxis tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px', background: CARD2, border: `1px solid ${BORDER}`, color: TEXT }} />
                 <Bar dataKey="booked"    fill={TEAL} radius={[4, 4, 0, 0]} />
                 <Bar dataKey="cancelled" fill={LIME} radius={[4, 4, 0, 0]} />
