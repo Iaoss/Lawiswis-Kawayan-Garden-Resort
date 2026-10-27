@@ -23,6 +23,7 @@ const navItems = [
   { label: 'Room Management', path: '/receptionist/rooms', icon: 'ti-bed' },
   { label: 'Reservations', path: '/receptionist/reservations', icon: 'ti-calendar-event' },
   { label: 'Walk-in', path: '/receptionist/walkin', icon: 'ti-walk' },
+  { label: 'Ihaw-Ihaw POS', path: '/receptionist/grill-pos', icon: 'ti-flame' },
   { label: 'Billing', path: '/receptionist/billing', icon: 'ti-receipt' },
   { label: 'Booking Transactions', path: '/receptionist/transactions', icon: 'ti-credit-card' },
   { label: 'Customers', path: '/receptionist/customers', icon: 'ti-users' },

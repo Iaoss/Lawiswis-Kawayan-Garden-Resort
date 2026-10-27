@@ -257,6 +257,40 @@ service cloud.firestore {
       allow read: if isStaff();
     }
 
+    // ── Ihaw-Ihaw POS ───────────────────────────────────────
+    // Menu prices: everyone on staff can read, only admins can change.
+    match /grillProducts/{productId} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin()
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 40
+        && request.resource.data.price is number
+        && request.resource.data.price >= 0;
+      allow delete: if isAdmin();
+    }
+    // Orders: staff take orders and mark them paid/unpaid; only admins delete.
+    match /grillOrders/{orderId} {
+      function validGrillOrder() {
+        let d = request.resource.data;
+        return d.status in ['paid', 'unpaid']
+          && d.identifier is string
+          && d.identifier.size() > 0
+          && d.identifier.size() <= 80
+          && d.items is list
+          && d.items.size() > 0
+          && d.items.size() <= 100
+          && d.total is number
+          && d.total >= 0
+          && d.dayKey is string;
+      }
+      allow read: if isStaff();
+      allow create: if isStaff() && validGrillOrder() && request.resource.data.staffUid == request.auth.uid;
+      allow update: if isStaff() && validGrillOrder()
+        && !changedKeys().hasAny(['orderNo', 'dayKey', 'createdAt', 'staffUid', 'staffName']);
+      allow delete: if isAdmin();
+    }
+
     // ── Default deny ────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
