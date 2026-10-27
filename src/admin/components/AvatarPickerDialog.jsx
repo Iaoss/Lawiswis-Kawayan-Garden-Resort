@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { doc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../../firebase/firebase';
 import { AvatarPicker } from '../../components/ui/avatar-picker.tsx';
@@ -50,7 +51,9 @@ export default function AvatarPickerDialog() {
     }
   };
 
-  return (
+  // Rendered into <body>: inside the sidebar, its animated container would
+  // trap the pop-up and the backdrop would only cover the sidebar.
+  return createPortal((
     <div
       role="presentation"
       onMouseDown={event => { if (event.target === event.currentTarget) setOpen(false); }}
@@ -68,5 +71,5 @@ export default function AvatarPickerDialog() {
         />
       </div>
     </div>
-  );
+  ), document.body);
 }
