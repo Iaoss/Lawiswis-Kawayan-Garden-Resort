@@ -7,6 +7,7 @@ import { motion } from 'framer-motion';
 import { ArrowLeft, Eye, EyeOff, LockKeyhole, Mail } from 'lucide-react';
 import { ImageSlider } from '../../components/ui/image-slider.tsx';
 import { RESORT_IMAGES } from '../../client/components/clientTheme';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
 const RESORT_SLIDES = [
   RESORT_IMAGES.hero,
@@ -14,7 +15,7 @@ const RESORT_SLIDES = [
   RESORT_IMAGES.pool,
   RESORT_IMAGES.dining,
 ];
-const RESORT_LOGO = 'https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png';
+const RESORT_LOGO = optimizeImage('https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png', IMAGE_WIDTHS.logo);
 
 export default function Login() {
   const location = useLocation();

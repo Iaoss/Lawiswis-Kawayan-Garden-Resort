@@ -1,3 +1,5 @@
+import { IMAGE_WIDTHS, optimizeImage, optimizeImageMap } from '../../lib/imageUrl';
+
 export const FOREST = '#3B4530';
 export const FOREST_DEEP = '#232A1B';
 export const MOSS = '#7C8A5E';
@@ -9,15 +11,15 @@ export const LINE = '#E3DDC8';
 export const SERIF = "'Fraunces', 'Times New Roman', serif";
 export const SANS = "'Inter', sans-serif";
 
-export const RESORT_IMAGES = {
+export const RESORT_IMAGES = optimizeImageMap({
   hero: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/09/About-Lawiswis-Kawayan-scaled-1.jpeg',
   garden: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Main-Villa-07.jpeg',
   pool: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/2017-16.jpg',
   dining: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Hapag-04.jpeg',
   spa: 'https://lawiswiskawayanresort.com/wp-content/uploads/2020/01/Spa.jpeg',
-};
+}, IMAGE_WIDTHS.large);
 
-export const ROOM_IMAGES = {
+export const ROOM_IMAGES = optimizeImageMap({
   himbing: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Himbing-01-1400x700-1.jpeg',
   tahimik: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tahimik-02-1400x700-1.jpeg',
   minamahal: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/MInamahal-01-1400x700-1.jpeg',
@@ -37,7 +39,7 @@ export const ROOM_IMAGES = {
   ginhawa: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Ginhawa-03-1400x700-1.jpeg',
   iglipan: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Iglipan-05-1400x700-1.jpeg',
   panatag: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Panatag-01-1400x700-1.jpeg',
-  payapa: 'https://lawiswiskayanresort.com/wp-content/uploads/2024/10/Payapa-01-1400x700-1.jpeg',
+  payapa: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Payapa-01-1400x700-1.jpeg',
   hiwaga: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Hiwaga-02-1400x700-1.jpeg',
   simoy: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Simoy-01-1400x700-1.jpeg',
   ligaya: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Ligaya-01-1400x700-1.jpeg',
@@ -46,7 +48,7 @@ export const ROOM_IMAGES = {
   halimuyak: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Halimuyak-04-1400x700-1.jpeg',
   paraiso: 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Paraiso-03-1400x700-1.jpeg',
   'main villa': 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Main-Villa-08-1400x700-1.jpeg',
-};
+}, IMAGE_WIDTHS.card);
 
 export const getRoomImage = (name) => {
   if (!name) return null;
@@ -56,7 +58,7 @@ export const getRoomImage = (name) => {
 // Prefer an admin-uploaded photo (room.imageUrl, hosted on Cloudinary);
 // fall back to the legacy WordPress-hosted map for rooms nobody has re-uploaded yet.
 export const resolveRoomImage = (room) => {
-  if (room?.imageUrl) return room.imageUrl;
+  if (room?.imageUrl) return optimizeImage(room.imageUrl, IMAGE_WIDTHS.card);
   return getRoomImage(room?.roomNumber);
 };
 

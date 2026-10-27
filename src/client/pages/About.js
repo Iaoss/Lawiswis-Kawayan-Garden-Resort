@@ -13,7 +13,7 @@ const storyChapters = navigate => [
     eyebrow: 'Our name',
     title: 'A song beneath the bamboo.',
     description: 'Lawiswis Kawayan is named after a beloved Filipino song that founder Atty. Federico Aranas taught his children — a couple meeting beneath the swaying bamboo. The resort was built to be that place: peaceful, green, and made for coming together.',
-    image: `${PHOTOS}/bamboo-cabanas.jpg`,
+    image: `${PHOTOS}/bamboo-cabanas.webp`,
     alt: 'Curtained cabanas in the bamboo garden',
   },
   {
@@ -21,7 +21,7 @@ const storyChapters = navigate => [
     eyebrow: '2005 – 2006',
     title: 'A garden takes root.',
     description: 'Clearing began in 2005, followed by the pond, pavilion and the first pools with bamboo poolside cabanas. After a blessing ceremony, the resort welcomed its first guests on March 4, 2006.',
-    image: `${PHOTOS}/serenity-pool.jpg`,
+    image: `${PHOTOS}/serenity-pool.webp`,
     alt: 'The Serenity pool surrounded by gardens',
   },
   {
@@ -29,7 +29,7 @@ const storyChapters = navigate => [
     eyebrow: '2007 – 2021',
     title: 'Room for every gathering.',
     description: 'The Main Villa, the spa, guest-room buildings, function and dining halls, and new couples’ and family suites — each added so families, couples and groups could find their own kind of rest.',
-    image: `${PHOTOS}/garden-terrace.jpg`,
+    image: `${PHOTOS}/garden-terrace.webp`,
     alt: 'A couple sharing drinks on a garden terrace',
   },
   {
@@ -37,7 +37,7 @@ const storyChapters = navigate => [
     eyebrow: 'Today',
     title: 'Evenings by the fire.',
     description: 'A bubble pool, lantern-lit evenings and bonfires under the trees. The garden keeps growing, but the welcome stays the same.',
-    image: `${PHOTOS}/fireside-friends.jpg`,
+    image: `${PHOTOS}/fireside-friends.webp`,
     alt: 'Friends roasting marshmallows by the fire pit',
     action: { label: 'Browse rooms', onClick: () => navigate('/rooms') },
   },

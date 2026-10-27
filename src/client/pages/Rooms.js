@@ -8,6 +8,7 @@ import DateOccupancy from '../../components/ui/date-occupancy';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
 import { areOvernightCheckInsClosed, isTourStartPassed } from '../../lib/bookingPricing';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
 /* ------------------------------------------------------------------ */
 /* Room catalog copied from lawiswiskawayanresort.com/regular-rooms    */
@@ -16,7 +17,7 @@ import { areOvernightCheckInsClosed, isTourStartPassed } from '../../lib/booking
 /* present; the catalog fills in whatever is missing.                  */
 /* ------------------------------------------------------------------ */
 const UP = 'https://lawiswiskawayanresort.com/wp-content/uploads/';
-const HERO_IMAGE = `${UP}2020/01/hero192x-scaled.jpg`;
+const HERO_IMAGE = optimizeImage(`${UP}2020/01/hero192x-scaled.jpg`, IMAGE_WIDTHS.hero);
 
 const GROUPS = [
   {
@@ -72,13 +73,13 @@ const CATALOG_ROWS = [
 const CATALOG = Object.fromEntries(
   CATALOG_ROWS.map(([name, path, group, description]) => [
     name.toLowerCase(),
-    { name, image: UP + path, group, description },
+    { name, image: optimizeImage(UP + path, IMAGE_WIDTHS.card), group, description },
   ])
 );
 
 // Extra photos we know about (Tahimik has a 5-photo gallery on the resort site).
 const EXTRA_GALLERY = {
-  tahimik: [1, 2, 3, 4, 5].map(n => `${UP}2024/10/Tahimik-0${n}.jpeg`),
+  tahimik: [1, 2, 3, 4, 5].map(n => optimizeImage(`${UP}2024/10/Tahimik-0${n}.jpeg`, IMAGE_WIDTHS.large)),
 };
 
 const DEFAULT_AMENITIES = 'Air conditioning, Wi-Fi, Hot shower';
