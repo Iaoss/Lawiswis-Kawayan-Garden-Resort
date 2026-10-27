@@ -9,24 +9,12 @@ import {
 import Layout from '../components/Layout';
 import DashboardSkeleton from '../components/DashboardSkeleton';
 import { useSettings } from '../components/SettingsContext';
+import { computeMonthlyStats, revenueByMonth, reservationsByDay } from '../lib/monthlyStats';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
 
-const revenueData = [
-  { m: 'Dec', v: 120000 }, { m: 'Jan', v: 180000 }, { m: 'Feb', v: 315060 },
-  { m: 'Mar', v: 260000 }, { m: 'Apr', v: 310000 }, { m: 'May', v: 290000 },
-];
-const reservationsData = [
-  { d: '12 Jun', booked: 70, cancelled: 20 },
-  { d: '13 Jun', booked: 80, cancelled: 15 },
-  { d: '14 Jun', booked: 60, cancelled: 30 },
-  { d: '15 Jun', booked: 90, cancelled: 10 },
-  { d: '16 Jun', booked: 75, cancelled: 25 },
-  { d: '17 Jun', booked: 85, cancelled: 12 },
-  { d: '18 Jun', booked: 65, cancelled: 18 },
-];
 const platformData = [
   { name: 'Direct Booking', value: 61, color: '#89D7B7' },
   { name: 'Booking.com',    value: 12, color: '#9cb56f' },
@@ -199,6 +187,17 @@ export default function AdminDashboard() {
   });
   const [selectedDay, setSelectedDay] = useState(() => new Date());
   const [loaded, setLoaded] = useState(false);
+  const [allReservations, setAllReservations] = useState([]);
+  const [allPayments, setAllPayments] = useState([]);
+
+  // Re-check the date every minute so the monthly numbers start over on the
+  // 1st even if the dashboard is left open.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+  const todayKey = dateKey(now);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -218,6 +217,8 @@ export default function AdminDashboard() {
         totalRevenue:      revenue,
         pendingPayments:   reservations.filter(r => r.paymentStatus === 'pending').length,
       });
+      setAllReservations(reservations);
+      setAllPayments(payments);
       setRecent([...reservations].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
     };
     fetchData().catch(err => console.error('Dashboard load failed:', err)).finally(() => setLoaded(true));
@@ -240,6 +241,23 @@ export default function AdminDashboard() {
     }, err => console.error('activities listener error:', err));
     return unsub;
   }, []);
+
+  // Recomputed when the data loads or the day changes (todayKey).
+  const monthly = useMemo(
+    () => computeMonthlyStats(allReservations, allPayments, new Date()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allReservations, allPayments, todayKey],
+  );
+  const revenueData = useMemo(
+    () => revenueByMonth(allPayments, new Date(), 6),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allPayments, todayKey],
+  );
+  const reservationsData = useMemo(
+    () => reservationsByDay(allReservations, new Date(), 7),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allReservations, todayKey],
+  );
 
   const filtered = recent.filter(r => {
     const q = searchQ.toLowerCase();
@@ -407,10 +425,10 @@ export default function AdminDashboard() {
         {/* ── Stat Cards ── */}
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${settings.showTotalRevenue === false ? 3 : 4},1fr)`, gap: '14px', marginBottom: '18px' }}>
           {[
-            { label: 'New Bookings',  show: true, value: stats.totalReservations, icon: 'ti-calendar-event', trend: '+8.70%', up: true,  to: '/admin/reservations?view=new' },
-            { label: 'Check-In',      show: true, value: stats.checkedIn,         icon: 'ti-login',          trend: '+3.56%', up: true,  to: '/admin/reservations?view=checked-in' },
-            { label: 'Check-Out',     show: true, value: stats.checkOuts,         icon: 'ti-logout',         trend: '-1.06%', up: false, to: '/admin/reservations?view=checked-out' },
-            { label: 'Total Revenue', show: settings.showTotalRevenue !== false, value: formatCurrency(stats.totalRevenue), icon: 'ti-currency-peso', trend: '+5.70%', up: true, to: '/admin/payments' },
+            { label: 'New Bookings',  show: true, value: monthly.current.bookings,  trend: monthly.trends.bookings,  icon: 'ti-calendar-event', to: '/admin/reservations?view=new' },
+            { label: 'Check-In',      show: true, value: monthly.current.checkIns,  trend: monthly.trends.checkIns,  icon: 'ti-login',          to: '/admin/reservations?view=checked-in' },
+            { label: 'Check-Out',     show: true, value: monthly.current.checkOuts, trend: monthly.trends.checkOuts, icon: 'ti-logout',         to: '/admin/reservations?view=checked-out' },
+            { label: 'Revenue',       show: settings.showTotalRevenue !== false, value: formatCurrency(monthly.current.revenue), trend: monthly.trends.revenue, icon: 'ti-currency-peso', to: '/admin/payments' },
           ].map((c, i) => !c.show ? null : (
             <div
               key={c.label}
@@ -439,16 +457,16 @@ export default function AdminDashboard() {
               >
                 <div>
                   <motion.div variants={statItemVariants} style={{ fontSize: '11px', color: 'rgba(255,255,255,0.85)', marginBottom: '6px' }}>
-                    {c.label}
+                    {c.label} · {monthly.monthLabel}
                   </motion.div>
                   <motion.div variants={statItemVariants} style={{ fontSize: '28px', fontWeight: '700', color: '#fff', lineHeight: 1 }}>
                     {c.value}
                   </motion.div>
                   <motion.div variants={statItemVariants} style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     <span style={{ color: '#fff', fontSize: '11px', fontWeight: '600' }}>
-                      {c.up ? '↑' : '↓'} {c.trend}
+                      {c.trend.up ? '↑' : '↓'} {c.trend.label}
                     </span>
-                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>Last month</span>
+                    <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.7)' }}>vs last month</span>
                   </motion.div>
                 </div>
                 <motion.div variants={statItemVariants} style={{
@@ -502,7 +520,7 @@ export default function AdminDashboard() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue</span>
-              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 6 Months ▾</Pill>
+              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 6 Months</Pill>
             </div>
             <ResponsiveContainer width="100%" height={160}>
               <AreaChart data={revenueData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
@@ -556,7 +574,7 @@ export default function AdminDashboard() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Reservations</span>
-              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 7 Days ▾</Pill>
+              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 7 Days</Pill>
             </div>
             <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
               {[{ color: TEAL, label: 'Booked' }, { color: LIME, label: 'Cancelled' }].map(l => (
