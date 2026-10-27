@@ -123,3 +123,91 @@ export function reservationsChartData(reservations = [], now = new Date(), range
     default: return reservationsByDay(reservations, now, 7);
   }
 }
+
+// ── Revenue chart filter ──────────────────────────────────────────
+export const REVENUE_CHART_RANGES = [
+  { id: '3m', label: 'Last 3 Months' },
+  { id: '6m', label: 'Last 6 Months' },
+  { id: '12m', label: 'Last 12 Months' },
+  { id: 'year', label: 'This Year' },
+];
+
+export function revenueChartData(payments = [], now = new Date(), rangeId = '6m') {
+  const months = { '3m': 3, '12m': 12, year: now.getMonth() + 1 }[rangeId] || 6;
+  return revenueByMonth(payments, now, months);
+}
+
+// ── Booking by platform (where the booking came from) ─────────────
+export const PLATFORM_RANGES = [
+  { id: 'month', label: 'This Month' },
+  { id: '30d', label: 'Last 30 Days' },
+  { id: '6m', label: 'Last 6 Months' },
+  { id: 'all', label: 'All Time' },
+];
+
+const PLATFORMS = [
+  { id: 'online', name: 'Website (online)', color: '#89D7B7' },
+  { id: 'walk-in', name: 'Walk-in', color: '#9cb56f' },
+  { id: 'corporate', name: 'Corporate / group', color: '#60a5fa' },
+  { id: 'other', name: 'Other', color: '#a78bfa' },
+];
+
+const platformOf = r => {
+  const type = String(r.type || '').toLowerCase().replace(/[\s_]/g, '-');
+  if (type === 'walkin') return 'walk-in';
+  return PLATFORMS.some(p => p.id === type) ? type : 'other';
+};
+
+// Count and share of bookings per platform, by booking date. Cancelled
+// bookings are left out. Platforms with no bookings are dropped.
+export function bookingsByPlatform(reservations = [], now = new Date(), rangeId = 'month') {
+  const start = {
+    month: new Date(now.getFullYear(), now.getMonth(), 1),
+    '30d': new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29),
+    '6m': new Date(now.getFullYear(), now.getMonth() - 5, 1),
+  }[rangeId] || null;
+  const list = reservations.filter(r => {
+    if (status(r) === 'cancelled') return false;
+    if (!start) return true;
+    const d = toDate(bookedDate(r));
+    return Boolean(d) && d >= start && d <= now;
+  });
+  const total = list.length;
+  return PLATFORMS
+    .map(p => {
+      const count = list.filter(r => platformOf(r) === p.id).length;
+      return { name: p.name, color: p.color, count, value: total ? Math.round((count / total) * 100) : 0 };
+    })
+    .filter(p => p.count > 0);
+}
+
+// ── Room availability on a chosen date ───────────────────────────
+const NOT_READY = new Set(['maintenance', 'cleaning', 'unavailable', 'out-of-service']);
+const INACTIVE = new Set(['cancelled', 'checked-out', 'rejected', 'refunded']);
+const dateOnly = value => {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const d = toDate(value);
+  return d ? dayKey(d) : '';
+};
+
+// For each room on `dateKey` (YYYY-MM-DD): occupied (guest checked in),
+// reserved (booked but not checked in), not ready (maintenance/cleaning),
+// or available. A single-day booking (same check-in and check-out date)
+// counts on that date.
+export function roomAvailabilityOn(rooms = [], reservations = [], dateKeyValue) {
+  const counts = { occupied: 0, reserved: 0, available: 0, notReady: 0, total: rooms.length };
+  rooms.forEach(room => {
+    if (NOT_READY.has(String(room.status || '').toLowerCase())) { counts.notReady += 1; return; }
+    const stays = reservations.filter(r => {
+      if (r.roomId !== room.id || INACTIVE.has(status(r))) return false;
+      const checkIn = dateOnly(r.checkIn);
+      const checkOut = dateOnly(r.checkOut);
+      if (!checkIn || !checkOut) return false;
+      return checkIn === checkOut ? checkIn === dateKeyValue : checkIn <= dateKeyValue && dateKeyValue < checkOut;
+    });
+    if (stays.some(r => status(r) === 'checked-in')) counts.occupied += 1;
+    else if (stays.length) counts.reserved += 1;
+    else counts.available += 1;
+  });
+  return counts;
+}

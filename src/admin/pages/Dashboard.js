@@ -8,7 +8,10 @@ import {
 } from 'firebase/firestore';
 import Layout from '../components/Layout';
 import { useSettings } from '../components/SettingsContext';
-import { RESERVATION_CHART_RANGES, computeMonthlyStats, revenueByMonth, reservationsChartData } from '../lib/monthlyStats';
+import {
+  PLATFORM_RANGES, RESERVATION_CHART_RANGES, REVENUE_CHART_RANGES,
+  bookingsByPlatform, computeMonthlyStats, reservationsChartData, revenueChartData, roomAvailabilityOn,
+} from '../lib/monthlyStats';
 import {
   ANALYTICS_PERIODS,
   getOverstayStats,
@@ -21,14 +24,6 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
 
-const platformData = [
-  { name: 'Direct Booking', value: 61, color: '#89D7B7' },
-  { name: 'Booking.com',    value: 12, color: '#9cb56f' },
-  { name: 'Agoda',          value: 11, color: '#60a5fa' },
-  { name: 'Airbnb',         value: 9,  color: '#f472b6' },
-  { name: 'Hotels.com',     value: 5,  color: '#fb923c' },
-  { name: 'Others',         value: 2,  color: '#a78bfa' },
-];
 const ratingCategories = [
   { label: 'Facilities',  score: 4.4 },
   { label: 'Cleanliness', score: 4.7 },
@@ -167,10 +162,6 @@ export default function AdminDashboard() {
   const LIME     = '#9cb56f';
   const TEAL     = '#89D7B7';
 
-  const [stats, setStats] = useState({
-    totalReservations: 0, checkedIn: 0, availableRooms: 0,
-    totalRevenue: 0, totalRooms: 0, pendingPayments: 0, checkOuts: 0,
-  });
   const [recent, setRecent]       = useState([]);
   const [searchQ, setSearchQ]     = useState('');
   const [statusFilter, setStatusFilter] = useState('All Status');
@@ -184,6 +175,7 @@ export default function AdminDashboard() {
   // ── Reservation analytics ─────────────────────────────────
   const [analyticsPeriod, setAnalyticsPeriod] = useState('30');
   const [payments, setPayments] = useState([]);
+  const [roomList, setRoomList] = useState([]);
 
   // ── Calendar ──────────────────────────────────────────────
   const [calMonth, setCalMonth] = useState(() => {
@@ -197,20 +189,11 @@ export default function AdminDashboard() {
       const roomsSnap = await getDocs(collection(db, 'rooms'));
       const resSnap   = await getDocs(collection(db, 'reservations'));
       const paySnap   = await getDocs(collection(db, 'payments'));
-      const rooms        = roomsSnap.docs.map(d => d.data());
+      const rooms        = roomsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const paymentRows  = paySnap.docs.map(d => d.data());
-      const revenue      = paymentRows.reduce((s, p) => s + Number(p.amount || 0), 0);
       setPayments(paymentRows);
-      setStats({
-        totalReservations: reservations.length,
-        checkedIn:         reservations.filter(r => r.status === 'checked-in').length,
-        checkOuts:         reservations.filter(r => r.status === 'checked-out').length,
-        availableRooms:    rooms.filter(r => r.status === 'vacant' || r.status === 'available').length,
-        totalRooms:        rooms.length,
-        totalRevenue:      revenue,
-        pendingPayments:   reservations.filter(r => r.paymentStatus === 'pending').length,
-      });
+      setRoomList(rooms);
       setRecent([...reservations].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
     };
     fetchData().catch(err => console.error('Dashboard load failed:', err)).finally(() => setLoaded(true));
@@ -257,10 +240,25 @@ export default function AdminDashboard() {
     : null);
 
   // Charts use real data.
+  const [revenueRange, setRevenueRange] = useState('6m');
   const revenueData = useMemo(
-    () => revenueByMonth(payments, new Date(), 6),
+    () => revenueChartData(payments, new Date(), revenueRange),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [payments, monthKeyNow],
+    [payments, revenueRange, monthKeyNow],
+  );
+  const [platformRange, setPlatformRange] = useState('month');
+  const platformData = useMemo(
+    () => bookingsByPlatform(recent, new Date(), platformRange),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recent, platformRange, dayKeyNow],
+  );
+  // Room availability for a chosen date (defaults to today).
+  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const [availabilityDate, setAvailabilityDate] = useState('');
+  const availabilityDay = availabilityDate || todayIso;
+  const roomCounts = useMemo(
+    () => roomAvailabilityOn(roomList, recent, availabilityDay),
+    [roomList, recent, availabilityDay],
   );
   const [reservationRange, setReservationRange] = useState('7d');
   const reservationsData = useMemo(
@@ -279,11 +277,8 @@ export default function AdminDashboard() {
     return matchQ && matchS;
   });
 
-  const occupied  = stats.checkedIn;
-  const reserved  = Math.max(0, stats.totalReservations - stats.checkedIn - stats.checkOuts);
-  const available = stats.availableRooms;
-  const notReady  = Math.max(0, stats.totalRooms - occupied - reserved - available);
-  const total     = stats.totalRooms || 1;
+  const { occupied, reserved, available, notReady } = roomCounts;
+  const total     = roomCounts.total || 1;
   const pct = v => `${Math.round((v / total) * 100)}%`;
 
   // ── Task actions ──────────────────────────────────────────
@@ -374,13 +369,12 @@ export default function AdminDashboard() {
     );
   }, [TEXT, MUTED]);
 
-  const Pill = useMemo(() => function Pill({ children, color = LIME, textColor = '#1a2e1a' }) {
-    return (
-      <span style={{ background: color, color: textColor, borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '600' }}>
-        {children}
-      </span>
-    );
-  }, []);
+  const filterSelectStyle = {
+    background: dark ? 'rgba(200,240,110,0.15)' : LIME, color: dark ? LIME : '#1a2e1a', border: 'none',
+    borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '600', fontFamily: 'inherit',
+    cursor: 'pointer', outline: 'none',
+  };
+  const optionStyle = { color: '#1a2e1a', background: '#fff' };
 
   const inputStyle = {
     width: '100%', padding: '7px 10px', borderRadius: '8px',
@@ -485,7 +479,21 @@ export default function AdminDashboard() {
 
           {settings.showOccupancyRate !== false && (
           <Card>
-            <SectionTitle action>Room Availability</SectionTitle>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Room Availability</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <input
+                  type="date"
+                  aria-label="Room availability date"
+                  value={availabilityDay}
+                  onChange={e => setAvailabilityDate(e.target.value)}
+                  style={{ ...filterSelectStyle, padding: '2px 8px', colorScheme: dark ? 'dark' : 'light' }}
+                />
+                {availabilityDay !== todayIso && (
+                  <button type="button" onClick={() => setAvailabilityDate('')} style={{ ...filterSelectStyle, background: 'transparent', color: MUTED }}>Today</button>
+                )}
+              </div>
+            </div>
             <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', height: '36px', marginBottom: '16px', gap: '2px' }}>
               {[
                 { w: pct(occupied),  bg: TEAL,      label: 'Occupied' },
@@ -519,7 +527,9 @@ export default function AdminDashboard() {
           <Card>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue</span>
-              <Pill color={dark ? 'rgba(200,240,110,0.15)' : LIME} textColor={dark ? LIME : '#1a2e1a'}>Last 6 Months</Pill>
+              <select aria-label="Revenue chart period" value={revenueRange} onChange={e => setRevenueRange(e.target.value)} style={filterSelectStyle}>
+                {REVENUE_CHART_RANGES.map(r => <option key={r.id} value={r.id} style={optionStyle}>{r.label}</option>)}
+              </select>
             </div>
             <ResponsiveContainer width="100%" height={160}>
               <AreaChart data={revenueData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
@@ -577,9 +587,9 @@ export default function AdminDashboard() {
                 aria-label="Reservations chart period"
                 value={reservationRange}
                 onChange={e => setReservationRange(e.target.value)}
-                style={{ background: dark ? 'rgba(200,240,110,0.15)' : LIME, color: dark ? LIME : '#1a2e1a', border: 'none', borderRadius: '20px', padding: '3px 10px', fontSize: '11px', fontWeight: '600', fontFamily: 'inherit', cursor: 'pointer', outline: 'none' }}
+                style={filterSelectStyle}
               >
-                {RESERVATION_CHART_RANGES.map(r => <option key={r.id} value={r.id} style={{ color: '#1a2e1a', background: '#fff' }}>{r.label}</option>)}
+                {RESERVATION_CHART_RANGES.map(r => <option key={r.id} value={r.id} style={optionStyle}>{r.label}</option>)}
               </select>
             </div>
             <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
@@ -602,11 +612,19 @@ export default function AdminDashboard() {
           </Card>
 
           <Card>
-            <SectionTitle action>Booking by Platform</SectionTitle>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Booking by Platform</span>
+              <select aria-label="Booking by platform period" value={platformRange} onChange={e => setPlatformRange(e.target.value)} style={filterSelectStyle}>
+                {PLATFORM_RANGES.map(r => <option key={r.id} value={r.id} style={optionStyle}>{r.label}</option>)}
+              </select>
+            </div>
+            {platformData.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '36px 0', color: MUTED, fontSize: '12px' }}>No bookings in this period.</div>
+            ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
               <PieChart width={130} height={130}>
                 <Pie data={platformData} cx={60} cy={60} innerRadius={38} outerRadius={60}
-                  dataKey="value" startAngle={90} endAngle={-270} paddingAngle={2}>
+                  dataKey="count" startAngle={90} endAngle={-270} paddingAngle={2}>
                   {platformData.map((d, i) => <Cell key={i} fill={d.color} />)}
                 </Pie>
               </PieChart>
@@ -617,11 +635,12 @@ export default function AdminDashboard() {
                       <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: d.color, flexShrink: 0 }} />
                       <span style={{ fontSize: '11px', color: MUTED }}>{d.name}</span>
                     </div>
-                    <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT }}>{d.value}%</span>
+                    <span title={`${d.count} booking${d.count === 1 ? '' : 's'}`} style={{ fontSize: '11px', fontWeight: '600', color: TEXT }}>{d.value}% <span style={{ color: MUTED, fontWeight: 500 }}>({d.count})</span></span>
                   </div>
                 ))}
               </div>
             </div>
+            )}
           </Card>
 
           {/* ── Tasks (functional) ── */}

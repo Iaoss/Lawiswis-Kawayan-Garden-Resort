@@ -53,3 +53,39 @@ test('reservations chart filter changes the period', () => {
   expect(sixMonths[4]).toEqual({ d: 'Sep 26', booked: 2, cancelled: 0 });
   expect(reservationsChartData(reservations, now, '12m')).toHaveLength(12);
 });
+
+describe('dashboard card filters', () => {
+  const { revenueChartData, bookingsByPlatform, roomAvailabilityOn } = require('./monthlyStats');
+
+  test('revenue chart period', () => {
+    expect(revenueChartData(payments, now, '3m').map(r => r.m)).toEqual(['Aug', 'Sep', 'Oct']);
+    expect(revenueChartData(payments, now, '12m')).toHaveLength(12);
+    expect(revenueChartData(payments, now, 'year')).toHaveLength(10);
+  });
+
+  test('booking by platform uses the booking type and period', () => {
+    const list = [
+      { type: 'online', createdAt: ts(2026, 9, 20) },
+      { type: 'online', createdAt: ts(2026, 9, 21) },
+      { type: 'walk-in', createdAt: ts(2026, 9, 22) },
+      { type: 'corporate', createdAt: ts(2026, 5, 1) },
+      { type: 'online', createdAt: ts(2026, 9, 23), status: 'cancelled' },
+    ];
+    expect(bookingsByPlatform(list, now, 'month')).toEqual([
+      { name: 'Website (online)', color: '#89D7B7', count: 2, value: 67 },
+      { name: 'Walk-in', color: '#9cb56f', count: 1, value: 33 },
+    ]);
+    expect(bookingsByPlatform(list, now, 'all').map(p => p.count)).toEqual([2, 1, 1]);
+  });
+
+  test('room availability for a chosen date', () => {
+    const rooms = [{ id: 'a' }, { id: 'b' }, { id: 'c', status: 'maintenance' }, { id: 'd' }];
+    const stays = [
+      { roomId: 'a', checkIn: '2026-10-26', checkOut: '2026-10-28', status: 'checked-in' },
+      { roomId: 'b', checkIn: '2026-10-30', checkOut: '2026-10-30', status: 'confirmed' },
+      { roomId: 'd', checkIn: '2026-10-25', checkOut: '2026-10-27', status: 'cancelled' },
+    ];
+    expect(roomAvailabilityOn(rooms, stays, '2026-10-27')).toEqual({ occupied: 1, reserved: 0, available: 2, notReady: 1, total: 4 });
+    expect(roomAvailabilityOn(rooms, stays, '2026-10-30')).toEqual({ occupied: 0, reserved: 1, available: 2, notReady: 1, total: 4 });
+  });
+});
