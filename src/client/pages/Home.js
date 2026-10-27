@@ -9,6 +9,7 @@ import OccupancyBadge from '../components/OccupancyBadge';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { Skeleton } from '../../components/ui/v-skeleton-8-utils/skeleton.jsx';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
 /* ─────────────────────────────────────────────
    BRAND PALETTE — pulled from the Lawiswis Kawayan
@@ -28,7 +29,7 @@ const SERIF = "'Fraunces', 'Times New Roman', serif";
 const SANS  = "'Inter', sans-serif";
 
 /* Real photography from lawiswiskawayanresort.com */
-const photos = {
+const rawPhotos = {
   hero:        'https://lawiswiskawayanresort.com/wp-content/uploads/2020/01/hero192x-scaled.jpg',
   about:       'https://lawiswiskawayanresort.com/wp-content/uploads/2024/09/About-Lawiswis-Kawayan-scaled-1.jpeg',
   welcome:     'https://lawiswiskawayanresort.com/wp-content/uploads/2024/09/Welcome-scaled-1.jpeg',
@@ -46,6 +47,9 @@ const photos = {
   logoWide:    'https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png',
   logoFooter:  'https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/OFFICIAL-LOGO-LAWISWIS-KAWAYAN-WHITE-VER-scaled.png',
 };
+// Banners at full width, logos small, everything else at feature size.
+const PHOTO_WIDTHS = { hero: IMAGE_WIDTHS.hero, welcome: IMAGE_WIDTHS.hero, logoWide: IMAGE_WIDTHS.logo, logoFooter: IMAGE_WIDTHS.logo };
+const photos = Object.fromEntries(Object.entries(rawPhotos).map(([key, url]) => [key, optimizeImage(url, PHOTO_WIDTHS[key] || IMAGE_WIDTHS.large)]));
 
 /* Fallback room photography, cycled when Firestore rooms don't carry images */
 const roomPhotos = [
@@ -53,14 +57,14 @@ const roomPhotos = [
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tahimik-02-1400x700-1.jpeg',
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/MInamahal-01-1400x700-1.jpeg',
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Panaginip-05.jpeg',
-];
+].map(url => optimizeImage(url, IMAGE_WIDTHS.card));
 
 /* Fallback news photography, cycled when Firestore articles don't carry images */
 const newsFallbackPhotos = [
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/11/image-wide-post.jpg',
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/11/349573106_214182444757352_8525037380621928322_n.jpg',
   'https://lawiswiskawayanresort.com/wp-content/uploads/2020/01/Pavillion-Featured.jpg',
-];
+].map(url => optimizeImage(url, IMAGE_WIDTHS.card));
 
 /* ─────────────────────────────────────────────
    REVEAL — one quiet fade/rise per section intro
@@ -484,7 +488,7 @@ export default function Home() {
       <div className="section-container responsive-grid-2" style={{ margin: '110px auto 100px', gap: '64px', alignItems: 'center' }}>
         <Reveal delay={100} y={24}>
           <div style={{ position: 'relative' }}>
-            <img src={photos.about} alt="Lawiswis Kawayan Garden Resort" style={{ width: '100%', height: '440px', objectFit: 'cover', borderRadius: '6px' }} />
+            <img src={photos.about} alt="Lawiswis Kawayan Garden Resort" loading="lazy" decoding="async" style={{ width: '100%', height: '440px', objectFit: 'cover', borderRadius: '6px' }} />
             <div className="lk-est-badge" style={{ position: 'absolute', bottom: '-22px', right: '-22px', background: PAPER, borderRadius: '6px', padding: '18px 22px', boxShadow: '0 12px 40px rgba(0,0,0,0.14)', border: `1px solid ${LINE}` }}>
               <div style={{ fontWeight: '600', fontSize: '20px', color: FOREST, fontFamily: SERIF }}>Est. 2006</div>
               <div style={{ fontSize: '11px', color: '#6b6a5c', fontFamily: SANS }}>Calumpit, Bulacan</div>
@@ -570,7 +574,7 @@ export default function Home() {
         <div className="responsive-grid-3" style={{ gap: '20px' }}>
           {builtFor.map(b => (
             <div key={b.title} style={{ borderRadius: '6px', overflow: 'hidden', position: 'relative' }}>
-              <img src={b.img} alt={b.title} style={{ width: '100%', height: '320px', objectFit: 'cover', display: 'block' }} />
+              <img src={b.img} alt={b.title} loading="lazy" decoding="async" style={{ width: '100%', height: '320px', objectFit: 'cover', display: 'block' }} />
               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 50%, rgba(15,18,10,0.85) 100%)' }} />
               <div style={{ position: 'absolute', left: '20px', bottom: '18px' }}>
                 <div style={{ color: '#fff', fontWeight: '500', fontSize: '17px', fontFamily: SERIF }}>{b.title}</div>
@@ -604,7 +608,7 @@ export default function Home() {
                 onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-5px)'; e.currentTarget.style.boxShadow = '0 20px 40px rgba(0,0,0,0.1)'; }}
                 onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}>
                 <div style={{ position: 'relative', height: '210px', overflow: 'hidden' }}>
-                  <img src={roomPhotos[i % roomPhotos.length]} alt={`Room ${room.roomNumber}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={roomPhotos[i % roomPhotos.length]} alt={`Room ${room.roomNumber}`} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   <div style={{ position: 'absolute', top: '14px', left: '14px', background: BRASS, borderRadius: '3px', padding: '5px 12px', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', color: '#fff', fontFamily: SANS }}>AVAILABLE</div>
                 </div>
                 <div style={{ padding: '22px' }}>
@@ -632,7 +636,7 @@ export default function Home() {
 
       {/* CTA BANNER */}
       <div style={{ position: 'relative', overflow: 'hidden' }}>
-        <img src={photos.garden06} alt="Bamboo Garden" style={{ width: '100%', height: '320px', objectFit: 'cover' }} />
+        <img src={photos.garden06} alt="Bamboo Garden" loading="lazy" decoding="async" style={{ width: '100%', height: '320px', objectFit: 'cover' }} />
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(20,25,15,0.78)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', padding: '0 40px', gap: '20px' }}>
           <Reveal style={{ flex: '1 1 340px', minWidth: 0 }}>
             <div style={{ fontSize: '11px', color: '#e7dfc4', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.16em', marginBottom: '14px', fontFamily: SANS }}>We Can't Wait to Serve You</div>
@@ -669,7 +673,7 @@ export default function Home() {
               <a key={b.id} href={b.externalLink || 'https://lawiswiskawayanresort.com/'} target="_blank" rel="noopener noreferrer"
                 style={{ background: PAPER, borderRadius: '6px', overflow: 'hidden', border: `1px solid ${LINE}`, cursor: 'pointer', display: 'block', textDecoration: 'none', color: 'inherit' }}>
                 <div style={{ height: '170px', overflow: 'hidden' }}>
-                  <img src={b.imageUrl || newsFallbackPhotos[i % newsFallbackPhotos.length]} alt={b.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={b.imageUrl ? optimizeImage(b.imageUrl, IMAGE_WIDTHS.card) : newsFallbackPhotos[i % newsFallbackPhotos.length]} alt={b.title} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
                 <div style={{ padding: '18px' }}>
                   <span style={{ background: CREAM, color: FOREST, fontSize: '9.5px', fontWeight: '600', letterSpacing: '0.05em', padding: '4px 10px', borderRadius: '3px', fontFamily: SANS }}>{b.category || 'News'}</span>

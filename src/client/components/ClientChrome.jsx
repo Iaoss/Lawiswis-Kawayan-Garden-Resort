@@ -4,8 +4,9 @@ import { BRASS, FOREST_DEEP, PAPER, SANS, LINE } from './clientTheme';
 import { useResortAvailability } from './ResortAvailabilityContext';
 import { BookingTypeSelectionModal } from '../pages/BookingTypeSelection';
 import { BOOKING_TYPE_MODAL_EVENT } from '../lib/bookingTypeModal';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
-const logo = 'https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png';
+const logo = optimizeImage('https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png', IMAGE_WIDTHS.logo);
 // Floating pill navbar colours.
 const NAV_BG = '#101a14';
 const NAV_CTA = '#FDF1B8';

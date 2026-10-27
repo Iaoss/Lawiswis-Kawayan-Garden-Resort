@@ -4,14 +4,14 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 // Resort photos, served from /public/images/resort.
 const PHOTOS = `${process.env.PUBLIC_URL || ''}/images/resort`;
 export const HERO_SLIDES = [
-  { src: `${PHOTOS}/serenity-pool.jpg`, alt: 'The Serenity pool surrounded by gardens' },
-  { src: `${PHOTOS}/bamboo-cabanas.jpg`, alt: 'Curtained cabanas in the bamboo garden' },
-  { src: `${PHOTOS}/garden-terrace.jpg`, alt: 'A couple sharing drinks on a garden terrace' },
-  { src: `${PHOTOS}/veranda-lounge.jpg`, alt: 'Veranda lounge overlooking the trees' },
-  { src: `${PHOTOS}/lanterns-sunset.jpg`, alt: 'Lanterns glowing in the trees at sunset' },
-  { src: `${PHOTOS}/fireside-friends.jpg`, alt: 'Friends roasting marshmallows by the fire pit' },
-  { src: `${PHOTOS}/bonfire-gathering.jpg`, alt: 'Group gathering around the bonfire under string lights' },
-  { src: `${PHOTOS}/garden-walk.jpg`, alt: 'A couple walking the garden path' },
+  { src: `${PHOTOS}/serenity-pool.webp`, alt: 'The Serenity pool surrounded by gardens' },
+  { src: `${PHOTOS}/bamboo-cabanas.webp`, alt: 'Curtained cabanas in the bamboo garden' },
+  { src: `${PHOTOS}/garden-terrace.webp`, alt: 'A couple sharing drinks on a garden terrace' },
+  { src: `${PHOTOS}/veranda-lounge.webp`, alt: 'Veranda lounge overlooking the trees' },
+  { src: `${PHOTOS}/lanterns-sunset.webp`, alt: 'Lanterns glowing in the trees at sunset' },
+  { src: `${PHOTOS}/fireside-friends.webp`, alt: 'Friends roasting marshmallows by the fire pit' },
+  { src: `${PHOTOS}/bonfire-gathering.webp`, alt: 'Group gathering around the bonfire under string lights' },
+  { src: `${PHOTOS}/garden-walk.webp`, alt: 'A couple walking the garden path' },
 ];
 
 const SLIDE_MS = 4000;
@@ -68,6 +68,9 @@ export default function HeroSlider({ slides = HERO_SLIDES, offsetY = 0 }) {
           key={slide.src}
           src={slide.src}
           alt={slide.alt}
+          // The first photo is what visitors see first, so fetch it ahead of everything else.
+          fetchpriority={index === 0 ? 'high' : 'auto'}
+          decoding="async"
           aria-roledescription="slide"
           aria-label={`${index + 1} of ${count}: ${slide.alt}`}
           initial={{ opacity: 0, scale: reduceMotion ? 1 : 1.08 }}
