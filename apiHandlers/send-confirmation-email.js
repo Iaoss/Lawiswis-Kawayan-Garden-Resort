@@ -15,11 +15,18 @@
 
 import { adminDb } from '../lib/firebaseAdmin';
 import { sendPaymentConfirmedEmail } from '../lib/email';
+import { verifyStaff } from '../lib/verifyStaff';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Staff only. Without this, anyone with a booking ID could trigger a
+  // "payment confirmed" email for a booking that was never paid.
+  if (!(await verifyStaff(req))) {
+    return res.status(401).json({ error: 'Only resort staff can send confirmation emails.' });
   }
 
   try {
@@ -34,6 +41,11 @@ export default async function handler(req, res) {
     }
 
     const reservation = snap.data();
+    // The email says the payment is confirmed, so it must match the records.
+    const status = String(reservation.status || '').toLowerCase();
+    if (Number(reservation.amountPaid || 0) <= 0 && !['confirmed', 'checked-in', 'checked-out'].includes(status)) {
+      return res.status(409).json({ error: 'This reservation has no recorded payment yet.' });
+    }
     const bookingRef = reservationId.slice(0, 8).toUpperCase();
 
     await sendPaymentConfirmedEmail(reservation, bookingRef);
