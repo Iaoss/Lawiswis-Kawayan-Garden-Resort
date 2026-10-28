@@ -2,10 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, onSnapshot, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 import { DEFAULT_QUICK_REPLIES, sortQuickReplies } from './quickReplyDefaults';
+import { useStaffAccess } from '../lib/useStaffAccess';
+import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 
 const PANEL_WIDTH = 400;
 
 export default function ChatPanel({ dark, accent, open, onClose }) {
+  const { user: me } = useStaffAccess();
   const ACCENT      = accent || '#9cb56f';
   const ACCENT_TEXT = '#0a1a0a';
   const PANEL_BG  = dark ? '#1c1c1c' : '#ffffff';
@@ -17,7 +20,6 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
   const SELECTED_BG = dark ? '#242422' : '#f3f4f6';
   const CHAT_BG   = dark ? '#141414' : '#fafafa';
   const BUBBLE_BG = dark ? '#282827' : '#ffffff';
-  const AVATAR_BG = dark ? '#282827' : '#1f2937';
 
   const [conversations, setConversations] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -79,6 +81,8 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
     await addDoc(collection(db, 'conversations', selected.id, 'messages'), {
       sender: 'staff',
       text: newMsg,
+      staffName: me?.name || '',
+      staffAvatar: me?.avatar || '',
       timestamp: serverTimestamp(),
     });
     await updateDoc(doc(db, 'conversations', selected.id), {
@@ -154,9 +158,7 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
                   }}
                   onMouseEnter={e => e.currentTarget.style.background = HOVER_BG}
                   onMouseLeave={e => e.currentTarget.style.background = selected?.id === c.id ? SELECTED_BG : 'transparent'}>
-                  <div style={{ width: 40, height: 40, borderRadius: '50%', background: AVATAR_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', color: ACCENT, fontWeight: 700, fontSize: 15, flexShrink: 0 }}>
-                    {(c.guestName || 'G')[0].toUpperCase()}
-                  </div>
+                  <BeamAvatar seed={guestAvatarSeed(c)} size={40} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span style={{ fontWeight: 600, fontSize: 12.5, color: TEXT }}>{c.guestName}</span>
@@ -180,9 +182,7 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
               <button onClick={backToList} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: TEXT, fontSize: 18, padding: 4, display: 'flex' }}>
                 <i className="ti ti-arrow-left" />
               </button>
-              <div style={{ width: 34, height: 34, borderRadius: '50%', background: AVATAR_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', color: ACCENT, fontWeight: 700, fontSize: 13 }}>
-                {(selected?.guestName || 'G')[0].toUpperCase()}
-              </div>
+              <BeamAvatar seed={guestAvatarSeed(selected || {})} size={34} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 13, color: TEXT }}>{selected?.guestName}</div>
                 <div style={{ fontSize: 11, color: MUTED }}>Room {selected?.roomNumber || '—'}</div>

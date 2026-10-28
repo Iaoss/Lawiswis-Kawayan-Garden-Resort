@@ -19,6 +19,8 @@ import {
   hasOutstandingBalance,
 } from '../../lib/reservationStatus';
 import { appPrompt } from '../../components/ui/app-dialog';
+import { useStaffAccess } from '../lib/useStaffAccess';
+import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 
 const QUICK_VIEWS = {
   new: { label: 'New bookings', sortBy: 'booked', sortDir: 'desc' },
@@ -119,8 +121,6 @@ const fromIso = s => {
 const shortDate = d => `${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()}`;
 // A stay covers every day from check-in through check-out (inclusive).
 const staysOn = (r, day) => (r.checkIn && r.checkOut ? r.checkIn <= day && day <= r.checkOut : r.checkIn === day);
-const initials = (name = '') =>
-  name.split(' ').filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || 'G';
 
 const monthGrid = (cursor) => {
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
@@ -306,7 +306,7 @@ function ReservationBoard({
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 150, flex: '0 0 auto' }}>
-          <span style={{ width: 30, height: 30, borderRadius: 999, display: 'grid', placeItems: 'center', fontSize: 11, fontWeight: 700, color: '#fff', background: color }}>{initials(r.guestName)}</span>
+          <BeamAvatar seed={guestAvatarSeed(r)} size={30} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: t.TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.phone || 'No phone'}</div>
             <div style={{ fontSize: 10, color: t.MUTED, textTransform: 'capitalize' }}>{r.status}</div>
@@ -558,6 +558,11 @@ export default function Reservations() {
   // ── Role detection (based on route; swap for real auth/role context if available) ──
   const isReceptionist = window.location.pathname.startsWith('/receptionist');
   const isAdmin = !isReceptionist;
+  // Actions an admin can also give a receptionist (Users → Access).
+  const access = useStaffAccess();
+  const canCancel = isAdmin || access.can('cancel');
+  const canDecideRefunds = isAdmin || access.can('refunds');
+  const canOverrideCheckout = isAdmin || access.can('checkoutOverride');
 
   const [reservations, setReservations] = useState([]);
   const [toast, setToast] = useState(null);
@@ -714,12 +719,12 @@ export default function Reservations() {
     let statusReason = reason;
     if (status === 'checked-out' && hasOutstandingBalance(reservation)) {
       const owedText = `₱${outstandingAmount(reservation).toLocaleString()}`;
-      if (!isAdmin) {
+      if (!canOverrideCheckout) {
         setToast({ type: 'error', text: `This guest still owes ${owedText}. Collect payment in Billing before checking out.` });
         return;
       }
       const overrideReason = await appPrompt(
-        `This guest still owes ${owedText}. You can check them out anyway as an admin; the reason and the unpaid amount are saved on the booking.`,
+        `This guest still owes ${owedText}. You can check them out anyway; the reason and the unpaid amount are saved on the booking.`,
         { title: 'Check out with an unpaid balance?', tone: 'warning', required: true, confirmLabel: 'Check out anyway', placeholder: 'e.g. Guest will settle by bank transfer tomorrow' },
       );
       if (!overrideReason) return;
@@ -978,7 +983,7 @@ export default function Reservations() {
   const renderStepper = (r, compact) => {
     const lockedReason = isReceptionist && r.status === 'cancelled'
       ? 'Cancelled bookings can only be changed by an admin.'
-      : isReceptionist && r.cancellationRequested ? 'Cancellation requested — waiting for an admin.' : '';
+      : !canCancel && r.cancellationRequested ? 'Cancellation requested — waiting for an admin.' : '';
     const owes = hasOutstandingBalance(r);
     return (
       <StatusStepper
@@ -988,12 +993,12 @@ export default function Reservations() {
         lockedReason={lockedReason}
         colors={stepperColors}
         stepNotes={owes ? {
-          'checked-out': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. Collect payment first${isAdmin ? ', or override with a reason' : ''}.`,
+          'checked-out': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. Collect payment first${canOverrideCheckout ? ', or override with a reason' : ''}.`,
         } : {}}
         getStepError={to => getStatusTransitionError(r.status, to)}
         onSelect={status => updateStatus(r.id, status)}
-        onCancel={() => openCancellationDialog(isReceptionist ? 'request' : 'cancel', r)}
-        cancelLabel={isReceptionist ? 'Request cancellation' : 'Cancel booking'}
+        onCancel={() => openCancellationDialog(canCancel ? 'cancel' : 'request', r)}
+        cancelLabel={canCancel ? 'Cancel booking' : 'Request cancellation'}
       />
     );
   };
@@ -1003,7 +1008,7 @@ export default function Reservations() {
   const canEditBooking = r => ['pending', 'confirmed', 'checked-in'].includes(r.status) && r.type !== 'corporate' && Boolean(r.roomId);
 
   const pendingCancellations = reservations.filter(r => r.cancellationRequested);
-  const pendingRefunds = isAdmin ? reservations.filter(r =>
+  const pendingRefunds = canDecideRefunds ? reservations.filter(r =>
     ['eligible', 'needs_review'].includes(String(r.refundRequestStatus || '').toLowerCase())) : [];
   const pendingModifications = reservations.filter(r =>
     ['requested', 'needs_review'].includes(String(r.modificationRequest?.status || '').toLowerCase()));
@@ -1170,7 +1175,7 @@ export default function Reservations() {
               line to open the details and actions. Empty types are hidden. */}
           <section aria-label="Notifications" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '12px 14px', display: 'grid', gap: '8px', alignContent: 'start', minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Notifications</div>
-            {lateArrivals.length + overstayed.length + (isAdmin ? pendingCancellations.length : 0) + pendingRefunds.length + pendingModifications.length === 0 && (
+            {lateArrivals.length + overstayed.length + (canCancel ? pendingCancellations.length : 0) + pendingRefunds.length + pendingModifications.length === 0 && (
               <div style={{ fontSize: '12px', color: MUTED }}>All clear — nothing needs action right now.</div>
             )}
 
@@ -1226,7 +1231,7 @@ export default function Reservations() {
               </NotificationGroup>
             )}
 
-            {isAdmin && pendingCancellations.length > 0 && (
+            {canCancel && pendingCancellations.length > 0 && (
               <NotificationGroup title="Cancellation requests" detail="Sent by receptionists for approval" count={pendingCancellations.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
                 {pendingCancellations.map(r => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${ROWLINE}` }}>

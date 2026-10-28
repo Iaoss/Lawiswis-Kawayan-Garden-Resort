@@ -1,5 +1,6 @@
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
-import { verifyStaff } from '../lib/verifyStaff';
+import { staffCan, verifyStaff } from '../lib/verifyStaff';
+import { logActivity } from '../lib/activityLog';
 import { calculateReservationModification } from '../lib/reservationModification';
 import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
 import { createPayMongoCheckoutSession } from '../lib/paymongoCheckout';
@@ -145,7 +146,7 @@ async function submitModificationRefund(reservationRef, reservationId, requestId
 }
 
 async function approveRefund({ reservationRef, reservationId, requestId, staff, amountOverride }) {
-  if (staff.role !== 'admin') throw new Error('Only an administrator can approve refund requests.');
+  if (!staffCan(staff, 'refunds')) throw new Error('Only an administrator (or staff given refund access) can approve refund requests.');
   const claim = await adminDb.runTransaction(async transaction => {
     const snapshot = await transaction.get(reservationRef);
     if (!snapshot.exists) throw new Error('Reservation not found.');
@@ -248,7 +249,7 @@ async function approveRefund({ reservationRef, reservationId, requestId, staff, 
 }
 
 async function decideRefund({ reservationRef, reservationId, requestId, staff, action, reason }) {
-  if (staff.role !== 'admin') throw new Error('Only an administrator can decide refund requests.');
+  if (!staffCan(staff, 'refunds')) throw new Error('Only an administrator (or staff given refund access) can decide refund requests.');
   const status = action === 'reject-refund' ? 'rejected' : 'needs_review';
   let reservationData;
   await adminDb.runTransaction(async transaction => {
@@ -501,6 +502,19 @@ export default async function handler(req, res) {
     } else {
       return res.status(400).json({ error: 'Choose a valid reservation action.' });
     }
+    const ref = `#${String(reservationId).slice(0, 8).toUpperCase()}`;
+    const summaries = {
+      'approve-refund': `Approved a refund on booking ${ref}`,
+      'reject-refund': `Rejected a refund request on booking ${ref}`,
+      'review-refund': `Sent a refund request on booking ${ref} back for review`,
+      'approve-modification': `Approved a date change on booking ${ref}`,
+      'reject-modification': `Rejected a date change on booking ${ref}`,
+    };
+    await logActivity(staff, {
+      action: action.replace('-', '_'),
+      summary: reason ? `${summaries[action]} (${reason.slice(0, 120)})` : summaries[action],
+      reservationId,
+    });
     return res.status(200).json(result);
   } catch (error) {
     console.error('Staff reservation action failed:', error);

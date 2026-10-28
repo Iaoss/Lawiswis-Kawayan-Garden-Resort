@@ -1,8 +1,8 @@
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendReservationPendingEmail } from '../lib/email';
-import { getCorporatePackage } from '../src/lib/corporatePackages';
+import { getCorporatePackage, getGroupAdvanceNoticeError, getGroupGuestError } from '../src/lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
-import { getStayDurationError } from '../src/lib/bookingPricing';
+import { getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 
 function dateKey(date) {
@@ -49,6 +49,10 @@ export default async function handler(req, res) {
       });
     }
 
+    // Group size: 15 to 250 guests, with a clear message either way.
+    const guestError = getGroupGuestError(totalGuests);
+    if (guestError) return res.status(400).json({ error: guestError });
+
     if (typeof companyName !== 'string' || !companyName.trim() || companyName.trim().length > 120
       || typeof email !== 'string' || !email.trim() || email.length > 254
       || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
@@ -84,12 +88,15 @@ export default async function handler(req, res) {
     const stayError = isDayTour ? '' : getStayDurationError(checkIn, checkOut);
     if (stayError) return res.status(400).json({ error: stayError });
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // "Today" is the Philippine date (the server runs in UTC).
+    const today = new Date(`${getResortNow().dateKey}T00:00:00`);
     const maxBookingDate = dateKey(addMonthsClamped(today, 2));
     if (checkIn < dateKey(today) || checkOut > maxBookingDate) {
       return res.status(400).json({ error: `Choose dates from today through ${maxBookingDate}.` });
     }
+    // Groups book at least a week ahead so the areas can be prepared.
+    const noticeError = getGroupAdvanceNoticeError(checkIn);
+    if (noticeError) return res.status(400).json({ error: noticeError, code: 'GROUP_ADVANCE_NOTICE' });
 
     const packageDetails = getCorporatePackage(totalGuests);
     const nights = isDayTour ? 1 : Math.ceil((checkOutDate - checkInDate) / 86400000);

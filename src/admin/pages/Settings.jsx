@@ -106,7 +106,10 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [toast, setToast] = useState('');
   const [activeTab, setActiveTab] = useState('appearance');
+  // Only admins change the resort status, so receptionists don't see that tab.
+  const isReceptionistPortal = window.location.pathname.startsWith('/receptionist');
   const [resortAvailable, setResortAvailable] = useState(true);
+  const [resortLimited, setResortLimited] = useState(false);
   const [availabilityReason, setAvailabilityReason] = useState('');
   const [availabilityLoading, setAvailabilityLoading] = useState(true);
   const [availabilitySaving, setAvailabilitySaving] = useState(false);
@@ -121,6 +124,7 @@ export default function Settings() {
         if (!response.ok) throw new Error(data.error || 'Could not load resort status.');
         if (active) {
           setResortAvailable(data.available !== false);
+          setResortLimited(data.available !== false && data.limited === true);
           setAvailabilityReason(data.reason || '');
         }
       })
@@ -201,7 +205,7 @@ export default function Settings() {
       const response = await fetch('/api/resort-availability', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ available: resortAvailable, reason: availabilityReason }),
+        body: JSON.stringify({ available: resortAvailable, limited: resortAvailable && resortLimited, reason: availabilityReason }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Could not save resort availability.');
@@ -252,7 +256,7 @@ export default function Settings() {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: t.CARD2, borderRadius: 12, padding: 4 }}>
-          {TABS.map(tab => (
+          {TABS.filter(tab => !(isReceptionistPortal && tab.id === 'availability')).map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               style={{
                 flex: 1, padding: '8px 4px', border: 'none', borderRadius: 9, cursor: 'pointer',
@@ -372,19 +376,35 @@ export default function Settings() {
           </Section>
         )}
 
-        {activeTab === 'availability' && (
+        {activeTab === 'availability' && !isReceptionistPortal && (
           <Section title="Resort availability" t={t}>
             <SettingRow
               t={t}
               icon="ti-building-store"
-              label={`Reservations: ${resortAvailable ? 'Open' : 'Unavailable'}`}
-              desc={resortAvailable ? 'Guests can book stays through the website.' : 'Client booking controls will be disabled while the resort is closed.'}
+              label={`Resort status: ${!resortAvailable ? 'Closed' : resortLimited ? 'Limited' : 'Open'}`}
+              desc={!resortAvailable
+                ? 'Bookings are turned off on the website, and visitors see your message.'
+                : resortLimited
+                  ? 'Guests can still book, and the website shows your message about what is limited.'
+                  : 'Guests can book stays through the website.'}
               last
             >
-              <Toggle value={resortAvailable} onChange={value => { setResortAvailable(value); setAvailabilitySaved(false); }} t={t} />
+              <div role="radiogroup" aria-label="Resort status" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[
+                  { id: 'open', label: 'Open', on: resortAvailable && !resortLimited, set: () => { setResortAvailable(true); setResortLimited(false); } },
+                  { id: 'limited', label: 'Limited', on: resortAvailable && resortLimited, set: () => { setResortAvailable(true); setResortLimited(true); } },
+                  { id: 'closed', label: 'Closed', on: !resortAvailable, set: () => { setResortAvailable(false); setResortLimited(false); } },
+                ].map(option => (
+                  <button key={option.id} type="button" role="radio" aria-checked={option.on}
+                    onClick={() => { option.set(); setAvailabilitySaved(false); }}
+                    style={{ padding: '7px 14px', borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: 'pointer', border: `1px solid ${option.on ? t.ACCENT : t.BORDER}`, background: option.on ? t.ACCENT : 'transparent', color: option.on ? t.ACCENT_TEXT : t.TEXT }}>
+                    {option.label}
+                  </button>
+                ))}
+              </div>
             </SettingRow>
             <label style={{ display: 'grid', gap: 7, padding: '14px 0', color: t.SUBTEXT, fontSize: 12 }}>
-              Closure reason or visitor message
+              {resortLimited && resortAvailable ? 'What is limited? (shown on the website)' : 'Closure reason or visitor message'}
               <textarea
                 maxLength={300}
                 value={availabilityReason}

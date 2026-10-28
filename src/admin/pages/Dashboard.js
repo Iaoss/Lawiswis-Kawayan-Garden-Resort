@@ -19,18 +19,12 @@ import {
   getQuarterlyBreakdown,
   getReservationAverages,
 } from '../../lib/reservationStatus';
+import { getFeedbackSummary, getRevenueBySource } from '../../lib/dashboardMetrics';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
 
-const ratingCategories = [
-  { label: 'Facilities',  score: 4.4 },
-  { label: 'Cleanliness', score: 4.7 },
-  { label: 'Services',    score: 4.6 },
-  { label: 'Comfort',     score: 4.8 },
-  { label: 'Location',    score: 4.5 },
-];
 
 const statusColors = {
   confirmed:    ['rgba(34,197,94,0.15)',  '#4ade80'],
@@ -175,6 +169,7 @@ export default function AdminDashboard() {
   // ── Reservation analytics ─────────────────────────────────
   const [analyticsPeriod, setAnalyticsPeriod] = useState('30');
   const [payments, setPayments] = useState([]);
+  const [feedback, setFeedback] = useState([]);
   const [roomList, setRoomList] = useState([]);
 
   // ── Calendar ──────────────────────────────────────────────
@@ -195,6 +190,13 @@ export default function AdminDashboard() {
       setPayments(paymentRows);
       setRoomList(rooms);
       setRecent([...reservations].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
+      // Feedback is loaded on its own so a problem there doesn't blank the dashboard.
+      try {
+        const feedbackSnap = await getDocs(collection(db, 'feedback'));
+        setFeedback(feedbackSnap.docs.map(d => d.data()));
+      } catch (feedbackError) {
+        console.error('Dashboard feedback load failed:', feedbackError);
+      }
     };
     fetchData().catch(err => console.error('Dashboard load failed:', err)).finally(() => setLoaded(true));
   }, []);
@@ -266,6 +268,10 @@ export default function AdminDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [recent, reservationRange, dayKeyNow],
   );
+  // Billed revenue by source, and guest ratings, from real records.
+  const revenueSources = useMemo(() => getRevenueBySource(recent, analytics.range), [recent, analytics.range]);
+  const feedbackSummary = useMemo(() => getFeedbackSummary(feedback), [feedback]);
+  const periodLabel = (ANALYTICS_PERIODS.find(p => p.id === analyticsPeriod) || ANALYTICS_PERIODS[0]).label;
   const formatAverage = value => (value >= 10 ? Math.round(value).toLocaleString() : value.toFixed(1));
 
   const filtered = recent.filter(r => {
@@ -552,28 +558,34 @@ export default function AdminDashboard() {
           )}
 
           <Card>
-            <SectionTitle action>Overall Rating</SectionTitle>
+            <SectionTitle>Guest Rating</SectionTitle>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
               <div>
-                <div style={{ fontSize: '36px', fontWeight: '800', color: TEXT, lineHeight: 1 }}>4.6</div>
+                <div style={{ fontSize: '36px', fontWeight: '800', color: TEXT, lineHeight: 1 }}>{feedbackSummary.average ? feedbackSummary.average.toFixed(1) : '—'}</div>
                 <div style={{ fontSize: '10px', color: MUTED }}>/5</div>
               </div>
               <div>
-                <div style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Impressive</div>
-                <div style={{ fontSize: '10px', color: MUTED }}>from 2546 reviews</div>
+                <div style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>{feedbackSummary.word}</div>
+                <div style={{ fontSize: '10px', color: MUTED }}>
+                  from {feedbackSummary.ratedCount.toLocaleString()} guest {feedbackSummary.ratedCount === 1 ? 'review' : 'reviews'}
+                </div>
               </div>
             </div>
-            {ratingCategories.map(r => (
-              <div key={r.label} style={{ marginBottom: '9px' }}>
+            {feedbackSummary.categories.map(r => (
+              <div key={r.key} style={{ marginBottom: '9px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                   <span style={{ fontSize: '11px', color: MUTED }}>{r.label}</span>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT }}>{r.score}</span>
+                  <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT }}>{r.count ? r.average.toFixed(1) : '—'}</span>
                 </div>
                 <div style={{ height: '4px', background: dark ? '#1e3a1e' : '#f0f0f0', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${(r.score / 5) * 100}%`, background: LIME, borderRadius: '2px' }} />
+                  <div style={{ height: '100%', width: `${(r.average / 5) * 100}%`, background: LIME, borderRadius: '2px' }} />
                 </div>
               </div>
             ))}
+            <button type="button" onClick={() => navigate('/admin/feedback')}
+              style={{ marginTop: '6px', background: 'none', border: 0, padding: 0, color: MUTED, fontSize: '11px', cursor: 'pointer', textDecoration: 'underline', fontFamily: 'inherit' }}>
+              See all feedback
+            </button>
           </Card>
         </div>
 
@@ -713,6 +725,44 @@ export default function AdminDashboard() {
             </div>
           </Card>
         </div>
+
+        {/* ── Revenue by source ── */}
+        <Card style={{ marginBottom: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: '700', fontSize: '14px', color: TEXT }}>Revenue by Source</span>
+            <span style={{ fontSize: '10px', color: MUTED }}>{periodLabel} · billed, by check-in date</span>
+          </div>
+          {revenueSources.total > 0 ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+              <PieChart width={130} height={130}>
+                <Pie data={revenueSources.rows.filter(d => d.value > 0)} cx={60} cy={60} innerRadius={38} outerRadius={60}
+                  dataKey="value" startAngle={90} endAngle={-270} paddingAngle={2}>
+                  {revenueSources.rows.filter(d => d.value > 0).map(d => <Cell key={d.id} fill={d.color} />)}
+                </Pie>
+                <Tooltip formatter={(v, name, item) => [formatCurrency(v), item?.payload?.label || name]}
+                  contentStyle={{ fontSize: '11px', borderRadius: '8px', background: CARD2, border: `1px solid ${BORDER}`, color: TEXT }} />
+              </PieChart>
+              <div style={{ flex: 1, minWidth: '220px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', columnGap: '24px' }}>
+                {revenueSources.rows.map(d => (
+                  <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', padding: '5px 0', borderBottom: `1px solid ${BORDER}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                      <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: d.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.label}</span>
+                    </div>
+                    <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT, whiteSpace: 'nowrap' }}>
+                      {formatCurrency(d.value)} <span style={{ color: MUTED, fontWeight: 500 }}>({Math.round(d.share * 100)}%)</span>
+                    </span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: '12px', fontWeight: '700', color: TEXT }}>
+                  <span>Total billed</span><span>{formatCurrency(revenueSources.total)}</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p style={{ fontSize: '12px', color: MUTED, margin: '12px 0' }}>No bookings with check-in dates in this period yet.</p>
+          )}
+        </Card>
 
         {/* ── Row 4 ── */}
         <div style={{ display: 'grid', gridTemplateColumns: settings.showRecentReservations === false ? '1fr' : '1fr 280px', gap: '14px', marginBottom: '14px' }}>

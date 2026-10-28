@@ -24,8 +24,8 @@ export function BookingTypeSelectionModal({ open, onClose, onSelectPersonal, onS
           </button>
           <button type="button" onClick={onSelectCorporate} style={{ textAlign: 'left', border: `1px solid ${FOREST}`, background: FOREST, padding: '23px', cursor: 'pointer', color: '#fff', fontFamily: SANS }}>
             <span style={{ display: 'block', color: '#e4d4a7', font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '12px' }}>Corporate / Big Group Booking</span>
-            <strong style={{ display: 'block', font: `500 25px ${SERIF}`, marginBottom: '8px' }}>15+ guests</strong>
-            <span style={{ color: 'rgba(255,255,255,.78)', font: `13px/1.6 ${SANS}` }}>Compare Bamboo packages, group inclusions, and the per-person total.</span>
+            <strong style={{ display: 'block', font: `500 25px ${SERIF}`, marginBottom: '8px' }}>15–250 guests</strong>
+            <span style={{ color: 'rgba(255,255,255,.78)', font: `13px/1.6 ${SANS}` }}>Compare Bamboo packages, group inclusions, and the per-person total. Book at least 1 week ahead.</span>
           </button>
         </div>
         <div style={{ marginTop: '22px', color: '#777363', font: `11px/1.6 ${SANS}` }}>A {RESERVATION_DEPOSIT_PERCENTAGE}% deposit is required for new reservations. The remaining balance is due before checkout.</div>

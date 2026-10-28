@@ -5,6 +5,8 @@ import {
   addDoc, serverTimestamp, doc, updateDoc, setDoc, getDocs, deleteDoc
 } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
+import { BeamAvatar, StaffAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
+import { useStaffAccess } from '../lib/useStaffAccess';
 import { appConfirm } from '../../components/ui/app-dialog';
 
 const ACCENT = '#9cb56f';
@@ -35,6 +37,8 @@ const DEFAULT_FAQS = [
 const CATEGORIES = ['All', 'Check-in/out', 'Booking', 'Payment', 'Cancellation', 'Amenities', 'Location', 'Rooms', 'General'];
 
 export default function Messages() {
+  // The signed-in staff member, so sent messages carry their name and avatar.
+  const { user: me } = useStaffAccess();
   const [conversations, setConversations]   = useState([]);
   const [selected,      setSelected]        = useState(null);
   const [messages,      setMessages]        = useState([]);
@@ -102,6 +106,8 @@ export default function Messages() {
     await addDoc(collection(db, 'conversations', selected.id, 'messages'), {
       sender: 'staff',
       text: msg,
+      staffName: me?.name || '',
+      staffAvatar: me?.avatar || '',
       timestamp: serverTimestamp(),
     });
     await updateDoc(doc(db, 'conversations', selected.id), {
@@ -185,9 +191,7 @@ export default function Messages() {
               filteredConvs.map(c => (
                 <div key={c.id} onClick={() => openConversation(c)}
                   style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', borderBottom: '1px solid #f9fafb', cursor: 'pointer', background: selected?.id === c.id ? '#f0fdf4' : 'transparent', borderLeft: selected?.id === c.id ? `3px solid ${ACCENT}` : '3px solid transparent', transition: 'all 0.15s' }}>
-                  <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: DARK, display: 'flex', alignItems: 'center', justifyContent: 'center', color: ACCENT, fontWeight: '700', fontSize: '14px', flexShrink: 0 }}>
-                    {(c.guestName || 'G')[0].toUpperCase()}
-                  </div>
+                  <BeamAvatar seed={guestAvatarSeed(c)} size={38} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontWeight: '600', fontSize: '12px', color: '#111' }}>{c.guestName}</span>
@@ -219,9 +223,7 @@ export default function Messages() {
               {/* Chat Header */}
               <div style={{ padding: '14px 18px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: DARK, display: 'flex', alignItems: 'center', justifyContent: 'center', color: ACCENT, fontWeight: '700', fontSize: '13px' }}>
-                    {(selected.guestName || 'G')[0].toUpperCase()}
-                  </div>
+                  <BeamAvatar seed={guestAvatarSeed(selected)} size={36} />
                   <div>
                     <div style={{ fontWeight: '600', fontSize: '13px', color: '#111' }}>{selected.guestName}</div>
                     <div style={{ fontSize: '11px', color: MUTED }}>Room {selected.roomNumber || '—'} · Guest</div>
@@ -370,9 +372,7 @@ export default function Messages() {
                 {messages.map(m => (
                   <div key={m.id} style={{ display: 'flex', justifyContent: m.sender === 'staff' ? 'flex-end' : 'flex-start', gap: '8px', alignItems: 'flex-end' }}>
                     {m.sender !== 'staff' && (
-                      <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: DARK, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', flexShrink: 0 }}>
-                        {(selected.guestName || 'G')[0].toUpperCase()}
-                      </div>
+                      <BeamAvatar seed={guestAvatarSeed(selected)} size={28} />
                     )}
                     <div style={{ maxWidth: '65%' }}>
                       <div style={{ background: m.sender === 'staff' ? DARK : '#fff', color: m.sender === 'staff' ? ACCENT : '#111', border: m.sender === 'staff' ? 'none' : '1px solid #e5e7eb', borderRadius: m.sender === 'staff' ? '16px 16px 4px 16px' : '16px 16px 16px 4px', padding: '10px 14px', fontSize: '13px', lineHeight: '1.5' }}>
@@ -383,9 +383,9 @@ export default function Messages() {
                       </div>
                     </div>
                     {m.sender === 'staff' && (
-                      <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: ACCENT, display: 'flex', alignItems: 'center', justifyContent: 'center', color: DARK, fontWeight: '700', fontSize: '11px', flexShrink: 0 }}>
-                        S
-                      </div>
+                      <span title={m.staffName || 'Staff'}>
+                        <StaffAvatar seed={m.staffAvatar} name={m.staffName || 'Staff'} size={28} background={ACCENT} color={DARK} />
+                      </span>
                     )}
                   </div>
                 ))}

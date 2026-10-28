@@ -26,6 +26,10 @@
   --muted-foreground: 215 16% 47%;
   --ring: 142 45% 38%;
   --accent-foreground: #10200d;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --primary: 142 45% 38%;
+  --primary-foreground: 0 0% 100%;
 }
 
 :root[data-dark="true"] {
@@ -36,6 +40,10 @@
   --muted: 120 4% 17%;
   --muted-foreground: 60 5% 65%;
   --ring: 82 65% 55%;
+  --card: 0 0% 11%;
+  --card-foreground: 60 10% 91%;
+  --primary: 82 65% 55%;
+  --primary-foreground: 100 40% 8%;
 }
 
 body {

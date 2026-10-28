@@ -4,6 +4,7 @@ import { db } from '../../firebase/firebase';
 import { collection, addDoc, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
+import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -285,9 +286,7 @@ export default function GuestChat() {
                     </div>
                   </div>
                   {m.sender === 'guest' && (
-                    <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: ACCENT, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: '700', fontSize: '11px', flexShrink: 0 }}>
-                      {guestName[0]?.toUpperCase()}
-                    </div>
+                    <BeamAvatar seed={guestAvatarSeed({ guestPhone, guestName })} size={28} title="You" />
                   )}
                 </div>
               ))}

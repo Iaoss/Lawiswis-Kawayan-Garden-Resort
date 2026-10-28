@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import RequireStaffRoute from './admin/components/RequireStaffRoute';
+import { RequireFeature } from './admin/lib/useStaffAccess';
 import Home from './client/pages/Home';
 import ClientLayout from './client/components/ClientLayout';
 import { AppDialogHost } from './components/ui/app-dialog';
@@ -39,6 +40,7 @@ const Settings = lazy(() => import('./admin/pages/Settings'));
 const NewsManagement = lazy(() => import('./admin/pages/NewsManagement.js'));
 const Email = lazy(() => import('./admin/pages/Email.js'));
 const PromoCodes = lazy(() => import('./admin/pages/PromoCodes'));
+const ActivityLog = lazy(() => import('./admin/pages/ActivityLog'));
 
 // Opening another page (e.g. "Book room") starts at the top, not wherever
 // the previous page was scrolled to.
@@ -91,7 +93,8 @@ function App() {
       <Routes>
         <Route path="/admin/login" element={<Login />} />
 
-        <Route path="/admin" element={<RequireStaffRoute><Outlet /></RequireStaffRoute>}>
+        {/* Every /admin page is admin-only; receptionists use /receptionist. */}
+        <Route path="/admin" element={<RequireStaffRoute allowedRoles={['admin']}><Outlet /></RequireStaffRoute>}>
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<RequireStaffRoute allowedRoles={['admin']}><AdminDashboard /></RequireStaffRoute>} />
           <Route path="rooms" element={<RoomManagement />} />
@@ -104,6 +107,7 @@ function App() {
           <Route path="history" element={<ReservationHistory />} />
           <Route path="reports" element={<Reports />} />
           <Route path="users" element={<UserManagement />} />
+          <Route path="activity" element={<ActivityLog />} />
           <Route path="feedback" element={<Feedback />} />
           <Route path="contact-inquiries" element={<ContactInquiries />} />
           <Route path="cancellation" element={<CancellationPolicy />} />
@@ -127,6 +131,14 @@ function App() {
           <Route path="transactions" element={<BookingTransactions />} />
           <Route path="cancellation" element={<CancellationPolicy />} />
           <Route path="settings" element={<Settings />} />
+          {/* Admin pages a receptionist can open only while an admin has given them access. */}
+          <Route path="reports" element={<RequireFeature feature="reports"><Reports /></RequireFeature>} />
+          <Route path="payments" element={<RequireFeature feature="payments"><PaymentTransactions /></RequireFeature>} />
+          <Route path="feedback" element={<RequireFeature feature="feedback"><Feedback /></RequireFeature>} />
+          <Route path="promos" element={<RequireFeature feature="promos"><PromoCodes /></RequireFeature>} />
+          <Route path="news" element={<RequireFeature feature="news"><NewsManagement /></RequireFeature>} />
+          <Route path="contact-inquiries" element={<RequireFeature feature="inquiries"><ContactInquiries /></RequireFeature>} />
+          <Route path="activity" element={<RequireFeature feature="activity"><ActivityLog /></RequireFeature>} />
           <Route path="*" element={<Navigate to="/receptionist/dashboard" replace />} />
         </Route>
 

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, onSnapshot, query, orderBy, updateDoc, doc, writeBatch } from 'firebase/firestore';
-import Layout from '../components/Layout';
+import Layout from '../components/PageLayout';
+import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { useSettings } from '../components/SettingsContext';
 
 /* ---------------------------------- icons --------------------------------- */
@@ -40,7 +41,6 @@ export default function Feedback() {
   const MUTED   = '#9ca3af';
   const TRACK   = dark ? '#282827' : '#eef2ea';
   const HOVER_BG = dark ? '#242422' : '#f9fafb';
-  const AVATAR_BG = dark ? '#282827' : '#e8efdc';
 
   const GREEN = dark ? '#86efac' : '#16a34a';
   const RED   = dark ? '#fca5a5' : '#dc2626';
@@ -192,11 +192,8 @@ export default function Feedback() {
     </span>
   );
 
-  const Avatar = ({ name, size = 34 }) => (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: AVATAR_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', color: dark ? ACCENT : '#5f7a35', fontWeight: 700, fontSize: size * 0.38, flexShrink: 0 }}>
-      {(name || 'A')[0].toUpperCase()}
-    </div>
-  );
+  // Each guest gets the same generated avatar everywhere (from their email or name).
+  const Avatar = ({ feedback, size = 34 }) => <BeamAvatar seed={guestAvatarSeed(feedback)} size={size} />;
 
 
   const tiles = [
@@ -325,7 +322,7 @@ export default function Feedback() {
             <div className="fb-scroll" style={{ display: 'grid', gap: '4px', maxHeight: '300px', overflowY: 'auto' }}>
               {feedbacks.filter(f => f.comment).slice(0, 6).map(f => (
                 <div key={f.id} style={{ display: 'flex', gap: '10px', padding: '10px 0', borderTop: `1px solid ${BORDER}` }}>
-                  <Avatar name={f.guestName} size={32} />
+                  <Avatar feedback={f} size={32} />
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '12px' }}>
                       <span style={{ fontWeight: 600, color: TEXT, display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -481,7 +478,7 @@ export default function Feedback() {
                     <tr key={f.id} className="fb-row" style={{ borderTop: `1px solid ${BORDER}`, boxShadow: !f.read ? `inset 3px 0 0 ${ACCENT}` : 'none' }}>
                       <td style={td}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <Avatar name={f.guestName} />
+                          <Avatar feedback={f} />
                           <div>
                             <div style={{ fontWeight: 600, color: TEXT }}>{f.guestName || 'Anonymous guest'}</div>
                             <div style={{ fontSize: '10.5px', color: MUTED }}>{timeLabel(f)}</div>

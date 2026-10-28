@@ -4,7 +4,7 @@ import { useResortAvailability } from './ResortAvailabilityContext';
 const DISMISSED_KEY = 'lkgr_unavailable_notice_dismissed';
 
 export default function ResortAvailabilityNotice() {
-  const { available, reason, error, loading } = useResortAvailability();
+  const { available, limited, reason, error, loading } = useResortAvailability();
   const [modalDismissed, setModalDismissed] = useState(() => {
     try {
       return window.sessionStorage.getItem(DISMISSED_KEY) === 'true';
@@ -30,6 +30,15 @@ export default function ResortAvailabilityNotice() {
     return (
       <div role="alert" style={{ background: '#7f1d1d', color: '#fff', padding: '11px 18px', textAlign: 'center', fontSize: 13, lineHeight: 1.5 }}>
         Resort availability could not be checked. Booking is temporarily disabled. Please try again later.
+      </div>
+    );
+  }
+
+  // Limited: bookings stay open, with a notice about what's affected.
+  if (available && limited) {
+    return (
+      <div role="status" style={{ background: '#fef3c7', color: '#78350f', padding: '11px 18px', textAlign: 'center', fontSize: 13, lineHeight: 1.5, borderBottom: '1px solid #fcd34d' }}>
+        <strong>Limited services.</strong> {reason || 'Some resort areas or services are temporarily unavailable.'} Bookings are still open.
       </div>
     );
   }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
 import { collection, getDocs } from 'firebase/firestore';
-import Layout from '../components/Layout';
+import Layout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 
 const STATUS_OPTIONS = [
