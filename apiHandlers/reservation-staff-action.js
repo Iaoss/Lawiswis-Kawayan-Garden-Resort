@@ -165,12 +165,28 @@ async function approveRefund({ reservationRef, reservationId, requestId, staff, 
     if (!Number.isFinite(amount) || amount <= 0 || cents(amount) > cents(reservation.amountPaid)) {
       throw new Error('Enter a positive refund amount no greater than the amount paid.');
     }
+    // The guest asked to cancel and be refunded, so approving the refund
+    // also cancels the booking and frees the room (if it isn't already).
+    const cancelNow = ['pending', 'confirmed'].includes(String(reservation.status || '').toLowerCase());
+    const roomRef = cancelNow && reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
+    const roomSnap = roomRef ? await transaction.get(roomRef) : null;
     transaction.update(reservationRef, {
       refundRequestStatus: 'processing',
       refundApprovedAt: FieldValue.serverTimestamp(),
       refundApprovedBy: staff.uid,
       refundApprovedAmount: amount,
+      cancellationRequested: false,
+      ...(cancelNow ? {
+        status: 'cancelled',
+        cancelledAt: new Date().toISOString(),
+        cancelledBy: staff.uid,
+        cancellationFee: Number(request.feeAmount || 0),
+        refundAmount: amount,
+        statusUpdatedAt: FieldValue.serverTimestamp(),
+        statusUpdatedBy: staff.uid,
+      } : {}),
     });
+    if (roomSnap?.exists && roomSnap.data().status !== 'occupied') transaction.update(roomRef, { status: 'vacant' });
     const auditRef = reservationRef.collection('refundAudit').doc();
     transaction.set(auditRef, {
       action: 'refund_approved',

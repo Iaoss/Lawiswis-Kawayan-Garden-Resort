@@ -41,10 +41,12 @@ interface AvatarPickerProps {
   onSave: (seed: string) => void;
   onCancel?: () => void;
   options?: string[];
+  /** When given, the name becomes an editable field (profile editing). */
+  onNameChange?: (name: string) => void;
 }
 
 export function AvatarPicker({
-  value = '', name = 'Me', subtitle = 'Select your avatar', saving = false, error = '', onSave, onCancel, options = AVATAR_PRESETS,
+  value = '', name = 'Me', subtitle = 'Select your avatar', saving = false, error = '', onSave, onCancel, options = AVATAR_PRESETS, onNameChange,
 }: AvatarPickerProps) {
   const reduceMotion = useReducedMotion();
   const [selected, setSelected] = useState(value || options[0]);
@@ -87,7 +89,19 @@ export function AvatarPicker({
             </motion.div>
 
             <motion.div className="mt-4 text-center" variants={pickerVariants.item}>
-              <h2 className="text-xl font-bold text-foreground">{name}</h2>
+              {onNameChange ? (
+                <label className="mx-auto block max-w-xs text-left">
+                  <span className="mb-1 block text-xs font-semibold text-muted-foreground">Your name</span>
+                  <input
+                    value={name}
+                    maxLength={80}
+                    onChange={event => onNameChange(event.target.value)}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-center text-base font-bold text-foreground outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </label>
+              ) : (
+                <h2 className="text-xl font-bold text-foreground">{name}</h2>
+              )}
               <p className="text-sm text-muted-foreground">{subtitle}</p>
             </motion.div>
 
@@ -146,7 +160,7 @@ export function AvatarPicker({
                 )}
                 <button type="button" disabled={saving} onClick={() => onSave(selected)}
                   className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60">
-                  {saving ? 'Saving…' : 'Save avatar'}
+                  {saving ? 'Saving…' : onNameChange ? 'Save profile' : 'Save avatar'}
                 </button>
               </div>
             </div>

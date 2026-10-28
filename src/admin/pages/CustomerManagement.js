@@ -4,6 +4,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
+import { getReservationRemarks } from '../../lib/reservationRemarks';
 
 const normalizeStatus = status => String(status || 'pending').toLowerCase().trim().replace(/[\s_]+/g, '-');
 const dateKey = value => {
@@ -229,7 +230,7 @@ export default function CustomerManagement() {
                   <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
                     <thead style={{ background: CARD2 }}>
                       <tr>
-                        {['Room', 'Check-in', 'Check-out', 'Amount', 'Status'].map(h => (
+                        {['Room', 'Check-in', 'Check-out', 'Amount', 'Status', 'Remarks'].map(h => (
                           <th key={h} style={{ padding: '10px 16px', textAlign: 'left', color: SUBTEXT, fontWeight: '600', fontSize: '12px' }}>
                             {h}
                           </th>
@@ -249,6 +250,14 @@ export default function CustomerManagement() {
                             <span style={{ background: STATUS_BG, color: STATUS_TEXT, padding: '3px 10px', borderRadius: '20px', fontSize: '11px' }}>
                               {r.status}
                             </span>
+                          </td>
+                          <td style={{ padding: '10px 16px', fontSize: '11.5px', color: TEXT, minWidth: '200px' }}>
+                            {getReservationRemarks(r).map(item => (
+                              <div key={item.type} style={{ marginBottom: '3px' }}>
+                                <strong style={{ color: item.tone === 'red' ? '#dc2626' : item.tone === 'green' ? '#16a34a' : '#b45309' }}>{item.label}:</strong> {item.text}
+                              </div>
+                            ))}
+                            {getReservationRemarks(r).length === 0 && <span style={{ color: MUTED }}>—</span>}
                           </td>
                         </tr>
                       ))}

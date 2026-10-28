@@ -31,6 +31,7 @@ import {
   MAX_LATE_FEE,
   RESERVATION_STATUSES,
   getStatusTransitionError,
+  getEarlyCheckInError,
   manilaDateKey,
   formatDuration,
   getOutstandingBalance,
@@ -75,6 +76,9 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   // One step at a time, forwards or back (see getStatusTransitionError).
   const transitionError = closingNoShow ? '' : getStatusTransitionError(current, status);
   if (transitionError) throw new StatusError(409, transitionError);
+  // No check-in before the booked check-in date.
+  const earlyError = status === 'checked-in' ? getEarlyCheckInError(reservation) : '';
+  if (earlyError) throw new StatusError(409, earlyError);
 
   const now = new Date();
   const overstay = getOverstay(reservation, now);
@@ -111,6 +115,8 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
     if (forcedWithBalance) {
       updates.checkedOutWithBalance = getOutstandingBalance(reservation);
       updates.checkedOutWithBalanceReason = reason;
+      updates.checkedOutWithBalanceBy = staff.uid;
+      updates.checkedOutWithBalanceByName = staff.name || staff.email || '';
     }
   }
   transaction.update(reservationRef, updates);

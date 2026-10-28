@@ -16,11 +16,14 @@ import {
   getOutstandingBalance as outstandingAmount,
   getOverstay,
   getStatusTransitionError,
+  getEarlyCheckInError,
   hasOutstandingBalance,
+  manilaDateKey,
 } from '../../lib/reservationStatus';
 import { appPrompt } from '../../components/ui/app-dialog';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
+import { getReservationRemarks } from '../../lib/reservationRemarks';
 
 const QUICK_VIEWS = {
   new: { label: 'New bookings', sortBy: 'booked', sortDir: 'desc' },
@@ -304,6 +307,11 @@ function ReservationBoard({
             {isDelayedArrival(r) && <Tag t={t} c="amber" title="Guest has not checked in yet">Delayed arrival</Tag>}
             {overstay && <Tag t={t} c="red" title="Still checked in past check-out time">Overstayed {overstay.label}</Tag>}
           </div>
+          {getReservationRemarks(r).filter(item => item.type !== 'cancelled' || r.cancellationReason).map(item => (
+            <div key={item.type} style={{ marginTop: 6, fontSize: 11, color: t.MUTED, lineHeight: 1.5 }}>
+              <strong style={{ color: item.tone === 'red' ? '#dc2626' : item.tone === 'green' ? '#16a34a' : '#b45309' }}>{item.label}:</strong> {item.text}
+            </div>
+          ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 150, flex: '0 0 auto' }}>
           <BeamAvatar seed={guestAvatarSeed(r)} size={30} />
@@ -709,7 +717,8 @@ export default function Reservations() {
     if (!reservation || reservation.status === status) return;
     if (isReceptionist && reservation.status === 'cancelled') return;
     // Same one-step-at-a-time rule the server enforces.
-    const transitionError = getStatusTransitionError(reservation.status, status);
+    const transitionError = getStatusTransitionError(reservation.status, status)
+      || (status === 'checked-in' ? getEarlyCheckInError(reservation) : '');
     if (transitionError) {
       setToast({ type: 'error', text: transitionError });
       if (status === 'cancelled') throw new Error(transitionError);
@@ -953,8 +962,14 @@ export default function Reservations() {
   const selectedReservation = selectedId ? reservations.find(r => r.id === selectedId) : null;
   const lateArrivals = reservations.filter(isDelayedArrival);
 
+  // Finished stays (checked out, or cancelled with dates already past) leave
+  // the list; they stay in Customers and Reservation History. Choose
+  // "Checked-out" or "Cancelled" in the status filter to see them here.
+  const todayKey = manilaDateKey(now);
+  const isFinished = r => r.status === 'checked-out'
+    || (r.status === 'cancelled' && String(r.checkOut || r.checkIn || '').slice(0, 10) < todayKey);
   const filtered = sortRecords(reservations.filter(r => {
-    const matchFilter = filter === 'all' || r.status === filter;
+    const matchFilter = filter === 'all' ? !isFinished(r) : r.status === filter;
     const matchQuick = !quickView || matchesQuickView(r, quickView, now);
     // Guest, room, phone, email, status or booking reference (with or without #).
     const term = search.trim().toLowerCase().replace(/^#/, '');
@@ -995,7 +1010,7 @@ export default function Reservations() {
         stepNotes={owes ? {
           'checked-out': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. Collect payment first${canOverrideCheckout ? ', or override with a reason' : ''}.`,
         } : {}}
-        getStepError={to => getStatusTransitionError(r.status, to)}
+        getStepError={to => getStatusTransitionError(r.status, to) || (to === 'checked-in' ? getEarlyCheckInError(r) : '')}
         onSelect={status => updateStatus(r.id, status)}
         onCancel={() => openCancellationDialog(canCancel ? 'cancel' : 'request', r)}
         cancelLabel={canCancel ? 'Cancel booking' : 'Request cancellation'}
@@ -1232,11 +1247,12 @@ export default function Reservations() {
             )}
 
             {canCancel && pendingCancellations.length > 0 && (
-              <NotificationGroup title="Cancellation requests" detail="Sent by receptionists for approval" count={pendingCancellations.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+              <NotificationGroup title="Cancellation requests" detail="From guests online, or from receptionists" count={pendingCancellations.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
                 {pendingCancellations.map(r => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${ROWLINE}` }}>
                     <div style={{ fontSize: '12px', color: TEXT }}>
                       <strong>{r.guestName}</strong> — Room {r.roomNumber}
+                      <span style={{ marginLeft: 6, fontSize: '10px', fontWeight: 700, color: '#d97706' }}>{r.cancellationRequestedBy === 'guest' ? 'From guest' : 'From staff'}</span>
                       <div style={{ fontSize: '10px', color: MUTED }}>Reason: {r.cancellationReason || 'No reason given'}</div>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -1337,7 +1353,7 @@ export default function Reservations() {
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
               {/* Filter */}
               <select value={filter} onChange={e => setFilter(e.target.value)} style={inp} aria-label="Filter by status">
-                <option value="all">All status</option>
+                <option value="all">All active</option>
                 <option value="pending">Pending</option>
                 <option value="confirmed">Confirmed</option>
                 <option value="checked-in">Checked-in</option>

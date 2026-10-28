@@ -140,6 +140,13 @@ async function requestRefund(reservation, contact) {
     }
 
     transaction.update(reservation.ref, {
+      // The guest wants to cancel: this puts it in front of staff as a
+      // cancellation request (and in the notification bell) whether or not
+      // any money is refundable.
+      cancellationRequested: true,
+      cancellationRequestedBy: 'guest',
+      cancellationRequestedAt: FieldValue.serverTimestamp(),
+      cancellationReason: `Guest asked to cancel online. ${decision.reason || ''}`.trim().slice(0, 500),
       refundRequestId: requestId,
       refundRequestStatus: decision.outcome,
       refundRequestedAt: FieldValue.serverTimestamp(),

@@ -3,6 +3,7 @@ import { db } from '../../firebase/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import Layout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { getReservationRemarks } from '../../lib/reservationRemarks';
 
 const STATUS_OPTIONS = [
   ['pending', 'Pending'], ['confirmed', 'Confirmed'], ['checked-in', 'Checked In'],
@@ -112,12 +113,22 @@ export default function Reports() {
     return matchesStatus && matchesCheckIn && matchesDateBooked && matchesRoom;
   });
 
+  // Guests checked out while still owing money, with the reason staff gave.
+  const unpaidCheckouts = filtered.filter(r => Number(r.checkedOutWithBalance) > 0);
+  const unpaidTotal = unpaidCheckouts.reduce((sum, r) => sum + Number(r.checkedOutWithBalance || 0), 0);
+  const remarkTone = tone => ({
+    red: { color: dark ? '#fca5a5' : '#b91c1c' },
+    amber: { color: dark ? '#fcd34d' : '#92400e' },
+    green: { color: dark ? '#86efac' : '#15803d' },
+  })[tone] || { color: SUBTEXT };
+
   const sortValue = (r, key) => {
     if (key === 'totalAmount') return Number(r.totalAmount) || 0;
     if (key === 'checkIn' || key === 'checkOut') return toDateKey(r[key]);
     if (key === 'dateBooked') return toDateKey(getDateBooked(r));
     if (key === 'roomNumber') return roomLabel(r);
     if (key === 'status') return normalizeStatus(r.status);
+    if (key === 'remarks') return getReservationRemarks(r).map(item => item.label).join(' ');
     return String(r[key] ?? '').toLocaleLowerCase();
   };
   const sortedReservations = [...filtered].sort((left, right) => {
@@ -419,6 +430,42 @@ export default function Reports() {
           </div>
         </div>
 
+        {/* Unpaid check-outs */}
+        <div className="report-print-section" style={{ ...card, padding: '22px', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '10px', flexWrap: 'wrap' }}>
+            <h3 style={cardTitle}>Checked Out with Unpaid Balance</h3>
+            <span style={{ fontSize: '12px', color: SUBTEXT }}>
+              {unpaidCheckouts.length} guest{unpaidCheckouts.length === 1 ? '' : 's'} · ₱{unpaidTotal.toLocaleString()} unpaid
+            </span>
+          </div>
+          {unpaidCheckouts.length === 0 ? (
+            <p style={{ margin: 0, fontSize: '12px', color: MUTED }}>No guests were checked out with an unpaid balance in this period.</p>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="report-print-table" style={{ width: '100%', fontSize: '12.5px', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    {['Guest', 'Check-out', 'Unpaid', 'Reason', 'Approved by'].map(h => (
+                      <th key={h} style={{ padding: '8px 12px', textAlign: 'left', color: SUBTEXT, fontWeight: 600, fontSize: '11.5px', borderBottom: `1px solid ${BORDER}` }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {unpaidCheckouts.map(r => (
+                    <tr key={r.id} style={{ borderBottom: `1px solid ${BORDER}` }}>
+                      <td style={{ padding: '9px 12px', fontWeight: 600, color: TEXT }}>{r.guestName}</td>
+                      <td style={{ padding: '9px 12px', color: TEXT }}>{formatDate(r.checkOut)}</td>
+                      <td style={{ padding: '9px 12px', color: dark ? '#fca5a5' : '#b91c1c', fontWeight: 600 }}>₱{Number(r.checkedOutWithBalance).toLocaleString()}</td>
+                      <td style={{ padding: '9px 12px', color: TEXT }}>{r.checkedOutWithBalanceReason || 'No reason recorded'}</td>
+                      <td style={{ padding: '9px 12px', color: SUBTEXT }}>{r.checkedOutWithBalanceByName || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
         {/* Reservation table */}
         <div className="report-print-section" style={{ ...card, overflow: 'hidden' }}>
           <div style={{ padding: '16px 20px', borderBottom: `1px solid ${BORDER}` }}>
@@ -436,6 +483,7 @@ export default function Reports() {
                     ['Check-out', 'checkOut'],
                     ['Amount', 'totalAmount'],
                     ['Status', 'status'],
+                    ['Remarks', 'remarks'],
                   ].map(([heading, key]) => (
                     <th key={heading} aria-sort={sortBy === key ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
                       style={{ padding: '12px 16px', textAlign: 'left', color: SUBTEXT, fontWeight: 600, fontSize: '12px' }}>
@@ -449,7 +497,7 @@ export default function Reports() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan="7" style={{ textAlign: 'center', padding: '24px 0', color: MUTED }}>No reservations found matching the selected filters.</td></tr>
+                  <tr><td colSpan="8" style={{ textAlign: 'center', padding: '24px 0', color: MUTED }}>No reservations found matching the selected filters.</td></tr>
                 ) : (
                   sortedReservations.map(r => (
                     <tr key={r.id} style={{ borderTop: `1px solid ${BORDER}`, transition: 'background 0.12s' }}
@@ -463,6 +511,13 @@ export default function Reports() {
                       <td style={{ padding: '12px 16px', color: TEXT }}>₱{Number(r.totalAmount || 0).toLocaleString()}</td>
                       <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>
                         <span style={{ ...reservationStatusStyle(r.status), padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 600 }}>{String(r.status || 'pending').replace(/-/g, ' ')}</span>
+                      </td>
+                      <td style={{ padding: '12px 16px', fontSize: '11.5px', minWidth: '220px' }}>
+                        {getReservationRemarks(r).length === 0 ? <span style={{ color: MUTED }}>—</span> : getReservationRemarks(r).map(item => (
+                          <div key={item.type} style={{ marginBottom: '3px', ...remarkTone(item.tone) }}>
+                            <strong>{item.label}:</strong> <span style={{ color: TEXT }}>{item.text}</span>
+                          </div>
+                        ))}
                       </td>
                     </tr>
                   ))

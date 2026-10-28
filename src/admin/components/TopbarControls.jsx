@@ -39,6 +39,7 @@ export function AccountMenu({ initials, name, role, dark, accent, accentText, on
   const [open, setOpen] = useState(false);
   const { user } = useStaffAccess();
   const avatar = user?.avatar || '';
+  if (user?.name) name = user.name;
   const rootRef = useRef(null);
 
   useEffect(() => {
@@ -77,7 +78,7 @@ export function AccountMenu({ initials, name, role, dark, accent, accentText, on
         }}>
           <button type="button" role="menuitem" className="topbar-account__item" style={{ color: dark ? '#e8e8d8' : '#111827' }}
             onClick={() => { setOpen(false); openAvatarPicker(); }}>
-            <i className="ti ti-mood-smile" /> {avatar ? 'Edit Avatar' : 'Choose Avatar'}
+            <i className="ti ti-user-edit" /> Edit Profile
           </button>
           <button type="button" role="menuitem" className="topbar-account__item" style={{ color: '#ef4444' }}
             onClick={() => { setOpen(false); onSignOut(); }}>

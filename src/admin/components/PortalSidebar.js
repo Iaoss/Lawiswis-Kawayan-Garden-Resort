@@ -281,6 +281,8 @@ function SidebarAccount({ name, role, email, onLogout }) {
   const collapsed = !isMobile && state === 'collapsed';
   const { user } = useStaffAccess();
   const avatar = user?.avatar || '';
+  // Live from the account, so a name change shows straight away.
+  if (user?.name) name = user.name;
 
   return (
     <AnimatedSidebarFooter className="gap-3">
@@ -288,7 +290,7 @@ function SidebarAccount({ name, role, email, onLogout }) {
         <button
           type="button"
           onClick={openAvatarPicker}
-          title="Edit avatar"
+          title="Edit profile"
           className="group flex min-w-0 items-center gap-2.5 rounded-lg px-1 py-1 text-left hover:bg-muted"
         >
           <span className="relative shrink-0">
@@ -310,7 +312,7 @@ function SidebarAccount({ name, role, email, onLogout }) {
             icon={collapsed ? <StaffAvatar seed={avatar} name={name} size={22} /> : <i className="ti ti-mood-smile" />}
             onSelect={openAvatarPicker}
           >
-            {avatar ? 'Edit avatar' : 'Choose avatar'}
+            Edit profile
           </AnimatedSidebarMenuButton>
         </AnimatedSidebarMenuItem>
         <AnimatedSidebarMenuItem>

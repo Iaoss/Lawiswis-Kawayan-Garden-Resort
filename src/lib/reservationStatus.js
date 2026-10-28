@@ -19,6 +19,17 @@ const STATUS_LABELS = { pending: 'Pending', confirmed: 'Confirmed', 'checked-in'
 //   - any booking can be cancelled except a finished (checked-out) stay,
 //     and a cancelled booking stays cancelled.
 // Unrecognised old statuses can move anywhere, so they can be fixed.
+// A guest can only be checked in from their check-in date (Philippine
+// time). Early arrivals on the day itself are fine.
+export function getEarlyCheckInError(reservation, now = new Date()) {
+  const checkIn = typeof reservation?.checkIn === 'string' ? reservation.checkIn.slice(0, 10) : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(checkIn)) return '';
+  if (checkIn <= manilaDateKey(now)) return '';
+  const [y, m, d] = checkIn.split('-').map(Number);
+  const label = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  return `This booking starts on ${label}. The guest can only be checked in from that day.`;
+}
+
 export function getStatusTransitionError(from, to) {
   if (from === to) return '';
   if (!RESERVATION_STATUSES.includes(to)) return 'Choose a valid reservation status.';
