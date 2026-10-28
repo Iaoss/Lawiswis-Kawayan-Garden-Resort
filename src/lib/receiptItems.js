@@ -24,8 +24,11 @@ export function getReceiptLineItems(reservation = {}) {
 
   if (reservation.type === 'corporate') {
     const guests = Number(reservation.totalGuests || 0);
+    const nights = Number(reservation.nights || 1);
+    const rate = Number(reservation.packageRate || 0);
+    const stay = nights > 1 ? ` × ${nights} nights` : '';
     booking.push({
-      label: `${reservation.packageName || 'Group package'}${guests ? ` · ${guests} guests` : ''}`,
+      label: `${reservation.packageName || 'Group package'}${guests ? ` · ${guests} guests` : ''}${rate ? ` × ₱${rate.toLocaleString()}` : ''}${stay}`,
       amount: money(total + discount),
     });
   } else {

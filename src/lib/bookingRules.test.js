@@ -1,5 +1,5 @@
 import {
-  getCorporatePackage, getEarliestGroupDate, getGroupAdvanceNoticeError, getGroupGuestError, MAX_GROUP_GUESTS,
+  getCorporateNights, getCorporatePackage, getEarliestGroupDate, getGroupAdvanceNoticeError, getGroupGuestError, MAX_GROUP_GUESTS,
 } from './corporatePackages';
 import { getOvernightCutoffError } from './bookingPricing';
 import { getReceiptLineItems } from './receiptItems';
@@ -7,6 +7,22 @@ import { buildBookingNotifications } from '../admin/lib/bookingNotifications';
 
 // 2026-10-27, 3:00 PM Philippine time (07:00 UTC).
 const now = new Date('2026-10-27T07:00:00Z');
+
+describe('group booking price', () => {
+  test('multiplies guests × rate per guest × nights', () => {
+    // 11/04 to 11/30 is 26 nights: 15 × ₱2,000 × 26 = ₱780,000.
+    expect(getCorporateNights('overnight', '2026-11-04', '2026-11-30')).toBe(26);
+    expect(getCorporatePackage(15, 26)).toMatchObject({ id: 'core', perNightAmount: 30000, totalAmount: 780000, nights: 26 });
+  });
+  test('counts a day tour as one', () => {
+    expect(getCorporateNights('daytour', '2026-11-04', '2026-11-04')).toBe(1);
+    expect(getCorporatePackage(15, 1).totalAmount).toBe(30000);
+  });
+  test('gives 0 nights until the dates are valid', () => {
+    expect(getCorporateNights('overnight', '2026-11-04', '')).toBe(0);
+    expect(getCorporateNights('overnight', '2026-11-04', '2026-11-04')).toBe(0);
+  });
+});
 
 describe('group bookings', () => {
   test('allow 15 to 250 guests', () => {
@@ -73,8 +89,8 @@ describe('itemized receipts', () => {
   });
 
   test('show group packages as one line', () => {
-    const items = getReceiptLineItems({ type: 'corporate', packageName: 'Bamboo Grand', totalGuests: 40, totalAmount: 100000 });
-    expect(items.booking).toEqual([{ label: 'Bamboo Grand · 40 guests', amount: 100000 }]);
+    const items = getReceiptLineItems({ type: 'corporate', packageName: 'Bamboo Grand', totalGuests: 40, packageRate: 2500, nights: 2, totalAmount: 200000 });
+    expect(items.booking).toEqual([{ label: 'Bamboo Grand · 40 guests × ₱2,500 × 2 nights', amount: 200000 }]);
   });
 });
 

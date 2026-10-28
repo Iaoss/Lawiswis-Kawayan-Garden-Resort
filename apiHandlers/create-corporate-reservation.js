@@ -1,6 +1,6 @@
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendReservationPendingEmail } from '../lib/email';
-import { getCorporatePackage, getGroupAdvanceNoticeError, getGroupGuestError } from '../src/lib/corporatePackages';
+import { getCorporateNights, getCorporatePackage, getGroupAdvanceNoticeError, getGroupGuestError } from '../src/lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
 import { getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
@@ -98,8 +98,10 @@ export default async function handler(req, res) {
     const noticeError = getGroupAdvanceNoticeError(checkIn);
     if (noticeError) return res.status(400).json({ error: noticeError, code: 'GROUP_ADVANCE_NOTICE' });
 
-    const packageDetails = getCorporatePackage(totalGuests);
-    const nights = isDayTour ? 1 : Math.ceil((checkOutDate - checkInDate) / 86400000);
+    // Priced per night: guests × rate per guest × nights (day tour = 1).
+    const nights = getCorporateNights(bookingType, checkIn, checkOut);
+    if (nights < 1) return res.status(400).json({ error: 'Choose a check-out date after check-in.' });
+    const packageDetails = getCorporatePackage(totalGuests, nights);
     const totalAmount = packageDetails.totalAmount;
     if (!Number.isSafeInteger(totalAmount) || totalAmount <= 0) {
       return res.status(400).json({ error: 'The group total is outside the supported booking range.' });

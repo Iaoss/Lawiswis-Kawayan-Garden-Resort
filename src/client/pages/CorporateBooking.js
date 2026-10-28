@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
-  formatLongDate, getCorporatePackage, getEarliestGroupDate, getGroupAdvanceNoticeError, getGroupGuestError,
+  formatLongDate, getCorporateNights, getCorporatePackage, getEarliestGroupDate, getGroupAdvanceNoticeError, getGroupGuestError,
   CORPORATE_FEATURE_ROWS, CORPORATE_PACKAGES, GROUP_ADVANCE_DAYS, MAX_GROUP_GUESTS, MIN_GROUP_GUESTS, isCorporateFeatureIncluded,
 } from '../../lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
@@ -42,11 +42,11 @@ export default function CorporateBooking() {
   const [savedReservationId, setSavedReservationId] = useState('');
 
   const totalGuests = Number(form.totalGuests);
-  const selectedPackage = getCorporatePackage(totalGuests);
-  const dateNights = form.checkIn && form.checkOut
-    ? Math.ceil((new Date(`${form.checkOut}T00:00:00`) - new Date(`${form.checkIn}T00:00:00`)) / 86400000)
-    : 1;
-  const nights = form.bookingType === 'daytour' ? 1 : dateNights;
+  // Nights from the dates (a day tour is 1). Until check-out is picked, the
+  // price shows for 1 night.
+  const nights = getCorporateNights(form.bookingType, form.checkIn, form.checkOut) || 1;
+  const selectedPackage = getCorporatePackage(totalGuests, nights);
+  const nightLabel = form.bookingType === 'daytour' ? 'day tour' : `${nights} night${nights === 1 ? '' : 's'}`;
   const guestName = joinGuestName(form.firstName, form.lastName);
   const depositAmount = selectedPackage ? getOnlinePaymentAmount(selectedPackage.totalAmount, 'deposit') : 0;
   const dateValid = Boolean(form.checkIn && (form.bookingType === 'daytour'
@@ -223,13 +223,17 @@ export default function CorporateBooking() {
             <>
               <h2 style={{ font: `500 30px ${SERIF}`, margin: '12px 0 5px' }}>{selectedPackage.name}</h2>
               <div style={{ color: 'rgba(255,255,255,.7)', font: `12px ${SANS}` }}>{selectedPackage.minGuests}{selectedPackage.maxGuests ? `–${selectedPackage.maxGuests}` : '+'} guests · ₱{selectedPackage.ratePerGuest.toLocaleString()} per guest</div>
-              <div style={{ borderTop: '1px solid rgba(255,255,255,.2)', margin: '22px 0 14px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', font: `13px ${SANS}` }}><span>{totalGuests} guests</span><span>₱{selectedPackage.totalAmount.toLocaleString()}</span></div>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.2)', margin: '22px 0 10px', paddingTop: '16px', display: 'grid', gap: '6px', font: `12px ${SANS}`, color: 'rgba(255,255,255,.78)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><span>{totalGuests} guests × ₱{selectedPackage.ratePerGuest.toLocaleString()}</span><span>₱{selectedPackage.perNightAmount.toLocaleString()}{form.bookingType === 'daytour' ? '' : ' / night'}</span></div>
+                {form.bookingType !== 'daytour' && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><span>× {nightLabel}{form.checkOut ? '' : ' (pick check-out)'}</span></div>}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '14px', font: `600 15px ${SANS}` }}><span>Total</span><span>₱{selectedPackage.totalAmount.toLocaleString()}</span></div>
               <div style={{ display: 'flex', justifyContent: 'space-between', color: '#e4d4a7', font: `600 14px ${SANS}` }}><span>{RESERVATION_DEPOSIT_PERCENTAGE}% deposit</span><span>₱{depositAmount.toLocaleString()}</span></div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', color: 'rgba(255,255,255,.7)', font: `12px ${SANS}` }}><span>Remaining balance</span><span>₱{(selectedPackage.totalAmount - depositAmount).toLocaleString()}</span></div>
             </>
           ) : <p style={{ color: 'rgba(255,255,255,.78)', font: `13px/1.6 ${SANS}` }}>Corporate packages are available for groups of 15 guests or more.</p>}
           <p style={{ borderTop: '1px solid rgba(255,255,255,.2)', paddingTop: '16px', margin: '20px 0 0', color: 'rgba(255,255,255,.7)', font: `11px/1.7 ${SANS}` }}>Your request is subject to resort confirmation. Optional accommodation/meal packages and whole property rental require availability confirmation.</p>
-          {packageFeatures.length > 0 && <div aria-label="Included package benefits" style={{ marginTop: '18px', display: 'grid', gap: '7px', color: '#f1ead9', font: `11px/1.5 ${SANS}` }}>{packageFeatures.slice(0, 4).map(feature => <span key={feature.id}>✓ {feature.group}</span>)}</div>}
+          {packageFeatures.length > 0 && <div aria-label="Included package benefits" style={{ marginTop: '18px', display: 'grid', gap: '7px', color: '#f1ead9', font: `11px/1.5 ${SANS}` }}>{packageFeatures.slice(0, 4).map(feature => <span key={feature.id}>✓ {feature.label}</span>)}</div>}
         </aside>
       </div>
     </main>

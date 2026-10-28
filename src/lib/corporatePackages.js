@@ -23,12 +23,29 @@ export const CORPORATE_FEATURE_ROWS = [
   { id: 'accommodation', label: 'Optional accommodation and meal packages', group: 'Resort access' },
 ];
 
-export function getCorporatePackage(totalGuests) {
+// Nights in a group stay: check-out minus check-in. A day tour counts as 1.
+// Returns 0 when the dates aren't valid yet.
+export function getCorporateNights(bookingType, checkIn, checkOut) {
+  if (bookingType === 'daytour') return 1;
+  const pattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (!pattern.test(String(checkIn)) || !pattern.test(String(checkOut))) return 0;
+  const nights = Math.round((Date.parse(`${checkOut}T00:00:00Z`) - Date.parse(`${checkIn}T00:00:00Z`)) / 86400000);
+  return nights > 0 ? nights : 0;
+}
+
+// Group price: guests × rate per guest × nights (a day tour is 1).
+export function getCorporatePackage(totalGuests, nights = 1) {
   if (!Number.isSafeInteger(totalGuests) || totalGuests < MIN_GROUP_GUESTS || totalGuests > MAX_GROUP_GUESTS) return null;
   const tier = CORPORATE_PACKAGES.find(({ minGuests, maxGuests }) =>
     totalGuests >= minGuests && (maxGuests === null || totalGuests <= maxGuests));
   if (!tier) return null;
-  return { ...tier, totalAmount: totalGuests * tier.ratePerGuest };
+  const stayNights = Number.isInteger(nights) && nights > 0 ? nights : 1;
+  return {
+    ...tier,
+    nights: stayNights,
+    perNightAmount: totalGuests * tier.ratePerGuest,
+    totalAmount: totalGuests * tier.ratePerGuest * stayNights,
+  };
 }
 
 export function isCorporateFeatureIncluded(packageId, nights, featureId) {
