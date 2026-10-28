@@ -152,6 +152,7 @@ export default function CorporateBooking() {
           .corporate-booking-layout { grid-template-columns: minmax(0, 1fr) !important; padding: 24px 16px !important; }
           .corporate-booking-layout > *, .corporate-booking-layout form > section { min-width: 0; }
           .corporate-booking-summary { position: static !important; }
+          .corporate-packages-top { padding: 24px 16px 0 !important; }
         }
       `}</style>
       <header style={{ background: FOREST_DEEP, color: '#fff', padding: '64px 24px 56px' }}>
@@ -162,6 +163,45 @@ export default function CorporateBooking() {
           <p style={{ maxWidth: '650px', color: 'rgba(255,255,255,.76)', font: `14px/1.8 ${SANS}`, margin: 0 }}>Select your group size and dates to see the Bamboo package tier and per-person pricing. A {RESERVATION_DEPOSIT_PERCENTAGE}% deposit reserves your request.</p>
         </div>
       </header>
+
+      {/* Packages first, so guests compare tiers before filling in the form. */}
+      <div className="corporate-packages-top" style={{ maxWidth: '1100px', margin: '0 auto', padding: '38px 24px 0' }}>
+        <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px' }}>
+          <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 8px' }}>Compare packages</h2>
+          <p style={{ color: '#6b6a5c', font: `12px/1.7 ${SANS}`, margin: '0 0 16px' }}>
+            Your package depends on the number of guests. Prices are per guest, per night (a day tour counts as one).
+            Inclusions shown for {form.bookingType === 'daytour' ? 'a day tour' : `${nights} night${nights === 1 ? '' : 's'}`}. Availability of accommodation and whole-property rental is confirmed by the resort.
+          </p>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: '620px', borderCollapse: 'collapse', font: `12px/1.5 ${SANS}`, color: INK }}>
+              <thead>
+                <tr style={{ background: CREAM }}>
+                  <th scope="col" style={{ textAlign: 'left', padding: '12px', minWidth: '260px' }}>Package inclusion</th>
+                  {CORPORATE_PACKAGES.map(tier => {
+                    const yours = selectedPackage?.id === tier.id;
+                    return (
+                      <th key={tier.id} scope="col" style={{ padding: '12px', textAlign: 'center', background: yours ? FOREST : undefined, color: yours ? '#fff' : undefined }}>
+                        {tier.name}{yours && <span style={{ display: 'block', font: `600 9px ${SANS}`, letterSpacing: '.12em', color: '#e4d4a7' }}>YOUR GROUP</span>}
+                        <span style={{ display: 'block', fontWeight: 400 }}>{tier.minGuests}{tier.maxGuests ? `–${tier.maxGuests}` : '+'} guests · ₱{tier.ratePerGuest.toLocaleString()} / guest</span>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>{CORPORATE_FEATURE_ROWS.map(row => (
+                <tr key={row.id} style={{ borderBottom: `1px solid ${LINE}` }}>
+                  <th scope="row" style={{ textAlign: 'left', fontWeight: 500, padding: '12px' }}>{row.label}</th>
+                  {CORPORATE_PACKAGES.map(tier => (
+                    <td key={tier.id} style={{ textAlign: 'center', padding: '12px', background: selectedPackage?.id === tier.id ? '#f1f5ec' : undefined, color: isCorporateFeatureIncluded(tier.id, nights, row.id) ? FOREST : '#aaa' }}>
+                      {isCorporateFeatureIncluded(tier.id, nights, row.id) ? 'Included' : '—'}
+                    </td>
+                  ))}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </section>
+      </div>
 
       <div className="corporate-booking-layout" style={{ maxWidth: '1100px', margin: '0 auto', padding: '38px 24px', display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(280px, .75fr)', gap: '24px', alignItems: 'start' }}>
         <form onSubmit={submit} style={{ display: 'grid', gap: '22px' }}>
@@ -193,22 +233,6 @@ export default function CorporateBooking() {
               Please include optional accommodation and meal package options (without meals, plated meals, or managed buffet meals) in our follow-up.
             </label>
             <label style={{ ...labelStyle, marginTop: '18px' }}>Additional details<textarea name="notes" maxLength="1000" rows="4" value={form.notes} onChange={changeField} placeholder="Tell us about your retreat, seminar, or event needs." style={{ ...inputStyle, resize: 'vertical' }} /></label>
-          </section>
-
-          <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px' }}>
-            <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 18px' }}>Package inclusions</h2>
-            <p style={{ color: '#6b6a5c', font: `12px/1.7 ${SANS}`, margin: '0 0 16px' }}>Selected inclusions are based on your guest tier and stay duration ({nights} night{nights === 1 ? '' : 's'}). Availability of accommodation and whole-property rental is confirmed by the resort.</p>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: '620px', borderCollapse: 'collapse', font: `12px/1.5 ${SANS}`, color: INK }}>
-                <thead><tr style={{ background: CREAM }}><th scope="col" style={{ textAlign: 'left', padding: '12px', minWidth: '260px' }}>Package inclusion</th>{CORPORATE_PACKAGES.map(tier => <th key={tier.id} scope="col" style={{ padding: '12px', textAlign: 'center' }}>{tier.name}<br /><span style={{ fontWeight: 400 }}>{tier.minGuests}{tier.maxGuests ? `–${tier.maxGuests}` : '+'} guests · ₱{tier.ratePerGuest.toLocaleString()} / guest</span></th>)}</tr></thead>
-                <tbody>{CORPORATE_FEATURE_ROWS.map(row => (
-                  <tr key={row.id} style={{ borderBottom: `1px solid ${LINE}` }}>
-                    <th scope="row" style={{ textAlign: 'left', fontWeight: 500, padding: '12px' }}>{row.label}</th>
-                    {CORPORATE_PACKAGES.map(tier => <td key={tier.id} style={{ textAlign: 'center', padding: '12px', color: isCorporateFeatureIncluded(tier.id, nights, row.id) ? FOREST : '#aaa' }}>{isCorporateFeatureIncluded(tier.id, nights, row.id) ? 'Included' : '—'}</td>)}
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
           </section>
 
           {errorMessage && <div role="alert" style={{ background: '#fff1f0', border: '1px solid #efc2bf', color: '#9b2c24', padding: '14px', font: `12px/1.6 ${SANS}` }}>{errorMessage}</div>}
