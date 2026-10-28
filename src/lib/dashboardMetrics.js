@@ -67,14 +67,15 @@ export const REVENUE_SOURCES = [
   { id: 'rooms', label: 'Rooms & packages', color: '#89D7B7' },
   { id: 'cottages', label: 'Cottages', color: '#9cb56f' },
   ...SERVICES.map((service, index) => ({ id: service.id, label: service.label, color: ['#60a5fa', '#f472b6', '#a78bfa'][index % 3] })),
-  { id: 'charges', label: 'Extra & late charges', color: '#fb923c' },
+  { id: 'charges', label: 'Extra charges', color: '#fb923c' },
+  { id: 'lateFees', label: 'Late check-out fees', color: '#facc15' },
   { id: 'cancellationFees', label: 'Cancellation fees', color: '#94a3b8' },
 ];
 
 const checkInKey = r => (typeof r.checkIn === 'string' ? r.checkIn.slice(0, 10) : '');
 
 // Billed amounts split by where they came from: room bookings, cottages,
-// each add-on service, other extra charges (incl. late check-out), and
+// each add-on service, other extra charges, late check-out fees, and
 // cancellation fees kept. Bookings are counted by check-in date within the
 // range ({ from, to } date keys; omit for all time).
 export function getRevenueBySource(reservations, range = null) {
@@ -96,7 +97,10 @@ export function getRevenueBySource(reservations, range = null) {
         services += Number(item.amount || 0);
       }
     });
-    totals.charges += Math.max(0, Number(r.extraCharges || 0) - services);
+    const lateFees = Number(r.lateCheckoutChargeTotal)
+      || (Array.isArray(r.lateCheckoutCharges) ? r.lateCheckoutCharges.reduce((sum, fee) => sum + Number(fee?.amount || 0), 0) : 0);
+    totals.lateFees += lateFees;
+    totals.charges += Math.max(0, Number(r.extraCharges || 0) - services - lateFees);
   });
   const rows = REVENUE_SOURCES.map(source => ({ ...source, value: money(totals[source.id]) }));
   const total = money(rows.reduce((sum, row) => sum + row.value, 0));

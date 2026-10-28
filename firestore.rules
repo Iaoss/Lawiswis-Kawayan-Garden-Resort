@@ -140,8 +140,7 @@ service cloud.firestore {
 
     // ── Tasks ───────────────────────────────────────────────
     match /tasks/{taskId} {
-      allow read, create, update: if isStaff();
-      allow delete: if isAdmin();
+      allow read, create, update, delete: if isStaff();
     }
 
     // ── Promos & Discounts ──────────────────────────────────

@@ -42,7 +42,7 @@ describe('daily reservations', () => {
 describe('revenue by source', () => {
   const reservations = [
     {
-      checkIn: '2026-10-10', status: 'checked-out', totalAmount: 5000, cottageFee: 1000, extraCharges: 2300,
+      checkIn: '2026-10-10', status: 'checked-out', totalAmount: 5000, cottageFee: 1000, extraCharges: 2300, lateCheckoutChargeTotal: 200,
       extraChargeItems: [
         { serviceId: 'spa', amount: 800 },
         { serviceId: 'photoshoot', amount: 1000 },
@@ -60,7 +60,8 @@ describe('revenue by source', () => {
     expect(value('cottages')).toBe(1000);
     expect(value('spa')).toBe(800);
     expect(value('photoshoot')).toBe(1000);
-    expect(value('charges')).toBe(500); // minibar + 200 late fee (not an item)
+    expect(value('charges')).toBe(300); // minibar
+    expect(value('lateFees')).toBe(200);
     expect(value('cancellationFees')).toBe(2000);
     expect(total).toBe(9300);
   });

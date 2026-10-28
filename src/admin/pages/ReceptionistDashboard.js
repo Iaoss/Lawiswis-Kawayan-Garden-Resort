@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import {
-  collection, getDocs, onSnapshot, addDoc, updateDoc,
+  collection, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc,
   doc, Timestamp, query, orderBy,
 } from 'firebase/firestore';
 import ReceptionistLayout from '../components/ReceptionistLayout';
@@ -162,6 +162,10 @@ export default function ReceptionistDashboard() {
   const toggleTask = async (t) => {
     try { await updateDoc(doc(db, 'tasks', t.id), { completed: !t.completed }); }
     catch (e) { console.error('Failed to update task:', e); }
+  };
+  const deleteTask = async (id) => {
+    try { await deleteDoc(doc(db, 'tasks', id)); }
+    catch (e) { console.error('Failed to delete task:', e); }
   };
 
   const getTaskStyle = (t) => {
@@ -496,8 +500,18 @@ export default function ReceptionistDashboard() {
                         type="checkbox"
                         checked={!!t.completed}
                         onChange={() => toggleTask(t)}
+                        aria-label={t.completed ? 'Mark task not done' : 'Mark task done'}
                         style={{ cursor: 'pointer', accentColor: st.color }}
                       />
+                      <button
+                        type="button"
+                        onClick={() => deleteTask(t.id)}
+                        aria-label="Delete task"
+                        title="Delete task"
+                        style={{ background: 'none', border: 0, padding: 0, color: st.color, opacity: 0.6, fontSize: '13px', cursor: 'pointer' }}
+                      >
+                        ✕
+                      </button>
                     </div>
                     <div style={{
                       fontSize: '11px', fontWeight: '600', color: st.color, marginTop: '4px', lineHeight: 1.3,

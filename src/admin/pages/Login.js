@@ -42,7 +42,9 @@ export default function Login() {
         const status = String(userData.status || 'active').trim().toLowerCase();
         if (status === 'inactive' || !['admin', 'receptionist'].includes(role)) {
           await signOut(auth);
-          setError('This account does not have active staff access.');
+          setError(status === 'inactive'
+            ? 'This account has been deactivated. Please contact the resort admin.'
+            : 'This account does not have staff access.');
         } else {
           const requestedPath = location.state?.from?.pathname || '';
           const permittedPrefix = role === 'admin' ? '/admin/' : '/receptionist/';

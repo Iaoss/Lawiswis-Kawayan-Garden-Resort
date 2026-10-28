@@ -254,6 +254,23 @@ export default function RoomManagement() {
     fetchRooms();
   };
 
+  // Any staff member can set a room's status from its card. (Check-in and
+  // check-out also set Occupied and Cleaning automatically.)
+  const [statusError, setStatusError] = useState('');
+  const changeStatus = async (room, status) => {
+    const current = room.status === 'vacant' ? 'available' : room.status;
+    if (!status || status === current) return;
+    setStatusError('');
+    try {
+      await updateDoc(doc(db, 'rooms', room.id), { status });
+      logStaffActivity('room_status_changed', `Changed Room ${room.roomNumber} from ${badgeLabel(room.status)} to ${badgeLabel(status)}`);
+      fetchRooms();
+    } catch (error) {
+      console.error('Could not change room status:', error);
+      setStatusError(`Room ${room.roomNumber}'s status could not be changed. Please try again.`);
+    }
+  };
+
   const markCleaned = async (room) => {
     await updateDoc(doc(db, 'rooms', room.id), { status: 'available' });
     logStaffActivity('room_status_changed', `Marked Room ${room.roomNumber} as available (was ${room.status})`);
@@ -404,7 +421,18 @@ export default function RoomManagement() {
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingBottom: 6 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingBottom: 6, alignItems: 'center' }}>
+              <select
+                aria-label={`Status of Room ${room.roomNumber}`}
+                value={room.status === 'vacant' ? 'available' : (room.status || 'available')}
+                onChange={event => changeStatus(room, event.target.value)}
+                style={{ padding: '6px 10px', background: HOVER, border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: TEXT }}
+              >
+                <option value="available">Available</option>
+                <option value="occupied">Occupied</option>
+                <option value="cleaning">Cleaning</option>
+                <option value="maintenance">Maintenance</option>
+              </select>
               {['cleaning', 'maintenance'].includes(room.status) && (
                 <button type="button" onClick={() => markCleaned(room)}
                   style={{ padding: '7px 14px', background: LIME, border: 'none', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', color: DARK }}>
@@ -578,6 +606,11 @@ export default function RoomManagement() {
           )}
         </AnimatePresence>
 
+        {statusError && (
+          <div role="alert" style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 10, background: dark ? '#7f1d1d' : '#fee2e2', color: dark ? '#fca5a5' : '#991b1b', fontSize: 12 }}>
+            {statusError}
+          </div>
+        )}
         {/* ── Toolbar: status tabs, search, type, sort, actions ── */}
         <motion.div variants={headerVariants} initial="hidden" animate="visible"
           style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 10 }}>
