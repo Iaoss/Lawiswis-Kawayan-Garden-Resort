@@ -154,6 +154,10 @@ export default function CorporateBooking() {
           .corporate-booking-summary { position: static !important; }
           .corporate-packages-top { padding: 24px 16px 0 !important; }
         }
+        @media (max-width: 640px) {
+          .corporate-packages-top .pkg-table { display: none !important; }
+          .corporate-packages-top .pkg-cards { display: grid !important; }
+        }
       `}</style>
       <header style={{ background: FOREST_DEEP, color: '#fff', padding: '64px 24px 56px' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
@@ -172,7 +176,7 @@ export default function CorporateBooking() {
             Your package depends on the number of guests. Prices are per guest, per night (a day tour counts as one).
             Inclusions shown for {form.bookingType === 'daytour' ? 'a day tour' : `${nights} night${nights === 1 ? '' : 's'}`}. Availability of accommodation and whole-property rental is confirmed by the resort.
           </p>
-          <div style={{ overflowX: 'auto' }}>
+          <div className="pkg-table" style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', minWidth: '620px', borderCollapse: 'collapse', font: `12px/1.5 ${SANS}`, color: INK }}>
               <thead>
                 <tr style={{ background: CREAM }}>
@@ -199,6 +203,27 @@ export default function CorporateBooking() {
                 </tr>
               ))}</tbody>
             </table>
+          </div>
+          {/* Phones: one card per package, so nothing is hidden off to the side. */}
+          <div className="pkg-cards" style={{ display: 'none', gap: '12px' }}>
+            {CORPORATE_PACKAGES.map(tier => {
+              const yours = selectedPackage?.id === tier.id;
+              const included = CORPORATE_FEATURE_ROWS.filter(row => isCorporateFeatureIncluded(tier.id, nights, row.id));
+              return (
+                <article key={tier.id} style={{ border: `1px solid ${yours ? FOREST : LINE}`, background: yours ? '#f1f5ec' : '#fff', padding: '14px 16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                    <strong style={{ color: FOREST_DEEP, font: `600 16px ${SANS}` }}>{tier.name}</strong>
+                    {yours && <span style={{ background: FOREST, color: '#fff', font: `600 9px ${SANS}`, letterSpacing: '.12em', padding: '3px 8px' }}>YOUR GROUP</span>}
+                  </div>
+                  <div style={{ color: '#626355', font: `12px/1.6 ${SANS}`, margin: '2px 0 8px' }}>
+                    {tier.minGuests}{tier.maxGuests ? `–${tier.maxGuests}` : '+'} guests · ₱{tier.ratePerGuest.toLocaleString()} per guest, per night
+                  </div>
+                  <ul style={{ margin: 0, padding: 0, listStyle: 'none', color: INK, font: `12px/1.7 ${SANS}` }}>
+                    {included.map(row => <li key={row.id}><span aria-hidden="true" style={{ color: FOREST, fontWeight: 700 }}>✓</span> {row.label}</li>)}
+                  </ul>
+                </article>
+              );
+            })}
           </div>
         </section>
       </div>
