@@ -3,6 +3,8 @@ import { auth, db } from '../../firebase/firebase';
 import { collection, query, orderBy, limit, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import PageLayout from '../components/PageLayout';
+import { useSettings } from '../components/SettingsContext';
+import { pagePalette } from '../lib/pagePalette';
 
 const ACCENT = '#9cb56f';
 const DARK   = '#1A312C';
@@ -55,11 +57,6 @@ async function callApi(path, body) {
   return data;
 }
 
-const inp = {
-  background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '10px',
-  padding: '9px 12px', fontSize: '12px', fontFamily: FONT, color: '#111',
-  outline: 'none', width: '100%', boxSizing: 'border-box',
-};
 
 // ── page ───────────────────────────────────────────────────
 export default function Email() {
@@ -72,6 +69,14 @@ export default function Email() {
   const [notice, setNotice]       = useState(null); // { type: 'error' | 'ok', text }
   const [compose, setCompose]     = useState(EMPTY_COMPOSE);
   const [sending, setSending]     = useState(false);
+  const { settings } = useSettings();
+  const dark = Boolean(settings?.darkMode);
+  const C = pagePalette(dark);
+  const inp = {
+    background: C.card2, border: `1px solid ${C.border}`, borderRadius: '10px',
+    padding: '9px 12px', fontSize: '12px', fontFamily: FONT, color: C.text,
+    outline: 'none', width: '100%', boxSizing: 'border-box',
+  };
 
   // Wait until Firebase knows who is logged in (needed for the API token).
   useEffect(() => onAuthStateChanged(auth, (u) => setAuthReady(!!u)), []);
@@ -169,7 +174,7 @@ export default function Email() {
       <div style={{ display: 'grid', gridTemplateColumns: '190px 340px 1fr', gap: '16px', height: 'calc(100vh - 120px)', fontFamily: FONT }}>
 
         {/* ── Folders ── */}
-        <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <div style={{ background: C.card, borderRadius: '16px', border: `1px solid ${C.border}`, padding: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <button onClick={() => openCompose()}
             style={{ background: DARK, color: ACCENT, border: 'none', borderRadius: '10px', padding: '10px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginBottom: '10px' }}>
             <i className="ti ti-pencil" style={{ fontSize: '14px' }} /> Compose
@@ -179,7 +184,7 @@ export default function Email() {
             const active = folder === f.key;
             return (
               <button key={f.key} onClick={() => { setFolder(f.key); setSelectedId(null); }}
-                style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '9px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: '12.5px', textAlign: 'left', background: active ? ACCENT : 'transparent', color: active ? '#0a1a0a' : '#6b7280', fontWeight: active ? '600' : '400' }}>
+                style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '9px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontFamily: FONT, fontSize: '12.5px', textAlign: 'left', background: active ? ACCENT : 'transparent', color: active ? '#0a1a0a' : C.sub, fontWeight: active ? '600' : '400' }}>
                 <i className={`ti ${f.icon}`} style={{ fontSize: '16px' }} />
                 <span style={{ flex: 1 }}>{f.label}</span>
                 {f.key === 'inbox' && unreadCount > 0 && (
@@ -191,28 +196,28 @@ export default function Email() {
 
           <div style={{ flex: 1 }} />
           <button onClick={sync} disabled={syncing}
-            style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '8px', fontSize: '11.5px', color: '#6b7280', cursor: syncing ? 'default' : 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+            style={{ background: C.card2, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '8px', fontSize: '11.5px', color: C.sub, cursor: syncing ? 'default' : 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
             <i className="ti ti-refresh" style={{ fontSize: '14px' }} />
             {syncing ? 'Checking Gmail…' : 'Refresh'}
           </button>
         </div>
 
         {/* ── Message list ── */}
-        <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '14px', borderBottom: '1px solid #f3f4f6' }}>
-            <div style={{ fontWeight: '700', fontSize: '14px', color: '#111', marginBottom: '10px' }}>
+        <div style={{ background: C.card, borderRadius: '16px', border: `1px solid ${C.border}`, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '14px', borderBottom: `1px solid ${C.line}` }}>
+            <div style={{ fontWeight: '700', fontSize: '14px', color: C.text, marginBottom: '10px' }}>
               {FOLDERS.find((f) => f.key === folder).label}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f9fafb', borderRadius: '10px', padding: '8px 12px', border: '1px solid #e5e7eb' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: C.card2, borderRadius: '10px', padding: '8px 12px', border: `1px solid ${C.border}` }}>
               <i className="ti ti-search" style={{ fontSize: '14px', color: MUTED }} />
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search emails..."
-                style={{ border: 'none', outline: 'none', fontSize: '12px', background: 'transparent', fontFamily: FONT, width: '100%', color: '#111' }} />
+                style={{ border: 'none', outline: 'none', fontSize: '12px', background: 'transparent', fontFamily: FONT, width: '100%', color: C.text }} />
             </div>
           </div>
 
           {notice && (
             <div onClick={() => setNotice(null)}
-              style={{ margin: '10px 14px 0', padding: '8px 12px', borderRadius: '8px', fontSize: '11.5px', cursor: 'pointer', background: notice.type === 'error' ? '#fef2f2' : '#f0fdf4', color: notice.type === 'error' ? '#b91c1c' : '#428475', border: `1px solid ${notice.type === 'error' ? '#fecaca' : '#86efac'}` }}>
+              style={{ margin: '10px 14px 0', padding: '8px 12px', borderRadius: '8px', fontSize: '11.5px', cursor: 'pointer', background: notice.type === 'error' ? C.errBg : C.soft, color: notice.type === 'error' ? C.errText : C.green, border: `1px solid ${notice.type === 'error' ? C.errBorder : C.softBorder}` }}>
               {notice.text}
             </div>
           )}
@@ -227,12 +232,12 @@ export default function Email() {
               const who = folder === 'sent' ? `To: ${(m.to || []).join(', ')}` : senderLabel(m);
               return (
                 <div key={m.id} onClick={() => openEmail(m)}
-                  style={{ padding: '12px 14px', borderBottom: '1px solid #f9fafb', cursor: 'pointer', background: active ? '#f0fdf4' : 'transparent', borderLeft: active ? `3px solid ${ACCENT}` : '3px solid transparent' }}>
+                  style={{ padding: '12px 14px', borderBottom: `1px solid ${C.line}`, cursor: 'pointer', background: active ? C.soft : 'transparent', borderLeft: active ? `3px solid ${ACCENT}` : '3px solid transparent' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
-                    <span style={{ fontSize: '12px', color: '#111', fontWeight: m.read ? '500' : '700', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{who}</span>
+                    <span style={{ fontSize: '12px', color: C.text, fontWeight: m.read ? '500' : '700', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{who}</span>
                     <span style={{ fontSize: '10px', color: MUTED, flexShrink: 0 }}>{shortDate(m.date)}</span>
                   </div>
-                  <div style={{ fontSize: '12px', color: '#111', fontWeight: m.read ? '400' : '600', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <div style={{ fontSize: '12px', color: C.text, fontWeight: m.read ? '400' : '600', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {!m.read && <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#ef4444', marginRight: '6px' }} />}
                     {m.subject}
                   </div>
@@ -244,23 +249,23 @@ export default function Email() {
         </div>
 
         {/* ── Reading pane ── */}
-        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {!selected ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: MUTED }}>
               <div style={{ fontSize: '48px', marginBottom: '14px' }}>✉️</div>
-              <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>Select an email</div>
+              <div style={{ fontSize: '14px', fontWeight: '600', color: C.text, marginBottom: '6px' }}>Select an email</div>
               <div style={{ fontSize: '12px' }}>Pick a message from the list to read it</div>
             </div>
           ) : (
             <>
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f3f4f6' }}>
-                <div style={{ fontWeight: '700', fontSize: '15px', color: '#111', marginBottom: '10px' }}>{selected.subject}</div>
+              <div style={{ padding: '16px 20px', borderBottom: `1px solid ${C.line}` }}>
+                <div style={{ fontWeight: '700', fontSize: '15px', color: C.text, marginBottom: '10px' }}>{selected.subject}</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: DARK, display: 'flex', alignItems: 'center', justifyContent: 'center', color: ACCENT, fontWeight: '700', fontSize: '13px', flexShrink: 0 }}>
                     {senderLabel(selected)[0].toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '12.5px', fontWeight: '600', color: '#111' }}>
+                    <div style={{ fontSize: '12.5px', fontWeight: '600', color: C.text }}>
                       {senderLabel(selected)} <span style={{ color: MUTED, fontWeight: '400' }}>&lt;{selected.from}&gt;</span>
                     </div>
                     <div style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -272,14 +277,14 @@ export default function Email() {
                     <i className="ti ti-arrow-back-up" style={{ fontSize: '14px' }} /> Reply
                   </button>
                   <button onClick={() => forward(selected)}
-                    style={{ padding: '7px 14px', background: '#f0fdf4', color: '#428475', border: '1px solid #86efac', borderRadius: '8px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    style={{ padding: '7px 14px', background: C.soft, color: C.green, border: `1px solid ${C.softBorder}`, borderRadius: '8px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <i className="ti ti-arrow-forward-up" style={{ fontSize: '14px' }} /> Forward
                   </button>
                 </div>
                 {selected.attachments?.length > 0 && (
-                  <div style={{ marginTop: '10px', fontSize: '11px', color: '#6b7280', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  <div style={{ marginTop: '10px', fontSize: '11px', color: C.sub, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     {selected.attachments.map((a, i) => (
-                      <span key={i} style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '20px', padding: '2px 10px' }}>
+                      <span key={i} style={{ background: C.card2, border: `1px solid ${C.border}`, borderRadius: '20px', padding: '2px 10px' }}>
                         <i className="ti ti-paperclip" style={{ fontSize: '11px' }} /> {a.filename}
                       </span>
                     ))}
@@ -287,13 +292,13 @@ export default function Email() {
                 )}
               </div>
 
-              <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px', background: '#fff' }}>
+              <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px', background: C.card }}>
                 {selected.html ? (
                   <iframe title="Email body" sandbox="allow-popups allow-popups-to-escape-sandbox"
                     srcDoc={wrapHtml(selected.html)}
-                    style={{ width: '100%', height: '100%', minHeight: '300px', border: 'none' }} />
+                    style={{ width: '100%', height: '100%', minHeight: '300px', border: 'none', background: '#fff', borderRadius: dark ? '10px' : 0 }} />
                 ) : (
-                  <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: FONT, fontSize: '13px', lineHeight: '1.6', color: '#111' }}>{selected.text || '(empty message)'}</pre>
+                  <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: FONT, fontSize: '13px', lineHeight: '1.6', color: C.text }}>{selected.text || '(empty message)'}</pre>
                 )}
               </div>
             </>
@@ -305,11 +310,11 @@ export default function Email() {
       {compose.open && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
           onClick={(e) => { if (e.target === e.currentTarget && !sending) setCompose(EMPTY_COMPOSE); }}>
-          <div style={{ background: '#fff', borderRadius: '16px', width: '600px', maxWidth: '100%', maxHeight: '100%', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', fontFamily: FONT }}>
-            <div style={{ padding: '14px 18px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ fontWeight: '700', fontSize: '14px', color: '#111' }}>New message</div>
+          <div style={{ background: C.card, borderRadius: '16px', width: '600px', maxWidth: '100%', maxHeight: '100%', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', fontFamily: FONT }}>
+            <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.line}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontWeight: '700', fontSize: '14px', color: C.text }}>New message</div>
               <button onClick={() => setCompose(EMPTY_COMPOSE)} disabled={sending}
-                style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '4px 10px', fontSize: '12px', color: MUTED, cursor: 'pointer', fontFamily: FONT }}>✕</button>
+                style={{ background: C.card2, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '4px 10px', fontSize: '12px', color: MUTED, cursor: 'pointer', fontFamily: FONT }}>✕</button>
             </div>
             <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <input style={inp} placeholder="To (separate several with commas)" value={compose.to} onChange={(e) => setCompose({ ...compose, to: e.target.value })} />
@@ -319,7 +324,7 @@ export default function Email() {
                 value={compose.body} onChange={(e) => setCompose({ ...compose, body: e.target.value })} />
               <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                 <button onClick={() => setCompose(EMPTY_COMPOSE)} disabled={sending}
-                  style={{ padding: '9px 18px', background: '#f9fafb', color: MUTED, border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '12px', cursor: 'pointer', fontFamily: FONT }}>Discard</button>
+                  style={{ padding: '9px 18px', background: C.card2, color: MUTED, border: `1px solid ${C.border}`, borderRadius: '8px', fontSize: '12px', cursor: 'pointer', fontFamily: FONT }}>Discard</button>
                 <button onClick={send} disabled={sending}
                   style={{ padding: '9px 20px', background: DARK, color: ACCENT, border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: '600', cursor: sending ? 'default' : 'pointer', fontFamily: FONT, opacity: sending ? 0.7 : 1 }}>
                   {sending ? 'Sending…' : 'Send email'}

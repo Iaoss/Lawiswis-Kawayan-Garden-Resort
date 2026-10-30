@@ -5,6 +5,8 @@ import {
   addDoc, serverTimestamp, doc, updateDoc, setDoc, getDocs, deleteDoc
 } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
+import { useSettings } from '../components/SettingsContext';
+import { pagePalette } from '../lib/pagePalette';
 import { BeamAvatar, StaffAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { appConfirm } from '../../components/ui/app-dialog';
@@ -52,6 +54,8 @@ export default function Messages() {
   const [newFAQ,        setNewFAQ]          = useState({ category: 'General', question: '', answer: '' });
   const [editFAQ,       setEditFAQ]         = useState(null);
   const bottomRef = useRef(null);
+  const { settings } = useSettings();
+  const C = pagePalette(Boolean(settings?.darkMode));
 
   // Load custom FAQs from Firestore
   useEffect(() => {
@@ -162,10 +166,10 @@ export default function Messages() {
   );
 
   const inp = {
-    background: '#f9fafb', border: '1px solid #e5e7eb',
+    background: C.card2, border: `1px solid ${C.border}`,
     borderRadius: '10px', padding: '9px 12px',
     fontSize: '12px', fontFamily: "'Poppins', sans-serif",
-    color: '#111', outline: 'none', width: '100%',
+    color: C.text, outline: 'none', width: '100%',
     boxSizing: 'border-box',
   };
 
@@ -174,14 +178,14 @@ export default function Messages() {
       <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: '16px', height: 'calc(100vh - 120px)', fontFamily: "'Poppins', sans-serif" }}>
 
         {/* ── Conversation List ── */}
-        <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '14px', borderBottom: '1px solid #f3f4f6' }}>
-            <div style={{ fontWeight: '700', fontSize: '14px', color: '#111', marginBottom: '10px' }}>Messages</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#f9fafb', borderRadius: '10px', padding: '8px 12px', border: '1px solid #e5e7eb' }}>
+        <div style={{ background: C.card, borderRadius: '16px', border: `1px solid ${C.border}`, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '14px', borderBottom: `1px solid ${C.line}` }}>
+            <div style={{ fontWeight: '700', fontSize: '14px', color: C.text, marginBottom: '10px' }}>Messages</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: C.card2, borderRadius: '10px', padding: '8px 12px', border: `1px solid ${C.border}` }}>
               <i className="ti ti-search" style={{ fontSize: '14px', color: MUTED }} />
               <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search guest..."
-                style={{ border: 'none', outline: 'none', fontSize: '12px', background: 'transparent', fontFamily: "'Poppins', sans-serif", width: '100%', color: '#111' }} />
+                style={{ border: 'none', outline: 'none', fontSize: '12px', background: 'transparent', fontFamily: "'Poppins', sans-serif", width: '100%', color: C.text }} />
             </div>
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -190,11 +194,11 @@ export default function Messages() {
             ) : (
               filteredConvs.map(c => (
                 <div key={c.id} onClick={() => openConversation(c)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', borderBottom: '1px solid #f9fafb', cursor: 'pointer', background: selected?.id === c.id ? '#f0fdf4' : 'transparent', borderLeft: selected?.id === c.id ? `3px solid ${ACCENT}` : '3px solid transparent', transition: 'all 0.15s' }}>
+                  style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', borderBottom: `1px solid ${C.line}`, cursor: 'pointer', background: selected?.id === c.id ? C.soft : 'transparent', borderLeft: selected?.id === c.id ? `3px solid ${ACCENT}` : '3px solid transparent', transition: 'all 0.15s' }}>
                   <BeamAvatar seed={guestAvatarSeed(c)} size={38} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: '600', fontSize: '12px', color: '#111' }}>{c.guestName}</span>
+                      <span style={{ fontWeight: '600', fontSize: '12px', color: C.text }}>{c.guestName}</span>
                       <span style={{ fontSize: '10px', color: MUTED }}>
                         {c.lastMessageAt?.seconds ? new Date(c.lastMessageAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                       </span>
@@ -211,27 +215,27 @@ export default function Messages() {
         </div>
 
         {/* ── Chat Window ── */}
-        <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '16px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {!selected ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: MUTED }}>
               <i className="ti ti-message-circle-2" aria-hidden="true" style={{ fontSize: '42px', marginBottom: '14px' }} />
-              <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>Select a conversation</div>
+              <div style={{ fontSize: '14px', fontWeight: '600', color: C.text, marginBottom: '6px' }}>Select a conversation</div>
               <div style={{ fontSize: '12px' }}>Choose a guest from the list to start chatting</div>
             </div>
           ) : (
             <>
               {/* Chat Header */}
-              <div style={{ padding: '14px 18px', borderBottom: '1px solid #f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <BeamAvatar seed={guestAvatarSeed(selected)} size={36} />
                   <div>
-                    <div style={{ fontWeight: '600', fontSize: '13px', color: '#111' }}>{selected.guestName}</div>
+                    <div style={{ fontWeight: '600', fontSize: '13px', color: C.text }}>{selected.guestName}</div>
                     <div style={{ fontSize: '11px', color: MUTED }}>Room {selected.roomNumber || '—'} · Guest</div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button onClick={() => { setShowFAQ(!showFAQ); setShowAddFAQ(false); }}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: showFAQ ? DARK : '#f0fdf4', color: showFAQ ? ACCENT : '#428475', border: `1px solid ${showFAQ ? DARK : '#86efac'}`, borderRadius: '8px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', background: showFAQ ? DARK : C.soft, color: showFAQ ? ACCENT : C.green, border: `1px solid ${showFAQ ? DARK : C.softBorder}`, borderRadius: '8px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
                     <i className="ti ti-bolt" style={{ fontSize: '14px' }} />
                     Quick Replies
                   </button>
@@ -240,20 +244,20 @@ export default function Messages() {
 
               {/* FAQ Panel */}
               {showFAQ && (
-                <div style={{ borderBottom: '1px solid #f3f4f6', background: '#fafffe' }}>
+                <div style={{ borderBottom: `1px solid ${C.line}`, background: C.panel }}>
                   {/* FAQ Header */}
                   <div style={{ padding: '12px 16px 8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ fontWeight: '600', fontSize: '13px', color: '#111', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <i className="ti ti-bolt" style={{ color: '#428475', fontSize: '15px' }} />
+                    <div style={{ fontWeight: '600', fontSize: '13px', color: C.text, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <i className="ti ti-bolt" style={{ color: C.green, fontSize: '15px' }} />
                       Quick Replies & FAQ
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button onClick={() => { setShowAddFAQ(!showAddFAQ); setEditFAQ(null); setNewFAQ({ category: 'General', question: '', answer: '' }); }}
-                        style={{ padding: '5px 12px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', color: '#428475', fontFamily: "'Poppins', sans-serif" }}>
+                        style={{ padding: '5px 12px', background: C.soft, border: `1px solid ${C.softBorder}`, borderRadius: '8px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', color: C.green, fontFamily: "'Poppins', sans-serif" }}>
                         + Add FAQ
                       </button>
                       <button onClick={() => setShowFAQ(false)}
-                        style={{ padding: '5px 10px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '11px', cursor: 'pointer', color: MUTED, fontFamily: "'Poppins', sans-serif" }}>
+                        style={{ padding: '5px 10px', background: C.card2, border: `1px solid ${C.border}`, borderRadius: '8px', fontSize: '11px', cursor: 'pointer', color: MUTED, fontFamily: "'Poppins', sans-serif" }}>
                         ✕
                       </button>
                     </div>
@@ -261,8 +265,8 @@ export default function Messages() {
 
                   {/* Add/Edit FAQ Form */}
                   {showAddFAQ && (
-                    <div style={{ margin: '0 14px 10px', background: '#fff', borderRadius: '12px', border: '1px solid #e5e7eb', padding: '14px' }}>
-                      <div style={{ fontWeight: '600', fontSize: '12px', color: '#111', marginBottom: '10px' }}>{editFAQ ? 'Edit Quick Reply' : 'Add New Quick Reply'}</div>
+                    <div style={{ margin: '0 14px 10px', background: C.card, borderRadius: '12px', border: `1px solid ${C.border}`, padding: '14px' }}>
+                      <div style={{ fontWeight: '600', fontSize: '12px', color: C.text, marginBottom: '10px' }}>{editFAQ ? 'Edit Quick Reply' : 'Add New Quick Reply'}</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '8px', marginBottom: '8px' }}>
                         <div>
                           <label style={{ fontSize: '10px', color: MUTED, display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>Category</label>
@@ -290,7 +294,7 @@ export default function Messages() {
                           {editFAQ ? 'Update' : 'Save FAQ'}
                         </button>
                         <button onClick={() => { setShowAddFAQ(false); setEditFAQ(null); }}
-                          style={{ padding: '7px 16px', background: '#f9fafb', color: MUTED, border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '11px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                          style={{ padding: '7px 16px', background: C.card2, color: MUTED, border: `1px solid ${C.border}`, borderRadius: '8px', fontSize: '11px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
                           Cancel
                         </button>
                       </div>
@@ -299,11 +303,11 @@ export default function Messages() {
 
                   {/* Search FAQs */}
                   <div style={{ padding: '0 14px 8px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '6px 10px' }}>
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px', background: C.card, border: `1px solid ${C.border}`, borderRadius: '8px', padding: '6px 10px' }}>
                       <i className="ti ti-search" style={{ fontSize: '12px', color: MUTED }} />
                       <input value={faqSearch} onChange={e => setFaqSearch(e.target.value)}
                         placeholder="Search quick replies..."
-                        style={{ border: 'none', outline: 'none', fontSize: '11px', background: 'transparent', fontFamily: "'Poppins', sans-serif", width: '100%', color: '#111' }} />
+                        style={{ border: 'none', outline: 'none', fontSize: '11px', background: 'transparent', fontFamily: "'Poppins', sans-serif", width: '100%', color: C.text }} />
                     </div>
                   </div>
 
@@ -311,7 +315,7 @@ export default function Messages() {
                   <div style={{ padding: '0 14px 8px', display: 'flex', gap: '6px', overflowX: 'auto', flexWrap: 'nowrap' }}>
                     {CATEGORIES.map(cat => (
                       <button key={cat} onClick={() => setFaqCategory(cat)}
-                        style={{ padding: '4px 12px', borderRadius: '20px', border: faqCategory === cat ? 'none' : '1px solid #e5e7eb', background: faqCategory === cat ? DARK : '#fff', color: faqCategory === cat ? ACCENT : '#6b7280', fontSize: '10px', fontWeight: faqCategory === cat ? '600' : '400', cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: "'Poppins', sans-serif" }}>
+                        style={{ padding: '4px 12px', borderRadius: '20px', border: faqCategory === cat ? 'none' : `1px solid ${C.border}`, background: faqCategory === cat ? DARK : C.card, color: faqCategory === cat ? ACCENT : C.sub, fontSize: '10px', fontWeight: faqCategory === cat ? '600' : '400', cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: "'Poppins', sans-serif" }}>
                         {cat}
                       </button>
                     ))}
@@ -324,22 +328,22 @@ export default function Messages() {
                     ) : (
                       filteredFAQs.map(faq => (
                         <div key={faq.id}
-                          style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e5e7eb', padding: '10px 12px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                          style={{ background: C.card, borderRadius: '10px', border: `1px solid ${C.border}`, padding: '10px 12px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                              <span style={{ background: '#f0fdf4', color: '#428475', borderRadius: '20px', padding: '1px 8px', fontSize: '9px', fontWeight: '600' }}>
+                              <span style={{ background: C.soft, color: C.green, borderRadius: '20px', padding: '1px 8px', fontSize: '9px', fontWeight: '600' }}>
                                 {faq.category}
                               </span>
-                              <span style={{ fontSize: '11px', fontWeight: '600', color: '#111' }}>{faq.question}</span>
+                              <span style={{ fontSize: '11px', fontWeight: '600', color: C.text }}>{faq.question}</span>
                             </div>
-                            <p style={{ fontSize: '11px', color: '#6b7280', margin: 0, lineHeight: '1.5', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                            <p style={{ fontSize: '11px', color: C.sub, margin: 0, lineHeight: '1.5', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                               {faq.answer}
                             </p>
                           </div>
                           <div style={{ display: 'flex', gap: '5px', flexShrink: 0 }}>
                             <button onClick={() => handleFAQSelect(faq)}
                               title="Edit in input"
-                              style={{ padding: '5px 10px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '7px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', color: '#428475', fontFamily: "'Poppins', sans-serif" }}>
+                              style={{ padding: '5px 10px', background: C.soft, border: `1px solid ${C.softBorder}`, borderRadius: '7px', fontSize: '10px', fontWeight: '600', cursor: 'pointer', color: C.green, fontFamily: "'Poppins', sans-serif" }}>
                               <i className="ti ti-pencil" aria-hidden="true" /> Edit
                             </button>
                             <button onClick={() => handleSendFAQ(faq)}
@@ -350,7 +354,7 @@ export default function Messages() {
                             {!DEFAULT_FAQS.find(d => d.id === faq.id) && (
                               <button onClick={() => handleDeleteFAQ(faq)}
                                 title="Delete"
-                                style={{ padding: '5px 8px', background: '#fff', border: '1px solid #fee2e2', borderRadius: '7px', fontSize: '10px', cursor: 'pointer', color: '#ef4444', fontFamily: "'Poppins', sans-serif" }}>
+                                style={{ padding: '5px 8px', background: C.card, border: `1px solid ${C.errBorder}`, borderRadius: '7px', fontSize: '10px', cursor: 'pointer', color: '#ef4444', fontFamily: "'Poppins', sans-serif" }}>
                                 <i className="ti ti-trash" aria-hidden="true" />
                               </button>
                             )}
@@ -363,7 +367,7 @@ export default function Messages() {
               )}
 
               {/* Messages */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '18px', display: 'flex', flexDirection: 'column', gap: '10px', background: '#fafafa' }}>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '18px', display: 'flex', flexDirection: 'column', gap: '10px', background: C.chatBg }}>
                 {messages.length === 0 && (
                   <div style={{ textAlign: 'center', color: MUTED, fontSize: '12px', padding: '30px' }}>
                     No messages yet. Say hello!
@@ -375,7 +379,7 @@ export default function Messages() {
                       <BeamAvatar seed={guestAvatarSeed(selected)} size={28} />
                     )}
                     <div style={{ maxWidth: '65%' }}>
-                      <div style={{ background: m.sender === 'staff' ? DARK : '#fff', color: m.sender === 'staff' ? ACCENT : '#111', border: m.sender === 'staff' ? 'none' : '1px solid #e5e7eb', borderRadius: m.sender === 'staff' ? '16px 16px 4px 16px' : '16px 16px 16px 4px', padding: '10px 14px', fontSize: '13px', lineHeight: '1.5' }}>
+                      <div style={{ background: m.sender === 'staff' ? DARK : C.card, color: m.sender === 'staff' ? ACCENT : C.text, border: m.sender === 'staff' ? 'none' : `1px solid ${C.border}`, borderRadius: m.sender === 'staff' ? '16px 16px 4px 16px' : '16px 16px 16px 4px', padding: '10px 14px', fontSize: '13px', lineHeight: '1.5' }}>
                         {m.text}
                       </div>
                       <div style={{ fontSize: '10px', color: MUTED, marginTop: '4px', textAlign: m.sender === 'staff' ? 'right' : 'left' }}>
@@ -394,7 +398,7 @@ export default function Messages() {
 
               {/* Suggested Quick Replies above input */}
               {!showFAQ && (
-                <div style={{ padding: '6px 16px 0', display: 'flex', gap: '6px', overflowX: 'auto', borderTop: '1px solid #f3f4f6' }}>
+                <div style={{ padding: '6px 16px 0', display: 'flex', gap: '6px', overflowX: 'auto', borderTop: `1px solid ${C.line}` }}>
                   {[
                     { label: 'Greeting',     faq: faqs.find(f => f.id === 'f18') },
                     { label: 'Check-in',     faq: faqs.find(f => f.id === 'f1') },
@@ -405,7 +409,7 @@ export default function Messages() {
                   ].filter(s => s.faq).map(s => (
                     <button key={s.label}
                       onClick={() => handleFAQSelect(s.faq)}
-                      style={{ padding: '5px 12px', background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '20px', fontSize: '11px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap', color: '#428475', fontFamily: "'Poppins', sans-serif", flexShrink: 0 }}>
+                      style={{ padding: '5px 12px', background: C.soft, border: `1px solid ${C.softBorder}`, borderRadius: '20px', fontSize: '11px', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap', color: C.green, fontFamily: "'Poppins', sans-serif", flexShrink: 0 }}>
                       {s.label}
                     </button>
                   ))}
@@ -417,11 +421,11 @@ export default function Messages() {
               )}
 
               {/* Input */}
-              <div style={{ padding: '12px 16px', borderTop: '1px solid #f3f4f6', display: 'flex', gap: '10px', background: '#fff' }}>
+              <div style={{ padding: '12px 16px', borderTop: `1px solid ${C.line}`, display: 'flex', gap: '10px', background: C.card }}>
                 <input value={newMsg} onChange={e => setNewMsg(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
                   placeholder="Type a message... or use Quick Replies above"
-                  style={{ flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 16px', fontSize: '13px', outline: 'none', fontFamily: "'Poppins', sans-serif", color: '#111', background: '#f9fafb' }} />
+                  style={{ flex: 1, border: `1px solid ${C.border}`, borderRadius: '10px', padding: '11px 16px', fontSize: '13px', outline: 'none', fontFamily: "'Poppins', sans-serif", color: C.text, background: C.card2 }} />
                 <button onClick={() => sendMessage()}
                   style={{ background: DARK, border: 'none', borderRadius: '10px', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
                   <i className="ti ti-send" aria-hidden="true" style={{ color: ACCENT, fontSize: '18px' }} />
