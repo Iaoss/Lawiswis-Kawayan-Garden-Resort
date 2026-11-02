@@ -226,6 +226,9 @@ export function getRoomCapacityPolicy(room) {
   } else if (text.includes('familyroom')) {
     const maximum = describedCapacity || 4;
     defaults = { maxAdults: maximum, maxChildren: maximum, maxGuests: maximum, label: `Family Room for ${maximum}` };
+  } else if (text.includes('standard') && (configuredMaxGuests || describedCapacity || 2) <= 2) {
+    // Standard rooms are the resort's 2-guest couple rooms (no extra bed).
+    defaults = { maxAdults: 2, maxChildren: 1, maxGuests: 2, label: 'Couple Room' };
   } else {
     const maximum = configuredMaxGuests || describedCapacity;
     if (!maximum) return null;

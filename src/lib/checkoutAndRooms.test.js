@@ -41,3 +41,13 @@ describe('couple rooms with an extra bed', () => {
     expect(picks[0].total).toBe(3000 + 800);
   });
 });
+
+describe('standard couple rooms', () => {
+  it('are 2-guest couple rooms', () => {
+    const standard = { type: 'Standard', roomNumber: 'Hirang', capacity: 2 };
+    expect(getRoomCapacityPolicy(standard)).toMatchObject({ label: 'Couple Room', maxGuests: 2 });
+    expect(getGuestCountViolation(standard, 2, 0)).toBeNull();
+    expect(getGuestCountViolation(standard, 1, 1)).toBeNull();
+    expect(getGuestCountViolation(standard, 2, 1)).not.toBeNull();
+  });
+});

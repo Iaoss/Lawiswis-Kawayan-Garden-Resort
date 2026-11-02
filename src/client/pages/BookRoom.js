@@ -351,9 +351,10 @@ export default function BookRoom() {
   const baseCapacity = pricing?.baseCapacity || 2;
   const groupSize = Number(form.adults) + Number(form.children);
   // Rooms that fit the group, cheapest for this booking first (room rate
-  // plus extra guests), one per room kind so the guest sees real choices:
-  // e.g. 3 guests get a Couple Room with Extra Bed before a Family Room.
-  const suggestedRooms = useMemo(() => {
+  // plus extra guests). The top 3 are shown as cards (for 3 guests these are
+  // the Couple Rooms with Extra Bed); other room kinds that also fit are
+  // listed underneath as alternatives.
+  const { suggestedRooms, otherRoomKinds } = useMemo(() => {
     const adults = Number(form.adults);
     const children = Number(form.children);
     const priceFor = item => {
@@ -371,14 +372,16 @@ export default function BookRoom() {
       .sort((a, b) => a.price - b.price
         || (getRoomCapacityPolicy(a.item)?.maxGuests || 99) - (getRoomCapacityPolicy(b.item)?.maxGuests || 99)
         || String(a.item.roomNumber || a.item.name).localeCompare(String(b.item.roomNumber || b.item.name)));
-    const seenKinds = new Set();
-    const picks = [];
-    matchingRooms.forEach(entry => {
-      if (picks.length >= 3 || seenKinds.has(entry.kind)) return;
-      seenKinds.add(entry.kind);
-      picks.push({ ...entry.item, suggestedPrice: entry.price, suggestedKind: entry.kind });
+    const withPrice = entry => ({ ...entry.item, suggestedPrice: entry.price, suggestedKind: entry.kind });
+    const picks = matchingRooms.slice(0, 3).map(withPrice);
+    const shownKinds = new Set(picks.map(item => item.suggestedKind));
+    const others = [];
+    matchingRooms.slice(3).forEach(entry => {
+      if (others.length >= 3 || shownKinds.has(entry.kind)) return;
+      shownKinds.add(entry.kind);
+      others.push(withPrice(entry));
     });
-    return picks;
+    return { suggestedRooms: picks, otherRoomKinds: others };
   }, [availableRooms, form.adults, form.children, form.bookingType, form.tourPeriod, nights, room?.id]);
 
   // Land at the top whenever the page moves to another step (bookings tab,
@@ -1273,7 +1276,7 @@ export default function BookRoom() {
               )}
               {guestCountViolation && (
                 <div role="alert" style={{ marginTop: '14px', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.5, color: '#9a3412' }}>
-                  <strong>Notice:</strong> You have exceeded the recommended capacity for this room (Maximum: {maxExtraGuests} extra guest{maxExtraGuests === 1 ? '' : 's'}). Please consider booking a larger room or additional rooms to ensure comfort.
+                  <strong>This room is too small for {groupSize} guests.</strong> {roomCapacity?.label && roomCapacity.label !== 'Selected room' ? `${roomCapacity.label} rooms take` : 'It takes'} up to {roomCapacity?.maxGuests ?? baseCapacity} guest{(roomCapacity?.maxGuests ?? baseCapacity) === 1 ? '' : 's'}{maxExtraGuests > 0 ? ` (${maxExtraGuests} more than the base ${baseCapacity})` : ''}. Pick one of the rooms below that fits your group.
                 </div>
               )}
               {groupSize > 0 && (
@@ -1311,6 +1314,17 @@ export default function BookRoom() {
                     </div>
                   ) : !roomSuggestionsLoading && (
                     <p style={{ margin: '12px 0 0', fontSize: '11px', color: '#4b6352' }}>No other currently available room matches this guest mix. Please contact the resort for help.</p>
+                  )}
+                  {otherRoomKinds.length > 0 && (
+                    <div style={{ marginTop: '12px', fontSize: '11px', color: '#4b6352', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+                      <span>Also fits your group:</span>
+                      {otherRoomKinds.map(other => (
+                        <button key={other.id} type="button" onClick={() => switchToRoom(other)}
+                          style={{ border: '1px solid #d8e7db', background: '#fff', color: DARK, borderRadius: '999px', padding: '5px 10px', fontSize: '11px', cursor: 'pointer' }}>
+                          {other.suggestedKind || 'Room'} · {other.roomNumber || other.name}{other.suggestedPrice < Number.MAX_SAFE_INTEGER ? ` · ₱${other.suggestedPrice.toLocaleString()}` : ''}
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </section>
               )}
