@@ -386,6 +386,9 @@ async function requestScheduleChange(reservation, body) {
   return { alreadyRequested: false, modificationRequest };
 }
 
+// Online cancel, refund and date-change requests are turned off.
+const GUEST_REQUESTS_DISABLED = true;
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
@@ -406,6 +409,11 @@ export default async function handler(req, res) {
 
     if (action === 'lookup') {
       return res.status(200).json({ reservation: publicReservation(reservation) });
+    }
+    // Guests now contact the resort to cancel or move a booking; staff
+    // handle it from the reservation list.
+    if (GUEST_REQUESTS_DISABLED && ['refund-preview', 'refund', 'schedule-change'].includes(action)) {
+      return res.status(403).json({ error: 'To move or cancel a booking, please contact the resort by phone, email or chat.' });
     }
     if (action === 'refund-preview') {
       const result = await previewRefund(reservation);

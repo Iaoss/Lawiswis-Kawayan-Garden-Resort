@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../firebase/firebase';
-import { collection, onSnapshot, query, orderBy, updateDoc, doc, writeBatch } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, updateDoc, doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import Layout from '../components/PageLayout';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { useSettings } from '../components/SettingsContext';
+import { awaitsWebsiteDecision, canShowOnWebsite, isShownOnWebsite } from '../../lib/feedbackPublishing';
 
 /* ---------------------------------- icons --------------------------------- */
 const Ico = ({ d, size = 16, ...p }) => (
@@ -64,6 +65,10 @@ export default function Feedback() {
   const [, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [copied, setCopied] = useState(false);
+  // Review being asked about: "Show it on the website?"
+  const [websiteAsk, setWebsiteAsk] = useState(null);
+  const [websiteBusy, setWebsiteBusy] = useState(false);
+  const [websiteError, setWebsiteError] = useState('');
 
   /* Real-time: new guest feedback appears here without a refresh. */
   useEffect(() => {
@@ -108,6 +113,32 @@ export default function Feedback() {
 
   const markRead = (id) => updateDoc(doc(db, 'feedback', id), { read: true });
 
+  // Reading a positive review asks whether it should appear on the website.
+  // Low ratings and reviews without a comment never appear there.
+  const openReview = f => {
+    setWebsiteError('');
+    if (canShowOnWebsite(f)) setWebsiteAsk(f);
+    else markRead(f.id);
+  };
+
+  const setWebsite = async (f, show) => {
+    setWebsiteBusy(true);
+    setWebsiteError('');
+    try {
+      await updateDoc(doc(db, 'feedback', f.id), {
+        read: true,
+        publicStatus: show ? 'approved' : 'hidden',
+        publicDecidedAt: serverTimestamp(),
+      });
+      setWebsiteAsk(null);
+    } catch (error) {
+      console.error('Could not save the website choice:', error);
+      setWebsiteError('The choice could not be saved. Please try again.');
+    } finally {
+      setWebsiteBusy(false);
+    }
+  };
+
   const markAllRead = async () => {
     const unread = feedbacks.filter(f => !f.read);
     if (!unread.length) return;
@@ -128,11 +159,14 @@ export default function Feedback() {
     if (filter === 'positive') return rate(f) >= 4;
     if (filter === 'neutral') return rate(f) === 3;
     if (filter === 'unread')   return !f.read;
+    if (filter === 'website')  return awaitsWebsiteDecision(f);
     return true;
   });
 
   const unreadList = feedbacks.filter(f => !f.read);
   const unreadCount = unreadList.length;
+  const awaitingCount = feedbacks.filter(awaitsWebsiteDecision).length;
+  const shownCount = feedbacks.filter(isShownOnWebsite).length;
   const positiveCount = feedbacks.filter(f => rate(f) >= 4).length;
   const neutralCount = feedbacks.filter(f => rate(f) === 3).length;
   const negativeCount = feedbacks.filter(f => rate(f) <= 2 && rate(f) > 0).length;
@@ -226,6 +260,40 @@ export default function Feedback() {
 
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '24px' }}>
 
+        {websiteAsk && (
+          <div role="presentation" onClick={event => { if (event.target === event.currentTarget && !websiteBusy) setWebsiteAsk(null); }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'center', padding: '18px' }}>
+            <section role="dialog" aria-modal="true" aria-labelledby="website-ask-title"
+              style={{ width: '100%', maxWidth: '460px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '16px', padding: '22px', boxShadow: '0 20px 60px rgba(0,0,0,0.3)', fontFamily: "'Poppins', sans-serif" }}>
+              <h2 id="website-ask-title" style={{ color: TEXT, fontSize: '17px', margin: '0 0 6px' }}>Show this review on the website?</h2>
+              <p style={{ color: MUTED, fontSize: '12px', margin: '0 0 14px' }}>
+                It has a good star rating. Read the comment first: if it complains about something, keep it private.
+              </p>
+              <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: '12px', padding: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                  <Avatar feedback={websiteAsk} size={30} />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '13px', color: TEXT }}>{websiteAsk.guestName || 'Anonymous guest'}</div>
+                    <Stars n={rate(websiteAsk)} size={12} />
+                  </div>
+                </div>
+                <div style={{ fontSize: '13px', color: SUBTEXT, lineHeight: 1.6, whiteSpace: 'pre-wrap', maxHeight: '220px', overflowY: 'auto' }}>{websiteAsk.comment}</div>
+              </div>
+              {websiteError && <div role="alert" style={{ color: RED, fontSize: '12px', marginTop: '10px' }}>{websiteError}</div>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '18px', flexWrap: 'wrap' }}>
+                <button type="button" disabled={websiteBusy} onClick={() => setWebsiteAsk(null)}
+                  style={{ border: 'none', background: 'transparent', color: MUTED, fontSize: '12px', padding: '9px 10px', cursor: 'pointer', marginRight: 'auto' }}>Decide later</button>
+                <button type="button" disabled={websiteBusy} onClick={() => setWebsite(websiteAsk, false)}
+                  style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 14px', background: CARD2, color: TEXT, fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>No, keep private</button>
+                <button type="button" disabled={websiteBusy} onClick={() => setWebsite(websiteAsk, true)}
+                  style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: ACCENT, color: ACCENT_TEXT, fontSize: '12px', fontWeight: 700, cursor: websiteBusy ? 'wait' : 'pointer' }}>
+                  {websiteBusy ? 'Saving…' : 'Yes, show on website'}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
+
         {/* header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '12px', flexWrap: 'wrap' }}>
           <div>
@@ -236,7 +304,7 @@ export default function Feedback() {
               </span>
             </div>
             <div style={{ fontSize: '12px', color: MUTED }}>
-              ({feedbacks.length} ratings overall) · {unreadCount ? `${unreadCount} new since you last looked` : 'All caught up'}
+              ({feedbacks.length} ratings overall) · {unreadCount ? `${unreadCount} new since you last looked` : 'All caught up'} · {shownCount} on the website{awaitingCount ? `, ${awaitingCount} waiting for your choice` : ''}
             </div>
           </div>
           {unreadCount > 0 && (
@@ -435,6 +503,7 @@ export default function Feedback() {
                 { value: 'neutral', label: 'Neutral' },
                 { value: 'negative', label: 'Negative' },
                 { value: 'unread', label: 'Unread' },
+                { value: 'website', label: `Website: to decide${awaitingCount ? ` (${awaitingCount})` : ''}` },
               ].map(({ value, label }) => (
                 <button key={value} onClick={() => setFilter(value)}
                   style={{
@@ -470,6 +539,7 @@ export default function Feedback() {
                     {CATEGORIES.map(([, label]) => <th key={label} style={th}>{label}</th>)}
                     <th style={th}>Room</th>
                     <th style={th}>Comment</th>
+                    <th style={th}>Website</th>
                     <th style={th} />
                   </tr>
                 </thead>
@@ -504,9 +574,24 @@ export default function Feedback() {
                           </div>
                         )}
                       </td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                        {!canShowOnWebsite(f) ? (
+                          <span style={{ fontSize: '10.5px', color: MUTED }} title="Only 4-5 star reviews with a comment can be shown">Not eligible</span>
+                        ) : (
+                          <div style={{ display: 'grid', gap: '5px', justifyItems: 'start' }}>
+                            <span style={{ fontSize: '10.5px', fontWeight: 700, color: isShownOnWebsite(f) ? GREEN : f.publicStatus === 'hidden' ? MUTED : STAR }}>
+                              {isShownOnWebsite(f) ? 'Shown' : f.publicStatus === 'hidden' ? 'Private' : 'Not decided'}
+                            </span>
+                            <button className="fb-btn" onClick={() => (f.publicStatus ? setWebsite(f, f.publicStatus !== 'approved') : openReview(f))}
+                              style={{ fontSize: '10.5px', background: CARD2, color: SUBTEXT, border: `1px solid ${BORDER}`, borderRadius: '7px', padding: '4px 9px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                              {f.publicStatus === 'approved' ? 'Hide' : f.publicStatus === 'hidden' ? 'Show' : 'Decide'}
+                            </button>
+                          </div>
+                        )}
+                      </td>
                       <td style={{ ...td, textAlign: 'right' }}>
                         {!f.read && (
-                          <button className="fb-btn" onClick={() => markRead(f.id)}
+                          <button className="fb-btn" onClick={() => openReview(f)}
                             style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10.5px', background: CARD2, color: SUBTEXT, border: 'none', borderRadius: '7px', padding: '5px 9px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", whiteSpace: 'nowrap' }}>
                             <IconCheck size={12} /> Mark read
                           </button>

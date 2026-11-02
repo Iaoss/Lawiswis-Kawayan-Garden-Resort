@@ -18,10 +18,11 @@ import {
   getStatusTransitionError,
   getEarlyCheckInError,
   hasOutstandingBalance,
-  manilaDateKey,
 } from '../../lib/reservationStatus';
 import { appPrompt } from '../../components/ui/app-dialog';
 import { useStaffAccess } from '../lib/useStaffAccess';
+import { describeUnpaidFollowUp, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
+import { getOnlinePaymentAmount } from '../../lib/paymentPolicy';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { getReservationRemarks } from '../../lib/reservationRemarks';
 
@@ -889,6 +890,33 @@ export default function Reservations() {
     }
   };
 
+  // Unpaid online bookings: ask the guest if the booking is theirs, or email
+  // a PayMongo payment link. Paying the link confirms the booking.
+  const followUpUnpaid = async (action, reservation, choice) => {
+    setDecisionBusy(reservation.id);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Please sign in again.');
+      const response = await fetch('/api/reservation-staff-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action, reservationId: reservation.id, choice }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'The email could not be sent.');
+      setToast({
+        type: 'success',
+        text: action === 'ask-guest-confirm'
+          ? `Email sent to ${reservation.email || 'the guest'} asking them to confirm the booking.`
+          : `Payment link for ₱${Number(result.amount).toLocaleString()} emailed to ${reservation.email || 'the guest'}. The booking confirms itself once they pay.`,
+      });
+    } catch (error) {
+      setToast({ type: 'error', text: error.message || 'The email could not be sent.' });
+    } finally {
+      setDecisionBusy('');
+    }
+  };
+
   const approveCancellation = async (reservation, reason) => {
     await callReservationStatusApi({ action: 'set-status', reservationId: reservation.id, status: 'cancelled', reason: reason.trim() });
     await fetchReservations();
@@ -962,12 +990,10 @@ export default function Reservations() {
   const selectedReservation = selectedId ? reservations.find(r => r.id === selectedId) : null;
   const lateArrivals = reservations.filter(isDelayedArrival);
 
-  // Finished stays (checked out, or cancelled with dates already past) leave
-  // the list; they stay in Customers and Reservation History. Choose
+  // Checked-out and cancelled bookings leave the list and the calendar right
+  // away; they stay in Customers and Reservation History. Choose
   // "Checked-out" or "Cancelled" in the status filter to see them here.
-  const todayKey = manilaDateKey(now);
-  const isFinished = r => r.status === 'checked-out'
-    || (r.status === 'cancelled' && String(r.checkOut || r.checkIn || '').slice(0, 10) < todayKey);
+  const isFinished = r => r.status === 'checked-out' || r.status === 'cancelled';
   const filtered = sortRecords(reservations.filter(r => {
     const matchFilter = filter === 'all' ? !isFinished(r) : r.status === filter;
     const matchQuick = !quickView || matchesQuickView(r, quickView, now);
@@ -1022,9 +1048,19 @@ export default function Reservations() {
   );
   const canEditBooking = r => ['pending', 'confirmed', 'checked-in'].includes(r.status) && r.type !== 'corporate' && Boolean(r.roomId);
 
-  const pendingCancellations = reservations.filter(r => r.cancellationRequested);
-  const pendingRefunds = canDecideRefunds ? reservations.filter(r =>
-    ['eligible', 'needs_review'].includes(String(r.refundRequestStatus || '').toLowerCase())) : [];
+  // Every staff member sees open requests (they also appear in the bell);
+  // only those allowed to decide get the buttons.
+  const pendingCancellations = reservations.filter(r => r.cancellationRequested && r.status !== 'cancelled');
+  const pendingRefunds = reservations.filter(r =>
+    ['eligible', 'needs_review'].includes(String(r.refundRequestStatus || '').toLowerCase()));
+  const unpaidOnline = reservations.filter(isUnpaidOnlineBooking);
+  const followUpTime = value => {
+    const ms = value?.toMillis ? value.toMillis() : value?.seconds ? value.seconds * 1000 : 0;
+    return ms ? new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'just now';
+  };
+  const waitingForAdmin = (
+    <span style={{ fontSize: '11px', fontWeight: 600, color: MUTED }}>Waiting for an admin</span>
+  );
   const pendingModifications = reservations.filter(r =>
     ['requested', 'needs_review'].includes(String(r.modificationRequest?.status || '').toLowerCase()));
 
@@ -1190,8 +1226,54 @@ export default function Reservations() {
               line to open the details and actions. Empty types are hidden. */}
           <section aria-label="Notifications" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '12px 14px', display: 'grid', gap: '8px', alignContent: 'start', minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Notifications</div>
-            {lateArrivals.length + overstayed.length + (canCancel ? pendingCancellations.length : 0) + pendingRefunds.length + pendingModifications.length === 0 && (
+            {lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length === 0 && (
               <div style={{ fontSize: '12px', color: MUTED }}>All clear — nothing needs action right now.</div>
+            )}
+
+            {unpaidOnline.length > 0 && (
+              <NotificationGroup title="Unpaid online bookings" detail="Booked online but nothing paid yet. Check they are real, then send a payment link" count={unpaidOnline.length} color="#dc2626" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {unpaidOnline.map(r => {
+                  const followUp = r.unpaidFollowUp || {};
+                  const total = Number(r.totalAmount || 0);
+                  const deposit = total > 0 ? getOnlinePaymentAmount(total, 'deposit') : 0;
+                  const busy = decisionBusy === r.id;
+                  const btn = { background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: busy ? 'wait' : 'pointer' };
+                  return (
+                    <div key={r.id} style={{ display: 'grid', gap: '8px', padding: '10px 0', borderTop: `1px solid ${BORDER}` }}>
+                      <div style={{ fontSize: '12px', color: TEXT }}>
+                        <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'} · #{r.id.slice(0, 8).toUpperCase()}
+                        <div style={{ fontSize: '10px', color: MUTED }}>
+                          {formatDate(r.checkIn)}{r.checkOut && r.checkOut !== r.checkIn ? ` – ${formatDate(r.checkOut)}` : ''} · ₱{total.toLocaleString()} · booked {followUpTime(r.createdAt)}
+                          {r.email ? ` · ${r.email}` : ''}{r.phone ? ` · ${r.phone}` : ''}
+                        </div>
+                        <div style={{ fontSize: '11px', marginTop: '4px', fontWeight: 600, color: followUp.guestReply === 'no' ? '#dc2626' : followUp.guestReply === 'yes' ? (dark ? '#86efac' : '#15803d') : MUTED }}>
+                          {describeUnpaidFollowUp(followUp, followUpTime)}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button disabled={busy} onClick={() => setSelectedId(r.id)} style={btn}>View</button>
+                        <button disabled={busy || !r.email} onClick={() => followUpUnpaid('ask-guest-confirm', r)} style={btn}
+                          title={r.email ? 'Email the guest asking if this booking is theirs' : 'No email on this booking'}>
+                          {followUp.verifySentAt ? 'Ask again' : 'Ask guest to confirm'}
+                        </button>
+                        {total > 0 && (
+                          <>
+                            <button disabled={busy || !r.email} onClick={() => followUpUnpaid('send-payment-link', r, 'deposit')}
+                              style={{ ...btn, background: '#166534', color: '#fff', border: 0 }}>
+                              Send deposit link ₱{deposit.toLocaleString()}
+                            </button>
+                            <button disabled={busy || !r.email} onClick={() => followUpUnpaid('send-payment-link', r, 'full')} style={btn}>
+                              Send full link ₱{total.toLocaleString()}
+                            </button>
+                          </>
+                        )}
+                        <button disabled={busy} onClick={() => openCancellationDialog(canCancel ? 'cancel' : 'request', r)}
+                          style={{ ...btn, color: '#dc2626' }}>{canCancel ? 'Cancel booking' : 'Request cancellation'}</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </NotificationGroup>
             )}
 
             {lateArrivals.length > 0 && (
@@ -1246,7 +1328,7 @@ export default function Reservations() {
               </NotificationGroup>
             )}
 
-            {canCancel && pendingCancellations.length > 0 && (
+            {pendingCancellations.length > 0 && (
               <NotificationGroup title="Cancellation requests" detail="From guests online, or from receptionists" count={pendingCancellations.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
                 {pendingCancellations.map(r => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${ROWLINE}` }}>
@@ -1255,7 +1337,12 @@ export default function Reservations() {
                       <span style={{ marginLeft: 6, fontSize: '10px', fontWeight: 700, color: '#d97706' }}>{r.cancellationRequestedBy === 'guest' ? 'From guest' : 'From staff'}</span>
                       <div style={{ fontSize: '10px', color: MUTED }}>Reason: {r.cancellationReason || 'No reason given'}</div>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <button onClick={() => setSelectedId(r.id)}
+                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                        View
+                      </button>
+                      {canCancel ? (<>
                       <button onClick={() => openCancellationDialog('approve', r)}
                         style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
                         Approve
@@ -1264,6 +1351,7 @@ export default function Reservations() {
                         style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
                         Deny
                       </button>
+                      </>) : waitingForAdmin}
                     </div>
                   </div>
                 ))}
@@ -1281,7 +1369,7 @@ export default function Reservations() {
                     {r.refundDecision?.alternatives?.length > 0 && (
                       <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '11px' }}>Options: {r.refundDecision.alternatives.join(' ')}</p>
                     )}
-                    {r.refundRequestStatus === 'needs_review' && (
+                    {canDecideRefunds && r.refundRequestStatus === 'needs_review' && (
                       <label style={{ display: 'inline-grid', gap: 4, margin: '0 10px 10px 0', color: MUTED, fontSize: 11 }}>
                         Staff-verified refund amount (₱)
                         <input type="number" min="0.01" step="0.01" value={manualRefunds[r.id] || ''}
@@ -1289,6 +1377,7 @@ export default function Reservations() {
                           style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 7, padding: '8px' }} />
                       </label>
                     )}
+                    {!canDecideRefunds ? waitingForAdmin : (
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       <button disabled={decisionBusy === r.id || (r.refundRequestStatus === 'needs_review' && !manualRefunds[r.id])}
                         onClick={() => decideRequest('approve-refund', r, r.refundRequestStatus === 'needs_review' ? { amount: manualRefunds[r.id] } : {})}
@@ -1298,6 +1387,7 @@ export default function Reservations() {
                       <button disabled={decisionBusy === r.id} onClick={() => decideRequest('review-refund', r)}
                         style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Keep for manual review</button>
                     </div>
+                    )}
                   </article>
                 ))}
               </NotificationGroup>

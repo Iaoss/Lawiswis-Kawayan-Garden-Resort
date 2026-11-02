@@ -334,7 +334,7 @@ export default function AdminDashboard() {
       map[key][type]++;
     };
     tasks.forEach(t => add(dateKey(t.date), 'tasks'));
-    recent.forEach(r => add(dateKey(r.checkIn), 'reservations'));
+    recent.filter(r => r.status !== 'cancelled').forEach(r => add(dateKey(r.checkIn), 'reservations'));
     return map;
   }, [tasks, recent]);
 
@@ -354,7 +354,7 @@ export default function AdminDashboard() {
 
   const selectedKey = dateKey(selectedDay);
   const dayTasks = tasks.filter(t => dateKey(t.date) === selectedKey);
-  const dayReservations = recent.filter(r => dateKey(r.checkIn) === selectedKey);
+  const dayReservations = recent.filter(r => r.status !== 'cancelled' && dateKey(r.checkIn) === selectedKey);
 
   // Memoized so their identity stays stable across renders (prevents inputs
   // inside <Card> from losing focus on every keystroke).

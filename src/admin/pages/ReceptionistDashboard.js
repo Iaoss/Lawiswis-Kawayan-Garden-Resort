@@ -187,7 +187,7 @@ export default function ReceptionistDashboard() {
       map[key][type]++;
     };
     tasks.forEach(t => add(dateKey(t.date), 'tasks'));
-    allReservations.forEach(r => add(dateKey(r.checkIn), 'reservations'));
+    allReservations.filter(r => r.status !== 'cancelled').forEach(r => add(dateKey(r.checkIn), 'reservations'));
     return map;
   }, [tasks, allReservations]);
 
@@ -207,7 +207,7 @@ export default function ReceptionistDashboard() {
 
   const selectedKey = dateKey(selectedDay);
   const dayTasks = tasks.filter(t => dateKey(t.date) === selectedKey);
-  const dayReservations = allReservations.filter(r => dateKey(r.checkIn) === selectedKey);
+  const dayReservations = allReservations.filter(r => r.status !== 'cancelled' && dateKey(r.checkIn) === selectedKey);
 
   const inputStyle = {
     width: '100%', padding: '7px 10px', borderRadius: '8px',

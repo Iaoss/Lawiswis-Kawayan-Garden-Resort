@@ -7,6 +7,8 @@
 // so group/corporate bookings, and bookings confirmed straight away by an
 // online payment, never showed up.
 
+import { GUEST_REPLY_LABELS, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
+
 export const NEW_BOOKING_DAYS = 7;
 export const ACTIVE_MODIFICATION_STATUSES = ['requested', 'needs_review', 'awaiting_payment', 'awaiting_refund'];
 export const ACTIVE_REFUND_STATUSES = ['requested', 'eligible', 'needs_review', 'awaiting_refund'];
@@ -50,14 +52,32 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
     const createdMs = toMs(r.createdAt);
     if (isGuestBooking(r) && createdMs >= since && status !== 'cancelled') {
       const group = lower(r.type) === 'corporate';
+      const unpaid = isUnpaidOnlineBooking(r);
       const paid = lower(r.paymentStatus) === 'paid' ? 'Paid' : lower(r.paymentStatus) === 'partial' ? 'Part paid' : 'Not paid yet';
       items.push({
         id: `new-booking_${r.id}`,
-        icon: group ? 'ti-users-group' : 'ti-calendar-plus',
-        badge: group ? 'New Group Booking' : 'New Booking',
+        icon: group ? 'ti-users-group' : unpaid ? 'ti-alert-triangle' : 'ti-calendar-plus',
+        badge: group ? 'New Group Booking' : unpaid ? 'New Booking · Unpaid' : 'New Booking',
         message: `${guest} · ${ref(r.id)}`,
         details: `${r.checkIn || '—'}${r.checkOut && r.checkOut !== r.checkIn ? ` → ${r.checkOut}` : ''} · ${peso(r.totalAmount)} · ${paid}${status ? ` · ${status}` : ''}`,
         timeMs: createdMs,
+        bookingId: r.id,
+        path,
+      });
+    }
+
+    // The guest answered "Did you make this reservation?".
+    const reply = r.unpaidFollowUp?.guestReply;
+    if (reply && GUEST_REPLY_LABELS[reply] && isUnpaidOnlineBooking(r)) {
+      items.push({
+        id: `guest-reply_${r.id}_${reply}_${toMs(r.unpaidFollowUp.guestRepliedAt)}`,
+        icon: reply === 'yes' ? 'ti-user-check' : 'ti-user-x',
+        badge: 'Guest Replied',
+        message: `${guest} · ${ref(r.id)}`,
+        details: reply === 'yes'
+          ? `${GUEST_REPLY_LABELS.yes}. Send a payment link.`
+          : `${GUEST_REPLY_LABELS.no}. You may cancel it.`,
+        timeMs: toMs(r.unpaidFollowUp.guestRepliedAt) || createdMs,
         bookingId: r.id,
         path,
       });

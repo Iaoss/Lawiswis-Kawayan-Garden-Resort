@@ -26,6 +26,8 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { verifyStaff } from '../lib/verifyStaff';
 import { describeBillingAction, logActivity } from '../lib/activityLog';
 import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
+import { shouldAutoConfirm } from '../lib/recordPayMongoPayment';
+import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 import { getCottageFee, stayRangesOverlap } from '../src/lib/bookingPricing';
@@ -79,7 +81,19 @@ async function recordPayment({ staff, reservationId, amount, method }) {
     const amountPaid = money(Number(reservation.amountPaid || 0) + paid);
     const total = Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0);
     const paymentStatus = paymentStatusFor(total, amountPaid);
-    transaction.update(ref, { amountPaid, paymentStatus });
+    // A pending booking is confirmed once at least the deposit is paid,
+    // the same rule as online payments.
+    const autoConfirmed = shouldAutoConfirm(reservation, {}, amountPaid);
+    transaction.update(ref, {
+      amountPaid,
+      paymentStatus,
+      ...(autoConfirmed ? {
+        status: 'confirmed',
+        autoConfirmedAt: FieldValue.serverTimestamp(),
+        statusUpdatedAt: FieldValue.serverTimestamp(),
+        statusUpdatedBy: staff.uid,
+      } : {}),
+    });
     transaction.set(paymentRef, {
       reservationId,
       guestName: reservation.guestName || '',
@@ -89,8 +103,16 @@ async function recordPayment({ staff, reservationId, amount, method }) {
       recordedBy: staff.uid,
       createdAt: FieldValue.serverTimestamp(),
     });
-    return { amountPaid, paymentStatus, balance: money(total - amountPaid) };
+    return { amountPaid, paymentStatus, balance: money(total - amountPaid), autoConfirmed };
   });
+
+  if (result.autoConfirmed) {
+    try {
+      await sendConfirmationEmailOnce(adminDb, FieldValue, reservationId);
+    } catch (error) {
+      console.error('Confirmation email after counter payment failed:', error);
+    }
+  }
 
   let receipt = null;
   let receiptError = '';
@@ -108,7 +130,7 @@ async function addCharge({ staff, reservationId, amount, description }) {
   if (!label) throw new BillingError(400, 'Describe the extra charge.');
   if (!Number.isFinite(charge) || charge <= 0 || charge > MAX_CHARGE) {
     throw new BillingError(400, `Enter a charge between ₱1 and ₱${MAX_CHARGE.toLocaleString()}.`);
-  }
+  }   
   return adminDb.runTransaction(async transaction => {
     const { ref, reservation } = await getReservation(transaction, reservationId);
     if (['cancelled', 'checked-out'].includes(reservation.status)) {
