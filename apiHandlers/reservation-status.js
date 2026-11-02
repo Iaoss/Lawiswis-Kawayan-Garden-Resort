@@ -32,6 +32,7 @@ import {
   RESERVATION_STATUSES,
   getStatusTransitionError,
   getEarlyCheckInError,
+  getCheckInPaymentError,
   manilaDateKey,
   formatDuration,
   getOutstandingBalance,
@@ -79,6 +80,9 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   // No check-in before the booked check-in date.
   const earlyError = status === 'checked-in' ? getEarlyCheckInError(reservation) : '';
   if (earlyError) throw new StatusError(409, earlyError);
+  // Guests pay in full before entering the resort.
+  const unpaidError = status === 'checked-in' ? getCheckInPaymentError(reservation) : '';
+  if (unpaidError) throw new StatusError(409, unpaidError);
 
   const now = new Date();
   const overstay = getOverstay(reservation, now);

@@ -130,9 +130,9 @@ export default function Billing() {
       const result = await staffApi('staff-billing', {
         action: 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: selected.paymentMethod || 'cash',
       });
-      setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus, ...(result.autoConfirmed ? { status: 'confirmed' } : {}) }));
+      setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus, ...(result.autoCheckedIn ? { status: 'checked-in' } : result.autoConfirmed ? { status: 'confirmed' } : {}) }));
       fetchReservations();
-      setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${result.autoConfirmed ? ' The booking is now confirmed.' : ''}${receiptNotice(result)}`);
+      setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${result.autoCheckedIn ? ' Fully paid: the guest is now checked in.' : result.autoConfirmed ? ' The booking is now confirmed.' : ''}${receiptNotice(result)}`);
       setPaymentAmount('');
     } catch (error) {
       appAlert(error.message, { title: 'Couldn’t save', tone: 'danger' });

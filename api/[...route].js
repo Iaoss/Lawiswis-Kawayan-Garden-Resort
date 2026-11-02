@@ -27,6 +27,7 @@ import sendThankYou from '../apiHandlers/send-thank-you';
 import reservationStatus from '../apiHandlers/reservation-status';
 import staffBilling from '../apiHandlers/staff-billing';
 import bookingReply from '../apiHandlers/booking-reply';
+import chatQuickReply from '../apiHandlers/chat-quick-reply';
 
 // The body parser is disabled for the whole function because the PayMongo
 // webhook needs the raw body for signature checks. Other routes get req.body
@@ -62,6 +63,7 @@ const handlers = {
   'send-thank-you': sendThankYou,
   occupancy,
   'booking-reply': bookingReply,
+  'chat-quick-reply': chatQuickReply,
 };
 
 function readBody(req) {

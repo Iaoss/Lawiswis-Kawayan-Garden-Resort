@@ -374,21 +374,22 @@ export default function Messages() {
                   </div>
                 )}
                 {messages.map(m => (
-                  <div key={m.id} style={{ display: 'flex', justifyContent: m.sender === 'staff' ? 'flex-end' : 'flex-start', gap: '8px', alignItems: 'flex-end' }}>
-                    {m.sender !== 'staff' && (
+                  <div key={m.id} style={{ display: 'flex', justifyContent: ['staff', 'bot'].includes(m.sender) ? 'flex-end' : 'flex-start', gap: '8px', alignItems: 'flex-end' }}>
+                    {!['staff', 'bot'].includes(m.sender) && (
                       <BeamAvatar seed={guestAvatarSeed(selected)} size={28} />
                     )}
                     <div style={{ maxWidth: '65%' }}>
-                      <div style={{ background: m.sender === 'staff' ? DARK : C.card, color: m.sender === 'staff' ? ACCENT : C.text, border: m.sender === 'staff' ? 'none' : `1px solid ${C.border}`, borderRadius: m.sender === 'staff' ? '16px 16px 4px 16px' : '16px 16px 16px 4px', padding: '10px 14px', fontSize: '13px', lineHeight: '1.5' }}>
+                      <div style={{ background: ['staff', 'bot'].includes(m.sender) ? DARK : C.card, color: ['staff', 'bot'].includes(m.sender) ? ACCENT : C.text, border: ['staff', 'bot'].includes(m.sender) ? 'none' : `1px solid ${C.border}`, borderRadius: ['staff', 'bot'].includes(m.sender) ? '16px 16px 4px 16px' : '16px 16px 16px 4px', padding: '10px 14px', fontSize: '13px', lineHeight: '1.5' }}>
                         {m.text}
                       </div>
-                      <div style={{ fontSize: '10px', color: MUTED, marginTop: '4px', textAlign: m.sender === 'staff' ? 'right' : 'left' }}>
+                      <div style={{ fontSize: '10px', color: MUTED, marginTop: '4px', textAlign: ['staff', 'bot'].includes(m.sender) ? 'right' : 'left' }}>
+                        {m.sender === 'bot' && 'Auto-reply · '}
                         {(m.timestamp || m.createdAt)?.seconds ? new Date((m.timestamp || m.createdAt).seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
                       </div>
                     </div>
-                    {m.sender === 'staff' && (
+                    {['staff', 'bot'].includes(m.sender) && (
                       <span title={m.staffName || 'Staff'}>
-                        <StaffAvatar seed={m.staffAvatar} name={m.staffName || 'Staff'} size={28} background={ACCENT} color={DARK} />
+                        <StaffAvatar seed={m.staffAvatar} name={m.staffName || (m.sender === 'bot' ? 'Auto reply' : 'Staff')} size={28} background={ACCENT} color={DARK} />
                       </span>
                     )}
                   </div>

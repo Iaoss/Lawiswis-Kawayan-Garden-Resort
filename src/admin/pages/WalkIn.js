@@ -292,7 +292,7 @@ export default function WalkIn() {
       } catch (confirmationError) {
         confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
       }
-      setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is ${arrivesToday ? 'now occupied' : `reserved for ${isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`}`}.${confirmationMessage}${receiptMessage}`);
+      setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is ${created.checkedIn ? 'now occupied and the guest is checked in' : arrivesToday ? 'held for today; the guest is checked in once they pay in full' : `reserved for ${isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`}`}.${confirmationMessage}${receiptMessage}`);
       setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', cottageId:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
       setNameErrors({});
       setSelectedRoom(null);

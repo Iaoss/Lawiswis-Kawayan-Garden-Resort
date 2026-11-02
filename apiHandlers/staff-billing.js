@@ -33,7 +33,7 @@ import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 import { getCottageFee, getReservationDayVisitors, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
 import { DEFAULT_CANCELLATION_POLICY, getDateChangeBlock, getStaffCancellationFee } from '../src/lib/cancellationPolicy';
-import { manilaDateKey } from '../src/lib/reservationStatus';
+import { canAutoCheckIn, manilaDateKey } from '../src/lib/reservationStatus';
 import { isRoomGuest, priceService } from '../src/lib/services';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
@@ -75,6 +75,9 @@ async function recordPayment({ staff, reservationId, amount, method }) {
   const result = await adminDb.runTransaction(async transaction => {
     const { ref, reservation } = await getReservation(transaction, reservationId);
     if (reservation.status === 'cancelled') throw new BillingError(409, 'Payments can’t be recorded on a cancelled booking.');
+    // Read the room now: a transaction must do all its reads before writing.
+    const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
+    const roomSnap = roomRef ? await transaction.get(roomRef) : null;
     const balance = owed(reservation);
     if (balance <= 0) throw new BillingError(409, 'This reservation has no balance left to pay.');
     if (paid - balance > 0.001) {
@@ -85,7 +88,10 @@ async function recordPayment({ staff, reservationId, amount, method }) {
     const paymentStatus = paymentStatusFor(total, amountPaid);
     // A pending booking is confirmed once at least the deposit is paid,
     // the same rule as online payments.
-    const autoConfirmed = shouldAutoConfirm(reservation, {}, amountPaid);
+    // Paid in full on the day of the stay: the guest is checked in, since
+    // guests pay before entering the resort.
+    const autoCheckedIn = canAutoCheckIn({ ...reservation, amountPaid });
+    const autoConfirmed = !autoCheckedIn && shouldAutoConfirm(reservation, {}, amountPaid);
     transaction.update(ref, {
       amountPaid,
       paymentStatus,
@@ -95,7 +101,15 @@ async function recordPayment({ staff, reservationId, amount, method }) {
         statusUpdatedAt: FieldValue.serverTimestamp(),
         statusUpdatedBy: staff.uid,
       } : {}),
+      ...(autoCheckedIn ? {
+        status: 'checked-in',
+        checkedInAt: reservation.checkedInAt || FieldValue.serverTimestamp(),
+        autoCheckedInAt: FieldValue.serverTimestamp(),
+        statusUpdatedAt: FieldValue.serverTimestamp(),
+        statusUpdatedBy: staff.uid,
+      } : {}),
     });
+    if (autoCheckedIn && roomSnap?.exists) transaction.update(roomRef, { status: 'occupied' });
     transaction.set(paymentRef, {
       reservationId,
       guestName: reservation.guestName || '',
@@ -105,7 +119,7 @@ async function recordPayment({ staff, reservationId, amount, method }) {
       recordedBy: staff.uid,
       createdAt: FieldValue.serverTimestamp(),
     });
-    return { amountPaid, paymentStatus, balance: money(total - amountPaid), autoConfirmed };
+    return { amountPaid, paymentStatus, balance: money(total - amountPaid), autoConfirmed, autoCheckedIn };
   });
 
   if (result.autoConfirmed) {
@@ -301,6 +315,8 @@ async function createWalkIn({ staff, booking = {} }) {
     }
     const totalAmount = money(pricing.subtotalAmount);
     const amountPaid = paymentStatus === 'paid' ? totalAmount : 0;
+    const arrivesToday = details.checkIn === today;
+    const checkedInNow = arrivesToday && amountPaid > 0 && amountPaid >= totalAmount;
 
     transaction.set(reservationRef, {
       firstName,
@@ -327,7 +343,9 @@ async function createWalkIn({ staff, booking = {} }) {
       paymentMethod,
       paymentStatus,
       type: 'walk-in',
-      status: 'confirmed',
+      // Paid in full and arriving today: the guest goes straight in.
+      status: checkedInNow ? 'checked-in' : 'confirmed',
+      ...(checkedInNow ? { checkedInAt: FieldValue.serverTimestamp() } : {}),
       createdBy: staff.uid,
       createdAt: FieldValue.serverTimestamp(),
     });
@@ -342,10 +360,9 @@ async function createWalkIn({ staff, booking = {} }) {
         createdAt: FieldValue.serverTimestamp(),
       });
     }
-    // Only mark the room occupied when the guest arrives today.
-    const arrivesToday = details.checkIn === today;
-    if (arrivesToday) transaction.update(roomRef, { status: 'occupied' });
-    return { totalAmount, amountPaid, roomNumber: room.roomNumber || '', arrivesToday };
+    // The room is occupied once the guest is checked in (paid, arriving today).
+    if (checkedInNow) transaction.update(roomRef, { status: 'occupied' });
+    return { totalAmount, amountPaid, roomNumber: room.roomNumber || '', arrivesToday, checkedIn: checkedInNow };
   });
 
   let receipt = null;

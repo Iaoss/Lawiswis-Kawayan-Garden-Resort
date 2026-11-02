@@ -17,6 +17,7 @@ import {
   getOverstay,
   getStatusTransitionError,
   getEarlyCheckInError,
+  getCheckInPaymentError,
   hasOutstandingBalance,
 } from '../../lib/reservationStatus';
 import { appPrompt } from '../../components/ui/app-dialog';
@@ -719,7 +720,7 @@ export default function Reservations() {
     if (isReceptionist && reservation.status === 'cancelled') return;
     // Same one-step-at-a-time rule the server enforces.
     const transitionError = getStatusTransitionError(reservation.status, status)
-      || (status === 'checked-in' ? getEarlyCheckInError(reservation) : '');
+      || (status === 'checked-in' ? getEarlyCheckInError(reservation) || getCheckInPaymentError(reservation) : '');
     if (transitionError) {
       setToast({ type: 'error', text: transitionError });
       if (status === 'cancelled') throw new Error(transitionError);
@@ -1034,9 +1035,10 @@ export default function Reservations() {
         lockedReason={lockedReason}
         colors={stepperColors}
         stepNotes={owes ? {
+          'checked-in': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. They must pay in full before check-in.`,
           'checked-out': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. Collect payment first${canOverrideCheckout ? ', or override with a reason' : ''}.`,
         } : {}}
-        getStepError={to => getStatusTransitionError(r.status, to) || (to === 'checked-in' ? getEarlyCheckInError(r) : '')}
+        getStepError={to => getStatusTransitionError(r.status, to) || (to === 'checked-in' ? getEarlyCheckInError(r) || getCheckInPaymentError(r) : '')}
         onSelect={status => updateStatus(r.id, status)}
         onCancel={() => openCancellationDialog(canCancel ? 'cancel' : 'request', r)}
         cancelLabel={canCancel ? 'Cancel booking' : 'Request cancellation'}

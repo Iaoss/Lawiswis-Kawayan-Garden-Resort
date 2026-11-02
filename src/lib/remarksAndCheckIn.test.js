@@ -31,3 +31,24 @@ describe('remarks', () => {
     expect(getReservationRemarks({ status: 'checked-out' })).toEqual([]);
   });
 });
+
+describe('check-in needs full payment', () => {
+  const { getCheckInPaymentError, canAutoCheckIn } = require('./reservationStatus');
+  const now = new Date('2026-11-05T03:00:00Z'); // Nov 5, 11 AM in Manila
+
+  it('blocks check-in while the guest owes money', () => {
+    expect(getCheckInPaymentError({ totalAmount: 3000, amountPaid: 1500 })).toMatch(/still owes ₱1,500/);
+    expect(getCheckInPaymentError({ totalAmount: 3000, extraCharges: 200, amountPaid: 3000 })).toMatch(/₱200/);
+    expect(getCheckInPaymentError({ totalAmount: 3000, amountPaid: 3000 })).toBe('');
+  });
+
+  it('checks in a fully paid booking on its stay days only', () => {
+    const paid = { status: 'confirmed', totalAmount: 3000, amountPaid: 3000, checkIn: '2026-11-05', checkOut: '2026-11-06' };
+    expect(canAutoCheckIn(paid, now)).toBe(true);
+    expect(canAutoCheckIn({ ...paid, checkIn: '2026-11-06', checkOut: '2026-11-07' }, now)).toBe(false);
+    expect(canAutoCheckIn({ ...paid, checkIn: '2026-11-01', checkOut: '2026-11-02' }, now)).toBe(false);
+    expect(canAutoCheckIn({ ...paid, amountPaid: 2999 }, now)).toBe(false);
+    expect(canAutoCheckIn({ ...paid, status: 'cancelled' }, now)).toBe(false);
+    expect(canAutoCheckIn({ ...paid, checkOut: '2026-11-05' }, now)).toBe(true);
+  });
+});

@@ -10,6 +10,8 @@ import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { Skeleton } from '../../components/ui/v-skeleton-8-utils/skeleton.jsx';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
+import RoomCarousel from '../components/RoomCarousel';
+import { decorateRoom } from '../lib/roomCatalog';
 
 /* ─────────────────────────────────────────────
    BRAND PALETTE — pulled from the Lawiswis Kawayan
@@ -50,14 +52,6 @@ const rawPhotos = {
 // Banners at full width, logos small, everything else at feature size.
 const PHOTO_WIDTHS = { hero: IMAGE_WIDTHS.hero, welcome: IMAGE_WIDTHS.hero, logoWide: IMAGE_WIDTHS.logo, logoFooter: IMAGE_WIDTHS.logo };
 const photos = Object.fromEntries(Object.entries(rawPhotos).map(([key, url]) => [key, optimizeImage(url, PHOTO_WIDTHS[key] || IMAGE_WIDTHS.large)]));
-
-/* Fallback room photography, cycled when Firestore rooms don't carry images */
-const roomPhotos = [
-  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Himbing-01-1400x700-1.jpeg',
-  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tahimik-02-1400x700-1.jpeg',
-  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/MInamahal-01-1400x700-1.jpeg',
-  'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Panaginip-05.jpeg',
-].map(url => optimizeImage(url, IMAGE_WIDTHS.card));
 
 /* Fallback news photography, cycled when Firestore articles don't carry images */
 const newsFallbackPhotos = [
@@ -603,32 +597,14 @@ export default function Home() {
         {rooms.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '70px', background: CREAM, borderRadius: '6px', color: '#8b8977', fontFamily: SANS, fontSize: '13px' }}>No rooms available right now — check back soon.</div>
         ) : (
-          <div className="responsive-grid-3" style={{ gap: '26px' }}>
-            {rooms.slice(0, 3).map((room, i) => (
-              <div key={room.id} style={{ background: PAPER, borderRadius: '6px', overflow: 'hidden', border: `1px solid ${LINE}`, transition: 'transform 0.4s cubic-bezier(0.16,1,0.3,1), box-shadow 0.4s cubic-bezier(0.16,1,0.3,1)' }}
-                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-5px)'; e.currentTarget.style.boxShadow = '0 20px 40px rgba(0,0,0,0.1)'; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}>
-                <div style={{ position: 'relative', height: '210px', overflow: 'hidden' }}>
-                  <img src={roomPhotos[i % roomPhotos.length]} alt={`Room ${room.roomNumber}`} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  <div style={{ position: 'absolute', top: '14px', left: '14px', background: BRASS, borderRadius: '3px', padding: '5px 12px', fontSize: '10px', fontWeight: '600', letterSpacing: '0.04em', color: '#fff', fontFamily: SANS }}>AVAILABLE</div>
-                </div>
-                <div style={{ padding: '22px' }}>
-                  <div style={{ fontWeight: '600', fontSize: '17px', color: INK, marginBottom: '6px', fontFamily: SERIF }}>Room {room.roomNumber}</div>
-                  <div style={{ fontSize: '12px', color: '#8b8977', marginBottom: '16px', fontFamily: SANS }}>{room.amenities || 'AC, TV, WiFi, Hot Shower'}</div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <span style={{ fontSize: '21px', fontWeight: '600', color: FOREST, fontFamily: SERIF }}>₱{Number(room.price).toLocaleString()}</span>
-                      <span style={{ fontSize: '11px', color: '#9b9788', fontFamily: SANS }}> /night</span>
-                    </div>
-                    <button disabled={!canBook} onClick={() => navigate(`/book/${room.id}`)}
-                      style={{ background: FOREST, color: '#fff', border: 'none', borderRadius: '3px', padding: '10px 20px', fontSize: '11.5px', fontWeight: '600', letterSpacing: '0.03em', cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.65, fontFamily: SANS }}>
-                      {canBook ? 'BOOK NOW' : availabilityLoading ? 'CHECKING' : availabilityError ? 'UNAVAILABLE' : 'CLOSED'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+          <RoomCarousel
+            rooms={rooms.map(decorateRoom)}
+            colors={{ FOREST, MOSS, BRASS, INK, LINE, PAPER, SERIF, SANS }}
+            canBook={canBook}
+            bookLabel={canBook ? 'BOOK NOW' : availabilityLoading ? 'CHECKING' : availabilityError ? 'UNAVAILABLE' : 'CLOSED'}
+            onBook={room => navigate(`/book/${room.id}`)}
+            onView={() => navigate('/rooms')}
+          />
         )}
       </div>
 

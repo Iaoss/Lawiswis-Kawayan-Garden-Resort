@@ -30,6 +30,25 @@ export function getEarlyCheckInError(reservation, now = new Date()) {
   return `This booking starts on ${label}. The guest can only be checked in from that day.`;
 }
 
+// Guests pay in full before they enter the resort, so check-in needs a zero
+// balance. Returns the reason check-in is blocked, or ''.
+export function getCheckInPaymentError(reservation) {
+  const owed = Math.round(getOutstandingBalance(reservation) * 100) / 100;
+  if (owed <= 0) return '';
+  return `The guest still owes ₱${owed.toLocaleString()}. Record the full payment in Billing first; the booking is checked in automatically once the balance is ₱0.`;
+}
+
+// True when a fully paid booking can be checked in today: it's pending or
+// confirmed and today (Philippine time) falls within its stay.
+export function canAutoCheckIn(reservation, now = new Date()) {
+  if (!['pending', 'confirmed'].includes(String(reservation?.status || '').toLowerCase())) return false;
+  if (hasOutstandingBalance(reservation)) return false;
+  const today = manilaDateKey(now);
+  const checkIn = String(reservation?.checkIn || '').slice(0, 10);
+  const checkOut = String(reservation?.checkOut || checkIn).slice(0, 10);
+  return Boolean(checkIn) && checkIn <= today && (checkOut >= today || checkOut === checkIn);
+}
+
 export function getStatusTransitionError(from, to) {
   if (from === to) return '';
   if (!RESERVATION_STATUSES.includes(to)) return 'Choose a valid reservation status.';
