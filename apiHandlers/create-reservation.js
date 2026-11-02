@@ -38,9 +38,10 @@ import {
   getGuestCountViolation,
   getStayUnits,
   isSingleDayStay,
+  normalizeDayVisitors,
   stayRangesOverlap,
 } from '../src/lib/bookingPricing';
-import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -87,6 +88,8 @@ export default async function handler(req, res) {
       preferredContactMethod,
       paymentMethod,
       promoCode: submittedPromoCode,
+      dayVisitors: submittedDayVisitors,
+      contactLink,
       website, // honeypot field — real guests never fill this in
     } = req.body || {};
 
@@ -174,6 +177,18 @@ export default async function handler(req, res) {
     if (singleDay && bookingType !== 'daytour') {
       return res.status(400).json({ error: 'Single-day bookings must be day tours. Choose a check-out date after check-in for an overnight stay.' });
     }
+    // A day or night tour is one date only.
+    if (!singleDay && bookingType === 'daytour') {
+      return res.status(400).json({ error: 'A day or night tour is for one date only. Choose the same check-in and check-out date, or book an overnight stay.' });
+    }
+    let dayVisitors = null;
+    try {
+      dayVisitors = bookingType === 'overnight' ? normalizeDayVisitors(submittedDayVisitors) : null;
+    } catch (visitorError) {
+      return res.status(400).json({ error: visitorError.message });
+    }
+    const contactLinkError = getContactLinkError(preferredContactMethod, contactLink);
+    if (contactLinkError) return res.status(400).json({ error: contactLinkError });
 
     const stayError = getStayDurationError(checkIn, checkOut, { allowSingleDay: singleDay });
     if (stayError) return res.status(400).json({ error: stayError });
@@ -235,6 +250,7 @@ export default async function handler(req, res) {
       tourPeriod: bookingType === 'daytour' ? tourPeriod : 'day',
       cottageId: cottageId || '',
       cottageFee: requestedCottageFee,
+      dayVisitors,
     });
     const totalAmount = pricing.subtotalAmount;
 
@@ -266,8 +282,13 @@ export default async function handler(req, res) {
       extraGuestCharge: pricing.extraGuestCharge,
       cottageId: pricing.cottageId,
       cottageFee: pricing.cottageFee,
+      dayVisitorAdults: pricing.dayVisitorAdults,
+      dayVisitorChildren: pricing.dayVisitorChildren,
+      dayVisitorPeriod: pricing.dayVisitorPeriod,
+      dayVisitorCharge: pricing.dayVisitorCharge,
       notes: notes || '',
       preferredContactMethod,
+      contactLink: preferredContactMethod === 'Facebook Messenger' ? String(contactLink).trim() : '',
       paymentMethod,
       subtotalAmount: totalAmount,
       nights,

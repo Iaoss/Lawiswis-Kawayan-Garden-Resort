@@ -436,7 +436,7 @@ export default function Home() {
             }}>
               An 18-year-old garden hideaway with 32 cozy rooms, quiet pools, and bamboo-shaded grounds — where work and play sit comfortably side by side.
             </p>
-            <OccupancyBadge style={{ marginBottom: '24px', background: 'rgba(255,255,255,0.92)' }} />
+            <OccupancyBadge style={{ marginBottom: '24px' }} />
             <div style={{
               display: 'flex', flexWrap: 'wrap', gap: '14px',
               opacity: heroIn ? 1 : 0, transform: heroIn ? 'translateY(0)' : 'translateY(18px)',

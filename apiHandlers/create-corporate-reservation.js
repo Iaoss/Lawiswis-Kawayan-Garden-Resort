@@ -3,7 +3,7 @@ import { sendReservationPendingEmail } from '../lib/email';
 import { getCorporateNights, getCorporatePackage, getGroupAdvanceNoticeError, getGroupGuestError } from '../src/lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
 import { getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
-import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -31,6 +31,7 @@ export default async function handler(req, res) {
       email,
       phone,
       preferredContactMethod,
+      contactLink,
       totalGuests,
       bookingType,
       checkIn,
@@ -65,6 +66,9 @@ export default async function handler(req, res) {
       || (accommodationInterest !== undefined && typeof accommodationInterest !== 'boolean')) {
       return res.status(400).json({ error: 'Please provide valid group, contact, and stay details.' });
     }
+
+    const contactLinkError = getContactLinkError(preferredContactMethod, contactLink);
+    if (contactLinkError) return res.status(400).json({ error: contactLinkError });
 
     const nameParts = typeof guestName === 'string' ? splitGuestName(guestName) : {};
     const contactFirstName = String(firstName ?? nameParts.firstName ?? '').trim();
@@ -124,6 +128,7 @@ export default async function handler(req, res) {
       emailLower: email.trim().toLowerCase(),
       phone,
       preferredContactMethod,
+      contactLink: preferredContactMethod === 'Facebook Messenger' ? String(contactLink).trim() : '',
       checkIn,
       checkOut,
       checkInTime: isDayTour ? 'Flexible day-tour arrival' : 'Flexible check-in',

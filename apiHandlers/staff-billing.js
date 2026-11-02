@@ -30,13 +30,15 @@ import { shouldAutoConfirm } from '../lib/recordPayMongoPayment';
 import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
-import { getCottageFee, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { getCottageFee, getReservationDayVisitors, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
 import { DEFAULT_CANCELLATION_POLICY, getDateChangeBlock, getStaffCancellationFee } from '../src/lib/cancellationPolicy';
 import { manilaDateKey } from '../src/lib/reservationStatus';
 import { isRoomGuest, priceService } from '../src/lib/services';
 
-export const COUNTER_PAYMENT_METHODS = ['cash', 'gcash', 'card', 'bank', 'online'];
+// The resort has no card terminal: guests pay at the counter by cash or QR
+// (GCash / QR Ph). 'card' stays accepted only for older bookings.
+export const COUNTER_PAYMENT_METHODS = ['cash', 'gcash', 'qrph', 'bank', 'online', 'card'];
 const WALK_IN_PAYMENT_STATUSES = ['paid', 'partial', 'pending'];
 const MAX_CHARGE = 100000;
 
@@ -403,7 +405,11 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
 
     let pricing;
     try {
-      pricing = priceBookingDetails(room, details, { cottageId: reservation.cottageId || '', cottageFee: Number(reservation.cottageFee || 0) });
+      pricing = priceBookingDetails(room, details, {
+        cottageId: reservation.cottageId || '',
+        cottageFee: Number(reservation.cottageFee || 0),
+        dayVisitors: getReservationDayVisitors(reservation),
+      });
     } catch (error) {
       throw new BillingError(409, error.message || 'This room has no valid rate.');
     }

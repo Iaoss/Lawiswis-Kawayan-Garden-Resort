@@ -6,7 +6,7 @@ import {
   CORPORATE_FEATURE_ROWS, CORPORATE_PACKAGES, GROUP_ADVANCE_DAYS, MAX_GROUP_GUESTS, MIN_GROUP_GUESTS, isCorporateFeatureIncluded,
 } from '../../lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
-import { PREFERRED_CONTACT_METHODS } from '../../lib/preferredContactMethods';
+import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError } from '../../lib/preferredContactMethods';
 import { CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
@@ -30,6 +30,7 @@ export default function CorporateBooking() {
     email: '',
     phone: '',
     preferredContactMethod: '',
+    contactLink: '',
     totalGuests: 15,
     bookingType: 'overnight',
     checkIn: '',
@@ -102,6 +103,11 @@ export default function CorporateBooking() {
       setErrorMessage('Enter a valid first and last name (2–35 letters each).');
       return;
     }
+    const contactLinkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
+    if (contactLinkError) {
+      setErrorMessage(contactLinkError);
+      return;
+    }
 
     setSubmitting(true);
     let reservationId = savedReservationId;
@@ -118,6 +124,7 @@ export default function CorporateBooking() {
             email: form.email.trim(),
             phone: form.phone.trim(),
             preferredContactMethod: form.preferredContactMethod,
+            contactLink: form.preferredContactMethod === FACEBOOK_CONTACT_METHOD ? form.contactLink.trim() : '',
             totalGuests,
             bookingType: form.bookingType,
             checkIn: form.checkIn,
@@ -239,7 +246,23 @@ export default function CorporateBooking() {
               <label style={labelStyle}>Contact last name<input required minLength="2" maxLength="35" name="lastName" value={form.lastName} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Email address<input required type="email" maxLength="254" name="email" value={form.email} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Mobile number<input required type="tel" inputMode="numeric" pattern="09[0-9]{9}" maxLength="11" placeholder="09XXXXXXXXX" name="phone" value={form.phone} onChange={changeField} style={inputStyle} /></label>
-              <label style={labelStyle}>Preferred Contact Method *<select required name="preferredContactMethod" value={form.preferredContactMethod} onChange={changeField} style={inputStyle}><option value="">Select a method</option>{PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
+              <label style={labelStyle}>Preferred Contact Method *<select required name="preferredContactMethod" value={form.preferredContactMethod} onChange={changeField} style={inputStyle}><option value="">Select a method</option>{PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select>
+                {['Email', 'Phone'].includes(form.preferredContactMethod) && (
+                  <span style={{ font: `500 12px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none', color: FOREST_DEEP }}>
+                    {(form.preferredContactMethod === 'Email' ? form.email : form.phone).trim()
+                      ? <>We'll contact you at <strong style={{ overflowWrap: 'anywhere' }}>{(form.preferredContactMethod === 'Email' ? form.email : form.phone).trim()}</strong></>
+                      : `Enter your ${form.preferredContactMethod === 'Email' ? 'email address' : 'mobile number'} above.`}
+                  </span>
+                )}
+              </label>
+              {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
+                <label style={labelStyle}>Facebook profile link *
+                  <input required type="url" maxLength="200" name="contactLink" value={form.contactLink} onChange={changeField} placeholder="https://www.facebook.com/your.name" style={inputStyle} />
+                  <span style={{ font: `500 11px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none', color: form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink) ? '#b42318' : '#6b7280' }}>
+                    {(form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink)) || 'Copy the link from your Facebook profile and paste it here.'}
+                  </span>
+                </label>
+              )}
             </div>
           </section>
 

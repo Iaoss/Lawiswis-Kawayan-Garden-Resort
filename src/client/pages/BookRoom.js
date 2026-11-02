@@ -6,6 +6,8 @@ import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
   calculateBookingPrice,
+  MAX_DAY_VISITORS,
+  getSwimmingRate,
   COTTAGE_OPTIONS,
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
@@ -21,7 +23,7 @@ import {
   getTourCutoffError,
   isSingleDayStay,
 } from '../../lib/bookingPricing';
-import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
+import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 import { Pagination, usePagination } from '../../components/ui/pagination';
@@ -198,6 +200,7 @@ export default function BookRoom() {
     phone: '',
     address: '',
     preferredContactMethod: '',
+    contactLink: '', // Facebook profile link when Facebook Messenger is chosen
     checkIn: params.get('checkIn') || '',
     checkOut: params.get('checkOut') || '',
     adults: 1,
@@ -207,6 +210,11 @@ export default function BookRoom() {
     tourPeriod: 'day',
     overnightTimeSlot: 'morning',
     cottageId: '',
+    // Guests joining an overnight stay for a day/night tour only.
+    hasDayVisitors: false,
+    dayVisitorAdults: 1,
+    dayVisitorChildren: 0,
+    dayVisitorPeriod: 'day',
     notes: '',
     paymentMethod: 'online',
     website: '', // honeypot — real guests leave this blank; see hidden field below
@@ -289,6 +297,29 @@ export default function BookRoom() {
     </form>
   );
   const stayUnit = form.bookingType === 'daytour' ? 'day' : 'night';
+  const dayVisitors = useMemo(() => (form.bookingType === 'overnight' && form.hasDayVisitors
+    && Number(form.dayVisitorAdults) + Number(form.dayVisitorChildren) > 0
+    ? { adults: Number(form.dayVisitorAdults), children: Number(form.dayVisitorChildren), tourPeriod: form.dayVisitorPeriod }
+    : null), [form.bookingType, form.hasDayVisitors, form.dayVisitorAdults, form.dayVisitorChildren, form.dayVisitorPeriod]);
+  const visitorRate = getSwimmingRate(form.dayVisitorPeriod);
+
+  // Switching between an overnight stay and a tour keeps the dates sensible:
+  // a day or night tour is one date, an overnight stay needs a later check-out.
+  const changeBookingType = choice => {
+    setForm(previous => {
+      if (choice === 'overnight') {
+        let checkOut = previous.checkOut;
+        if (previous.checkIn && previous.checkOut <= previous.checkIn) {
+          const next = new Date(`${previous.checkIn}T00:00:00`);
+          next.setDate(next.getDate() + 1);
+          checkOut = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+          if (checkOut > maximumBookingDate) checkOut = previous.checkOut;
+        }
+        return { ...previous, bookingType: 'overnight', checkOut };
+      }
+      return { ...previous, bookingType: 'daytour', tourPeriod: choice, checkOut: previous.checkIn || previous.checkOut };
+    });
+  };
   const pricing = useMemo(() => room && nights > 0
     ? calculateBookingPrice({
       room,
@@ -299,8 +330,9 @@ export default function BookRoom() {
       tourPeriod: form.tourPeriod,
       cottageId: form.cottageId,
       cottageFee: getCottageFee(form.cottageId) ?? 0,
+      dayVisitors: dayVisitors,
     })
-    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId]);
+    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, dayVisitors]);
   const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
@@ -346,6 +378,22 @@ export default function BookRoom() {
       setForm(previous => ({ ...previous, bookingType: 'daytour' }));
     }
   }, [singleDay, form.bookingType]);
+
+  // A day or night tour covers one date only. If a tour still has two dates
+  // (e.g. it was switched from an overnight stay), keep just the first date.
+  useEffect(() => {
+    if (form.bookingType === 'daytour' && form.checkIn && form.checkOut !== form.checkIn) {
+      setForm(previous => ({ ...previous, checkOut: previous.checkIn }));
+    }
+  }, [form.bookingType, form.checkIn, form.checkOut]);
+
+  // Keep the address bar in step with the dates on the form.
+  useEffect(() => {
+    if (!roomId || !form.checkIn || !form.checkOut) return;
+    const current = new URLSearchParams(location.search);
+    if (current.get('checkIn') === form.checkIn && current.get('checkOut') === form.checkOut) return;
+    navigate(`/book/${roomId}?checkIn=${encodeURIComponent(form.checkIn)}&checkOut=${encodeURIComponent(form.checkOut)}`, { replace: true, state: location.state });
+  }, [roomId, form.checkIn, form.checkOut, location.search, location.state, navigate]);
 
   // Today's day tour closes at its 8:00 AM check-in, so move to the night tour while it's still open.
   useEffect(() => {
@@ -423,6 +471,7 @@ export default function BookRoom() {
         preferredContactMethod: isPreferredContactMethod(profile.preferredContactMethod)
           ? profile.preferredContactMethod
           : previous.preferredContactMethod,
+        contactLink: typeof profile.contactLink === 'string' ? profile.contactLink : previous.contactLink,
       }));
     }
 
@@ -622,6 +671,12 @@ export default function BookRoom() {
       document.getElementById('preferredContactMethod')?.focus();
       return;
     }
+    const contactLinkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
+    if (contactLinkError) {
+      setErrorMsg(contactLinkError);
+      document.getElementById('contactLink')?.focus();
+      return;
+    }
     if (guestCountViolation) {
       setErrorMsg(guestCountViolation);
       return;
@@ -654,6 +709,7 @@ export default function BookRoom() {
           phone: form.phone,
           address: form.address,
           preferredContactMethod: form.preferredContactMethod,
+          contactLink: form.preferredContactMethod === FACEBOOK_CONTACT_METHOD ? form.contactLink.trim() : '',
           checkIn: form.checkIn,
           checkOut: form.checkOut,
           checkInTime: form.bookingType === 'daytour'
@@ -667,6 +723,7 @@ export default function BookRoom() {
           bookingType: form.bookingType,
           tourPeriod: form.tourPeriod,
           cottageId: form.cottageId,
+          dayVisitors,
           notes: form.notes,
           paymentMethod: form.paymentMethod,
           promoCode: activePromo?.code || '',
@@ -694,6 +751,7 @@ export default function BookRoom() {
         email: form.email.trim(),
         address: form.address.trim(),
         preferredContactMethod: form.preferredContactMethod,
+        contactLink: form.preferredContactMethod === FACEBOOK_CONTACT_METHOD ? form.contactLink.trim() : '',
       };
       if (rememberDetails) {
         setSavedProfile(profile);
@@ -994,6 +1052,32 @@ export default function BookRoom() {
                     <option value="">Select contact method</option>
                     {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
                   </select>
+                  {/* Email / Phone reuse what the guest typed above; Facebook needs a link. */}
+                  {['Email', 'Phone'].includes(form.preferredContactMethod) && (() => {
+                    const value = form.preferredContactMethod === 'Email' ? form.email.trim() : form.phone.trim();
+                    return (
+                      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px', background: LIGHT, color: '#355a42', borderRadius: '8px', padding: '9px 12px', fontSize: '12px' }}>
+                        <i className={`ti ${form.preferredContactMethod === 'Email' ? 'ti-mail' : 'ti-phone'}`} aria-hidden="true" style={{ fontSize: '15px' }} />
+                        {value
+                          ? <span>We'll contact you at <strong style={{ overflowWrap: 'anywhere' }}>{value}</strong></span>
+                          : <span>Enter your {form.preferredContactMethod === 'Email' ? 'email address' : 'phone number'} above.</span>}
+                      </div>
+                    );
+                  })()}
+                  {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
+                    <div style={{ marginTop: '8px' }}>
+                      <label htmlFor="contactLink" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Facebook profile link *</label>
+                      <input id="contactLink" name="contactLink" type="url" required maxLength={200} value={form.contactLink}
+                        onChange={e => setForm(previous => ({ ...previous, contactLink: e.target.value }))}
+                        placeholder="https://www.facebook.com/your.name"
+                        style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                      <div style={{ color: form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink) ? '#b91c1c' : '#9ca3af', fontSize: '10px', marginTop: '5px' }}>
+                        {form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink)
+                          ? getContactLinkError(form.preferredContactMethod, form.contactLink)
+                          : 'Open your Facebook profile, copy the link from the address bar and paste it here.'}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               {savedProfile && (
@@ -1044,14 +1128,9 @@ export default function BookRoom() {
                       both read the same booking type + tour period. */}
                   <select id="booking-type"
                     value={form.bookingType === 'daytour' ? (form.tourPeriod === 'night' ? 'night' : 'day') : 'overnight'}
-                    onChange={e => {
-                      const choice = e.target.value;
-                      setForm(previous => (choice === 'overnight'
-                        ? { ...previous, bookingType: 'overnight' }
-                        : { ...previous, bookingType: 'daytour', tourPeriod: choice }));
-                    }}
+                    onChange={e => changeBookingType(e.target.value)}
                     style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                    <option value="overnight" disabled={singleDay}>Overnight stay{singleDay ? ' (needs a later check-out date)' : ''}</option>
+                    <option value="overnight">Overnight stay{singleDay ? ' (check-out moves to the next day)' : ''}</option>
                     <option value="day" disabled={dayTourClosed}>Day tour (8:00 AM–5:00 PM){dayTourClosed ? ' — closed for today' : ''}</option>
                     <option value="night" disabled={nightTourClosed}>Night tour (5:00 PM–10:00 PM){nightTourClosed ? ' — closed for today' : ''}</option>
                   </select>
@@ -1117,6 +1196,65 @@ export default function BookRoom() {
                   );
                 })}
               </div>
+              {form.bookingType === 'overnight' && (
+                <section aria-labelledby="day-visitors-title" style={{ marginTop: '16px', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '14px' }}>
+                  <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={form.hasDayVisitors}
+                      onChange={e => setForm(previous => ({ ...previous, hasDayVisitors: e.target.checked }))}
+                      style={{ marginTop: '3px', accentColor: ACCENT }} />
+                    <span>
+                      <strong id="day-visitors-title" style={{ fontSize: '13px', color: '#111' }}>Someone is visiting but not staying overnight</strong>
+                      <span style={{ display: 'block', fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                        A friend or family member who joins you for a day or night tour, then goes home. They pay the swimming rate and don't use the room's guest count.
+                      </span>
+                    </span>
+                  </label>
+                  {form.hasDayVisitors && (
+                    <div className="responsive-grid-2" style={{ gap: '12px', marginTop: '12px' }}>
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <label htmlFor="day-visitor-period" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>They will join for</label>
+                        <select id="day-visitor-period" value={form.dayVisitorPeriod} onChange={e => setForm(previous => ({ ...previous, dayVisitorPeriod: e.target.value }))}
+                          style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: '#fff' }}>
+                          <option value="day">Day tour (8:00 AM–5:00 PM) · ₱{getSwimmingRate('day').adult} adult, ₱{getSwimmingRate('day').child} child</option>
+                          <option value="night">Night tour (5:00 PM–10:00 PM) · ₱{getSwimmingRate('night').adult} adult, ₱{getSwimmingRate('night').child} child</option>
+                        </select>
+                      </div>
+                      {[
+                        { key: 'dayVisitorAdults', label: 'Visiting adults', min: 0, rate: visitorRate.adult },
+                        { key: 'dayVisitorChildren', label: 'Visiting children (under 10)', min: 0, rate: visitorRate.child },
+                      ].map(visitor => {
+                        const count = Number(form[visitor.key]);
+                        const otherKey = visitor.key === 'dayVisitorAdults' ? 'dayVisitorChildren' : 'dayVisitorAdults';
+                        const atMax = count + Number(form[otherKey]) >= MAX_DAY_VISITORS;
+                        const setCount = value => setForm(previous => {
+                          const other = Number(previous[otherKey]);
+                          const next = Math.max(visitor.min, Math.min(MAX_DAY_VISITORS - other, Number(value) || 0));
+                          return { ...previous, [visitor.key]: next };
+                        });
+                        return (
+                          <div key={visitor.key}>
+                            <label htmlFor={`${visitor.key}-count`} style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{visitor.label}</label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <button type="button" aria-label={`Remove one ${visitor.label.toLowerCase()}`} disabled={count <= visitor.min} onClick={() => setCount(count - 1)}
+                                style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: count <= visitor.min ? 'not-allowed' : 'pointer' }}>−</button>
+                              <input id={`${visitor.key}-count`} type="number" min={visitor.min} max={MAX_DAY_VISITORS} value={count} onChange={event => setCount(event.target.value)}
+                                style={{ minWidth: 0, flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 12px', fontSize: '13px', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                              <button type="button" aria-label={`Add one ${visitor.label.toLowerCase()}`} disabled={atMax} onClick={() => setCount(count + 1)}
+                                style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: atMax ? 'not-allowed' : 'pointer' }}>+</button>
+                            </div>
+                            <div style={{ color: '#6b7280', fontSize: '10px', marginTop: '6px' }}>₱{visitor.rate.toLocaleString()} each, one visit</div>
+                          </div>
+                        );
+                      })}
+                      <div style={{ gridColumn: '1 / -1', background: LIGHT, color: '#355a42', borderRadius: '8px', padding: '10px 12px', fontSize: '12px' }}>
+                        {pricing?.dayVisitorCharge > 0
+                          ? <>Day visitors: <strong>₱{pricing.dayVisitorCharge.toLocaleString()}</strong>, added to your total. Visitors leave by {form.dayVisitorPeriod === 'night' ? NIGHTTOUR_TIME_SLOT.checkOut : DAYTOUR_TIME_SLOT.checkOut}.</>
+                          : 'Add at least one visitor, or untick the box.'}
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
               {guestCountViolation && (
                 <div role="alert" style={{ marginTop: '14px', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.5, color: '#9a3412' }}>
                   <strong>Notice:</strong> You have exceeded the recommended capacity for this room (Maximum: {maxExtraGuests} extra guest{maxExtraGuests === 1 ? '' : 's'}). Please consider booking a larger room or additional rooms to ensure comfort.
@@ -1238,11 +1376,19 @@ export default function BookRoom() {
                   <div style={{ background: LIGHT, borderRadius: '12px', padding: '16px', fontSize: '12px', color: '#374151', lineHeight: '1.6' }}>
                     You'll be redirected to PayMongo to pay <strong>₱{onlinePaymentAmount.toLocaleString()}</strong> now.
                     {' '}Reservation total: <strong>₱{bookingTotal.toLocaleString()}</strong>.
-                    {paymentChoice === 'deposit' && <> The remaining balance must be paid before checkout.</>}
+                    {paymentChoice === 'deposit' && <> The remaining balance must be paid before checkout, in cash or by QR at the resort.</>}
                     {' '}Card, GCash, Maya, and GrabPay payments are processed securely by PayMongo.
                   </div>
                 </>
               )}
+
+              <div role="note" style={{ marginTop: '12px', display: 'flex', gap: '10px', alignItems: 'flex-start', background: '#fff7ed', border: '1px solid #fed7aa', color: '#9a3412', borderRadius: '10px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.6 }}>
+                <i className="ti ti-info-circle" aria-hidden="true" style={{ fontSize: '17px', marginTop: '1px' }} />
+                <span>
+                  <strong>Paying at the resort? Cash or QR only.</strong> The resort has no card terminal, so credit and debit cards can't be used on-site.
+                  Pay any remaining balance at the front desk in cash or by QR (GCash / QR Ph). Cards work only for online payment on this page.
+                </span>
+              </div>
 
               <p style={{ margin: '12px 0 0', color: '#355a42', fontSize: '12px', lineHeight: 1.6 }}>{RECEIPT_NOTICE}</p>
 

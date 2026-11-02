@@ -387,7 +387,7 @@ export default function Rooms() {
                   ? `Showing availability for ${rangeLabel}.`
                   : 'Sleep beneath the bamboo canopy, with room to gather, rest, and breathe.'}
               </p>
-              <OccupancyBadge startDate={checkIn || undefined} endDate={stayEnd || undefined} style={{ fontFamily: SANS, background: 'rgba(255,255,255,0.9)' }} />
+              <OccupancyBadge startDate={checkIn || undefined} endDate={stayEnd || undefined} style={{ fontFamily: SANS }} />
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>

@@ -300,6 +300,44 @@ export function getRoomBaseRate(room, bookingType) {
   };
 }
 
+// Swimming rate per person for a day tour or night tour.
+export function getSwimmingRate(tourPeriod = 'day') {
+  return tourPeriod === 'night' ? { adult: 475, child: 375 } : { adult: 375, child: 275 };
+}
+
+// Day visitors: people who join an overnight booking for a day tour or night
+// tour but don't sleep in the room (e.g. a friend visiting a couple). They
+// pay the swimming rate once and don't count toward the room's capacity.
+export const MAX_DAY_VISITORS = 10;
+
+export function normalizeDayVisitors(input) {
+  if (!input) return null;
+  const adults = Number(input.adults || 0);
+  const children = Number(input.children || 0);
+  const tourPeriod = input.tourPeriod === 'night' ? 'night' : 'day';
+  if (!Number.isInteger(adults) || !Number.isInteger(children) || adults < 0 || children < 0
+    || adults + children > MAX_DAY_VISITORS) {
+    throw new Error(`Day visitors must be whole numbers, up to ${MAX_DAY_VISITORS} people.`);
+  }
+  if (input.tourPeriod && !['day', 'night'].includes(input.tourPeriod)) {
+    throw new Error('Choose a day tour or night tour for the day visitors.');
+  }
+  return adults + children > 0 ? { adults, children, tourPeriod } : null;
+}
+
+// Day visitors saved on a booking, for repricing it later.
+export function getReservationDayVisitors(reservation = {}) {
+  const adults = Number(reservation.dayVisitorAdults || 0);
+  const children = Number(reservation.dayVisitorChildren || 0);
+  return adults + children > 0 ? { adults, children, tourPeriod: reservation.dayVisitorPeriod || 'day' } : null;
+}
+
+export function getDayVisitorCharge(dayVisitors) {
+  if (!dayVisitors) return 0;
+  const rate = getSwimmingRate(dayVisitors.tourPeriod);
+  return dayVisitors.adults * rate.adult + dayVisitors.children * rate.child;
+}
+
 export function calculateBookingPrice({
   room,
   bookingType,
@@ -309,6 +347,7 @@ export function calculateBookingPrice({
   tourPeriod = 'day',
   cottageId = '',
   cottageFee = 0,
+  dayVisitors = null,
 }) {
   const { amount: baseRate, baseCapacity } = getRoomBaseRate(room, bookingType);
   const totalGuests = adults + children;
@@ -319,9 +358,7 @@ export function calculateBookingPrice({
   const extraChildren = children - childrenWithinCapacity;
   const extraRate = bookingType === 'overnight'
     ? { adult: 800, child: 400 }
-    : tourPeriod === 'night'
-      ? { adult: 475, child: 375 }
-      : { adult: 375, child: 275 };
+    : getSwimmingRate(tourPeriod);
   const extraGuestCharge = (extraAdults * extraRate.adult + extraChildren * extraRate.child) * nights;
   const fee = Number(cottageFee);
   const validCottageFee = getCottageFee(cottageId) === fee
@@ -332,6 +369,9 @@ export function calculateBookingPrice({
     throw new Error('Guest counts must be whole numbers.');
   }
   if (!validCottageFee) throw new Error('Choose a valid cottage rate.');
+  // Day visitors only apply to overnight stays (on a tour, everyone is a visitor).
+  const visitors = bookingType === 'overnight' ? normalizeDayVisitors(dayVisitors) : null;
+  const dayVisitorCharge = getDayVisitorCharge(visitors);
 
   return {
     baseRate,
@@ -345,6 +385,10 @@ export function calculateBookingPrice({
     extraGuestCharge,
     cottageId,
     cottageFee: fee,
-    subtotalAmount: baseRate * nights + extraGuestCharge + fee,
+    dayVisitorAdults: visitors?.adults || 0,
+    dayVisitorChildren: visitors?.children || 0,
+    dayVisitorPeriod: visitors?.tourPeriod || '',
+    dayVisitorCharge,
+    subtotalAmount: baseRate * nights + extraGuestCharge + fee + dayVisitorCharge,
   };
 }

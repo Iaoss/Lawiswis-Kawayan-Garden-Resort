@@ -15,6 +15,17 @@ const unitLabel = (reservation, units) => {
   return units === 1 ? '1 night' : `${units} nights`;
 };
 
+// "Day visitors (2 adults, 1 child · day tour)"
+const dayVisitorLabel = reservation => {
+  const adults = Number(reservation.dayVisitorAdults || 0);
+  const children = Number(reservation.dayVisitorChildren || 0);
+  const people = [
+    adults ? `${adults} adult${adults === 1 ? '' : 's'}` : '',
+    children ? `${children} child${children === 1 ? '' : 'ren'}` : '',
+  ].filter(Boolean).join(', ');
+  return `Day visitors (${people} · ${reservation.dayVisitorPeriod === 'night' ? 'night tour' : 'day tour'})`;
+};
+
 export function getReceiptLineItems(reservation = {}) {
   const booking = [];
   const extras = [];
@@ -35,13 +46,16 @@ export function getReceiptLineItems(reservation = {}) {
     const units = Math.max(1, Number(reservation.nights) || 1);
     const baseRate = money(reservation.baseRate);
     const extraGuests = money(reservation.extraGuestCharge);
+    const dayVisitors = money(reservation.dayVisitorCharge);
     const room = reservation.roomName || `Room ${reservation.roomNumber || ''}${reservation.roomType ? ` (${reservation.roomType})` : ''}`.trim();
     if (baseRate > 0) {
       booking.push({ label: `${room} · ₱${baseRate.toLocaleString()} × ${unitLabel(reservation, units)}`, amount: money(baseRate * units) });
       if (extraGuests > 0) booking.push({ label: 'Extra guests', amount: extraGuests });
+      if (dayVisitors > 0) booking.push({ label: dayVisitorLabel(reservation), amount: dayVisitors });
     } else {
       // Older bookings without a price breakdown: one room line.
-      booking.push({ label: `${room} · ${unitLabel(reservation, units)}`, amount: money(total + discount - cottageFee) });
+      booking.push({ label: `${room} · ${unitLabel(reservation, units)}`, amount: money(total + discount - cottageFee - dayVisitors) });
+      if (dayVisitors > 0) booking.push({ label: dayVisitorLabel(reservation), amount: dayVisitors });
     }
   }
 

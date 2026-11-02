@@ -676,7 +676,7 @@ export default function WalkIn() {
                           <select value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })} style={inp}>
                             <option value="cash">Cash</option>
                             <option value="gcash">GCash</option>
-                            <option value="card">Credit/Debit Card</option>
+                            <option value="qrph">QR payment (QR Ph)</option>
                             <option value="bank">Bank Transfer</option>
                           </select>
                         </div>
