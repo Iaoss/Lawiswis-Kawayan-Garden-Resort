@@ -24,7 +24,6 @@ const navItems = [
   { label: 'Reservations', path: '/receptionist/reservations', icon: 'ti-calendar-event' },
   { label: 'Walk-in', path: '/receptionist/walkin', icon: 'ti-walk' },
   { label: 'Billing', path: '/receptionist/billing', icon: 'ti-receipt' },
-  { label: 'Booking Transactions', path: '/receptionist/transactions', icon: 'ti-credit-card' },
   { label: 'Customers', path: '/receptionist/customers', icon: 'ti-users' },
   { label: 'History', path: '/receptionist/history', icon: 'ti-clock' },
   { label: 'Cancellation', path: '/receptionist/cancellation', icon: 'ti-file-x' },

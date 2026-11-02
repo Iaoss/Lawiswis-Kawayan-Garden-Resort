@@ -19,6 +19,10 @@ import {
   getEarlyCheckInError,
   getCheckInPaymentError,
   hasOutstandingBalance,
+  getCheckoutDue,
+  formatManilaTime,
+  getScheduledCheckOutMs,
+  MAX_LATE_CHECKOUT_HOURS,
 } from '../../lib/reservationStatus';
 import { appPrompt } from '../../components/ui/app-dialog';
 import { useStaffAccess } from '../lib/useStaffAccess';
@@ -579,6 +583,8 @@ export default function Reservations() {
   const [cancelDialog, setCancelDialog] = useState(null);
   const [statusBusyId, setStatusBusyId] = useState('');
   const [lateFeeDialog, setLateFeeDialog] = useState(null); // { reservation, amount, note }
+  // "Give more time" (late check-out): { reservation, hours, amount, note, busy }
+  const [extendDialog, setExtendDialog] = useState(null);
   const [lateFeeBusy, setLateFeeBusy] = useState(false);
   const [editTarget, setEditTarget] = useState(null); // reservation being edited
   const [cancelReason, setCancelReason] = useState('');
@@ -990,6 +996,31 @@ export default function Reservations() {
 
   const selectedReservation = selectedId ? reservations.find(r => r.id === selectedId) : null;
   const lateArrivals = reservations.filter(isDelayedArrival);
+  // Checked-in guests whose check-out time is within the next 2 hours.
+  const dueToCheckOut = reservations
+    .map(r => ({ r, due: getCheckoutDue(r, now) }))
+    .filter(x => x.due)
+    .sort((a, b) => a.due.dueMs - b.due.dueMs);
+  const billingPath = id => `${isReceptionist ? '/receptionist' : '/admin'}/billing?booking=${encodeURIComponent(id)}`;
+
+  const submitExtension = async () => {
+    if (!extendDialog || extendDialog.busy) return;
+    setExtendDialog(d => ({ ...d, busy: true }));
+    try {
+      const result = await callReservationStatusApi({
+        action: 'extend-checkout',
+        reservationId: extendDialog.reservation.id,
+        hours: Number(extendDialog.hours),
+        amount: extendDialog.amount === '' ? 0 : Number(extendDialog.amount),
+        note: extendDialog.note,
+      });
+      setExtendDialog(null);
+      setToast({ type: 'success', text: `${extendDialog.reservation.guestName || 'Guest'} can stay until ${result.untilLabel}.${result.fee ? ` ₱${Number(result.fee).toLocaleString()} late check-out fee added to the bill.` : ''}` });
+    } catch (error) {
+      setExtendDialog(d => (d ? { ...d, busy: false } : d));
+      setToast({ type: 'error', text: error.message || 'More time could not be given.' });
+    }
+  };
 
   // Checked-out and cancelled bookings leave the list and the calendar right
   // away; they stay in Customers and Reservation History. Choose
@@ -1126,6 +1157,49 @@ export default function Reservations() {
           </div>
         )}
 
+        {extendDialog && (
+          <div role="presentation" onClick={event => { if (event.target === event.currentTarget && !extendDialog.busy) setExtendDialog(null); }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: '16px' }}>
+            <form role="dialog" aria-modal="true" aria-labelledby="extend-title"
+              onSubmit={event => { event.preventDefault(); submitExtension(); }}
+              style={{ width: '100%', maxWidth: '420px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '20px', display: 'grid', gap: '12px' }}>
+              <div id="extend-title" style={{ fontWeight: 700, fontSize: '15px', color: TEXT }}>Give more time to check out</div>
+              <div style={{ fontSize: '12px', color: MUTED }}>
+                {extendDialog.reservation.guestName || 'Guest'} · Room {extendDialog.reservation.roomNumber || '—'} · now due {formatManilaTime(getScheduledCheckOutMs(extendDialog.reservation))}.
+                The new time is counted from now or the current check-out time, whichever is later.
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: MUTED, marginBottom: '6px' }}>Extra time</div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {Array.from({ length: MAX_LATE_CHECKOUT_HOURS }, (_, i) => i + 1).map(h => (
+                    <button key={h} type="button" onClick={() => setExtendDialog(d => ({ ...d, hours: h }))}
+                      style={{ ...inp, padding: '7px 12px', fontWeight: 600, background: Number(extendDialog.hours) === h ? ACCENT : CARD2, color: Number(extendDialog.hours) === h ? ACCENT_TEXT : TEXT }}>
+                      {h} hr{h === 1 ? '' : 's'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: MUTED }}>
+                Late check-out fee (₱, optional)
+                <input type="number" min="0" max={MAX_LATE_FEE} step="0.01" value={extendDialog.amount} placeholder="0"
+                  onChange={e => setExtendDialog(d => ({ ...d, amount: e.target.value }))} style={inp} />
+              </label>
+              <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: MUTED }}>
+                Note (optional)
+                <input type="text" maxLength={300} value={extendDialog.note} placeholder="e.g. Waiting for their ride"
+                  onChange={e => setExtendDialog(d => ({ ...d, note: e.target.value }))} style={inp} />
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button type="button" onClick={() => setExtendDialog(null)} disabled={extendDialog.busy} style={{ ...inp, fontWeight: 600 }}>Cancel</button>
+                <button type="submit" disabled={extendDialog.busy}
+                  style={{ background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: '10px', padding: '9px 14px', fontSize: '12px', fontWeight: 700, cursor: extendDialog.busy ? 'wait' : 'pointer' }}>
+                  {extendDialog.busy ? 'Saving…' : `Give ${extendDialog.hours} more hour${Number(extendDialog.hours) === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
         {cancelDialog && (
           <div role="presentation" onClick={event => {
             if (event.target === event.currentTarget && !cancelBusy) setCancelDialog(null);
@@ -1177,6 +1251,7 @@ export default function Reservations() {
             ['Duration', nights(s)],
             ['Overstay', so ? `Overstayed by ${so.label}${s.overstay?.flaggedAt ? ' (flagged)' : ''}` : s.overstayMinutes ? 'Checked out late' : 'No'],
             ['Late Check-out Charges', getLateFeeTotal(s) > 0 ? money(getLateFeeTotal(s)) : 'None'],
+            ...(Number(s.lateCheckoutUntil) > 0 ? [['Late Check-out Until', formatManilaTime(Number(s.lateCheckoutUntil))]] : []),
             ['Special Requests', s.notes || 'None'],
             ['Payment Status', s.paymentStatus || '—'],
             ['Payment Method', s.paymentMethod || '—'],
@@ -1212,7 +1287,25 @@ export default function Reservations() {
                     </div>
                   ))}
                 </dl>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px' }}>
+                {hasOutstandingBalance(s) && s.status !== 'cancelled' && (
+                  <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', background: dark ? 'rgba(217,119,6,0.12)' : '#fff7ed', border: `1px solid ${dark ? 'rgba(217,119,6,0.35)' : '#fed7aa'}`, borderRadius: '10px', padding: '10px 12px' }}>
+                    <div style={{ fontSize: '12px', color: TEXT }}>
+                      <strong>Balance due: {money(Math.max(0, outstandingAmount(s)))}</strong>
+                      <div style={{ fontSize: '11px', color: MUTED }}>{['pending', 'confirmed'].includes(s.status) ? 'The guest pays in full before check-in. Paying the full balance on the stay date checks them in.' : 'Collect it before check-out.'}</div>
+                    </div>
+                    <button type="button" onClick={() => navigate(billingPath(s.id))}
+                      style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: '#d97706', color: '#fff', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      <i className="ti ti-receipt" aria-hidden="true" /> Collect payment in Billing
+                    </button>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => navigate(billingPath(s.id))}
+                    style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Open in Billing</button>
+                  {s.status === 'checked-in' && (
+                    <button type="button" onClick={() => setExtendDialog({ reservation: s, hours: 1, amount: '', note: '', busy: false })}
+                      style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Give more time</button>
+                  )}
                   {canEditBooking(s) && (
                     <button type="button" onClick={() => setEditTarget(s)}
                       style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Edit booking</button>
@@ -1233,8 +1326,35 @@ export default function Reservations() {
               line to open the details and actions. Empty types are hidden. */}
           <section aria-label="Notifications" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '12px 14px', display: 'grid', gap: '8px', alignContent: 'start', minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Notifications</div>
-            {lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length === 0 && (
+            {dueToCheckOut.length + lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length === 0 && (
               <div style={{ fontSize: '12px', color: MUTED }}>All clear — nothing needs action right now.</div>
+            )}
+
+            {dueToCheckOut.length > 0 && (
+              <NotificationGroup title="Due to check out" detail="Checked-in guests leaving within 2 hours" count={dueToCheckOut.length} color="#2563eb" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {dueToCheckOut.map(({ r, due }) => {
+                  const owes = hasOutstandingBalance(r);
+                  const btn = { background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' };
+                  return (
+                    <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: `1px solid ${BORDER}` }}>
+                      <div style={{ fontSize: '12px', color: TEXT }}>
+                        <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'}
+                        <div style={{ fontSize: '11px', color: due.minutesLeft <= 30 ? '#d97706' : MUTED, fontWeight: due.minutesLeft <= 30 ? 700 : 400 }}>
+                          Check-out at {formatManilaTime(due.dueMs)} · in {due.minutesLeft >= 60 ? `${Math.floor(due.minutesLeft / 60)}h ${due.minutesLeft % 60}m` : `${due.minutesLeft} min`}
+                          {owes ? ` · owes ₱${outstandingAmount(r).toLocaleString()}` : ' · fully paid'}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button onClick={() => setSelectedId(r.id)} style={btn}>View</button>
+                        {owes && <button onClick={() => navigate(billingPath(r.id))} style={{ ...btn, color: '#d97706' }}>Collect ₱{outstandingAmount(r).toLocaleString()}</button>}
+                        <button onClick={() => setExtendDialog({ reservation: r, hours: 1, amount: '', note: '', busy: false })} style={btn}>Give more time</button>
+                        <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
+                          style={{ ...btn, background: ACCENT, color: ACCENT_TEXT, border: 'none', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </NotificationGroup>
             )}
 
             {unpaidOnline.length > 0 && (
@@ -1324,6 +1444,8 @@ export default function Reservations() {
                         <button onClick={() => flagOverstay(r)} disabled={statusBusyId === r.id}
                           style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Flag overstay</button>
                       )}
+                      <button onClick={() => setExtendDialog({ reservation: r, hours: 1, amount: '', note: '', busy: false })}
+                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Give more time</button>
                       <button onClick={() => setLateFeeDialog({ reservation: r, amount: '', note: `Overstayed ${info.label}` })}
                         style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Add late fee</button>
                       <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}

@@ -18,7 +18,7 @@ import { staffApi } from '../lib/staffApi';
 import { appAlert } from '../../components/ui/app-dialog';
 import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
 
-const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
+const COUPLE_ROOM_LIMIT_MESSAGE = 'This room is full for that many guests. Couple rooms take 2 guests; a Couple Room with Extra Bed takes a third adult. For bigger groups, choose a Family Room or Family Suite.';
 
 const toIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const getLocalToday = () => toIso(new Date());
@@ -121,7 +121,10 @@ export default function WalkIn() {
   const [reservations, setReservations] = useState([]);
   const [catFilter, setCatFilter] = useState('all');
   const [selectedRoom, setSelectedRoom] = useState(null);
-  const [step, setStep] = useState(1); // 1 = dates & room, 2 = guest details
+  const [step, setStep] = useState(1); // 1 = dates & room, 2 = guest details, 3 = payment
+  // The booking just created, waiting for payment (step 3).
+  const [created, setCreated] = useState(null); // { id, guestName, roomNumber, total, paid, checkIn, isToday, notes: [] }
+  const [payment, setPayment] = useState({ method: 'cash', amount: '', busy: false, error: '' });
   const [success, setSuccess] = useState('');
   const [saving, setSaving] = useState(false);
   const [upsellOpen, setUpsellOpen] = useState(false);
@@ -131,7 +134,7 @@ export default function WalkIn() {
     roomId: '', checkIn: '', checkOut: '',
     bookingOption: 'overnight', overnightTimeSlot: 'morning', cottageId: '',
     adults: 1, children: 0,
-    paymentMethod: 'cash', paymentStatus: 'paid', notes: '',
+    paymentMethod: 'cash', paymentStatus: 'pending', notes: '',
   });
 
   const today = getLocalToday();
@@ -265,9 +268,10 @@ export default function WalkIn() {
       // price from the room's nightly rate, and records any payment.
       let created;
       try {
+        // Created unpaid; the payment is taken in the next step.
         created = await staffApi('staff-billing', {
           action: 'create-walk-in',
-          booking: { ...form, checkOut: stayCheckOut, category: categoryOf(selectedRoom)?.category || '' },
+          booking: { ...form, paymentMethod: 'cash', paymentStatus: 'pending', checkOut: stayCheckOut, category: categoryOf(selectedRoom)?.category || '' },
         });
       } catch (createError) {
         if (/just booked/.test(createError.message)) {
@@ -279,9 +283,6 @@ export default function WalkIn() {
         return;
       }
       const arrivesToday = created.arrivesToday;
-      const receiptMessage = created.amountPaid > 0
-        ? (created.receiptError ? ` Payment receipt failed: ${created.receiptError}` : ' Payment receipt emailed.')
-        : '';
 
       let confirmationMessage = '';
       try {
@@ -292,17 +293,68 @@ export default function WalkIn() {
       } catch (confirmationError) {
         confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
       }
-      setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is ${created.checkedIn ? 'now occupied and the guest is checked in' : arrivesToday ? 'held for today; the guest is checked in once they pay in full' : `reserved for ${isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`}`}.${confirmationMessage}${receiptMessage}`);
-      setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', cottageId:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
-      setNameErrors({});
-      setSelectedRoom(null);
-      setCatFilter('all');
-      setStep(1);
+      // Next: take the payment. Guests pay in full before entering.
+      setCreated({
+        id: created.reservationId,
+        guestName,
+        roomNumber: selectedRoom.roomNumber,
+        total: Number(created.totalAmount || 0),
+        paid: 0,
+        stayLabel: isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`,
+        isToday: arrivesToday,
+        notes: [confirmationMessage.trim()].filter(Boolean),
+        checkedIn: false,
+      });
+      setPayment({ method: 'cash', amount: String(Number(created.totalAmount || 0)), busy: false, error: '' });
+      setSuccess('');
+      setStep(3);
     } catch (submitError) {
       appAlert(submitError.message || 'Unknown error.', { title: 'Couldn’t save the reservation', tone: 'danger' });
     } finally {
       setSaving(false);
     }
+  };
+
+  // Step 3: record the walk-in's payment. Paying the full amount for a stay
+  // that starts today checks the guest in and marks the room occupied.
+  const owedNow = created ? Math.max(0, Math.round((created.total - created.paid) * 100) / 100) : 0;
+  const recordWalkInPayment = async () => {
+    if (!created || payment.busy) return;
+    const amount = Number(payment.amount);
+    if (!Number.isFinite(amount) || amount <= 0) { setPayment(p => ({ ...p, error: 'Enter the amount received.' })); return; }
+    if (amount - owedNow > 0.001) { setPayment(p => ({ ...p, error: `The guest only owes ₱${owedNow.toLocaleString()}.` })); return; }
+    setPayment(p => ({ ...p, busy: true, error: '' }));
+    try {
+      const result = await staffApi('staff-billing', { action: 'record-payment', reservationId: created.id, amount, method: payment.method });
+      const receipt = result.receiptError ? `Receipt email failed: ${result.receiptError}` : result.receipt ? 'Receipt emailed.' : '';
+      setCreated(c => ({
+        ...c,
+        paid: Number(result.amountPaid || 0),
+        checkedIn: Boolean(result.autoCheckedIn) || c.checkedIn,
+        notes: [...c.notes, receipt].filter(Boolean),
+      }));
+      const left = Math.max(0, Math.round((created.total - Number(result.amountPaid || 0)) * 100) / 100);
+      setPayment(p => ({ ...p, busy: false, amount: left > 0 ? String(left) : '' }));
+    } catch (error) {
+      setPayment(p => ({ ...p, busy: false, error: error.message || 'The payment could not be saved.' }));
+    }
+  };
+
+  const finishWalkIn = () => {
+    if (created) {
+      const state = created.checkedIn
+        ? `Fully paid: ${created.guestName} is checked in and Room ${created.roomNumber} is occupied.`
+        : owedNow > 0
+          ? `Room ${created.roomNumber} is reserved for ${created.stayLabel}. ₱${owedNow.toLocaleString()} is still due; collect it in Billing before check-in.`
+          : `Fully paid. Room ${created.roomNumber} is reserved for ${created.stayLabel}; check the guest in when they arrive.`;
+      setSuccess(`Reservation created for ${created.guestName}. ${state} ${created.notes.join(' ')}`.trim());
+    }
+    setCreated(null);
+    setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', cottageId:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'pending', notes:'' });
+    setNameErrors({});
+    setSelectedRoom(null);
+    setCatFilter('all');
+    setStep(1);
   };
 
   /* ── shared styles ── */
@@ -319,16 +371,16 @@ export default function WalkIn() {
 
   const Breadcrumb = () => (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px', fontSize: '12px' }}>
-      {[{ n: 1, label: 'Dates & room' }, { n: 2, label: 'Guest details' }].map((s, i) => (
+      {[{ n: 1, label: 'Dates & room' }, { n: 2, label: 'Guest details' }, { n: 3, label: 'Payment' }].map((s, i) => (
         <React.Fragment key={s.n}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: step > s.n ? 'pointer' : 'default' }}
-            onClick={() => step > s.n && setStep(s.n)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: step > s.n && step < 3 ? 'pointer' : 'default' }}
+            onClick={() => step > s.n && step < 3 && setStep(s.n)}>
             <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: step >= s.n ? ACCENT : CARD2, color: step >= s.n ? ACCENT_TEXT : MUTED, fontSize: 10, fontWeight: 700 }}>
               {step > s.n ? '✓' : s.n}
             </div>
             <span style={{ color: step >= s.n ? TEXT : MUTED, fontWeight: step === s.n ? 600 : 400 }}>{s.label}</span>
           </div>
-          {i < 1 && <span style={{ color: BORDER2 }}>›</span>}
+          {i < 2 && <span style={{ color: BORDER2 }}>›</span>}
         </React.Fragment>
       ))}
     </div>
@@ -387,19 +439,36 @@ export default function WalkIn() {
                         <input type="number" min="0" value={form.children} onChange={e => changeGuests('children', e.target.value)} style={inp} />
                       </div>
                     </div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 8 }}>Booking type</div>
+                    {/* Same-day bookings: a day or night tour checks in and out on one date. */}
+                    <div role="radiogroup" aria-label="Booking type" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 8 }}>
+                      {BOOKING_OPTIONS.map(option => {
+                        const closed = option.bookingType === 'daytour' && isTourStartPassed(form.checkIn, option.tourPeriod);
+                        const active = form.bookingOption === option.id;
+                        const sameDay = option.bookingType === 'daytour';
+                        return (
+                          <button key={option.id} type="button" role="radio" aria-checked={active} disabled={closed}
+                            onClick={() => setForm(p => ({ ...p, bookingOption: option.id }))}
+                            style={{ textAlign: 'left', border: `1.5px solid ${active ? ACCENT : BORDER2}`, background: active ? `${ACCENT}22` : CARD2, color: TEXT, borderRadius: 10, padding: '10px 12px', cursor: closed ? 'not-allowed' : 'pointer', opacity: closed ? 0.5 : 1, fontFamily: 'inherit' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: sameDay ? ACCENT : MUTED }}>{sameDay ? 'Same day · single-day' : 'Stays the night'}</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>{sameDay ? (option.tourPeriod === 'night' ? 'Night tour' : 'Day tour') : 'Overnight stay'}</div>
+                            <div style={{ fontSize: 11, color: MUTED }}>{closed ? 'Closed for today' : sameDay ? (option.tourPeriod === 'night' ? '5:00 PM – 10:00 PM' : '8:00 AM – 5:00 PM') : 'Check out on a later date'}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: 11, color: MUTED, marginBottom: 12 }}>
+                      Day and night tours are single-day bookings: the guest checks in and out on the same date, and can book for today.
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, alignItems: 'end' }}>
                       <div>
-                        <label style={label}>Booking type *</label>
-                        <select value={form.bookingOption} style={inp}
-                          onChange={e => setForm(p => ({ ...p, bookingOption: e.target.value }))}>
-                          {BOOKING_OPTIONS.map(option => {
-                            const closed = option.bookingType === 'daytour' && isTourStartPassed(form.checkIn, option.tourPeriod);
-                            return <option key={option.id} value={option.id} disabled={closed}>{option.label}{closed ? ' — closed for today' : ''}</option>;
-                          })}
-                        </select>
-                      </div>
-                      <div>
-                        <label style={label}>{isTour ? 'Date *' : 'Check-in *'}</label>
+                        <label style={{ ...label, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>{isTour ? 'Date *' : 'Check-in *'}</span>
+                          {form.checkIn !== today && (
+                            <button type="button" onClick={() => setForm(p => ({ ...p, checkIn: today, checkOut: p.checkOut && p.checkOut <= today ? '' : p.checkOut }))}
+                              style={{ border: 0, background: 'transparent', color: ACCENT, fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0, textTransform: 'none', letterSpacing: 0 }}>Today</button>
+                          )}
+                        </label>
                         <input type="date" min={today} value={form.checkIn} style={inp}
                           onChange={e => {
                             const checkIn = e.target.value;
@@ -668,26 +737,11 @@ export default function WalkIn() {
                       </div>
                     </div>
 
-                    <div style={card}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>💳 Payment</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                        <div>
-                          <label style={label}>Payment Method</label>
-                          <select value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })} style={inp}>
-                            <option value="cash">Cash</option>
-                            <option value="gcash">GCash</option>
-                            <option value="qrph">QR payment (QR Ph)</option>
-                            <option value="bank">Bank Transfer</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label style={label}>Payment Status</label>
-                          <select value={form.paymentStatus} onChange={e => setForm({ ...form, paymentStatus: e.target.value })} style={inp}>
-                            <option value="paid">Paid</option>
-                            <option value="partial">Partial</option>
-                            <option value="pending">Pending</option>
-                          </select>
-                        </div>
+                    <div style={{ ...card, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                      <i className="ti ti-cash" aria-hidden="true" style={{ fontSize: 18, color: ACCENT }} />
+                      <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
+                        <strong style={{ color: TEXT }}>Payment comes next.</strong> Walk-in guests pay in full before entering (cash or QR, no cards).
+                        After you reserve, you'll record the payment; paying in full for today checks the guest in.
                       </div>
                     </div>
 
@@ -699,7 +753,7 @@ export default function WalkIn() {
 
                     <motion.button type="submit" disabled={saving} whileHover={{ scale: saving ? 1 : 1.01 }} whileTap={{ scale: saving ? 1 : 0.98 }}
                       style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 14, fontSize: 14, fontWeight: 700, cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.7 : 1, fontFamily: "'Poppins', sans-serif" }}>
-                      {saving ? 'Saving…' : '✅ Confirm Walk-in Reservation'}
+                      {saving ? 'Saving…' : 'Reserve & continue to payment →'}
                     </motion.button>
                   </form>
                 </div>
@@ -734,6 +788,67 @@ export default function WalkIn() {
                     </button>
                   </div>
                 </aside>
+              </div>
+            )}
+
+            {/* ═════════ STEP 3 — Payment ═════════ */}
+            {step === 3 && created && (
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                <div style={{ ...card, flex: '1 1 420px', minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Collect payment</div>
+                  <div style={{ fontSize: 12, color: MUTED, marginBottom: 16 }}>
+                    Booking #{created.id.slice(0, 8).toUpperCase()} · {created.guestName} · Room {created.roomNumber} · {created.stayLabel}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 16 }}>
+                    {[['Total', created.total], ['Paid', created.paid], ['Still due', owedNow]].map(([lbl, value]) => (
+                      <div key={lbl} style={{ background: CARD2, borderRadius: 10, padding: '10px 12px' }}>
+                        <div style={{ fontSize: 10, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{lbl}</div>
+                        <div style={{ fontSize: 17, fontWeight: 800, color: lbl === 'Still due' && value > 0 ? '#d97706' : TEXT }}>₱{Number(value).toLocaleString()}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {created.checkedIn ? (
+                    <div role="status" style={{ background: SUCCESS_BG, color: SUCCESS_TEXT, borderRadius: 10, padding: '12px 14px', fontSize: 13, fontWeight: 600, marginBottom: 14 }}>
+                      Fully paid. {created.guestName} is checked in and Room {created.roomNumber} is now occupied.
+                    </div>
+                  ) : owedNow <= 0 ? (
+                    <div role="status" style={{ background: SUCCESS_BG, color: SUCCESS_TEXT, borderRadius: 10, padding: '12px 14px', fontSize: 13, fontWeight: 600, marginBottom: 14 }}>
+                      Fully paid. Check the guest in from Reservations when they arrive on {created.stayLabel}.
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+                        <div>
+                          <label style={label}>Paid with</label>
+                          <select value={payment.method} onChange={e => setPayment(p => ({ ...p, method: e.target.value }))} style={inp}>
+                            <option value="cash">Cash</option>
+                            <option value="gcash">GCash</option>
+                            <option value="qrph">QR payment (QR Ph)</option>
+                            <option value="bank">Bank transfer</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={label}>Amount received (₱)</label>
+                          <input type="number" min="1" step="0.01" max={owedNow} value={payment.amount}
+                            onChange={e => setPayment(p => ({ ...p, amount: e.target.value, error: '' }))} style={inp} />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: MUTED, margin: '8px 0 12px' }}>
+                        The resort has no card terminal: cash or QR only. {created.isToday ? 'Paying the full amount checks the guest in now.' : 'The guest is checked in on arrival once fully paid.'}
+                      </div>
+                      {payment.error && <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginBottom: 10 }}>{payment.error}</div>}
+                      <button type="button" onClick={recordWalkInPayment} disabled={payment.busy}
+                        style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 13, fontSize: 14, fontWeight: 700, cursor: payment.busy ? 'wait' : 'pointer', fontFamily: 'inherit', marginBottom: 10 }}>
+                        {payment.busy ? 'Saving…' : `Record ₱${Number(payment.amount || 0).toLocaleString()} payment`}
+                      </button>
+                    </>
+                  )}
+                  <button type="button" onClick={finishWalkIn}
+                    style={{ ...inp, cursor: 'pointer', textAlign: 'center', fontWeight: 600, color: owedNow > 0 ? MUTED : TEXT }}>
+                    {owedNow > 0 ? 'Collect later (guest not checked in yet)' : 'Done — start a new walk-in'}
+                  </button>
+                </div>
               </div>
             )}
           </motion.div>

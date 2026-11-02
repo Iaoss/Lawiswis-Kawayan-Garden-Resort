@@ -350,20 +350,36 @@ export default function BookRoom() {
   const [roomSuggestionsLoading, setRoomSuggestionsLoading] = useState(false);
   const baseCapacity = pricing?.baseCapacity || 2;
   const groupSize = Number(form.adults) + Number(form.children);
+  // Rooms that fit the group, cheapest for this booking first (room rate
+  // plus extra guests), one per room kind so the guest sees real choices:
+  // e.g. 3 guests get a Couple Room with Extra Bed before a Family Room.
   const suggestedRooms = useMemo(() => {
+    const adults = Number(form.adults);
+    const children = Number(form.children);
+    const priceFor = item => {
+      try {
+        return calculateBookingPrice({
+          room: item, bookingType: form.bookingType, nights: Math.max(1, nights || 1), adults, children,
+          tourPeriod: form.tourPeriod,
+        }).subtotalAmount;
+      } catch { return Number.MAX_SAFE_INTEGER; }
+    };
     const matchingRooms = availableRooms
       .filter(item => item.id !== room?.id && !['maintenance', 'cleaning', 'occupied', 'unavailable'].includes(String(item.status || '').toLowerCase()))
-      .filter(item => !getGuestCountViolation(item, Number(form.adults), Number(form.children)))
-      .sort((first, second) => {
-        const firstCapacity = getRoomCapacityPolicy(first)?.maxGuests || Number.MAX_SAFE_INTEGER;
-        const secondCapacity = getRoomCapacityPolicy(second)?.maxGuests || Number.MAX_SAFE_INTEGER;
-        return firstCapacity - secondCapacity || String(first.roomNumber || first.name).localeCompare(String(second.roomNumber || second.name));
-      });
-    if (!matchingRooms.length) return [];
-    const closestCapacity = getRoomCapacityPolicy(matchingRooms[0])?.maxGuests;
-    const closestMatches = matchingRooms.filter(item => getRoomCapacityPolicy(item)?.maxGuests === closestCapacity);
-    return (closestMatches.length >= 2 ? closestMatches : matchingRooms).slice(0, 2);
-  }, [availableRooms, form.adults, form.children, room?.id]);
+      .filter(item => !getGuestCountViolation(item, adults, children))
+      .map(item => ({ item, price: priceFor(item), kind: getRoomCapacityPolicy(item)?.label || item.type || '' }))
+      .sort((a, b) => a.price - b.price
+        || (getRoomCapacityPolicy(a.item)?.maxGuests || 99) - (getRoomCapacityPolicy(b.item)?.maxGuests || 99)
+        || String(a.item.roomNumber || a.item.name).localeCompare(String(b.item.roomNumber || b.item.name)));
+    const seenKinds = new Set();
+    const picks = [];
+    matchingRooms.forEach(entry => {
+      if (picks.length >= 3 || seenKinds.has(entry.kind)) return;
+      seenKinds.add(entry.kind);
+      picks.push({ ...entry.item, suggestedPrice: entry.price, suggestedKind: entry.kind });
+    });
+    return picks;
+  }, [availableRooms, form.adults, form.children, form.bookingType, form.tourPeriod, nights, room?.id]);
 
   // Land at the top whenever the page moves to another step (bookings tab,
   // payment preview, confirmation).
@@ -1272,14 +1288,15 @@ export default function BookRoom() {
                     {roomSuggestionsLoading && <span style={{ fontSize: '11px', color: '#4b6352' }}>Finding rooms...</span>}
                   </div>
                   {suggestedRooms.length > 0 ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${suggestedRooms.length}, minmax(0, 1fr))`, gap: '10px', marginTop: '12px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px', marginTop: '12px' }}>
                       {suggestedRooms.map(suggestedRoom => {
                         const capacity = getRoomCapacityPolicy(suggestedRoom);
                         const details = getRoomComparisonDetails(suggestedRoom);
                         return (
                           <article key={suggestedRoom.id} style={{ background: '#fff', border: '1px solid #d8e7db', borderRadius: '10px', padding: '12px', minWidth: 0 }}>
                             <strong style={{ display: 'block', color: DARK, fontSize: '13px' }}>{suggestedRoom.roomNumber || suggestedRoom.name || suggestedRoom.type}</strong>
-                            <span style={{ display: 'block', marginTop: '3px', color: '#52725b', fontSize: '11px' }}>Up to {capacity?.maxGuests} guests</span>
+                            {suggestedRoom.suggestedKind && <span style={{ display: 'block', marginTop: '3px', color: DARK, fontSize: '11px', fontWeight: 600 }}>{suggestedRoom.suggestedKind}</span>}
+                            <span style={{ display: 'block', marginTop: '3px', color: '#52725b', fontSize: '11px' }}>Up to {capacity?.maxGuests} guests{suggestedRoom.suggestedPrice < Number.MAX_SAFE_INTEGER ? ` · ₱${suggestedRoom.suggestedPrice.toLocaleString()} for your group` : ''}</span>
                             <div style={{ marginTop: '10px', fontSize: '11px', color: '#374151', lineHeight: 1.5 }}>
                               <div><strong>Layout:</strong> {details.layout}</div>
                               <div><strong>Comfort:</strong> {details.comfort}</div>

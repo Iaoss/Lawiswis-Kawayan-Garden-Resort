@@ -27,7 +27,7 @@ const MENU_GROUPS = [
   {
     label: 'Front Desk / Operations',
     icon: 'ti ti-building-store',
-    children: ['Reservations', 'Walk-in', 'Room Management', 'Booking Transactions'],
+    children: ['Reservations', 'Walk-in', 'Room Management'],
   },
   {
     label: 'Financials',
@@ -71,7 +71,7 @@ const searchableCollections = [
   {
     name: 'payments',
     label: 'Payment',
-    path: (prefix) => `${prefix}/${prefix === '/admin' ? 'payments' : 'transactions'}`,
+    path: (prefix) => `${prefix}/${prefix === '/admin' ? 'payments' : 'billing'}`,
     fields: ['guestName', 'roomNumber', 'reservationId', 'amount', 'method', 'status'],
     title: (data) => data.guestName || 'Payment',
     detail: (data) => [`Room ${data.roomNumber || '—'}`, data.amount ? `₱${data.amount}` : null, data.method].filter(Boolean).join(' · '),

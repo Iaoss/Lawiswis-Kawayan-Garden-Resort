@@ -18,6 +18,9 @@
 //   { action: 'flag-overstay', reservationId, note? }
 //     Marks a checked-in guest who is past check-out as overstayed.
 //   { action: 'add-late-fee', reservationId, amount, note? }
+//   { action: 'extend-checkout', reservationId, hours, amount?, note? }
+//     Gives a checked-in guest more time before check-out (late check-out),
+//     with an optional fee added to their bill.
 //     Adds a late check-out charge to an overstaying guest's bill.
 //
 // Overstay records (flag, late-fee total, minutes late at check-out) are kept
@@ -28,8 +31,11 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { logActivity } from '../lib/activityLog';
 import {
+  MAX_LATE_CHECKOUT_HOURS,
   MAX_LATE_FEE,
   RESERVATION_STATUSES,
+  formatManilaTime,
+  getScheduledCheckOutMs,
   getStatusTransitionError,
   getEarlyCheckInError,
   getCheckInPaymentError,
@@ -147,6 +153,51 @@ function flagOverstay({ transaction, reservationRef, reservation, staff, note })
   return { flagged: true, overstayLabel: formatDuration(overstay.ms) };
 }
 
+function extendCheckout({ transaction, reservationRef, reservation, staff, hours, amount, note }) {
+  if (reservation.status !== 'checked-in') throw new StatusError(409, 'Only a checked-in guest can be given more time.');
+  const extraHours = Number(hours);
+  if (!Number.isInteger(extraHours) || extraHours < 1 || extraHours > MAX_LATE_CHECKOUT_HOURS) {
+    throw new StatusError(400, `Choose between 1 and ${MAX_LATE_CHECKOUT_HOURS} extra hours.`);
+  }
+  const fee = amount === undefined || amount === '' ? 0 : Math.round(Number(amount) * 100) / 100;
+  if (!Number.isFinite(fee) || fee < 0 || fee > MAX_LATE_FEE) {
+    throw new StatusError(400, `Enter a late check-out fee between ₱0 and ₱${MAX_LATE_FEE.toLocaleString()}.`);
+  }
+  const current = getScheduledCheckOutMs(reservation);
+  if (current === null) throw new StatusError(409, 'This booking has no check-out date.');
+  // Extend from the later of now or the current check-out time.
+  const until = Math.max(current, Date.now()) + extraHours * 3600000;
+  const updates = {
+    lateCheckoutUntil: until,
+    lateCheckoutExtensions: FieldValue.arrayUnion({
+      id: crypto.randomUUID(),
+      hours: extraHours,
+      until,
+      fee,
+      note,
+      addedBy: staff.uid,
+      addedByName: staff.name || staff.email || '',
+      addedAt: new Date().toISOString(),
+    }),
+  };
+  if (fee > 0) {
+    const extraCharges = Number(reservation.extraCharges || 0) + fee;
+    updates.extraCharges = FieldValue.increment(fee);
+    updates.lateCheckoutChargeTotal = FieldValue.increment(fee);
+    updates.lateCheckoutCharges = FieldValue.arrayUnion({
+      id: crypto.randomUUID(),
+      amount: fee,
+      note: note || `Late check-out, ${extraHours} extra hour${extraHours === 1 ? '' : 's'}`,
+      addedBy: staff.uid,
+      addedAt: new Date().toISOString(),
+      overstayMinutes: 0,
+    });
+    updates.paymentStatus = paymentStatusFor(Number(reservation.totalAmount || 0) + extraCharges, Number(reservation.amountPaid || 0));
+  }
+  transaction.update(reservationRef, updates);
+  return { extended: true, hours: extraHours, until, untilLabel: formatManilaTime(until), fee };
+}
+
 function addLateFee({ transaction, reservationRef, reservation, staff, amount, note }) {
   const fee = Math.round(Number(amount) * 100) / 100;
   if (!Number.isFinite(fee) || fee <= 0 || fee > MAX_LATE_FEE) {
@@ -217,6 +268,7 @@ export default async function handler(req, res) {
       }
       if (action === 'flag-overstay') return flagOverstay({ ...context, note: cleanText(note, 300) });
       if (action === 'add-late-fee') return addLateFee({ ...context, amount, note: cleanText(note, 300) });
+      if (action === 'extend-checkout') return extendCheckout({ ...context, hours: req.body?.hours, amount, note: cleanText(note, 300) });
       throw new StatusError(400, 'Choose a valid reservation action.');
     });
 
@@ -228,7 +280,9 @@ export default async function handler(req, res) {
     }
     if (!result.unchanged) {
       const ref = `#${reservationId.slice(0, 8).toUpperCase()}`;
-      const entry = action === 'add-late-fee'
+      const entry = action === 'extend-checkout'
+        ? { action: 'late_checkout_given', summary: `Gave booking ${ref} ${result.hours} more hour${result.hours === 1 ? '' : 's'} (check-out ${result.untilLabel})${result.fee ? `, ₱${Number(result.fee).toLocaleString()} fee` : ''}` }
+        : action === 'add-late-fee'
         ? { action: 'late_fee_added', summary: `Added ₱${Number(result.lateFeeAdded || 0).toLocaleString()} late check-out charge on booking ${ref}` }
         : action === 'flag-overstay'
           ? { action: 'overstay_flagged', summary: `Flagged an overstay on booking ${ref}` }

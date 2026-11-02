@@ -82,11 +82,35 @@ function parseClock(value, fallback = DEFAULT_CHECKOUT_TIME) {
 }
 
 // Scheduled check-out moment (ms since epoch), or null if the date is missing.
+// A late check-out staff agreed to (lateCheckoutUntil) moves it later.
 export function getScheduledCheckOutMs(reservation) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(reservation?.checkOut || '');
   if (!match) return null;
   const { hours, minutes } = parseClock(reservation.checkOutTime);
-  return Date.UTC(+match[1], +match[2] - 1, +match[3], hours - MANILA_OFFSET_HOURS, minutes);
+  const booked = Date.UTC(+match[1], +match[2] - 1, +match[3], hours - MANILA_OFFSET_HOURS, minutes);
+  const extended = Number(reservation.lateCheckoutUntil);
+  return Number.isFinite(extended) && extended > booked ? extended : booked;
+}
+
+// Longest late check-out staff can give in one go.
+export const MAX_LATE_CHECKOUT_HOURS = 6;
+// How early a checked-in guest shows as "due to check out".
+export const CHECKOUT_DUE_WINDOW_MINUTES = 120;
+
+// A checked-in guest whose check-out time is coming up within the window
+// (not yet past it; past it is an overstay). Returns { dueMs, minutesLeft } or null.
+export function getCheckoutDue(reservation, now = new Date(), windowMinutes = CHECKOUT_DUE_WINDOW_MINUTES) {
+  if (reservation?.status !== 'checked-in') return null;
+  const dueMs = getScheduledCheckOutMs(reservation);
+  if (dueMs === null) return null;
+  const minutesLeft = Math.ceil((dueMs - now.getTime()) / 60000);
+  if (minutesLeft <= 0 || minutesLeft > windowMinutes) return null;
+  return { dueMs, minutesLeft };
+}
+
+// "12:30 PM" in Philippine time.
+export function formatManilaTime(ms) {
+  return new Date(ms).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' });
 }
 
 export function formatDuration(ms) {

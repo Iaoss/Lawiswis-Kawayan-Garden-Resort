@@ -40,6 +40,8 @@ export default function Billing() {
   // Rate-card service being added (spa / photoshoot). Priced again on the server.
   const [service, setService] = useState({ serviceId: 'spa', hours: 1, persons: 5 });
   const [paymentAmount, setPaymentAmount] = useState('');
+  // How the guest paid at the desk. The resort has no card terminal.
+  const [deskMethod, setDeskMethod] = useState('cash');
   const [success, setSuccess] = useState('');
 
   // ── PayMongo payment link ──────────────────────────────────
@@ -57,6 +59,20 @@ export default function Billing() {
   };
 
   useEffect(() => { fetchReservations(); }, []);
+
+  // Opened from a booking (?booking=<id>): select it and fill in the balance.
+  const [preselectDone, setPreselectDone] = useState(false);
+  useEffect(() => {
+    if (preselectDone || reservations.length === 0) return;
+    const wanted = new URLSearchParams(window.location.search).get('booking');
+    setPreselectDone(true);
+    const match = wanted && reservations.find(r => r.id === wanted);
+    if (match) {
+      setSelected(match);
+      const owed = Number(match.totalAmount || 0) + Number(match.extraCharges || 0) - Number(match.amountPaid || 0);
+      if (owed > 0) setPaymentAmount(String(Math.round(owed * 100) / 100));
+    }
+  }, [reservations, preselectDone]);
 
   // Live-updates the open reservation so a PayMongo payment (confirmed by
   // the webhook, which writes straight to Firestore) shows up here the
@@ -128,7 +144,7 @@ export default function Billing() {
     setBillingBusy(true);
     try {
       const result = await staffApi('staff-billing', {
-        action: 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: selected.paymentMethod || 'cash',
+        action: 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: deskMethod,
       });
       setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus, ...(result.autoCheckedIn ? { status: 'checked-in' } : result.autoConfirmed ? { status: 'confirmed' } : {}) }));
       fetchReservations();
@@ -412,15 +428,35 @@ export default function Billing() {
                 {/* Payment — two clearly separate lanes */}
                 <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: '10px', padding: '18px 24px' }}>
                   <h3 style={{ fontWeight: '600', color: INK, marginBottom: '14px', fontSize: '13px' }}>Accept payment</h3>
-                  <input type="number" value={paymentAmount}
-                    onChange={e => { setPaymentAmount(e.target.value); setStatusResult(''); }}
-                    placeholder="Amount"
-                    style={{ ...inp, width: '100%', marginBottom: '16px' }} />
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                    <input type="number" value={paymentAmount}
+                      onChange={e => { setPaymentAmount(e.target.value); setStatusResult(''); }}
+                      placeholder="Amount"
+                      style={{ ...inp, flex: 1, minWidth: 0 }} />
+                    {totalBalance(selected) > 0 && (
+                      <button type="button" onClick={() => { setPaymentAmount(String(Math.round(totalBalance(selected) * 100) / 100)); setStatusResult(''); }}
+                        style={{ ...inp, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        Full balance {formatCurrency(totalBalance(selected))}
+                      </button>
+                    )}
+                  </div>
+                  {['pending', 'confirmed'].includes(selected.status) && totalBalance(selected) > 0 && (
+                    <p style={{ fontSize: '11.5px', color: SUBINK, margin: '-6px 0 14px' }}>
+                      Guests pay in full before entering. Paying the full balance on the stay date checks the guest in automatically.
+                    </p>
+                  )}
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr', gap: '20px' }}>
                     {/* Cash lane */}
                     <div>
-                      <p style={{ fontSize: '11px', color: SUBINK, margin: '0 0 8px', fontWeight: 600 }}>Cash</p>
+                      <p style={{ fontSize: '11px', color: SUBINK, margin: '0 0 8px', fontWeight: 600 }}>At the front desk (cash or QR — no cards)</p>
+                      <select value={deskMethod} onChange={e => setDeskMethod(e.target.value)} aria-label="Payment method"
+                        style={{ ...inp, width: '100%', marginBottom: '8px' }}>
+                        <option value="cash">Cash</option>
+                        <option value="gcash">GCash</option>
+                        <option value="qrph">QR payment (QR Ph)</option>
+                        <option value="bank">Bank transfer</option>
+                      </select>
                       <button onClick={handlePayment}
                         disabled={!paymentAmount}
                         style={{
@@ -428,7 +464,7 @@ export default function Billing() {
                           padding: '10px 14px', fontSize: '13px', fontWeight: '700', cursor: paymentAmount ? 'pointer' : 'default',
                           opacity: paymentAmount ? 1 : 0.5, fontFamily: SANS,
                         }}>
-                        Record cash payment
+                        Record {deskMethod === 'cash' ? 'cash' : deskMethod === 'gcash' ? 'GCash' : deskMethod === 'qrph' ? 'QR' : 'bank'} payment
                       </button>
                     </div>
 

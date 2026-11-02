@@ -62,6 +62,7 @@ function useNotificationReservations() {
       refunds: query(reservations, where('refundRequestStatus', 'in', ACTIVE_REFUND_STATUSES)),
       changes: query(reservations, where('modificationRequest.status', 'in', ACTIVE_MODIFICATION_STATUSES)),
       replies: query(reservations, where('unpaidFollowUp.guestReply', 'in', ['yes', 'no'])),
+      checkedIn: query(reservations, where('status', '==', 'checked-in')),
     };
     const loaded = new Set();
     const stops = Object.entries(queries).map(([key, q]) => onSnapshot(q, snapshot => {

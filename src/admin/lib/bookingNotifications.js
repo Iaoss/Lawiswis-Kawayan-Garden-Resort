@@ -8,6 +8,7 @@
 // online payment, never showed up.
 
 import { GUEST_REPLY_LABELS, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
+import { formatManilaTime, getCheckoutDue, getOutstandingBalance, getOverstay } from '../../lib/reservationStatus';
 
 export const NEW_BOOKING_DAYS = 7;
 export const ACTIVE_MODIFICATION_STATUSES = ['requested', 'needs_review', 'awaiting_payment', 'awaiting_refund'];
@@ -61,6 +62,27 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
         message: `${guest} · ${ref(r.id)}`,
         details: `${r.checkIn || '—'}${r.checkOut && r.checkOut !== r.checkIn ? ` → ${r.checkOut}` : ''} · ${peso(r.totalAmount)} · ${paid}${status ? ` · ${status}` : ''}`,
         timeMs: createdMs,
+        bookingId: r.id,
+        path,
+      });
+    }
+
+    // Checked-in guests whose check-out time is close, or already past.
+    const due = getCheckoutDue(r, new Date(now));
+    const overstay = !due && getOverstay(r, new Date(now));
+    if (due || overstay) {
+      const owes = Math.max(0, getOutstandingBalance(r));
+      const room = r.roomNumber ? `Room ${r.roomNumber}` : 'Group';
+      items.push({
+        id: due ? `checkout-due_${r.id}_${due.dueMs}` : `checkout-late_${r.id}_${r.checkOut}_${r.lateCheckoutUntil || ''}`,
+        icon: due ? 'ti-clock-hour-4' : 'ti-alarm',
+        badge: due ? 'Check-out Soon' : 'Past Check-out',
+        message: `${guest} · ${room}`,
+        details: due
+          ? `Due ${formatManilaTime(due.dueMs)} · in ${due.minutesLeft} min${owes > 0 ? ` · owes ${peso(owes)}` : ''}`
+          : `Overstayed ${overstay.label}${owes > 0 ? ` · owes ${peso(owes)}` : ''} · check out or give more time`,
+        // Keeps these near the top while they matter.
+        timeMs: now,
         bookingId: r.id,
         path,
       });

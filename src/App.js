@@ -36,7 +36,6 @@ const Amenities = lazy(() => import('./client/pages/Amenities'));
 const Certifications = lazy(() => import('./client/pages/Certifications'));
 const CustomerCarePage = lazy(() => import('./client/pages/CustomerCarePage'));
 const FeedbackForm = lazy(() => import('./client/pages/FeedbackForm'));
-const BookingTransactions = lazy(() => import('./admin/pages/BookingTransactions'));
 const Settings = lazy(() => import('./admin/pages/Settings'));
 const NewsManagement = lazy(() => import('./admin/pages/NewsManagement.js'));
 const Email = lazy(() => import('./admin/pages/Email.js'));
@@ -129,7 +128,8 @@ function App() {
           <Route path="customers" element={<CustomerManagement />} />
           <Route path="history" element={<ReservationHistory />} />
           <Route path="messages" element={<Messages />} />
-          <Route path="transactions" element={<BookingTransactions />} />
+          {/* Booking Transactions was merged into Billing. */}
+          <Route path="transactions" element={<Navigate to="/receptionist/billing" replace />} />
           <Route path="cancellation" element={<CancellationPolicy />} />
           <Route path="settings" element={<Settings />} />
           {/* Admin pages a receptionist can open only while an admin has given them access. */}
