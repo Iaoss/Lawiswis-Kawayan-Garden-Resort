@@ -8,6 +8,7 @@ import { ArrowLeft, Eye, EyeOff, LockKeyhole, Mail } from 'lucide-react';
 import { ImageSlider } from '../../components/ui/image-slider.tsx';
 import { RESORT_IMAGES } from '../../client/components/clientTheme';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
+import StaffPortalIntro from '../components/StaffPortalIntro';
 
 const RESORT_SLIDES = [
   RESORT_IMAGES.hero,
@@ -90,6 +91,8 @@ export default function Login() {
   };
 
   return (
+    <>
+    <StaffPortalIntro />
     <main
       className="flex min-h-screen items-center justify-center px-4 py-8 sm:px-6"
       style={{
@@ -216,5 +219,6 @@ export default function Login() {
         </section>
       </motion.section>
     </main>
+    </>
   );
 }
