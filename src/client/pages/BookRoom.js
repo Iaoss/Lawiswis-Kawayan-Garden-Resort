@@ -28,6 +28,7 @@ import {
 import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
+import BookingSteps from '../components/BookingSteps';
 import { Pagination, usePagination } from '../../components/ui/pagination';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
@@ -178,6 +179,9 @@ export default function BookRoom() {
   const [previewReservationRef, setPreviewReservationRef] = useState('');
   const [termsRead, setTermsRead] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+  // The form is split into steps so it isn't all on one screen:
+  // 0 Stay details, 1 Your details, 2 Review & pay.
+  const [formStep, setFormStep] = useState(0);
   // Saving the guest's details on this device is opt-in (off unless they
   // already chose to save them before). See the Privacy Policy.
   const [rememberDetails, setRememberDetails] = useState(() => Boolean(readLocalValue(GUEST_PROFILE_KEY, null)));
@@ -688,8 +692,63 @@ export default function BookRoom() {
     setFieldErrors(previous => ({ ...previous, [name]: validateField(name, normalized) }));
   };
 
+  // Checks for the current step before moving on. Returns true when OK.
+  const checkStayStep = () => {
+    if (!datesValid || nights <= 0) { setErrorMsg('Choose valid dates first.'); return false; }
+    if (tourCutoffError) { setErrorMsg(tourCutoffError); return false; }
+    if (guestCountViolation) { setErrorMsg(guestCountViolation); return false; }
+    if (form.bookingType === 'daytour' && !form.cottageId) {
+      setErrorMsg('Day and night tours need a cottage. Please choose one under "Cottage".');
+      document.getElementById('cottage-selection')?.focus();
+      return false;
+    }
+    return true;
+  };
+  const checkDetailsStep = () => {
+    const guestErrors = {
+      firstName: validateField('firstName', form.firstName),
+      lastName: validateField('lastName', form.lastName),
+      phone: validateField('phone', form.phone),
+    };
+    setFieldErrors(guestErrors);
+    const firstBad = Object.keys(guestErrors).find(key => guestErrors[key]);
+    if (firstBad) { document.getElementById(firstBad)?.focus(); return false; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(form.email || '').trim())) {
+      setErrorMsg('Enter a valid email address.');
+      document.getElementById('email')?.focus();
+      return false;
+    }
+    if (!isPreferredContactMethod(form.preferredContactMethod)) {
+      setErrorMsg('Please choose a preferred contact method.');
+      document.getElementById('preferredContactMethod')?.focus();
+      return false;
+    }
+    const linkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
+    if (linkError) { setErrorMsg(linkError); document.getElementById('contactLink')?.focus(); return false; }
+    return true;
+  };
+  const goToFormStep = next => {
+    setErrorMsg('');
+    setFormStep(next);
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+  };
+  const nextFormStep = () => {
+    setErrorMsg('');
+    if (formStep === 0 && !checkStayStep()) return;
+    if (formStep === 1 && !checkDetailsStep()) return;
+    goToFormStep(Math.min(2, formStep + 1));
+  };
+  // Back to the room choice step, keeping the dates and guests.
+  const backToRoomChoice = () => {
+    const stay = form.bookingType === 'daytour' ? (form.tourPeriod === 'night' ? 'night' : 'day') : 'overnight';
+    navigate(`/book?${new URLSearchParams({ type: 'personal', stay, checkIn: form.checkIn, ...(stay === 'overnight' ? { checkOut: form.checkOut } : {}), adults: String(form.adults), children: String(form.children), step: 'room' })}`);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    // Enter on an earlier step moves to the next step instead of paying.
+    if (formStep < 2) { nextFormStep(); return; }
     if (!resortAvailable || availabilityError) {
       setErrorMsg(availabilityError || unavailableReason || 'Reservations are temporarily closed.');
       return;
@@ -1043,117 +1102,29 @@ export default function BookRoom() {
                 <button onClick={openDateEditor} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates here</button>
               )
             ) : (
-              <button onClick={() => navigate('/rooms')} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
+              <button onClick={() => navigate(`/book?room=${encodeURIComponent(roomId || '')}&type=personal`)} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
             )}
           </div>
         ) : (
         <div className="booking-layout">
         {/* Booking Form */}
         <div>
-          <button type="button" onClick={() => navigate('/rooms')} style={{ padding: 0, border: 0, background: 'transparent', color: ACCENT, fontSize: '12px', cursor: 'pointer', marginBottom: '14px' }}>← Back to rooms</button>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#111', marginBottom: '6px' }}>Complete Your Booking</h1>
-          <p style={{ fontSize: '13px', color: '#9ca3af', marginBottom: '28px' }}>Fill in your details to reserve Room {room.roomNumber}</p>
+          <BookingSteps current={3 + formStep} onStep={index => (index <= 2 ? backToRoomChoice() : goToFormStep(index - 3))} />
+          <button type="button" onClick={() => (formStep === 0 ? backToRoomChoice() : goToFormStep(formStep - 1))} style={{ padding: 0, border: 0, background: 'transparent', color: ACCENT, fontSize: '12px', cursor: 'pointer', marginBottom: '14px' }}>
+            ← {formStep === 0 ? 'Back to room choice' : formStep === 1 ? 'Back to stay details' : 'Back to your details'}
+          </button>
+          <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#111', marginBottom: '6px' }}>{['Stay details', 'Your details', 'Review & pay'][formStep]}</h1>
+          <p style={{ fontSize: '13px', color: '#9ca3af', marginBottom: '28px' }}>
+            {[`Times, guests and extras for ${room.roomName || `Room ${room.roomNumber}`}`, 'Who is booking, and how we should reach you', 'Check the price, choose how much to pay, and agree to the terms'][formStep]}
+          </p>
 
           <form onSubmit={handleSubmit}>
-            {/* Guest Info */}
-            <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '16px' }}>
-              <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>1</span>
-                Guest Information
-              </div>
-              <div className="responsive-grid-2" style={{ gap: '14px' }}>
-                {[
-                  { label: 'First Name *', key: 'firstName', placeholder: 'Juan', type: 'text', required: true },
-                  { label: 'Last Name *', key: 'lastName', placeholder: 'dela Cruz', type: 'text', required: true },
-                  { label: 'Phone Number *', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: true },
-                  { label: 'Email Address *', key: 'email', placeholder: 'juan@email.com', type: 'email', required: true },
-                  { label: 'Address', key: 'address', placeholder: 'City, Province', type: 'text', required: false },
-                ].map(f => (
-                  <div key={f.key}>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</label>
-                    <input id={f.key} name={f.key} required={f.required} type={f.type} value={form[f.key]}
-                      maxLength={['firstName', 'lastName'].includes(f.key) ? 35 : f.key === 'phone' ? 11 : undefined}
-                      inputMode={f.key === 'phone' ? 'numeric' : undefined}
-                      autoComplete={f.key === 'firstName' ? 'given-name' : f.key === 'lastName' ? 'family-name' : f.key === 'phone' ? 'tel' : f.key === 'email' ? 'email' : f.key === 'address' ? 'street-address' : undefined}
-                      pattern={f.key === 'phone' ? '09[0-9]{9}' : undefined}
-                      onChange={['firstName', 'lastName', 'phone'].includes(f.key) ? handleGuestFieldChange : e => setForm(previous => ({ ...previous, [f.key]: e.target.value }))}
-                      onBlur={['firstName', 'lastName', 'phone'].includes(f.key) ? handleGuestFieldBlur : undefined}
-                      placeholder={f.placeholder}
-                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
-                    {['firstName', 'lastName'].includes(f.key) && (
-                      <div role={fieldErrors[f.key] ? 'alert' : undefined} style={{ color: fieldErrors[f.key] ? '#b91c1c' : '#9ca3af', fontSize: '10px', marginTop: '5px' }}>
-                        {fieldErrors[f.key] || 'Use 2-35 letters, spaces, hyphens, or apostrophes.'}
-                      </div>
-                    )}
-                    {f.key !== 'firstName' && f.key !== 'lastName' && fieldErrors[f.key] && <div role="alert" style={{ color: '#b91c1c', fontSize: '11px', marginTop: '5px' }}>{fieldErrors[f.key]}</div>}
-                  </div>
-                ))}
-                <div>
-                  <label htmlFor="preferredContactMethod" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preferred Contact Method *</label>
-                  <select id="preferredContactMethod" name="preferredContactMethod" required value={form.preferredContactMethod}
-                    onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))}
-                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: '#fff' }}>
-                    <option value="">Select contact method</option>
-                    {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
-                  </select>
-                  {/* Email / Phone reuse what the guest typed above; Facebook needs a link. */}
-                  {['Email', 'Phone'].includes(form.preferredContactMethod) && (() => {
-                    const value = form.preferredContactMethod === 'Email' ? form.email.trim() : form.phone.trim();
-                    return (
-                      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px', background: LIGHT, color: '#355a42', borderRadius: '8px', padding: '9px 12px', fontSize: '12px' }}>
-                        <i className={`ti ${form.preferredContactMethod === 'Email' ? 'ti-mail' : 'ti-phone'}`} aria-hidden="true" style={{ fontSize: '15px' }} />
-                        {value
-                          ? <span>We'll contact you at <strong style={{ overflowWrap: 'anywhere' }}>{value}</strong></span>
-                          : <span>Enter your {form.preferredContactMethod === 'Email' ? 'email address' : 'phone number'} above.</span>}
-                      </div>
-                    );
-                  })()}
-                  {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
-                    <div style={{ marginTop: '8px' }}>
-                      <label htmlFor="contactLink" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Facebook profile link *</label>
-                      <input id="contactLink" name="contactLink" type="url" required maxLength={200} value={form.contactLink}
-                        onChange={e => setForm(previous => ({ ...previous, contactLink: e.target.value }))}
-                        placeholder="https://www.facebook.com/your.name"
-                        style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
-                      <div style={{ color: form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink) ? '#b91c1c' : '#9ca3af', fontSize: '10px', marginTop: '5px' }}>
-                        {form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink)
-                          ? getContactLinkError(form.preferredContactMethod, form.contactLink)
-                          : 'Open your Facebook profile, copy the link from the address bar and paste it here.'}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-              {savedProfile && (
-                <div style={{ marginTop: '16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', background: LIGHT, color: '#355a42', borderRadius: '999px', padding: '9px 13px', fontSize: '11px' }}>
-                  <span>Welcome back, {savedProfile.guestName || 'guest'}!</span>
-                  <button type="button" onClick={clearSavedProfile} style={{ border: 0, background: 'transparent', padding: 0, color: DARK, font: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}>Not you? Forget my details</button>
-                </div>
-              )}
-
-              {/* Honeypot field — invisible to real guests (off-screen, no
-                  tab focus). Basic bots that auto-fill every input on a
-                  form will populate this; the API rejects the submission
-                  when it sees a value here. Real guests never notice it. */}
-              <div style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', overflow: 'hidden' }} aria-hidden="true">
-                <label htmlFor="website">Leave this field blank</label>
-                <input
-                  type="text"
-                  id="website"
-                  name="website"
-                  tabIndex={-1}
-                  autoComplete="off"
-                  value={form.website}
-                  onChange={e => setForm({ ...form, website: e.target.value })}
-                />
-              </div>
-
-            </div>
-
+            {formStep === 0 && (
+            <>
             {/* Stay Details */}
             <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '16px' }}>
               <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>2</span>
+                <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>1</span>
                 Stay Details
               </div>
               <div className="responsive-grid-2" style={{ gap: '14px' }}>
@@ -1401,6 +1372,109 @@ export default function BookRoom() {
               </div>
             </div>
 
+            </>
+            )}
+            {formStep === 1 && (
+            <>
+            {/* Guest Info */}
+            <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '16px' }}>
+              <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>2</span>
+                Guest Information
+              </div>
+              <div className="responsive-grid-2" style={{ gap: '14px' }}>
+                {[
+                  { label: 'First Name *', key: 'firstName', placeholder: 'Juan', type: 'text', required: true },
+                  { label: 'Last Name *', key: 'lastName', placeholder: 'dela Cruz', type: 'text', required: true },
+                  { label: 'Phone Number *', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: true },
+                  { label: 'Email Address *', key: 'email', placeholder: 'juan@email.com', type: 'email', required: true },
+                  { label: 'Address', key: 'address', placeholder: 'City, Province', type: 'text', required: false },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</label>
+                    <input id={f.key} name={f.key} required={f.required} type={f.type} value={form[f.key]}
+                      maxLength={['firstName', 'lastName'].includes(f.key) ? 35 : f.key === 'phone' ? 11 : undefined}
+                      inputMode={f.key === 'phone' ? 'numeric' : undefined}
+                      autoComplete={f.key === 'firstName' ? 'given-name' : f.key === 'lastName' ? 'family-name' : f.key === 'phone' ? 'tel' : f.key === 'email' ? 'email' : f.key === 'address' ? 'street-address' : undefined}
+                      pattern={f.key === 'phone' ? '09[0-9]{9}' : undefined}
+                      onChange={['firstName', 'lastName', 'phone'].includes(f.key) ? handleGuestFieldChange : e => setForm(previous => ({ ...previous, [f.key]: e.target.value }))}
+                      onBlur={['firstName', 'lastName', 'phone'].includes(f.key) ? handleGuestFieldBlur : undefined}
+                      placeholder={f.placeholder}
+                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                    {['firstName', 'lastName'].includes(f.key) && (
+                      <div role={fieldErrors[f.key] ? 'alert' : undefined} style={{ color: fieldErrors[f.key] ? '#b91c1c' : '#9ca3af', fontSize: '10px', marginTop: '5px' }}>
+                        {fieldErrors[f.key] || 'Use 2-35 letters, spaces, hyphens, or apostrophes.'}
+                      </div>
+                    )}
+                    {f.key !== 'firstName' && f.key !== 'lastName' && fieldErrors[f.key] && <div role="alert" style={{ color: '#b91c1c', fontSize: '11px', marginTop: '5px' }}>{fieldErrors[f.key]}</div>}
+                  </div>
+                ))}
+                <div>
+                  <label htmlFor="preferredContactMethod" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preferred Contact Method *</label>
+                  <select id="preferredContactMethod" name="preferredContactMethod" required value={form.preferredContactMethod}
+                    onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))}
+                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: '#fff' }}>
+                    <option value="">Select contact method</option>
+                    {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
+                  </select>
+                  {/* Email / Phone reuse what the guest typed above; Facebook needs a link. */}
+                  {['Email', 'Phone'].includes(form.preferredContactMethod) && (() => {
+                    const value = form.preferredContactMethod === 'Email' ? form.email.trim() : form.phone.trim();
+                    return (
+                      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px', background: LIGHT, color: '#355a42', borderRadius: '8px', padding: '9px 12px', fontSize: '12px' }}>
+                        <i className={`ti ${form.preferredContactMethod === 'Email' ? 'ti-mail' : 'ti-phone'}`} aria-hidden="true" style={{ fontSize: '15px' }} />
+                        {value
+                          ? <span>We'll contact you at <strong style={{ overflowWrap: 'anywhere' }}>{value}</strong></span>
+                          : <span>Enter your {form.preferredContactMethod === 'Email' ? 'email address' : 'phone number'} above.</span>}
+                      </div>
+                    );
+                  })()}
+                  {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
+                    <div style={{ marginTop: '8px' }}>
+                      <label htmlFor="contactLink" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Facebook profile link *</label>
+                      <input id="contactLink" name="contactLink" type="url" required maxLength={200} value={form.contactLink}
+                        onChange={e => setForm(previous => ({ ...previous, contactLink: e.target.value }))}
+                        placeholder="https://www.facebook.com/your.name"
+                        style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                      <div style={{ color: form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink) ? '#b91c1c' : '#9ca3af', fontSize: '10px', marginTop: '5px' }}>
+                        {form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink)
+                          ? getContactLinkError(form.preferredContactMethod, form.contactLink)
+                          : 'Open your Facebook profile, copy the link from the address bar and paste it here.'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {savedProfile && (
+                <div style={{ marginTop: '16px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', background: LIGHT, color: '#355a42', borderRadius: '999px', padding: '9px 13px', fontSize: '11px' }}>
+                  <span>Welcome back, {savedProfile.guestName || 'guest'}!</span>
+                  <button type="button" onClick={clearSavedProfile} style={{ border: 0, background: 'transparent', padding: 0, color: DARK, font: 'inherit', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}>Not you? Forget my details</button>
+                </div>
+              )}
+
+              {/* Honeypot field — invisible to real guests (off-screen, no
+                  tab focus). Basic bots that auto-fill every input on a
+                  form will populate this; the API rejects the submission
+                  when it sees a value here. Real guests never notice it. */}
+              <div style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', overflow: 'hidden' }} aria-hidden="true">
+                <label htmlFor="website">Leave this field blank</label>
+                <input
+                  type="text"
+                  id="website"
+                  name="website"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  value={form.website}
+                  onChange={e => setForm({ ...form, website: e.target.value })}
+                />
+              </div>
+
+            </div>
+
+            </>
+            )}
+            {formStep === 2 && (
+            <>
             {/* Payment Method */}
             <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '20px' }}>
               <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1596,6 +1670,27 @@ export default function BookRoom() {
               style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError || guestCountViolation ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError || guestCountViolation ? 0.7 : 1 }}>
               {availabilityLoading ? 'Checking resort status…' : availabilityError ? 'Booking status unavailable' : !resortAvailable ? 'Reservations temporarily closed' : submitting ? 'Redirecting to payment...' : guestCountViolation ? 'Choose a room that fits your group' : !termsAccepted ? 'Accept terms to continue' : 'Continue to Payment →'}
             </button>
+            </>
+            )}
+            {formStep < 2 && (
+              <>
+                {errorMsg && (
+                  <div role="alert" style={{ marginBottom: '12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', color: '#b91c1c' }}>
+                    {errorMsg}
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => (formStep === 0 ? backToRoomChoice() : goToFormStep(formStep - 1))}
+                    style={{ background: '#fff', color: DARK, border: '1px solid #d1d5db', borderRadius: '14px', padding: '14px 20px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                    ← Back
+                  </button>
+                  <button type="button" onClick={nextFormStep}
+                    style={{ flex: '1 1 220px', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                    {formStep === 0 ? 'Next: your details →' : 'Next: review & pay →'}
+                  </button>
+                </div>
+              </>
+            )}
           </form>
         </div>
 

@@ -2,7 +2,6 @@ import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import { BRASS, FOREST, FOREST_DEEP, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
-import { openBookingTypeModal } from '../lib/bookingTypeModal';
 
 export function BookingTypeSelectionModal({ open, onClose, onSelectPersonal, onSelectCorporate, onSelectCottage }) {
   if (!open) return null;
@@ -44,9 +43,9 @@ export function BookingTypeSelectionModal({ open, onClose, onSelectPersonal, onS
 export default function BookingTypeSelection() {
   const navigate = useNavigate();
 
+  // Old /booking-options links now open the step-by-step booking page.
   useEffect(() => {
-    openBookingTypeModal();
-    navigate('/home', { replace: true });
+    navigate('/book', { replace: true });
   }, [navigate]);
 
   return null;

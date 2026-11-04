@@ -25,6 +25,7 @@ const Messages = lazy(() => import('./admin/pages/Messages'));
 const ReceptionistDashboard = lazy(() => import('./admin/pages/ReceptionistDashboard'));
 const Rooms = lazy(() => import('./client/pages/Rooms'));
 const BookRoom = lazy(() => import('./client/pages/BookRoom'));
+const BookingWizard = lazy(() => import('./client/pages/BookingWizard'));
 const BookingHistory = lazy(() => import('./client/pages/BookingHistory'));
 const BookingCheck = lazy(() => import('./client/pages/BookingCheck'));
 const GuestChat = lazy(() => import('./client/pages/Chat'));
@@ -152,6 +153,7 @@ function App() {
           <Route path="/booking-options" element={<BookingTypeSelection />} />
           <Route path="/corporate-booking" element={<CorporateBooking />} />
           <Route path="/book-cottage" element={<CottageBooking />} />
+          <Route path="/book" element={<BookingWizard />} />
           <Route path="/book/:roomId" element={<BookRoom />} />
           <Route path="/my-bookings" element={<BookingHistory />} />
           <Route path="/booking-check" element={<BookingCheck />} />

@@ -602,7 +602,7 @@ export default function Home() {
             colors={{ FOREST, MOSS, BRASS, INK, LINE, PAPER, SERIF, SANS }}
             canBook={canBook}
             bookLabel={canBook ? 'BOOK NOW' : availabilityLoading ? 'CHECKING' : availabilityError ? 'UNAVAILABLE' : 'CLOSED'}
-            onBook={room => navigate(`/book/${room.id}`)}
+            onBook={room => navigate(`/book?room=${encodeURIComponent(room.id)}&type=personal`)}
             onView={() => navigate('/rooms')}
           />
         )}

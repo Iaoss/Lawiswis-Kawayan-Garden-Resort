@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BRASS, FOREST_DEEP, PAPER, SANS, LINE } from './clientTheme';
 import { useResortAvailability } from './ResortAvailabilityContext';
-import { BookingTypeSelectionModal } from '../pages/BookingTypeSelection';
 import { BOOKING_TYPE_MODAL_EVENT } from '../lib/bookingTypeModal';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
@@ -83,12 +82,12 @@ export default function ClientChrome({ children }) {
   };
   useEffect(() => () => clearTimeout(logoTapsRef.current.timer), []);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [bookingModalOpen, setBookingModalOpen] = useState(false);
   const { available: resortAvailable, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const canBook = resortAvailable && !availabilityLoading;
+  // Book now opens the step-by-step booking page (Type → When → Room → …).
   const openBookingModal = () => {
     if (!canBook) return;
-    setBookingModalOpen(true);
+    navigate('/book');
   };
 
   useEffect(() => {
@@ -116,19 +115,11 @@ export default function ClientChrome({ children }) {
   useEffect(() => {
     const handleOpen = () => {
       if (!canBook) return;
-      setBookingModalOpen(true);
+      navigate('/book');
     };
     window.addEventListener(BOOKING_TYPE_MODAL_EVENT, handleOpen);
     return () => window.removeEventListener(BOOKING_TYPE_MODAL_EVENT, handleOpen);
-  }, [canBook]);
-  useEffect(() => {
-    if (!bookingModalOpen) return undefined;
-    const onEscape = event => {
-      if (event.key === 'Escape') setBookingModalOpen(false);
-    };
-    document.addEventListener('keydown', onEscape);
-    return () => document.removeEventListener('keydown', onEscape);
-  }, [bookingModalOpen]);
+  }, [canBook, navigate]);
   const link = (label, href, onNavigate = () => {}) => (
     <button key={label} onClick={() => { onNavigate(); navigate(href); }} className={`client-nav-link${path === href || (href === '/home' && path === '/') || (href === '/rooms' && path.startsWith('/book/')) ? ' is-active' : ''}`} aria-current={path === href || (href === '/home' && path === '/') ? 'page' : undefined}>
       {label}
@@ -197,22 +188,6 @@ export default function ClientChrome({ children }) {
           </nav>
         </div>
       )}
-      <BookingTypeSelectionModal
-        open={bookingModalOpen}
-        onClose={() => setBookingModalOpen(false)}
-        onSelectPersonal={() => {
-          setBookingModalOpen(false);
-          navigate('/rooms');
-        }}
-        onSelectCorporate={() => {
-          setBookingModalOpen(false);
-          navigate('/corporate-booking');
-        }}
-        onSelectCottage={() => {
-          setBookingModalOpen(false);
-          navigate('/book-cottage');
-        }}
-      />
       <main className="client-main">{children}</main>
       <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '34px' }}>

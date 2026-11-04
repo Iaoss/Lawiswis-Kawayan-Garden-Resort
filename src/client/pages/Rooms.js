@@ -1,28 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
-import DateOccupancy from '../../components/ui/date-occupancy';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
-import { openBookingTypeModal } from '../lib/bookingTypeModal';
-import { areOvernightCheckInsClosed, isTourStartPassed } from '../../lib/bookingPricing';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
 import { GROUPS, OTHER_GROUP, UP, decorateRoom } from '../lib/roomCatalog';
 
 const HERO_IMAGE = optimizeImage(`${UP}2020/01/hero192x-scaled.jpg`, IMAGE_WIDTHS.hero);
 
-/* ------------------------------------------------------------------ */
-/* Date helpers                                                        */
-/* ------------------------------------------------------------------ */
-const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-const addMonths = (date, months) => {
-  const result = new Date(date.getFullYear(), date.getMonth() + months, 1);
-  result.setDate(Math.min(date.getDate(), new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate()));
-  return result;
-};
 const peso = value => `₱${Number(value || 0).toLocaleString('en-PH')}`;
 
 export default function Rooms() {
@@ -31,31 +19,11 @@ export default function Rooms() {
   const { available: resortAvailable, error: availabilityStatusError, loading: resortStatusLoading } = useResortAvailability();
   const canBook = resortAvailable && !resortStatusLoading && !availabilityStatusError;
   const [rooms, setRooms] = useState([]);
-  const [fullyBookedDates, setFullyBookedDates] = useState([]);
-  const [availableRoomIds, setAvailableRoomIds] = useState([]);
   const [filter, setFilter] = useState(() => new URLSearchParams(window.location.search).get('category') || 'all');
   const [search, setSearch] = useState('');
-  // Which rooms to show once dates are picked: 'available' (default), 'unavailable' or 'all'.
-  const [availabilityView, setAvailabilityView] = useState('available');
   const [loading, setLoading] = useState(true);
-  const [calendarLoading, setCalendarLoading] = useState(true);
-  const [availabilityLoading, setAvailabilityLoading] = useState(false);
-  const [calendarError, setCalendarError] = useState(false);
-  const [availabilityError, setAvailabilityError] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [photoIndex, setPhotoIndex] = useState(0);
-  const datesRef = useRef(null);
-
-  const params = new URLSearchParams(window.location.search);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todayKey = formatDate(today);
-  const maxDate = addMonths(today, 2);
-  const maxDateKey = formatDate(maxDate);
-  const [calendarMonth, setCalendarMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
-  const [checkIn, setCheckIn] = useState(params.get('checkIn') || '');
-  // An empty check-out means a single-day booking on the check-in date.
-  const [checkOut, setCheckOut] = useState(() => (params.get('checkOut') && params.get('checkOut') !== params.get('checkIn') ? params.get('checkOut') : ''));
 
   useEffect(() => {
     setFilter(new URLSearchParams(location.search).get('category') || 'all');
@@ -70,53 +38,6 @@ export default function Rooms() {
       .catch(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    fetch('/api/room-availability')
-      .then(response => {
-        if (!response.ok) throw new Error('Availability unavailable');
-        return response.json();
-      })
-      .then(data => { if (active) setFullyBookedDates(data.fullyBookedDates || []); })
-      .catch(() => { if (active) setCalendarError(true); })
-      .finally(() => { if (active) setCalendarLoading(false); });
-    return () => { active = false; };
-  }, []);
-
-  // One tapped date is a single-day booking (day tour): it ends on the same date.
-  const stayEnd = checkOut || checkIn;
-  const singleDay = Boolean(checkIn) && !checkOut;
-  // Today is closed once its last check-in time has passed (Philippine time):
-  // 5:00 PM for single-day tours, 6:00 PM for overnight stays.
-  const todayToursClosed = singleDay && isTourStartPassed(checkIn, 'night');
-  const todayOvernightClosed = !singleDay && Boolean(checkIn) && areOvernightCheckInsClosed(checkIn);
-  const rangeIsValid = Boolean(checkIn && checkIn >= todayKey && stayEnd >= checkIn && stayEnd <= maxDateKey && !todayToursClosed && !todayOvernightClosed);
-  const rangeLabel = singleDay ? `${checkIn} (single day)` : `${checkIn} to ${checkOut}`;
-  useEffect(() => {
-    if (!rangeIsValid) {
-      setAvailableRoomIds([]);
-      setAvailabilityLoading(false);
-      setAvailabilityError(false);
-      return undefined;
-    }
-    const range = new URLSearchParams({ startDate: checkIn, endDate: stayEnd });
-    let active = true;
-    setAvailabilityLoading(true);
-    setAvailabilityError(false);
-    fetch(`/api/room-availability?${range.toString()}`)
-      .then(response => {
-        if (!response.ok) throw new Error('Availability unavailable');
-        return response.json();
-      })
-      .then(data => { if (active) setAvailableRoomIds(data.availableRoomIds || []); })
-      .catch(() => { if (active) { setAvailableRoomIds([]); setAvailabilityError(true); } })
-      .finally(() => { if (active) setAvailabilityLoading(false); });
-    return () => { active = false; };
-  }, [checkIn, stayEnd, rangeIsValid]);
-
-  // Picking new dates shows the available rooms first.
-  useEffect(() => { setAvailabilityView('available'); }, [checkIn, checkOut]);
-
   // Close the detail dialog with Escape.
   useEffect(() => {
     if (!selectedRoom) return undefined;
@@ -125,16 +46,9 @@ export default function Rooms() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedRoom]);
 
-  /* Every room is always listed, with its own price and description.  */
-  /* Dates only add an availability badge and enable the Book button.  */
+  /* Every room is listed with its own price and description. Dates are  */
+  /* chosen in the booking steps after pressing Book now.                */
   const allRooms = useMemo(() => rooms.map(decorateRoom), [rooms]);
-
-  const statusOf = room => {
-    if (!rangeIsValid) return 'unknown';
-    if (availabilityLoading) return 'checking';
-    if (availabilityError) return 'error';
-    return availableRoomIds.includes(room.id) ? 'available' : 'booked';
-  };
 
   const groupTitles = useMemo(() => {
     const present = new Set(allRooms.map(room => room.groupTitle));
@@ -151,11 +65,7 @@ export default function Rooms() {
       || room.groupTitle === filter
       || (filter === 'Regular Rooms' && /^(standard|regular rooms?)$/i.test(roomType))
       || (filter === 'Suite Rooms' && /(suite|villa)/i.test(roomType));
-    const status = statusOf(room);
-    // While availability is still loading (or failed), show every room.
-    const matchesDates = !rangeIsValid || availabilityView === 'all' || !['available', 'booked'].includes(status)
-      || (availabilityView === 'available' ? status === 'available' : status === 'booked');
-    return matchesText && matchesGroup && matchesDates;
+    return matchesText && matchesGroup;
   });
 
   const sections = groupTitles
@@ -166,76 +76,17 @@ export default function Rooms() {
     }))
     .filter(section => section.items.length);
 
-  const availableCount = rangeIsValid && !availabilityLoading && !availabilityError
-    ? allRooms.filter(room => availableRoomIds.includes(room.id)).length
-    : null;
-
-  /* Calendar */
-  const monthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
-  const calendarDays = Array.from({ length: new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate() }, (_, index) =>
-    new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), index + 1)
-  );
-  const minMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const maxMonth = new Date(maxDate.getFullYear(), maxDate.getMonth(), 1);
-  const monthLabel = calendarMonth.toLocaleDateString('en', { month: 'long', year: 'numeric' });
-
-  const selectDate = dateKey => {
-    if (!canBook) return;
-    if (!checkIn || checkOut) {
-      setCheckIn(dateKey);
-      setCheckOut('');
-      return;
-    }
-    // Tapping the selected date again clears it.
-    if (dateKey === checkIn) {
-      setCheckIn('');
-      setCheckOut('');
-      return;
-    }
-    if (dateKey < checkIn) {
-      setCheckIn(dateKey);
-      setCheckOut('');
-      return;
-    }
-    setCheckOut(dateKey);
-  };
-  const resetDates = () => {
-    setCheckIn('');
-    setCheckOut('');
-    setAvailabilityView('available');
-  };
   const openRoom = room => { setPhotoIndex(0); setSelectedRoom(room); };
-  const goToDates = () => {
-    setSelectedRoom(null);
-    datesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
+  // Book now starts the booking steps with this room picked: next the guest
+  // chooses the stay type and dates, and the room is checked for those dates.
   const bookRoom = room => {
     if (!canBook) return;
-    if (!rangeIsValid) { goToDates(); return; }
-    navigate(`/book/${room.id}?checkIn=${checkIn}&checkOut=${stayEnd}`);
+    navigate(`/book?room=${encodeURIComponent(room.id)}&type=personal`);
   };
 
-  const badgeFor = room => {
-    switch (statusOf(room)) {
-      case 'available': return { label: 'Available', bg: CREAM, color: FOREST };
-      case 'booked': return { label: 'Not available', bg: 'rgba(35,42,27,.82)', color: '#fff' };
-      case 'checking': return { label: 'Checking…', bg: 'rgba(255,255,255,.9)', color: MOSS };
-      case 'error': return { label: 'Unverified', bg: 'rgba(255,255,255,.9)', color: '#b91c1c' };
-      default: return null;
-    }
-  };
-  const bookLabel = room => {
-    if (!canBook) return resortStatusLoading ? 'Checking resort status…' : availabilityStatusError ? 'Booking status unavailable' : 'Reservations temporarily closed';
-    const status = statusOf(room);
-    if (status === 'unknown') return 'Select dates';
-    if (status === 'available') return 'Book room';
-    if (status === 'checking') return 'Checking…';
-    return 'Unavailable';
-  };
-  const bookDisabled = room => !canBook || ['checking', 'booked', 'error'].includes(statusOf(room));
-
-  const bookButtonStyle = room => {
-    const disabled = bookDisabled(room);
+  const bookLabel = () => (canBook ? 'Book now' : resortStatusLoading ? 'Checking…' : availabilityStatusError ? 'Booking unavailable' : 'Reservations closed');
+  const bookButtonStyle = () => {
+    const disabled = !canBook;
     return {
       background: disabled ? '#e5e1d4' : FOREST,
       color: disabled ? '#989382' : '#fff',
@@ -290,24 +141,22 @@ export default function Rooms() {
                 A room for the way you want to stay.
               </h1>
               <p style={{ margin: '0 0 22px', maxWidth: '560px', color: 'rgba(255,255,255,0.82)', font: `14px/1.8 ${SANS}` }}>
-                {rangeIsValid
-                  ? `Showing availability for ${rangeLabel}.`
-                  : 'Sleep beneath the bamboo canopy, with room to gather, rest, and breathe.'}
+                Sleep beneath the bamboo canopy, with room to gather, rest, and breathe. Press Book now on any room to pick your dates.
               </p>
-              <OccupancyBadge startDate={checkIn || undefined} endDate={stayEnd || undefined} style={{ fontFamily: SANS }} />
+              <OccupancyBadge style={{ fontFamily: SANS }} />
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
               <div style={{ width: '100%', maxWidth: '340px', background: 'rgba(247,242,235,0.96)', borderRadius: '18px', padding: '24px 22px', border: '1px solid rgba(35,42,27,0.08)', boxShadow: '0 20px 50px rgba(20,25,15,0.16)' }}>
                 <div className="rooms-tag" style={{ color: MOSS, marginBottom: '12px' }}>At a glance</div>
                 <div style={{ fontFamily: SERIF, fontSize: '30px', lineHeight: 1.1, color: FOREST }}>
-                  {availableCount !== null ? availableCount : allRooms.length || '—'}
+                  {allRooms.length || '—'}
                 </div>
                 <div style={{ font: `600 11px ${SANS}`, letterSpacing: '0.12em', color: '#6d675f', textTransform: 'uppercase', marginBottom: '8px' }}>
-                  {availableCount !== null ? 'Rooms for your stay' : 'Rooms in the resort'}
+                  Rooms in the resort
                 </div>
                 <div style={{ color: '#777363', font: `12px/1.6 ${SANS}` }}>
-                  {rangeIsValid ? rangeLabel : 'Pick dates below to check availability'}
+                  You choose your dates after pressing Book now.
                 </div>
               </div>
             </div>
@@ -316,100 +165,11 @@ export default function Rooms() {
       </section>
 
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '48px 24px 100px' }}>
-        {/* Dates (optional) */}
-        <div ref={datesRef} style={{ scrollMarginTop: '24px' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'end', gap: '20px', flexWrap: 'wrap', marginBottom: '24px' }}>
-          <div>
-            <div className="rooms-tag" style={{ color: BRASS, marginBottom: '8px' }}>Plan your stay</div>
-            <h2 style={{ color: INK, margin: 0, font: `500 32px ${SERIF}` }}>Check availability</h2>
-          </div>
-          <div style={{ display: 'grid', gap: '10px', justifyItems: 'end' }}>
-            <div style={{ color: '#777363', font: `12px ${SANS}` }}>
-              Booking dates are available through {maxDate.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}
-            </div>
-            <button type="button" onClick={openBookingTypeModal} style={{ border: `1px solid ${FOREST}`, background: 'transparent', color: FOREST, padding: '9px 12px', cursor: 'pointer', font: `600 10px ${SANS}`, letterSpacing: '.05em' }}>BOOKING OPTIONS · PERSONAL OR 15+ GROUP</button>
-          </div>
-        </div>
-
-        <section aria-label="Choose check-in and check-out dates" style={{ background: '#fff', border: `1px solid ${LINE}`, borderRadius: '12px', padding: '24px', marginBottom: '48px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', marginBottom: '18px', flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ color: FOREST, font: `600 15px ${SANS}`, marginBottom: '5px' }}>Stay dates</div>
-              <div style={{ color: '#777363', font: `12px ${SANS}` }}>{checkIn
-                ? (checkOut ? rangeLabel : `${checkIn} · single-day booking (day tour). Tap a later date to make it an overnight stay.`)
-                : 'Tap one date for a single-day booking (day tour), or tap a check-in date and then a check-out date for an overnight stay.'}</div>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <button type="button" aria-label="Previous month" disabled={calendarMonth <= minMonth} onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} style={{ border: `1px solid ${LINE}`, background: '#fff', color: FOREST, width: '36px', height: '36px', cursor: calendarMonth <= minMonth ? 'not-allowed' : 'pointer' }}>‹</button>
-              <span style={{ minWidth: '145px', textAlign: 'center', color: INK, font: `600 13px ${SANS}` }}>{monthLabel}</span>
-              <button type="button" aria-label="Next month" disabled={calendarMonth >= maxMonth} onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))} style={{ border: `1px solid ${LINE}`, background: '#fff', color: FOREST, width: '36px', height: '36px', cursor: calendarMonth >= maxMonth ? 'not-allowed' : 'pointer' }}>›</button>
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '6px', maxWidth: '480px' }}>
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => <div key={day} style={{ textAlign: 'center', color: '#777363', font: `600 10px ${SANS}`, padding: '6px 0' }}>{day}</div>)}
-            {Array.from({ length: monthStart.getDay() }, (_, index) => <span key={`blank-${index}`} />)}
-            {calendarDays.map(date => {
-              const dateKey = formatDate(date);
-              const soldOut = fullyBookedDates.includes(dateKey);
-              const outsideWindow = dateKey < todayKey || dateKey > maxDateKey;
-              const disabled = !canBook || calendarLoading || calendarError || outsideWindow || soldOut;
-              const selected = dateKey === checkIn || dateKey === checkOut;
-              const inRange = checkIn && checkOut && dateKey > checkIn && dateKey < checkOut;
-              return (
-                <button
-                  key={dateKey}
-                  type="button"
-                  disabled={disabled}
-                  aria-label={`${date.toLocaleDateString('en', { month: 'long', day: 'numeric' })}${soldOut ? ', fully booked' : ''}`}
-                  onClick={() => selectDate(dateKey)}
-                  style={{ minWidth: 0, aspectRatio: '1', border: selected ? `1px solid ${FOREST}` : '1px solid transparent', background: selected ? FOREST : inRange ? CREAM : 'transparent', color: selected ? '#fff' : disabled ? '#bbb7aa' : INK, font: `500 12px ${SANS}`, cursor: disabled ? 'not-allowed' : 'pointer', opacity: outsideWindow ? 0.45 : 1, textDecoration: soldOut ? 'line-through' : 'none' }}
-                >
-                  {date.getDate()}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', maxWidth: '480px', marginTop: '14px' }}>
-            <span role={calendarError ? 'alert' : undefined} style={{ color: calendarError ? '#b91c1c' : '#777363', font: `11px ${SANS}` }}>
-              {!canBook ? (resortStatusLoading ? 'Checking resort status…' : availabilityStatusError ? 'Booking status could not be checked. Refresh to try again.' : 'Reservations temporarily closed') : calendarError ? 'Availability could not be checked. Refresh to try again.' : 'Crossed-out dates are fully booked.'}
-            </span>
-            {(checkIn || checkOut) && <button type="button" className="rooms-link" onClick={resetDates}>Clear dates</button>}
-          </div>
-          {todayToursClosed && (
-            <div role="alert" style={{ marginTop: '14px', color: '#b91c1c', font: `12px ${SANS}` }}>
-              Today's day and night tours have already started, so a single-day booking for today is no longer available. Choose another date, or tap a later date for an overnight stay.
-            </div>
-          )}
-          {todayOvernightClosed && (
-            <div role="alert" style={{ marginTop: '14px', color: '#b91c1c', font: `12px ${SANS}` }}>
-              Today's last overnight check-in time (6:00 PM) has passed. Please choose a later check-in date.
-            </div>
-          )}
-          {singleDay && !todayToursClosed && isTourStartPassed(checkIn, 'day') && (
-            <div style={{ marginTop: '14px', color: '#777363', font: `12px ${SANS}` }}>
-              Today's day tour started at 8:00 AM. The night tour (from 5:00 PM) can still be booked.
-            </div>
-          )}
-          {checkIn && (
-            <DateOccupancy
-              date={checkIn}
-              focus={singleDay ? (isTourStartPassed(checkIn, 'day') ? 'night' : 'day') : 'overnight'}
-              colors={{ accent: FOREST, background: '#fff', border: LINE }}
-              style={{ marginTop: '14px', maxWidth: '480px', fontFamily: SANS }}
-            />
-          )}
-          {availabilityError && (
-            <div role="alert" style={{ marginTop: '14px', color: '#b91c1c', font: `12px ${SANS}` }}>
-              Room availability could not be verified. Please select your dates again.
-            </div>
-          )}
-        </section>
-
         {/* Rooms */}
         <div style={{ marginBottom: '20px' }}>
           <div className="rooms-tag" style={{ color: BRASS, marginBottom: '8px' }}>Our rooms</div>
           <h2 style={{ color: INK, margin: 0, font: `500 32px ${SERIF}` }}>
-            {rangeIsValid && availabilityView !== 'all' ? `${visible.length} ${availabilityView === 'available' ? 'available' : 'unavailable'} room${visible.length === 1 ? '' : 's'}` : 'Rooms & rates'}
+            Rooms &amp; rates
           </h2>
         </div>
 
@@ -428,21 +188,6 @@ export default function Rooms() {
               {title === 'all' ? 'All rooms' : title}
             </button>
           ))}
-          {rangeIsValid && (
-            <div role="radiogroup" aria-label="Room availability" style={{ display: 'inline-flex', marginLeft: 'auto', border: `1px solid ${LINE}`, borderRadius: '999px', padding: '3px', background: '#fff' }}>
-              {[
-                ['available', 'Available only'],
-                ['unavailable', 'Unavailable only'],
-                ['all', 'All rooms'],
-              ].map(([value, label]) => (
-                <button key={value} type="button" role="radio" aria-checked={availabilityView === value}
-                  onClick={() => setAvailabilityView(value)}
-                  style={{ border: 0, borderRadius: '999px', padding: '8px 14px', cursor: 'pointer', font: `600 11px ${SANS}`, background: availabilityView === value ? FOREST : 'transparent', color: availabilityView === value ? '#fff' : FOREST, transition: 'background .2s, color .2s' }}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         {loading ? (
@@ -461,7 +206,6 @@ export default function Rooms() {
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
                 {section.items.map((room, roomIndex) => {
-                  const badge = badgeFor(room);
                   return (
                     <article key={room.id} className="rooms-card lk-enter" style={{ '--lk-delay': `${Math.min(roomIndex, 8) * 60}ms` }}>
                       <button type="button" className="rooms-card-photo" onClick={() => openRoom(room)} aria-label={`View ${room.title}`}>
@@ -469,11 +213,6 @@ export default function Rooms() {
                           <img src={room.cover} alt={room.title} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, transparent 45%, rgba(20,25,15,.66))' }} />
                           <span style={{ position: 'absolute', left: '16px', bottom: '16px', color: '#fff', font: `500 24px ${SERIF}` }}>{room.title}</span>
-                          {badge && (
-                            <span style={{ position: 'absolute', right: '14px', top: '14px', background: badge.bg, color: badge.color, padding: '6px 10px', borderRadius: '999px', font: `600 10px ${SANS}`, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                              {badge.label}
-                            </span>
-                          )}
                         </div>
                       </button>
 
@@ -497,8 +236,8 @@ export default function Rooms() {
                               {peso(room.price)}
                               <small style={{ color: '#8d8877', font: `10px ${SANS}` }}> / night</small>
                             </span>
-                            <button type="button" disabled={bookDisabled(room)} onClick={() => bookRoom(room)} style={bookButtonStyle(room)}>
-                              {bookLabel(room)}
+                            <button type="button" disabled={!canBook} onClick={() => bookRoom(room)} style={bookButtonStyle()}>
+                              {bookLabel()}
                             </button>
                           </div>
                         </div>
@@ -560,7 +299,6 @@ export default function Rooms() {
                       selectedRoom.capacity && ['Guests', selectedRoom.capacity],
                       selectedRoom.bedType && ['Bed type', selectedRoom.bedType],
                       selectedRoom.view && ['View', selectedRoom.view],
-                      rangeIsValid && ['Your dates', rangeLabel],
                     ].filter(Boolean).map(([label, value]) => (
                       <tr key={label} style={{ borderTop: `1px solid ${LINE}` }}>
                         <th scope="row" style={{ textAlign: 'left', padding: '10px 0', color: '#777363', fontWeight: 600, width: '40%' }}>{label}</th>
@@ -570,23 +308,12 @@ export default function Rooms() {
                   </tbody>
                 </table>
 
-                {(() => {
-                  const badge = badgeFor(selectedRoom);
-                  return badge ? (
-                    <div style={{ marginBottom: '14px', color: badge.color === CREAM ? FOREST : badge.color, font: `600 12px ${SANS}` }}>
-                      {badge.label} for your dates
-                    </div>
-                  ) : null;
-                })()}
-
-                <button type="button" disabled={bookDisabled(selectedRoom)} onClick={() => bookRoom(selectedRoom)} style={{ ...bookButtonStyle(selectedRoom), width: '100%', padding: '14px 16px' }}>
-                  {bookLabel(selectedRoom)}
+                <button type="button" disabled={!canBook} onClick={() => bookRoom(selectedRoom)} style={{ ...bookButtonStyle(), width: '100%', padding: '14px 16px' }}>
+                  {bookLabel()}
                 </button>
-                {!rangeIsValid && (
-                  <p style={{ margin: '12px 0 0', color: '#777363', font: `12px/1.6 ${SANS}` }}>
-                    Choose your check-in and check-out dates to book this room.
-                  </p>
-                )}
+                <p style={{ margin: '12px 0 0', color: '#777363', font: `12px/1.6 ${SANS}` }}>
+                  Next you'll choose your stay type and dates, and we'll check this room is free.
+                </p>
               </div>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { BRASS, CREAM, FOREST, FOREST_DEEP, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import {
@@ -29,13 +29,19 @@ const COTTAGES = COTTAGE_OPTIONS.filter(option => option.id);
 
 export default function CottageBooking() {
   const navigate = useNavigate();
+  // Filled in from the booking steps (/book): date, tour time and guests.
+  const [query] = useSearchParams();
   const { available: resortOpen, loading: resortLoading } = useResortAvailability();
   const today = getResortNow().dateKey;
   const maxDate = addMonthsKey(today, 2);
   const [form, setForm] = useState(() => {
     const profile = readLocal('guest_profile', {}) || {};
     return {
-      date: today, tourPeriod: 'day', adults: 2, children: 0, cottageId: '',
+      date: /^\d{4}-\d{2}-\d{2}$/.test(query.get('date') || '') && query.get('date') >= today ? query.get('date') : today,
+      tourPeriod: query.get('tour') === 'night' ? 'night' : 'day',
+      adults: Math.max(1, Math.min(20, Number(query.get('adults')) || 2)),
+      children: Math.max(0, Math.min(20, Number(query.get('children')) || 0)),
+      cottageId: '',
       firstName: profile.firstName || '', lastName: profile.lastName || '', phone: profile.phone || '', email: profile.email || '',
       preferredContactMethod: PREFERRED_CONTACT_METHODS.includes(profile.preferredContactMethod) ? profile.preferredContactMethod : '',
       contactLink: profile.contactLink || '', notes: '', website: '',
@@ -137,7 +143,7 @@ export default function CottageBooking() {
   return (
     <main style={{ background: PAPER, padding: 'clamp(28px, 6vw, 64px) 16px', fontFamily: SANS }}>
       <div style={{ maxWidth: 1080, margin: '0 auto' }}>
-        <button type="button" onClick={() => navigate('/home')} style={{ border: 0, background: 'none', color: FOREST, cursor: 'pointer', padding: 0, font: `600 12px ${SANS}`, marginBottom: 14 }}>← Back</button>
+        <button type="button" onClick={() => navigate(`/book?${new URLSearchParams({ type: 'personal', stay: form.tourPeriod, checkIn: form.date, adults: String(form.adults), children: String(form.children), step: 'room' })}`)} style={{ border: 0, background: 'none', color: FOREST, cursor: 'pointer', padding: 0, font: `600 12px ${SANS}`, marginBottom: 14 }}>← Back to room choice</button>
         <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 10 }}>Day tour · Night tour</div>
         <h1 style={{ color: FOREST_DEEP, font: `500 clamp(30px, 5vw, 44px)/1.1 ${SERIF}`, margin: '0 0 10px' }}>Book a cottage for the day</h1>
         <p style={{ color: '#6b6a5c', font: `14px/1.7 ${SANS}`, margin: '0 0 26px', maxWidth: 640 }}>
