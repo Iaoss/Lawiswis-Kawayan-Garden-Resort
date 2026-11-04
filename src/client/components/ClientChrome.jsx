@@ -54,14 +54,27 @@ export default function ClientChrome({ children }) {
   const { pathname: path } = useLocation();
   const navigate = useNavigate();
 
-  // Hidden way into the staff portal (no link for guests): Ctrl + Shift + L
-  // (Cmd + Shift + L on a Mac), or tap the footer logo 5 times on a phone.
-  // It only opens the staff login page; the login itself protects the portal.
+  // Hidden way into the staff portal (no link for guests): type the word
+  // "huapro" anywhere outside a text box, press Ctrl + Shift + L (Cmd on a
+  // Mac — some graphics software, such as AMD Radeon, takes this one over),
+  // or tap the footer logo 5 times on a phone. It only opens the staff login
+  // page; the login itself protects the portal.
   const logoTapsRef = useRef({ count: 0, timer: null });
+  const typedRef = useRef('');
   useEffect(() => {
+    const SECRET = 'huapro';
     const onKey = event => {
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'l') {
         event.preventDefault();
+        navigate('/admin/login');
+        return;
+      }
+      const target = event.target;
+      const typing = target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+      if (typing || event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
+      typedRef.current = (typedRef.current + event.key.toLowerCase()).slice(-SECRET.length);
+      if (typedRef.current === SECRET) {
+        typedRef.current = '';
         navigate('/admin/login');
       }
     };

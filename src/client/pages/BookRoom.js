@@ -430,13 +430,20 @@ export default function BookRoom() {
     }
   }, [form.bookingType, form.checkIn, form.checkOut]);
 
-  // Keep the address bar in step with the dates on the form.
+  // Keep the address bar in step with the dates on the form, only while this
+  // room's page is the one showing (not while leaving for the booking steps).
   useEffect(() => {
     if (!roomId || !form.checkIn || !form.checkOut) return;
+    if (location.pathname !== `/book/${roomId}`) return;
     const current = new URLSearchParams(location.search);
     if (current.get('checkIn') === form.checkIn && current.get('checkOut') === form.checkOut) return;
     navigate(`/book/${roomId}?checkIn=${encodeURIComponent(form.checkIn)}&checkOut=${encodeURIComponent(form.checkOut)}`, { replace: true, state: location.state });
-  }, [roomId, form.checkIn, form.checkOut, location.search, location.state, navigate]);
+  }, [roomId, form.checkIn, form.checkOut, location.pathname, location.search, location.state, navigate]);
+
+  // An old broken link (/book/book?…) goes to the booking steps instead.
+  useEffect(() => {
+    if (roomId === 'book') navigate(`/book${location.search}`, { replace: true });
+  }, [roomId, location.search, navigate]);
 
   // Today's day tour closes at its 8:00 AM check-in, so move to the night tour while it's still open.
   useEffect(() => {
