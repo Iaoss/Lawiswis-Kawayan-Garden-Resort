@@ -54,6 +54,34 @@ function NavDropdown({ label, items, onNavigate, active }) {
 export default function ClientChrome({ children }) {
   const { pathname: path } = useLocation();
   const navigate = useNavigate();
+
+  // Hidden way into the staff portal (no link for guests): Ctrl + Shift + L
+  // (Cmd + Shift + L on a Mac), or tap the footer logo 5 times on a phone.
+  // It only opens the staff login page; the login itself protects the portal.
+  const logoTapsRef = useRef({ count: 0, timer: null });
+  useEffect(() => {
+    const onKey = event => {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'l') {
+        event.preventDefault();
+        navigate('/admin/login');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navigate]);
+  const onFooterLogoTap = () => {
+    const taps = logoTapsRef.current;
+    taps.count += 1;
+    clearTimeout(taps.timer);
+    if (taps.count >= 5) {
+      taps.count = 0;
+      navigate('/admin/login');
+      return;
+    }
+    // The 5 taps must come within about 2 seconds of each other.
+    taps.timer = setTimeout(() => { taps.count = 0; }, 2000);
+  };
+  useEffect(() => () => clearTimeout(logoTapsRef.current.timer), []);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
   const { available: resortAvailable, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
@@ -188,7 +216,7 @@ export default function ClientChrome({ children }) {
       <main className="client-main">{children}</main>
       <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '34px' }}>
-          <div><img src={logo} alt="Lawiswis Kawayan" style={{ width: '180px', filter: 'brightness(0) invert(1)', marginBottom: '16px' }} /><p style={{ maxWidth: '300px', fontSize: '12px', lineHeight: 1.8, margin: 0 }}>A quiet bamboo garden hideaway in Calumpit, Bulacan, where work and play sit comfortably side by side.</p></div>
+          <div><img src={logo} alt="Lawiswis Kawayan" onClick={onFooterLogoTap} draggable={false} style={{ width: '180px', filter: 'brightness(0) invert(1)', marginBottom: '16px', WebkitTapHighlightColor: 'transparent', userSelect: 'none' }} /><p style={{ maxWidth: '300px', fontSize: '12px', lineHeight: 1.8, margin: 0 }}>A quiet bamboo garden hideaway in Calumpit, Bulacan, where work and play sit comfortably side by side.</p></div>
           <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>EXPLORE</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/rooms')} style={{ cursor: 'pointer' }}>Our rooms</span><span onClick={() => navigate('/about-us')} style={{ cursor: 'pointer' }}>Our story</span><span onClick={() => navigate('/amenities')} style={{ cursor: 'pointer' }}>Our amenities</span><span onClick={() => navigate('/contact-us')} style={{ cursor: 'pointer' }}>Contact us</span></div></div>
           <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>POLICIES</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/privacy-policy')} style={{ cursor: 'pointer' }}>Privacy Policy</span><span onClick={() => navigate('/terms-of-service')} style={{ cursor: 'pointer' }}>Terms of Service</span><span onClick={() => navigate('/cancellation-policy')} style={{ cursor: 'pointer' }}>Cancellation &amp; Refund Policy</span></div></div>
           <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>VISIT</strong><p style={{ fontSize: '12px', lineHeight: 1.8, marginTop: '14px' }}>Open daily<br />Day tour 8:00 AM – 5:00 PM<br />Night tour 5:00 PM – 10:00 PM<br />Overnight check-in 10 AM, 2 PM or 6 PM<br />Late arrival after 9 PM (+10%)</p></div>
