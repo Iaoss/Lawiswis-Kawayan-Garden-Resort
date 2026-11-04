@@ -30,7 +30,9 @@ import { shouldAutoConfirm } from '../lib/recordPayMongoPayment';
 import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
-import { getCottageFee, getReservationDayVisitors, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, getCottageFee, getReservationDayVisitors, getTourCutoffError, isLateArrivalTime, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { getCottageAvailabilityFor } from '../lib/cottageStock';
+import { cottageAvailabilityError } from '../src/lib/cottages';
 import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
 import { DEFAULT_CANCELLATION_POLICY, getDateChangeBlock, getStaffCancellationFee } from '../src/lib/cancellationPolicy';
 import { canAutoCheckIn, manilaDateKey } from '../src/lib/reservationStatus';
@@ -271,11 +273,80 @@ function detailsFromForm(form, options) {
   return result.details;
 }
 
+// Walk-in day or night tour with just a cottage (no room).
+async function createCottageWalkIn({ staff, booking }) {
+  const firstName = cleanText(booking.firstName, 35);
+  const lastName = cleanText(booking.lastName, 35);
+  const tourPeriod = booking.bookingOption === 'night' ? 'night' : booking.bookingOption === 'day' ? 'day' : '';
+  if (!tourPeriod) throw new BillingError(400, 'A cottage-only booking is for a day tour or a night tour.');
+  const date = typeof booking.checkIn === 'string' ? booking.checkIn : '';
+  const today = manilaDateKey();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < today) throw new BillingError(400, 'Choose today or a later date.');
+  const cutoff = getTourCutoffError(date, tourPeriod);
+  if (cutoff) throw new BillingError(400, cutoff);
+  let pricing;
+  try {
+    pricing = calculateCottageTourPrice({ adults: Number(booking.adults), children: Number(booking.children || 0), tourPeriod, cottageId: booking.cottageId });
+  } catch (error) {
+    throw new BillingError(400, error.message);
+  }
+  const fullError = cottageAvailabilityError(await getCottageAvailabilityFor(date, tourPeriod), booking.cottageId);
+  if (fullError) throw new BillingError(409, fullError);
+  const slot = tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT : DAYTOUR_TIME_SLOT;
+  const reservationRef = adminDb.collection('reservations').doc();
+  const guestName = joinGuestName(firstName, lastName);
+  const totalAmount = money(pricing.subtotalAmount);
+  await reservationRef.create({
+    cottageOnly: true,
+    roomId: '',
+    roomNumber: `${pricing.cottageLabel} (cottage)`,
+    roomType: `Cottage · ${tourPeriod} tour`,
+    firstName,
+    lastName,
+    guestName,
+    email: cleanText(booking.email, 120),
+    phone: cleanText(booking.phone, 20),
+    address: cleanText(booking.address, 300),
+    preferredContactMethod: booking.preferredContactMethod,
+    notes: cleanText(booking.notes, 1000),
+    category: 'Cottage',
+    bookingType: 'daytour',
+    tourPeriod,
+    checkIn: date,
+    checkOut: date,
+    checkInTime: slot.checkIn,
+    checkOutTime: slot.checkOut,
+    adults: Number(booking.adults),
+    children: Number(booking.children || 0),
+    totalGuests: pricing.totalGuests,
+    nights: 1,
+    cottageId: booking.cottageId,
+    cottageFee: pricing.cottageFee,
+    entranceAdultRate: pricing.entranceAdultRate,
+    entranceChildRate: pricing.entranceChildRate,
+    entranceFee: pricing.entranceFee,
+    subtotalAmount: totalAmount,
+    totalAmount,
+    amountPaid: 0,
+    paymentMethod: 'cash',
+    paymentStatus: 'pending',
+    type: 'walk-in',
+    status: 'confirmed',
+    createdBy: staff.uid,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+  return { totalAmount, amountPaid: 0, roomNumber: `${pricing.cottageLabel} (cottage)`, arrivesToday: date === today, checkedIn: false, reservationId: reservationRef.id, receipt: null, receiptError: '' };
+}
+
 async function createWalkIn({ staff, booking = {} }) {
   const firstName = cleanText(booking.firstName, 35);
   const lastName = cleanText(booking.lastName, 35);
   if (!NAME_PATTERN.test(firstName) || !NAME_PATTERN.test(lastName)) {
     throw new BillingError(400, 'Enter a valid first and last name (2-35 letters each).');
+  }
+  if (booking.cottageOnly === true) {
+    if (!isPreferredContactMethod(booking.preferredContactMethod)) throw new BillingError(400, 'Choose a preferred contact method.');
+    return createCottageWalkIn({ staff, booking });
   }
   const { roomId } = booking;
   if (typeof roomId !== 'string' || !roomId) throw new BillingError(400, 'Choose a room.');
@@ -287,6 +358,15 @@ async function createWalkIn({ staff, booking = {} }) {
   const cottageId = typeof booking.cottageId === 'string' ? booking.cottageId : '';
   const cottageFee = getCottageFee(cottageId);
   if (cottageFee === null) throw new BillingError(400, 'Choose a valid cottage.');
+  // Day and night tours need at least a cottage.
+  if (['day', 'night'].includes(booking.bookingOption) && !cottageId) {
+    throw new BillingError(400, 'Day and night tours need a cottage. Choose one for the guest.');
+  }
+  if (cottageId) {
+    const tour = ['day', 'night'].includes(booking.bookingOption) ? booking.bookingOption : 'both';
+    const fullError = cottageAvailabilityError(await getCottageAvailabilityFor(String(booking.checkIn || ''), tour), cottageId);
+    if (fullError) throw new BillingError(409, fullError);
+  }
   const today = manilaDateKey();
 
   const roomRef = adminDb.collection('rooms').doc(roomId);
@@ -335,6 +415,8 @@ async function createWalkIn({ staff, booking = {} }) {
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
+      lateArrival: isLateArrivalTime(details.checkInTime) && details.bookingType === 'overnight',
+      lateArrivalSurcharge: pricing.lateArrivalSurcharge || 0,
       cottageId,
       cottageFee,
       subtotalAmount: totalAmount,

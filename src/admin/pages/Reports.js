@@ -4,6 +4,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import Layout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { getReservationRemarks } from '../../lib/reservationRemarks';
+import { getVatBreakdown } from '../../lib/bookingPricing';
 
 const STATUS_OPTIONS = [
   ['pending', 'Pending'], ['confirmed', 'Confirmed'], ['checked-in', 'Checked In'],
@@ -219,7 +220,8 @@ export default function Reports() {
   ];
 
   const summaryCards = [
-    { label: 'Total Revenue',      value: `₱${totalRevenue.toLocaleString()}`, icon: 'ti-cash',            bg: GRADIENTS.revenue },
+    { label: 'Total Revenue',      value: `₱${totalRevenue.toLocaleString()}`, icon: 'ti-cash',            bg: GRADIENTS.revenue,
+      note: `Incl. 12% VAT ₱${getVatBreakdown(totalRevenue).vat.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · net ₱${getVatBreakdown(totalRevenue).net.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
     { label: 'Total Reservations', value: totalReservations,                   icon: 'ti-calendar-event',  bg: GRADIENTS.bookings },
     { label: 'Checked Out',        value: checkedOut,                          icon: 'ti-logout',          bg: GRADIENTS.checkout },
     { label: 'Cancelled',          value: cancelledCount,                      icon: 'ti-calendar-off',    bg: GRADIENTS.cancel },
@@ -300,6 +302,7 @@ export default function Reports() {
               </span>
               <p style={{ fontSize: '12px', margin: 0, opacity: 0.9 }}>{c.label}</p>
               <p style={{ fontSize: '28px', fontWeight: 700, margin: '8px 0 0', lineHeight: 1.1 }}>{c.value}</p>
+              {c.note && <p style={{ fontSize: '10.5px', margin: '6px 0 0', opacity: 0.9 }}>{c.note}</p>}
             </div>
           ))}
         </div>

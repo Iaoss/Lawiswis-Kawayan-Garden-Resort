@@ -32,6 +32,7 @@ const About = lazy(() => import('./client/pages/About'));
 const Contact = lazy(() => import('./client/pages/Contact'));
 const BookingTypeSelection = lazy(() => import('./client/pages/BookingTypeSelection'));
 const CorporateBooking = lazy(() => import('./client/pages/CorporateBooking'));
+const CottageBooking = lazy(() => import('./client/pages/CottageBooking'));
 const Amenities = lazy(() => import('./client/pages/Amenities'));
 const Certifications = lazy(() => import('./client/pages/Certifications'));
 const CustomerCarePage = lazy(() => import('./client/pages/CustomerCarePage'));
@@ -150,6 +151,7 @@ function App() {
           <Route path="/rooms" element={<Rooms />} />
           <Route path="/booking-options" element={<BookingTypeSelection />} />
           <Route path="/corporate-booking" element={<CorporateBooking />} />
+          <Route path="/book-cottage" element={<CottageBooking />} />
           <Route path="/book/:roomId" element={<BookRoom />} />
           <Route path="/my-bookings" element={<BookingHistory />} />
           <Route path="/booking-check" element={<BookingCheck />} />

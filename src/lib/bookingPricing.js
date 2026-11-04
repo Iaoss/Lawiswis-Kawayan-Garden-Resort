@@ -1,9 +1,29 @@
+// Overnight check-in times. Check-in is flexible: a slot can still be booked
+// for today until the next slot starts (cutoffMinutes). Guests arriving after
+// 9:00 PM (walk-ins or late arrivals, even near midnight) book the late
+// arrival slot, which adds a 10% surcharge on the room rate.
+export const LATE_ARRIVAL_SLOT_ID = 'late';
+export const LATE_ARRIVAL_SURCHARGE_RATE = 0.10;
 export const OVERNIGHT_TIME_SLOTS = [
-  // startMinutes: minutes after midnight when check-in opens (used for same-day cutoffs).
-  { id: 'morning', label: '10:00 AM / 11:00 AM check-in → 8:00 AM check-out', checkIn: '10:00 AM / 11:00 AM', checkOut: '8:00 AM', startMinutes: 10 * 60 },
-  { id: 'afternoon', label: '2:00 PM / 3:00 PM check-in → 12:00 PM check-out', checkIn: '2:00 PM / 3:00 PM', checkOut: '12:00 PM', startMinutes: 14 * 60 },
-  { id: 'evening', label: '6:00 PM / 7:00 PM check-in → 4:00 PM check-out', checkIn: '6:00 PM / 7:00 PM', checkOut: '4:00 PM', startMinutes: 18 * 60 },
+  // startMinutes: when check-in opens; cutoffMinutes: last time it can be booked for today.
+  { id: 'morning', label: '10:00 AM / 11:00 AM check-in → 8:00 AM check-out', checkIn: '10:00 AM / 11:00 AM', checkOut: '8:00 AM', startMinutes: 10 * 60, cutoffMinutes: 14 * 60 },
+  { id: 'afternoon', label: '2:00 PM / 3:00 PM check-in → 12:00 PM check-out', checkIn: '2:00 PM / 3:00 PM', checkOut: '12:00 PM', startMinutes: 14 * 60, cutoffMinutes: 18 * 60 },
+  { id: 'evening', label: '6:00 PM / 7:00 PM check-in → 4:00 PM check-out', checkIn: '6:00 PM / 7:00 PM', checkOut: '4:00 PM', startMinutes: 18 * 60, cutoffMinutes: 21 * 60 },
+  { id: LATE_ARRIVAL_SLOT_ID, label: 'Late arrival after 9:00 PM → 12:00 PM check-out (+10% room rate)', checkIn: 'After 9:00 PM', checkOut: '12:00 PM', startMinutes: 21 * 60, cutoffMinutes: 24 * 60, lateArrival: true },
 ];
+
+export function isLateArrivalTime(checkInTime) {
+  return checkInTime === OVERNIGHT_TIME_SLOTS.find(slot => slot.lateArrival).checkIn;
+}
+
+// Every rate already includes 12% VAT. Splits a VAT-inclusive amount into
+// the net amount and the VAT: 3,000 = 2,678.57 net + 321.43 VAT.
+export const VAT_RATE = 0.12;
+export function getVatBreakdown(total) {
+  const amount = Math.round(Number(total || 0) * 100) / 100;
+  const net = Math.round((amount / (1 + VAT_RATE)) * 100) / 100;
+  return { total: amount, net, vat: Math.round((amount - net) * 100) / 100 };
+}
 
 export const DAYTOUR_TIME_SLOT = {
   id: 'day',
@@ -33,10 +53,11 @@ export function getResortNow(now = new Date()) {
   return { dateKey: `${parts.year}-${parts.month}-${parts.day}`, minutes: Number(parts.hour) * 60 + Number(parts.minute) };
 }
 
-// True when `date` is today at the resort and the slot's check-in time has passed.
+// True when `date` is today at the resort and the slot can no longer be
+// booked (its cutoff, or for tours its start time, has passed).
 export function isCheckInPassed(date, slot, now = new Date()) {
   const resortNow = getResortNow(now);
-  return Boolean(slot) && date === resortNow.dateKey && resortNow.minutes >= slot.startMinutes;
+  return Boolean(slot) && date === resortNow.dateKey && resortNow.minutes >= (slot.cutoffMinutes ?? slot.startMinutes);
 }
 
 // True when `date` is today at the resort and that tour's check-in time has passed.
@@ -55,7 +76,7 @@ export function getOvernightCutoffError(date, slotId, now = new Date()) {
   if (!isCheckInPassed(date, slot, now)) return '';
   return areOvernightCheckInsClosed(date, now)
     ? "All of today's overnight check-in times have passed. Please choose another check-in date."
-    : `Today's ${slot.checkIn} check-in time has passed. Please choose a later check-in time.`;
+    : `Today's ${slot.checkIn} check-in can no longer be booked. Please choose a later check-in time.`;
 }
 
 // Error message when a same-day tour is booked after its check-in time, or ''.
@@ -354,6 +375,7 @@ export function calculateBookingPrice({
   cottageId = '',
   cottageFee = 0,
   dayVisitors = null,
+  lateArrival = false,
 }) {
   const { amount: baseRate, baseCapacity } = getRoomBaseRate(room, bookingType);
   const totalGuests = adults + children;
@@ -378,6 +400,10 @@ export function calculateBookingPrice({
   // Day visitors only apply to overnight stays (on a tour, everyone is a visitor).
   const visitors = bookingType === 'overnight' ? normalizeDayVisitors(dayVisitors) : null;
   const dayVisitorCharge = getDayVisitorCharge(visitors);
+  // Arriving after 9:00 PM: 10% on the room rate (once, for the arrival night).
+  const lateArrivalSurcharge = bookingType === 'overnight' && lateArrival
+    ? Math.round(baseRate * LATE_ARRIVAL_SURCHARGE_RATE * 100) / 100
+    : 0;
 
   return {
     baseRate,
@@ -395,6 +421,36 @@ export function calculateBookingPrice({
     dayVisitorChildren: visitors?.children || 0,
     dayVisitorPeriod: visitors?.tourPeriod || '',
     dayVisitorCharge,
-    subtotalAmount: baseRate * nights + extraGuestCharge + fee + dayVisitorCharge,
+    lateArrivalSurcharge,
+    subtotalAmount: baseRate * nights + extraGuestCharge + fee + dayVisitorCharge + lateArrivalSurcharge,
+  };
+}
+
+// ── Cottage-only day / night tours ─────────────────────────────────────
+// Tour guests may book just a cottage (no room). They pay the swimming
+// entrance per person plus the cottage. The group must fit the cottage.
+export const cottageName = cottage => String(cottage?.label || 'Cottage').replace(/\s*\(.*\)$/, '');
+
+export function calculateCottageTourPrice({ adults, children = 0, tourPeriod = 'day', cottageId }) {
+  const cottage = COTTAGE_OPTIONS.find(option => option.id && option.id === cottageId);
+  if (!cottage) throw new Error('Choose a cottage for your day or night tour.');
+  if (!Number.isInteger(adults) || adults < 1 || !Number.isInteger(children) || children < 0) {
+    throw new Error('Guest counts must be whole numbers, with at least one adult.');
+  }
+  if (adults + children > cottage.maxGuests) {
+    throw new Error(`A ${cottageName(cottage)} seats up to ${cottage.maxGuests} guests. Choose a bigger cottage.`);
+  }
+  const rate = getSwimmingRate(tourPeriod);
+  const entranceFee = adults * rate.adult + children * rate.child;
+  return {
+    cottageId,
+    cottageLabel: cottageName(cottage),
+    cottageFee: cottage.price,
+    cottageMaxGuests: cottage.maxGuests,
+    entranceAdultRate: rate.adult,
+    entranceChildRate: rate.child,
+    entranceFee,
+    totalGuests: adults + children,
+    subtotalAmount: entranceFee + cottage.price,
   };
 }

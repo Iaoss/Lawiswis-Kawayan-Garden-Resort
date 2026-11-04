@@ -66,6 +66,8 @@ export default async function handler(req, res) {
     const unitLabel = reservation.bookingType === 'daytour' ? 'day' : 'night';
     description = reservation.type === 'corporate'
       ? `${reservation.packageName || 'Corporate'} corporate group booking · ${Number(reservation.totalGuests) || 0} guests`
+      : reservation.cottageOnly
+        ? `${reservation.roomNumber || 'Cottage'} — ${reservation.tourPeriod === 'night' ? 'night' : 'day'} tour · ${Number(reservation.totalGuests) || 0} guests`
       : checkoutType === 'billing'
         ? `Room ${reservation.roomNumber || ''} — ${guestName}`
         : `Room ${reservation.roomNumber || ''} (${reservation.roomType || ''}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`;

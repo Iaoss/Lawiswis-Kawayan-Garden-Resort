@@ -3,7 +3,7 @@
 // promo discount). `extras` is everything added later: spa, photoshoot,
 // other extra charges and late check-out fees. Sections with nothing in them
 // come back empty so the receipt can leave them out.
-import { COTTAGE_OPTIONS } from './bookingPricing';
+import { COTTAGE_OPTIONS, getVatBreakdown } from './bookingPricing';
 
 const money = value => Math.round(Number(value || 0) * 100) / 100;
 
@@ -42,9 +42,20 @@ export function getReceiptLineItems(reservation = {}) {
       label: `${reservation.packageName || 'Group package'}${guests ? ` · ${guests} guests` : ''}${rate ? ` × ₱${rate.toLocaleString()}` : ''}${stay}`,
       amount: money(total + discount),
     });
+  } else if (reservation.cottageOnly) {
+    // Cottage-only tour: swimming entrance per person (the cottage is added below).
+    const adults = Number(reservation.adults || 0);
+    const children = Number(reservation.children || 0);
+    const tour = reservation.tourPeriod === 'night' ? 'Night tour' : 'Day tour';
+    const parts = [
+      adults ? `${adults} adult${adults === 1 ? '' : 's'} × ₱${Number(reservation.entranceAdultRate || 0).toLocaleString()}` : '',
+      children ? `${children} child${children === 1 ? '' : 'ren'} × ₱${Number(reservation.entranceChildRate || 0).toLocaleString()}` : '',
+    ].filter(Boolean).join(', ');
+    booking.push({ label: `${tour} entrance · ${parts}`, amount: money(reservation.entranceFee ?? (total + discount - cottageFee)) });
   } else {
     const units = Math.max(1, Number(reservation.nights) || 1);
     const baseRate = money(reservation.baseRate);
+    const lateArrival = money(reservation.lateArrivalSurcharge);
     const extraGuests = money(reservation.extraGuestCharge);
     const dayVisitors = money(reservation.dayVisitorCharge);
     const room = reservation.roomName || `Room ${reservation.roomNumber || ''}${reservation.roomType ? ` (${reservation.roomType})` : ''}`.trim();
@@ -52,10 +63,12 @@ export function getReceiptLineItems(reservation = {}) {
       booking.push({ label: `${room} · ₱${baseRate.toLocaleString()} × ${unitLabel(reservation, units)}`, amount: money(baseRate * units) });
       if (extraGuests > 0) booking.push({ label: 'Extra guests', amount: extraGuests });
       if (dayVisitors > 0) booking.push({ label: dayVisitorLabel(reservation), amount: dayVisitors });
+      if (lateArrival > 0) booking.push({ label: 'Late arrival after 9:00 PM (10% of room rate)', amount: lateArrival });
     } else {
       // Older bookings without a price breakdown: one room line.
-      booking.push({ label: `${room} · ${unitLabel(reservation, units)}`, amount: money(total + discount - cottageFee - dayVisitors) });
+      booking.push({ label: `${room} · ${unitLabel(reservation, units)}`, amount: money(total + discount - cottageFee - dayVisitors - lateArrival) });
       if (dayVisitors > 0) booking.push({ label: dayVisitorLabel(reservation), amount: dayVisitors });
+      if (lateArrival > 0) booking.push({ label: 'Late arrival after 9:00 PM (10% of room rate)', amount: lateArrival });
     }
   }
 
@@ -89,5 +102,7 @@ export function getReceiptLineItems(reservation = {}) {
     bookingTotal: total,
     extrasTotal,
     grandTotal: money(total + extrasTotal),
+    // All prices include 12% VAT.
+    vat: getVatBreakdown(money(total + extrasTotal)),
   };
 }

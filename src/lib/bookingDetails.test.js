@@ -19,7 +19,8 @@ describe('booking details rules (all portals)', () => {
 
   test('overnight stays need a later check-out and an open check-in time', () => {
     expect(normalizeBookingDetails({ bookingType: 'overnight', checkIn: '2026-10-25', checkOut: '2026-10-25', adults: 2 }, { now }).error).toBeTruthy();
-    expect(normalizeBookingDetails({ bookingType: 'overnight', overnightTimeSlot: 'morning', checkIn: '2026-10-24', checkOut: '2026-10-25', adults: 2 }, { now }).error).toMatch(/10:00 AM/);
+    const afterTwo = new Date('2026-10-24T06:35:00Z'); // 2:35 PM: the 10 AM slot closed at 2 PM
+    expect(normalizeBookingDetails({ bookingType: 'overnight', overnightTimeSlot: 'morning', checkIn: '2026-10-24', checkOut: '2026-10-25', adults: 2 }, { now: afterTwo }).error).toMatch(/10:00 AM/);
     expect(normalizeBookingDetails({ bookingType: 'overnight', overnightTimeSlot: 'afternoon', checkIn: '2026-10-24', checkOut: '2026-10-26', adults: 2 }, { now }).details.nights).toBe(2);
   });
 

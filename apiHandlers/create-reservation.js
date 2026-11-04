@@ -42,6 +42,8 @@ import {
   stayRangesOverlap,
 } from '../src/lib/bookingPricing';
 import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { getCottageAvailabilityFor } from '../lib/cottageStock';
+import { cottageAvailabilityError } from '../src/lib/cottages';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -159,6 +161,10 @@ export default async function handler(req, res) {
     if (requestedCottageFee === null) {
       return res.status(400).json({ error: 'Choose a valid cottage option.' });
     }
+    // Day and night tours need at least a cottage.
+    if (bookingType === 'daytour' && !cottageId) {
+      return res.status(400).json({ error: 'Day and night tours need a cottage. Please choose one.', code: 'COTTAGE_REQUIRED' });
+    }
     if (paymentMethod !== 'online') {
       return res.status(400).json({ error: 'Reservations must be paid online through PayMongo.' });
     }
@@ -239,6 +245,13 @@ export default async function handler(req, res) {
       });
     }
 
+    // ---- 5b. The cottage must still be free for that date and time --------
+    if (cottageId) {
+      const cottageAvailability = await getCottageAvailabilityFor(checkIn, bookingType === 'daytour' ? tourPeriod : 'both');
+      const cottageError = cottageAvailabilityError(cottageAvailability, cottageId);
+      if (cottageError) return res.status(409).json({ error: cottageError });
+    }
+
     // ---- 6. Create the reservation ---------------------------------------
     const nights = getStayUnits(checkIn, checkOut);
     const pricing = calculateBookingPrice({
@@ -251,6 +264,7 @@ export default async function handler(req, res) {
       cottageId: cottageId || '',
       cottageFee: requestedCottageFee,
       dayVisitors,
+      lateArrival: Boolean(timeSlot.lateArrival),
     });
     const totalAmount = pricing.subtotalAmount;
 
@@ -286,6 +300,8 @@ export default async function handler(req, res) {
       dayVisitorChildren: pricing.dayVisitorChildren,
       dayVisitorPeriod: pricing.dayVisitorPeriod,
       dayVisitorCharge: pricing.dayVisitorCharge,
+      lateArrival: Boolean(timeSlot.lateArrival),
+      lateArrivalSurcharge: pricing.lateArrivalSurcharge,
       notes: notes || '',
       preferredContactMethod,
       contactLink: preferredContactMethod === 'Facebook Messenger' ? String(contactLink).trim() : '',

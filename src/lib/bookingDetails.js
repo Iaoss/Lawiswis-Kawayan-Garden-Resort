@@ -10,6 +10,7 @@ import {
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
   calculateBookingPrice,
+  isLateArrivalTime,
   getGuestCountViolation,
   getOvernightCutoffError,
   getStayDurationError,
@@ -112,6 +113,7 @@ export function priceBookingDetails(room, details, { cottageId = '', cottageFee 
     cottageId,
     cottageFee,
     dayVisitors,
+    lateArrival: details.bookingType === 'overnight' && isLateArrivalTime(details.checkInTime),
   });
 }
 

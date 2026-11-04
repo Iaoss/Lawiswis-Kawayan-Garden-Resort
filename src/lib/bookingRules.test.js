@@ -49,16 +49,18 @@ describe('group bookings', () => {
 });
 
 describe('overnight check-in cutoff', () => {
-  test('rejects a check-in time that has already passed today', () => {
-    expect(getOvernightCutoffError('2026-10-27', 'morning', now)).toMatch(/has passed/);
-    expect(getOvernightCutoffError('2026-10-27', 'afternoon', now)).toMatch(/has passed/);
+  test('rejects a check-in time once the next one has started', () => {
+    // 3:00 PM: the 10 AM slot closed at 2 PM; 2 PM and 6 PM are still open.
+    expect(getOvernightCutoffError('2026-10-27', 'morning', now)).toMatch(/no longer be booked/);
+    expect(getOvernightCutoffError('2026-10-27', 'afternoon', now)).toBe('');
     expect(getOvernightCutoffError('2026-10-27', 'evening', now)).toBe('');
     expect(getOvernightCutoffError('2026-10-28', 'morning', now)).toBe('');
   });
 
-  test('says when every check-in time today is over', () => {
-    const late = new Date('2026-10-27T11:30:00Z'); // 7:30 PM
-    expect(getOvernightCutoffError('2026-10-27', 'evening', late)).toMatch(/All of today/);
+  test('after 9 PM only the late arrival time is left', () => {
+    const late = new Date('2026-10-27T13:30:00Z'); // 9:30 PM
+    expect(getOvernightCutoffError('2026-10-27', 'evening', late)).toMatch(/later check-in time/);
+    expect(getOvernightCutoffError('2026-10-27', 'late', late)).toBe('');
   });
 });
 

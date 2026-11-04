@@ -4,7 +4,7 @@ import { RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import { BRASS, FOREST, FOREST_DEEP, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
 
-export function BookingTypeSelectionModal({ open, onClose, onSelectPersonal, onSelectCorporate }) {
+export function BookingTypeSelectionModal({ open, onClose, onSelectPersonal, onSelectCorporate, onSelectCottage }) {
   if (!open) return null;
 
   return (
@@ -14,14 +14,21 @@ export function BookingTypeSelectionModal({ open, onClose, onSelectPersonal, onS
           ×
         </button>
         <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '12px' }}>Choose your experience</div>
-        <h1 id="booking-type-title" style={{ color: FOREST_DEEP, font: `500 clamp(34px, 5vw, 48px)/1.1 ${SERIF}`, margin: '0 0 12px' }}>How many guests are joining?</h1>
-        <p style={{ color: '#6b6a5c', font: `14px/1.7 ${SANS}`, margin: '0 0 30px' }}>Choose the booking path that fits your group. Groups of 15 or more are priced per guest in our corporate package tiers.</p>
+        <h1 id="booking-type-title" style={{ color: FOREST_DEEP, font: `500 clamp(34px, 5vw, 48px)/1.1 ${SERIF}`, margin: '0 0 12px' }}>How would you like to visit?</h1>
+        <p style={{ color: '#6b6a5c', font: `14px/1.7 ${SANS}`, margin: '0 0 30px' }}>Overnight stays need a room. Day and night tours need at least a cottage. Groups of 15 or more are priced per guest in our corporate package tiers.</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(245px, 1fr))', gap: '14px' }}>
           <button type="button" onClick={onSelectPersonal} style={{ textAlign: 'left', border: `1px solid ${LINE}`, background: PAPER, padding: '23px', cursor: 'pointer', color: FOREST_DEEP, fontFamily: SANS }}>
-            <span style={{ display: 'block', color: FOREST, font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '12px' }}>Personal Booking</span>
+            <span style={{ display: 'block', color: FOREST, font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '12px' }}>Room · Personal Booking</span>
             <strong style={{ display: 'block', font: `500 25px ${SERIF}`, marginBottom: '8px' }}>1–14 guests</strong>
-            <span style={{ color: '#6b6a5c', font: `13px/1.6 ${SANS}` }}>Browse individual rooms and continue with the standard reservation workflow.</span>
+            <span style={{ color: '#6b6a5c', font: `13px/1.6 ${SANS}` }}>Overnight stay, or a day or night tour with a room. Browse rooms and book.</span>
           </button>
+          {onSelectCottage && (
+            <button type="button" onClick={onSelectCottage} style={{ textAlign: 'left', border: `1px solid ${LINE}`, background: PAPER, padding: '23px', cursor: 'pointer', color: FOREST_DEEP, fontFamily: SANS }}>
+              <span style={{ display: 'block', color: FOREST, font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '12px' }}>Cottage · Day / Night Tour</span>
+              <strong style={{ display: 'block', font: `500 25px ${SERIF}`, marginBottom: '8px' }}>No room needed</strong>
+              <span style={{ color: '#6b6a5c', font: `13px/1.6 ${SANS}` }}>Swim for the day (8 AM–5 PM) or the evening (5–10 PM) with your own cottage.</span>
+            </button>
+          )}
           <button type="button" onClick={onSelectCorporate} style={{ textAlign: 'left', border: `1px solid ${FOREST}`, background: FOREST, padding: '23px', cursor: 'pointer', color: '#fff', fontFamily: SANS }}>
             <span style={{ display: 'block', color: '#e4d4a7', font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '12px' }}>Corporate / Big Group Booking</span>
             <strong style={{ display: 'block', font: `500 25px ${SERIF}`, marginBottom: '8px' }}>15–250 guests</strong>

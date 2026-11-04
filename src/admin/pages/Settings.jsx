@@ -3,6 +3,7 @@ import PageLayout from '../components/PageLayout';
 import { useSettings, DEFAULT_SETTINGS, DASHBOARD_KEYS } from '../components/SettingsContext';
 import { auth } from '../../firebase/firebase';
 import QuickRepliesManager from '../components/QuickRepliesManager';
+import CottageInventoryManager from '../components/CottageInventoryManager';
 import { appConfirm } from '../../components/ui/app-dialog';
 
 const ACCENT_COLORS = [
@@ -421,6 +422,7 @@ export default function Settings() {
               style={{ margin: '4px 0 16px', padding: '9px 16px', border: 0, borderRadius: 9, background: t.ACCENT, color: t.ACCENT_TEXT, fontSize: 12, fontWeight: 700, cursor: availabilitySaving ? 'wait' : 'pointer', opacity: availabilitySaving || availabilityLoading ? 0.65 : 1 }}>
               {availabilitySaving ? 'Saving…' : 'Save resort status'}
             </button>
+            <CottageInventoryManager t={t} />
           </Section>
         )}
 

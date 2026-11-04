@@ -52,16 +52,18 @@ describe('same-day tour cutoff (Philippine time)', () => {
 
 describe('same-day overnight cutoff (Philippine time)', () => {
   const lunchtime = new Date('2026-10-24T04:35:00Z'); // 12:35 PM in Manila
-  it('blocks check-in times that have passed today', () => {
-    expect(getOvernightCutoffError('2026-10-24', 'morning', lunchtime)).toMatch(/10:00 AM/);
-    expect(getOvernightCutoffError('2026-10-24', 'afternoon', lunchtime)).toBe('');
-    expect(getOvernightCutoffError('2026-10-25', 'morning', lunchtime)).toBe('');
+  it('keeps a check-in time open until the next one starts (flexible check-in)', () => {
+    const afterTwo = new Date('2026-10-24T06:35:00Z'); // 2:35 PM in Manila
+    expect(getOvernightCutoffError('2026-10-24', 'morning', lunchtime)).toBe('');
+    expect(getOvernightCutoffError('2026-10-24', 'morning', afterTwo)).toMatch(/10:00 AM/);
+    expect(getOvernightCutoffError('2026-10-24', 'afternoon', afterTwo)).toBe('');
+    expect(getOvernightCutoffError('2026-10-25', 'morning', afterTwo)).toBe('');
   });
-  it('closes today entirely after the last check-in time', () => {
-    const evening = new Date('2026-10-24T10:30:00Z'); // 6:30 PM in Manila
-    expect(areOvernightCheckInsClosed('2026-10-24', lunchtime)).toBe(false);
-    expect(areOvernightCheckInsClosed('2026-10-24', evening)).toBe(true);
-    expect(getOvernightCutoffError('2026-10-24', 'evening', evening)).toMatch(/All of today/);
+  it('still takes late arrivals after 9 PM, so today never fully closes', () => {
+    const night = new Date('2026-10-24T13:30:00Z'); // 9:30 PM in Manila
+    expect(areOvernightCheckInsClosed('2026-10-24', night)).toBe(false);
+    expect(getOvernightCutoffError('2026-10-24', 'evening', night)).toMatch(/later check-in time/);
+    expect(getOvernightCutoffError('2026-10-24', 'late', night)).toBe('');
   });
 });
 

@@ -7,6 +7,7 @@ import { createPayMongoCheckout, checkPayMongoCheckoutStatus } from '../../lib/p
 import { SortControls, sortRecords } from '../lib/listSort';
 import { receiptNotice, staffApi } from '../lib/staffApi';
 import { SERVICES, getService, isRoomGuest, priceService } from '../../lib/services';
+import { getVatBreakdown } from '../../lib/bookingPricing';
 import { appAlert } from '../../components/ui/app-dialog';
 
 export default function Billing() {
@@ -348,7 +349,7 @@ export default function Billing() {
                     <span style={{ fontSize: '12px', color: SUBINK }}>Room {selected.roomNumber} · {selected.roomType}</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
-                    <Receipt label="Room charge" value={formatCurrency(selected.totalAmount)} />
+                    <Receipt label={selected.cottageOnly ? 'Entrance + cottage' : 'Room charge'} value={formatCurrency(selected.totalAmount)} />
                     <Receipt label="Extra charges" value={formatCurrency(selected.extraCharges || 0)} />
                     {Array.isArray(selected.extraChargeItems) && selected.extraChargeItems.length > 0 && (
                       <div style={{ display: 'grid', gap: '4px', paddingLeft: '12px' }}>
@@ -360,6 +361,15 @@ export default function Billing() {
                       </div>
                     )}
                     <Receipt label="Paid to date" value={`− ${formatCurrency(totalPaid(selected))}`} />
+                    {(() => {
+                      const vat = getVatBreakdown(Number(selected.totalAmount || 0) + Number(selected.extraCharges || 0));
+                      return (
+                        <div style={{ fontSize: '11px', color: SUBINK, display: 'grid', gap: '3px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Total charges (VAT included)</span><span style={money}>{formatCurrency(vat.total)}</span></div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Net of VAT · 12% VAT</span><span style={money}>{formatCurrency(vat.net)} · {formatCurrency(vat.vat)}</span></div>
+                        </div>
+                      );
+                    })()}
                     <div style={{ borderTop: `1px solid ${LINE}`, marginTop: '4px', paddingTop: '10px' }}>
                       <Receipt label="Balance due" value={formatCurrency(totalBalance(selected))} strong />
                     </div>

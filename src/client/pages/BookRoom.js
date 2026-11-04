@@ -7,6 +7,8 @@ import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../li
 import {
   calculateBookingPrice,
   MAX_DAY_VISITORS,
+  LATE_ARRIVAL_SURCHARGE_RATE,
+  getVatBreakdown,
   getSwimmingRate,
   COTTAGE_OPTIONS,
   DAYTOUR_TIME_SLOT,
@@ -302,6 +304,23 @@ export default function BookRoom() {
     ? { adults: Number(form.dayVisitorAdults), children: Number(form.dayVisitorChildren), tourPeriod: form.dayVisitorPeriod }
     : null), [form.bookingType, form.hasDayVisitors, form.dayVisitorAdults, form.dayVisitorChildren, form.dayVisitorPeriod]);
   const visitorRate = getSwimmingRate(form.dayVisitorPeriod);
+  // Arriving after 9:00 PM adds 10% of the room rate.
+  const lateArrivalChosen = form.bookingType === 'overnight'
+    && Boolean(OVERNIGHT_TIME_SLOTS.find(slot => slot.id === form.overnightTimeSlot)?.lateArrival);
+  const isTourBooking = form.bookingType === 'daytour';
+
+  // How many of each cottage are still free for this date and time.
+  const [cottageAvailability, setCottageAvailability] = useState(null);
+  useEffect(() => {
+    if (!form.checkIn) return undefined;
+    let active = true;
+    const period = form.bookingType === 'daytour' ? form.tourPeriod : 'both';
+    fetch(`/api/cottage-availability?date=${encodeURIComponent(form.checkIn)}&tourPeriod=${period}`)
+      .then(response => (response.ok ? response.json() : null))
+      .then(result => { if (active) setCottageAvailability(result?.availability || null); })
+      .catch(() => { if (active) setCottageAvailability(null); });
+    return () => { active = false; };
+  }, [form.checkIn, form.bookingType, form.tourPeriod]);
 
   // Switching between an overnight stay and a tour keeps the dates sensible:
   // a day or night tour is one date, an overnight stay needs a later check-out.
@@ -331,8 +350,9 @@ export default function BookRoom() {
       cottageId: form.cottageId,
       cottageFee: getCottageFee(form.cottageId) ?? 0,
       dayVisitors: dayVisitors,
+      lateArrival: lateArrivalChosen,
     })
-    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, dayVisitors]);
+    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, dayVisitors, lateArrivalChosen]);
   const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
@@ -688,6 +708,11 @@ export default function BookRoom() {
     if (!isPreferredContactMethod(form.preferredContactMethod)) {
       setErrorMsg('Please choose a preferred contact method.');
       document.getElementById('preferredContactMethod')?.focus();
+      return;
+    }
+    if (form.bookingType === 'daytour' && !form.cottageId) {
+      setErrorMsg('Day and night tours need a cottage. Please choose one under "Cottage".');
+      document.getElementById('cottage-selection')?.focus();
       return;
     }
     const contactLinkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
@@ -1164,6 +1189,11 @@ export default function BookRoom() {
                         return <option key={slot.id} value={slot.id} disabled={passed}>{slot.label}{passed ? ' — passed for today' : ''}</option>;
                       })}
                     </select>
+                    <div style={{ fontSize: '10px', color: lateArrivalChosen ? '#9a3412' : '#9ca3af', marginTop: '5px', lineHeight: 1.5 }}>
+                      {lateArrivalChosen
+                        ? `Arriving after 9:00 PM adds ${Math.round(LATE_ARRIVAL_SURCHARGE_RATE * 100)}% of the room rate${pricing?.lateArrivalSurcharge ? ` (₱${pricing.lateArrivalSurcharge.toLocaleString()})` : ''}. Late arrivals and midnight walk-ins are welcome.`
+                        : 'Check-in times are flexible as long as the room is free. Arriving after 9:00 PM? Choose the late arrival option.'}
+                    </div>
                   </div>
                 ) : (
                   <div style={{ alignSelf: 'end', background: LIGHT, color: '#355a42', padding: '12px', borderRadius: '8px', fontSize: '12px' }}>
@@ -1342,19 +1372,32 @@ export default function BookRoom() {
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
               </div>
               <div style={{ marginTop: '14px' }}>
-                <label htmlFor="cottage-selection" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Optional Cottage</label>
-                <select id="cottage-selection" value={form.cottageId} onChange={e => {
+                <label htmlFor="cottage-selection" style={{ fontSize: '11px', fontWeight: '600', color: isTourBooking && !form.cottageId ? '#9a3412' : '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {isTourBooking ? 'Cottage * (required for day and night tours)' : 'Optional Cottage'}
+                </label>
+                <select id="cottage-selection" required={isTourBooking} value={form.cottageId} onChange={e => {
                   // The option value is only the cottage id; the server looks up the price.
                   const cottageId = e.target.value;
                   setForm(previous => ({ ...previous, cottageId }));
                 }}
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                  {COTTAGE_OPTIONS.map(option => (
-                    <option key={option.id || 'none'} value={option.id}>
-                      {option.id ? `${option.label} · ₱${option.price.toLocaleString()}` : option.label}
-                    </option>
-                  ))}
+                  {COTTAGE_OPTIONS.map(option => {
+                    const entry = option.id ? cottageAvailability?.[option.id] : null;
+                    const soldOut = Boolean(entry && entry.left !== null && entry.left <= 0);
+                    return (
+                      <option key={option.id || 'none'} value={option.id} disabled={soldOut || (!option.id && isTourBooking)}>
+                        {option.id
+                          ? `${option.label} · ₱${option.price.toLocaleString()}${soldOut ? ' — fully booked' : entry && entry.left !== null ? ` — ${entry.left} left` : ''}`
+                          : isTourBooking ? 'Choose a cottage' : option.label}
+                      </option>
+                    );
+                  })}
                 </select>
+                {isTourBooking && (
+                  <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '5px' }}>
+                    Don't need a room? <a href="/book-cottage" style={{ color: DARK, fontWeight: 600 }}>Book just a cottage</a> for your tour.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1612,6 +1655,14 @@ export default function BookRoom() {
                   <span>{pricing.extraChildren} extra child{pricing.extraChildren !== 1 ? 'ren' : ''} × ₱{pricing.extraChildRate.toLocaleString()} × {nights} {stayUnit}{nights !== 1 ? 's' : ''}</span>
                   <span>₱{(pricing.extraChildren * pricing.extraChildRate * nights).toLocaleString()}</span>
                 </div>}
+                {pricing?.lateArrivalSurcharge > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#9a3412', marginBottom: '8px' }}>
+                  <span>Late arrival after 9 PM (10% of room rate)</span>
+                  <span>₱{pricing.lateArrivalSurcharge.toLocaleString()}</span>
+                </div>}
+                {pricing?.dayVisitorCharge > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                  <span>Day visitors</span>
+                  <span>₱{pricing.dayVisitorCharge.toLocaleString()}</span>
+                </div>}
                 {pricing?.cottageFee > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
                   <span>{getCottageLabel(pricing.cottageId)}</span>
                   <span>₱{pricing.cottageFee.toLocaleString()}</span>
@@ -1621,9 +1672,19 @@ export default function BookRoom() {
                   <span>Subtotal</span><span>₱{totalAmount.toLocaleString()}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: '700', color: '#111', borderTop: '1px solid #f3f4f6', paddingTop: '14px' }}>
-                  <span>Total</span>
+                  <span>Total <span style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280' }}>(VAT included)</span></span>
                   <span style={{ color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
                 </div>
+                {bookingTotal > 0 && (() => {
+                  const vat = getVatBreakdown(bookingTotal);
+                  const two = value => value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  return (
+                    <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '6px', display: 'grid', gap: '3px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Net of VAT</span><span>₱{two(vat.net)}</span></div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>12% VAT</span><span>₱{two(vat.vat)}</span></div>
+                    </div>
+                  );
+                })()}
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today ({depositPercentage}% deposit)</span><span>₱{depositAmount.toLocaleString()}</span></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '7px' }}><span>Balance due on arrival</span><span>₱{balanceAmount.toLocaleString()}</span></div>
               </div>
