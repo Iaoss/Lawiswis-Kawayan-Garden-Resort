@@ -1113,18 +1113,18 @@ const MARK_HP = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 170"><
 
 export type GlassRevealHuaProProps = Omit<GlassIconRevealProps, "logo">
 
-/** HuaPro's "HP" in dark glass with the resort's lime accent. Every prop can override the look. */
+/** HuaPro's "HP" in resort green under clear glass on white. Every prop can override the look. */
 export function GlassRevealHuaPro({ tuning, ...props }: GlassRevealHuaProProps) {
   return (
     <GlassIconReveal
       logo={MARK_HP}
       label="HuaPro"
-      look="dark"
-      background="#06110d"
-      plateColor="#0c1d17"
-      logoColor="#c8e889"
+      look="light"
+      background="#ffffff"
+      logoColor="#2f6b3a"
       logoScale={0.62}
       finalScale={0.85}
+      speed={1.4}
       {...props}
       tuning={{
         startZoom: 2.1,
