@@ -8,6 +8,7 @@ import ChatPanel from './ChatPanel';
 import './portal-sidebar.css';
 import logo from './logo-mark.png';
 import NotificationBell from './NotificationBell';
+import CheckInReminder from './CheckInReminder';
 import {
   AnimatedSidebarInset,
   AnimatedSidebarProvider,
@@ -89,7 +90,7 @@ export default function ReceptionistLayout({ children }) {
           const data = userDoc.data();
           if (data.role !== 'receptionist') window.location.href = '/admin/login';
           setStaffName(data.name || 'Receptionist');
-          setStaffRole(data.role || 'receptionist');
+          setStaffRole(data.customRoleName || data.role || 'receptionist');
           setStaffEmail(user.email || data.email || '');
         }
       } else {
@@ -198,7 +199,7 @@ export default function ReceptionistLayout({ children }) {
               onClick={() => setChatOpen(true)}
             />
 
-            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/receptionist" />
+            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/receptionist" showInquiries={access.can('inquiries')} />
 
             <TopbarIconButton
               icon="ti-settings"
@@ -226,6 +227,7 @@ export default function ReceptionistLayout({ children }) {
       </AnimatedSidebarInset>
 
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
+      <CheckInReminder dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts !== false} prefix="/receptionist" />
     </AnimatedSidebarProvider>
   );
 }

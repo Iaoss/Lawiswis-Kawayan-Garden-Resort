@@ -25,6 +25,24 @@ describe('Lawiswis Kawayan cancellation policy', () => {
     expect(getStaffCancellationFee({ checkIn: '2026-10-24', totalAmount: 6000, now })).toMatchObject({ rate: 100, noShow: true });
   });
 
+  test('staff cancellation refunds what was paid minus the fee, never less than zero', () => {
+    // 50% fee on ₱6,000 = ₱3,000. Paid in full: ₱3,000 back.
+    expect(getStaffCancellationFee({ checkIn: '2026-11-22', totalAmount: 6000, amountPaid: 6000, now }))
+      .toMatchObject({ fee: 3000, amountPaid: 6000, retained: 3000, refund: 3000 });
+    // Paid only the ₱3,000 deposit: the deposit covers the fee, nothing back.
+    expect(getStaffCancellationFee({ checkIn: '2026-11-22', totalAmount: 6000, amountPaid: 3000, now }))
+      .toMatchObject({ fee: 3000, retained: 3000, refund: 0 });
+    // Paid ₱1,000: the resort keeps ₱1,000 and the guest owes nothing more.
+    expect(getStaffCancellationFee({ checkIn: '2026-11-22', totalAmount: 6000, amountPaid: 1000, now }))
+      .toMatchObject({ retained: 1000, refund: 0 });
+    // 30+ days out: everything paid comes back.
+    expect(getStaffCancellationFee({ checkIn: '2026-11-23', totalAmount: 6000, amountPaid: 3000, now }))
+      .toMatchObject({ fee: 0, retained: 0, refund: 3000 });
+    // Nothing paid: nothing to refund.
+    expect(getStaffCancellationFee({ checkIn: '2026-11-23', totalAmount: 6000, amountPaid: 0, now }))
+      .toMatchObject({ refund: 0, retained: 0 });
+  });
+
   test('guest refunds are capped at what was paid', () => {
     expect(getCancellationPolicyOutcome({ checkIn: '2026-11-22', amount: 10000, amountPaid: 3000, now }))
       .toMatchObject({ outcome: 'eligible', policyRate: 50, feeAmount: 5000, refundableAmount: 3000 });

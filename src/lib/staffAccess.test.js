@@ -55,3 +55,34 @@ describe('extra access for receptionists', () => {
     expect(describeExpiry(now - 1, now)).toBe('Expired');
   });
 });
+
+describe('custom staff roles', () => {
+  const { listRoles, getRoleError, planRoleAccess, roleLabel, hasFeature: can } = require('./staffAccess');
+
+  test('lists saved roles and drops unknown features', () => {
+    const roles = listRoles({ roles: { r2: { name: 'Night Auditor', features: ['reports', 'users'] }, r1: { name: 'Cashier', features: ['payments'] } } });
+    expect(roles.map(r => r.name)).toEqual(['Cashier', 'Night Auditor']);
+    expect(roles[1].features).toEqual(['reports']);
+  });
+
+  test('checks role names and features', () => {
+    expect(getRoleError({ name: 'Admin', features: ['reports'] })).toMatch(/built in/);
+    expect(getRoleError({ id: 'b', name: 'Cashier', features: ['payments'] }, [{ id: 'a', name: 'cashier' }])).toMatch(/already/);
+    expect(getRoleError({ name: 'Cashier', features: [] })).toMatch(/at least one/);
+    expect(getRoleError({ name: 'Cashier', features: ['payments'] })).toBe('');
+  });
+
+  test('changing role swaps role grants but keeps hand-given ones', () => {
+    const user = { role: 'receptionist', access: { payments: { fromRole: 'cashier' }, reports: { fromRole: 'cashier' }, news: { expiresAt: null } } };
+    expect(planRoleAccess(user, { features: ['reports', 'activity'] })).toEqual({ add: ['reports', 'activity'], remove: ['payments'] });
+    expect(planRoleAccess(user, null)).toEqual({ add: [], remove: ['payments', 'reports'] });
+  });
+
+  test('role grants count as access, and the role name is shown', () => {
+    const user = { role: 'receptionist', customRoleName: 'Cashier', access: { payments: { fromRole: 'cashier', expiresAt: null } } };
+    expect(can(user, 'payments')).toBe(true);
+    expect(can(user, 'reports')).toBe(false);
+    expect(roleLabel(user)).toBe('Cashier');
+    expect(roleLabel({ role: 'admin' })).toBe('Admin');
+  });
+});

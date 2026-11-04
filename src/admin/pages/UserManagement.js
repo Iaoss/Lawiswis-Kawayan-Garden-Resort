@@ -1,20 +1,28 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { auth, db, secondaryAuth } from '../../firebase/firebase';
 import {
-  Timestamp, collection, deleteField, doc, onSnapshot, serverTimestamp, setDoc, updateDoc,
+  Timestamp, collection, deleteField, doc, onSnapshot, serverTimestamp, setDoc, updateDoc, writeBatch,
 } from 'firebase/firestore';
 import { createUserWithEmailAndPassword, sendPasswordResetEmail, signOut } from 'firebase/auth';
 import Layout from '../components/Layout';
 import { useSettings } from '../components/SettingsContext';
 import { logStaffActivity } from '../lib/activityLog';
 import { appConfirm } from '../../components/ui/app-dialog';
+import { staffApi } from '../lib/staffApi';
 import {
-  ACCESS_DURATIONS, ACCESS_FEATURES, describeExpiry, getAccessFeature, getActiveGrants, getGrantExpiry,
+  ACCESS_DURATIONS, ACCESS_FEATURES, STAFF_ROLES_DOC, describeExpiry, getAccessFeature, getActiveGrants, getGrantExpiry,
+  getRoleError, listRoles, normalizeRole, planRoleAccess, roleLabel,
 } from '../../lib/staffAccess';
 
 // Staff accounts: create, edit name and role, reset password, deactivate,
-// and give receptionists extra access to admin features for a set time or
-// until it's removed.
+// delete, and give receptionists extra access to admin features for a set
+// time or until it's removed. Admins can also save custom roles (a name plus
+// a set of features) and give them to staff; see src/lib/staffAccess.js.
+
+const EMPTY_ROLE = { id: '', name: '', description: '', features: [] };
+const newRoleId = () => `role_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+// Role picker values: 'admin', 'receptionist' or 'custom:<roleId>'.
+const roleValueOf = u => (u?.role === 'receptionist' && u.customRoleId ? `custom:${u.customRoleId}` : (u?.role || 'receptionist'));
 
 const EMPTY_FORM = { name: '', email: '', password: '', role: 'receptionist' };
 const FILTERS = [
@@ -77,6 +85,13 @@ export default function UserManagement() {
   const [accessBusy, setAccessBusy] = useState(false);
   const [accessError, setAccessError] = useState('');
 
+  // Custom roles.
+  const [roles, setRoles] = useState([]);
+  const [rolesOpen, setRolesOpen] = useState(false);
+  const [roleForm, setRoleForm] = useState(null); // EMPTY_ROLE shape while editing
+  const [roleBusy, setRoleBusy] = useState(false);
+  const [roleError, setRoleError] = useState('');
+
   const myUid = auth.currentUser?.uid;
   const me = users.find(u => u.id === myUid);
 
@@ -88,6 +103,10 @@ export default function UserManagement() {
     setNotice({ type: 'error', text: 'Staff accounts could not be loaded.' });
     setLoading(false);
   }), []);
+
+  useEffect(() => onSnapshot(doc(db, ...STAFF_ROLES_DOC),
+    snapshot => setRoles(listRoles(snapshot.data())),
+    error => console.error('Could not load staff roles:', error)), []);
 
   // Keeps "time left" labels and expiries current.
   useEffect(() => {
@@ -113,7 +132,7 @@ export default function UserManagement() {
         if (filter === 'receptionist' && u.role !== 'receptionist') return false;
         if (filter === 'inactive' && isActive(u)) return false;
         if (filter === 'access' && !(u.role === 'receptionist' && getActiveGrants(u, now).length)) return false;
-        return !term || [u.name, u.email, u.role].some(v => String(v || '').toLowerCase().includes(term));
+        return !term || [u.name, u.email, u.role, u.customRoleName].some(v => String(v || '').toLowerCase().includes(term));
       })
       .sort((a, b) => (a.id === myUid ? -1 : b.id === myUid ? 1 : 0)
         || Number(isActive(b)) - Number(isActive(a))
@@ -121,6 +140,115 @@ export default function UserManagement() {
   }, [users, search, filter, now, myUid]);
 
   const say = (type, text) => setNotice({ type, text });
+
+  // ── Roles ──────────────────────────────────────────────────
+  const roleById = id => roles.find(role => role.id === id) || null;
+  const membersOf = roleId => users.filter(u => u.role === 'receptionist' && u.customRoleId === roleId);
+
+  // Firestore field changes that give `user` the picked role (value from
+  // the role picker), with the role's features as permanent access.
+  const roleChanges = (user, value) => {
+    const custom = value.startsWith('custom:') ? roleById(value.slice(7)) : null;
+    const role = custom ? 'receptionist' : value;
+    const changes = { role };
+    if (role === 'admin') {
+      // Admins have every feature, so extra access is cleared.
+      if (user?.access) changes.access = deleteField();
+    } else {
+      const plan = planRoleAccess(user, custom);
+      plan.remove.forEach(id => { changes[`access.${id}`] = deleteField(); });
+      plan.add.forEach(id => {
+        changes[`access.${id}`] = {
+          grantedAt: serverTimestamp(),
+          grantedBy: myUid || '',
+          grantedByName: me?.name || auth.currentUser?.email || 'Admin',
+          expiresAt: null,
+          note: `Part of the ${custom.name} role`,
+          fromRole: custom.id,
+        };
+      });
+    }
+    if (custom) {
+      changes.customRoleId = custom.id;
+      changes.customRoleName = custom.name;
+    } else if (user?.customRoleId) {
+      changes.customRoleId = deleteField();
+      changes.customRoleName = deleteField();
+    }
+    return { changes, label: custom ? custom.name : role, custom };
+  };
+
+  const saveRole = async () => {
+    if (!roleForm) return;
+    const role = normalizeRole(roleForm.id || newRoleId(), roleForm);
+    const error = getRoleError(role, roles);
+    if (error) { setRoleError(error); return; }
+    setRoleBusy(true);
+    setRoleError('');
+    try {
+      await setDoc(doc(db, ...STAFF_ROLES_DOC), {
+        roles: { [role.id]: { name: role.name, description: role.description, features: role.features, updatedAt: serverTimestamp(), updatedByName: me?.name || auth.currentUser?.email || 'Admin' } },
+      }, { merge: true });
+      // Everyone with this role gets the new feature list straight away.
+      const members = membersOf(role.id);
+      if (members.length) {
+        const batch = writeBatch(db);
+        members.forEach(member => {
+          const plan = planRoleAccess(member, role);
+          const changes = { customRoleName: role.name };
+          plan.remove.forEach(id => { changes[`access.${id}`] = deleteField(); });
+          plan.add.forEach(id => {
+            changes[`access.${id}`] = { grantedAt: serverTimestamp(), grantedBy: myUid || '', grantedByName: me?.name || 'Admin', expiresAt: null, note: `Part of the ${role.name} role`, fromRole: role.id };
+          });
+          batch.update(doc(db, 'users', member.id), changes);
+        });
+        await batch.commit();
+      }
+      const labels = role.features.map(id => getAccessFeature(id)?.label).join(', ');
+      logStaffActivity('staff_role_saved', `${roleForm.id ? 'Updated' : 'Created'} the ${role.name} role: ${labels}${members.length ? ` (${members.length} staff updated)` : ''}`);
+      say('success', `The ${role.name} role was saved${members.length ? ` and ${members.length} staff member${members.length === 1 ? '' : 's'} updated` : ''}.`);
+      setRoleForm(null);
+    } catch (saveError) {
+      setRoleError(saveError.message || 'Could not save the role.');
+    } finally {
+      setRoleBusy(false);
+    }
+  };
+
+  const deleteRole = async role => {
+    const members = membersOf(role.id);
+    const ok = await appConfirm(
+      members.length
+        ? `${members.length} staff member${members.length === 1 ? ' has' : 's have'} this role. They become plain receptionists and lose its features.`
+        : 'Nobody has this role yet.',
+      { title: `Delete the ${role.name} role?`, tone: 'warning', confirmLabel: 'Delete role' },
+    );
+    if (!ok) return;
+    setRoleBusy(true);
+    setRoleError('');
+    try {
+      const batch = writeBatch(db);
+      members.forEach(member => {
+        const changes = { customRoleId: deleteField(), customRoleName: deleteField() };
+        planRoleAccess(member, null).remove.forEach(id => { changes[`access.${id}`] = deleteField(); });
+        batch.update(doc(db, 'users', member.id), changes);
+      });
+      batch.set(doc(db, ...STAFF_ROLES_DOC), { roles: { [role.id]: deleteField() } }, { merge: true });
+      await batch.commit();
+      logStaffActivity('staff_role_deleted', `Deleted the ${role.name} role${members.length ? ` (${members.length} staff moved to Receptionist)` : ''}`);
+      say('success', `The ${role.name} role was deleted.`);
+      if (roleForm?.id === role.id) setRoleForm(null);
+    } catch (deleteError) {
+      setRoleError(deleteError.message || 'Could not delete the role.');
+    } finally {
+      setRoleBusy(false);
+    }
+  };
+
+  const toggleRoleFeature = id => setRoleForm(current => ({
+    ...current,
+    features: current.features.includes(id) ? current.features.filter(f => f !== id) : [...current.features, id],
+  }));
 
   // ── Account actions ────────────────────────────────────────
   const handleCreate = async event => {
@@ -134,8 +262,10 @@ export default function UserManagement() {
       // The account is created on a second Firebase instance so the admin stays signed in.
       const cred = await createUserWithEmailAndPassword(secondaryAuth, form.email.trim(), form.password);
       await signOut(secondaryAuth);
-      await setDoc(doc(db, 'users', cred.user.uid), { name, email: form.email.trim(), role: form.role, status: 'active' });
-      logStaffActivity('staff_account_created', `Created ${form.role} account for ${name} (${form.email.trim()})`);
+      const { changes, label } = roleChanges(null, form.role);
+      await setDoc(doc(db, 'users', cred.user.uid), { name, email: form.email.trim(), role: changes.role, status: 'active' });
+      if (form.role.startsWith('custom:')) await updateDoc(doc(db, 'users', cred.user.uid), changes);
+      logStaffActivity('staff_account_created', `Created ${label} account for ${name} (${form.email.trim()})`);
       say('success', `${name}’s account was created. They can now log in with ${form.email.trim()}.`);
       setForm(EMPTY_FORM);
       setShowCreate(false);
@@ -154,13 +284,13 @@ export default function UserManagement() {
     setSaving(true);
     setNotice(null);
     try {
-      const changes = { name, role: editing.role };
-      // Admins have every feature, so extra access is cleared when promoted.
-      if (editing.role === 'admin' && user.access) changes.access = deleteField();
+      const roleChanged = editing.role !== roleValueOf(user);
+      const { changes: roleFields, label } = roleChanges(user, editing.role);
+      const changes = { name, ...(roleChanged ? roleFields : {}) };
       await updateDoc(doc(db, 'users', user.id), changes);
       const summary = [];
       if (name !== user.name) summary.push(`name "${user.name || ''}" → "${name}"`);
-      if (editing.role !== user.role) summary.push(`role ${user.role} → ${editing.role}`);
+      if (roleChanged) summary.push(`role ${roleLabel(user)} → ${label}`);
       if (summary.length) logStaffActivity('staff_account_edited', `Edited ${user.email}: ${summary.join(', ')}`);
       say('success', `${name}’s account was updated.`);
       setEditing(null);
@@ -197,6 +327,21 @@ export default function UserManagement() {
       say('success', `${user.name || user.email} was ${deactivate ? 'deactivated' : 'reactivated'}.`);
     } catch (error) {
       say('error', error.message || 'Could not change the account status.');
+    }
+  };
+
+  const deleteAccount = async user => {
+    const ok = await appConfirm(
+      `${user.name || user.email} will no longer be able to log in, and the account is removed for good. Bookings, payments and the Activity Log keep their name. If they may come back, deactivate the account instead.`,
+      { title: 'Delete this account?', tone: 'danger', confirmLabel: 'Delete account' },
+    );
+    if (!ok) return;
+    setNotice(null);
+    try {
+      const result = await staffApi('staff-users', { action: 'delete-user', uid: user.id });
+      say('success', `${result.name || user.name || user.email}’s account was deleted.`);
+    } catch (error) {
+      say('error', error.message || 'Could not delete the account.');
     }
   };
 
@@ -309,9 +454,14 @@ export default function UserManagement() {
                 Staff accounts, roles, and extra access to admin features for receptionists.
               </p>
             </div>
-            <button type="button" onClick={() => { setForm(EMPTY_FORM); setShowCreate(true); }} style={{ ...primary, padding: '10px 18px', fontSize: 13, borderRadius: 10 }}>
-              + Add staff
-            </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => { setRolesOpen(true); setRoleForm(null); setRoleError(''); }} style={{ ...btn, padding: '10px 16px', fontSize: 13, borderRadius: 10 }}>
+                <i className="ti ti-id-badge-2" aria-hidden="true" /> Roles{roles.length ? ` (${roles.length})` : ''}
+              </button>
+              <button type="button" onClick={() => { setForm(EMPTY_FORM); setShowCreate(true); }} style={{ ...primary, padding: '10px 18px', fontSize: 13, borderRadius: 10 }}>
+                + Add staff
+              </button>
+            </div>
           </header>
 
           {notice && (
@@ -383,20 +533,21 @@ export default function UserManagement() {
                     </div>
 
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <span style={{ ...pill, ...(u.role === 'admin' ? tone('purple') : tone('blue')), textTransform: 'capitalize' }}>{u.role || 'no role'}</span>
+                      <span style={{ ...pill, ...(u.role === 'admin' ? tone('purple') : tone('blue')) }}>{roleLabel(u)}</span>
+                      {u.customRoleName && <span style={{ ...pill, background: c.card2, color: c.muted }}>Receptionist + role access</span>}
                       <span style={{ ...pill, ...(active ? tone('green') : tone('red')) }}>{active ? 'Active' : 'Deactivated'}</span>
                     </div>
 
                     {u.role === 'receptionist' && (
                       <div style={{ background: c.card2, borderRadius: 10, padding: '10px 12px' }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: c.sub, marginBottom: grants.length ? 8 : 0 }}>
-                          {grants.length ? 'Extra access' : 'No extra access: standard receptionist pages only'}
+                          {grants.length ? (u.customRoleName ? `${u.customRoleName} access` : 'Extra access') : 'No extra access: standard receptionist pages only'}
                         </div>
                         {grants.length > 0 && (
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                             {grants.map(g => (
                               <span key={g.id} title={g.grant.note || undefined} style={{ ...pill, ...(g.expiresMs ? tone('amber') : tone('green')) }}>
-                                <i className="ti ti-key" aria-hidden="true" /> {g.label} · {describeExpiry(g.expiresMs, now)}
+                                <i className={`ti ${g.grant.fromRole ? 'ti-id-badge-2' : 'ti-key'}`} aria-hidden="true" /> {g.label} · {g.grant.fromRole ? 'role' : describeExpiry(g.expiresMs, now)}
                               </span>
                             ))}
                           </div>
@@ -406,7 +557,7 @@ export default function UserManagement() {
                     {u.role === 'admin' && <div style={{ fontSize: 11.5, color: c.muted }}>Admins can use every feature.</div>}
 
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderTop: `1px solid ${c.border}`, paddingTop: 12 }}>
-                      <button type="button" style={btn} onClick={() => setEditing({ id: u.id, name: u.name || '', role: u.role || 'receptionist' })}>
+                      <button type="button" style={btn} onClick={() => setEditing({ id: u.id, name: u.name || '', role: roleValueOf(u) })}>
                         <i className="ti ti-pencil" aria-hidden="true" /> Edit
                       </button>
                       {u.role === 'receptionist' && active && (
@@ -420,8 +571,13 @@ export default function UserManagement() {
                         </button>
                       )}
                       {!isMe && (
-                        <button type="button" style={{ ...btn, ...(active ? tone('red') : tone('green')), border: 'none' }} onClick={() => toggleStatus(u)}>
+                        <button type="button" style={{ ...btn, ...(active ? tone('amber') : tone('green')), border: 'none' }} onClick={() => toggleStatus(u)}>
                           {active ? 'Deactivate' : 'Reactivate'}
+                        </button>
+                      )}
+                      {!isMe && (
+                        <button type="button" style={{ ...btn, ...tone('red'), border: 'none' }} onClick={() => deleteAccount(u)} title="Delete this account for good">
+                          <i className="ti ti-trash" aria-hidden="true" /> Delete
                         </button>
                       )}
                     </div>
@@ -448,8 +604,21 @@ export default function UserManagement() {
               <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={{ ...input, cursor: 'pointer' }}>
                 <option value="receptionist">Receptionist</option>
                 <option value="admin">Admin</option>
+                {roles.length > 0 && (
+                  <optgroup label="Custom roles">
+                    {roles.map(role => <option key={role.id} value={`custom:${role.id}`}>{role.name}</option>)}
+                  </optgroup>
+                )}
               </select>
             </label>
+            {(() => {
+              const picked = String(form.role).startsWith('custom:') ? roleById(String(form.role).slice(7)) : null;
+              return picked ? (
+                <p style={{ gridColumn: '1 / -1', margin: 0, fontSize: 11.5, color: c.muted }}>
+                  {picked.name} can use the receptionist pages plus: {picked.features.map(id => getAccessFeature(id)?.label).join(', ')}.
+                </p>
+              ) : null;
+            })()}
             <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button type="button" style={btn} onClick={() => setShowCreate(false)}>Cancel</button>
               <button type="submit" disabled={creating} style={{ ...primary, padding: '9px 18px' }}>{creating ? 'Creating…' : 'Create account'}</button>
@@ -467,8 +636,21 @@ export default function UserManagement() {
               <select value={editing.role} disabled={editingUser.id === myUid} onChange={e => setEditing({ ...editing, role: e.target.value })} style={{ ...input, cursor: 'pointer' }}>
                 <option value="receptionist">Receptionist</option>
                 <option value="admin">Admin</option>
+                {roles.length > 0 && (
+                  <optgroup label="Custom roles">
+                    {roles.map(role => <option key={role.id} value={`custom:${role.id}`}>{role.name}</option>)}
+                  </optgroup>
+                )}
               </select>
             </label>
+            {(() => {
+              const picked = String(editing.role).startsWith('custom:') ? roleById(String(editing.role).slice(7)) : null;
+              return picked ? (
+                <p style={{ gridColumn: '1 / -1', margin: 0, fontSize: 11.5, color: c.muted }}>
+                  {picked.name} can use the receptionist pages plus: {picked.features.map(id => getAccessFeature(id)?.label).join(', ')}.
+                </p>
+              ) : null;
+            })()}
             {editingUser.id === myUid && <p style={{ margin: 0, fontSize: 11.5, color: c.muted }}>You can’t change your own role.</p>}
             <p style={{ margin: 0, fontSize: 11.5, color: c.muted }}>The email is the login, so it can’t be changed here. For a new email, create a new account and deactivate this one.</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
@@ -490,7 +672,7 @@ export default function UserManagement() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 10 }}>
                 <strong style={{ fontSize: 13 }}>Current access</strong>
                 {accessGrants.length > 1 && (
-                  <button type="button" disabled={accessBusy} style={{ ...btn, ...tone('red'), border: 'none' }} onClick={() => removeAccess(accessUser, accessGrants.map(g => g.id))}>Remove all</button>
+                  <button type="button" disabled={accessBusy} style={{ ...btn, ...tone('red'), border: 'none' }} onClick={() => removeAccess(accessUser, accessGrants.filter(g => !g.grant.fromRole).map(g => g.id))}>Remove all</button>
                 )}
               </div>
               {accessGrants.length === 0 ? (
@@ -507,7 +689,9 @@ export default function UserManagement() {
                           {g.grant.note ? ` · “${g.grant.note}”` : ''}
                         </div>
                       </div>
-                      <button type="button" disabled={accessBusy} style={btn} onClick={() => removeAccess(accessUser, [g.id])}>Remove</button>
+                      {g.grant.fromRole
+                        ? <span style={{ fontSize: 11, color: c.muted, whiteSpace: 'nowrap' }}>From the role</span>
+                        : <button type="button" disabled={accessBusy} style={btn} onClick={() => removeAccess(accessUser, [g.id])}>Remove</button>}
                     </li>
                   ))}
                 </ul>
@@ -523,12 +707,13 @@ export default function UserManagement() {
                     {ACCESS_FEATURES.filter(f => f.group === group).map(feature => {
                       const checked = accessForm.features.includes(feature.id);
                       const has = accessGrants.some(g => g.id === feature.id);
+                      const viaRole = accessGrants.some(g => g.id === feature.id && g.grant.fromRole);
                       return (
-                        <label key={feature.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 11px', borderRadius: 10, cursor: 'pointer', border: `1px solid ${checked ? c.accent : c.border}`, background: checked ? (dark ? 'rgba(156,181,111,0.12)' : '#f3f8ec') : c.card }}>
-                          <input type="checkbox" checked={checked} onChange={() => toggleFeature(feature.id)} style={{ marginTop: 3, accentColor: c.accent }} />
+                        <label key={feature.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 11px', borderRadius: 10, cursor: viaRole ? 'default' : 'pointer', opacity: viaRole ? 0.65 : 1, border: `1px solid ${checked ? c.accent : c.border}`, background: checked ? (dark ? 'rgba(156,181,111,0.12)' : '#f3f8ec') : c.card }}>
+                          <input type="checkbox" checked={checked || viaRole} disabled={viaRole} onChange={() => toggleFeature(feature.id)} style={{ marginTop: 3, accentColor: c.accent }} />
                           <span>
                             <span style={{ fontSize: 12.5, fontWeight: 600, color: c.text }}>{feature.label}</span>
-                            {has && <span style={{ ...pill, ...tone('green'), marginLeft: 6, padding: '1px 7px', fontSize: 10 }}>has it</span>}
+                            {has && <span style={{ ...pill, ...tone('green'), marginLeft: 6, padding: '1px 7px', fontSize: 10 }}>{viaRole ? 'in role' : 'has it'}</span>}
                             <span style={{ display: 'block', fontSize: 11, color: c.muted, marginTop: 2 }}>{feature.description}</span>
                           </span>
                         </label>
@@ -564,6 +749,86 @@ export default function UserManagement() {
                 </button>
               </div>
             </div>
+          </div>
+        ))}
+
+        {/* Custom roles */}
+        {rolesOpen && modal({
+          title: 'Roles',
+          subtitle: 'Save a set of features as a role, then give it to staff. They keep the receptionist pages and get the role’s features until you change their role.',
+          onClose: () => { setRolesOpen(false); setRoleForm(null); },
+          width: 680,
+        }, (
+          <div style={{ display: 'grid', gap: 16 }}>
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8 }}>
+              <li style={{ background: c.card2, borderRadius: 10, padding: '10px 12px', fontSize: 12, color: c.muted }}>
+                <strong style={{ color: c.text }}>Admin</strong> · every feature, including user management, room prices and settings (built in).
+              </li>
+              <li style={{ background: c.card2, borderRadius: 10, padding: '10px 12px', fontSize: 12, color: c.muted }}>
+                <strong style={{ color: c.text }}>Receptionist</strong> · front desk pages only (built in).
+              </li>
+              {roles.map(role => (
+                <li key={role.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, border: `1px solid ${roleForm?.id === role.id ? c.accent : c.border}`, borderRadius: 10, padding: '10px 12px' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{role.name} <span style={{ fontWeight: 500, color: c.muted, fontSize: 11 }}>· {membersOf(role.id).length} staff</span></div>
+                    {role.description && <div style={{ fontSize: 11.5, color: c.muted }}>{role.description}</div>}
+                    <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+                      {role.features.map(id => <span key={id} style={{ ...pill, ...tone('blue'), padding: '1px 8px', fontSize: 10.5 }}>{getAccessFeature(id)?.label}</span>)}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button type="button" style={btn} disabled={roleBusy} onClick={() => { setRoleForm({ ...role }); setRoleError(''); }}><i className="ti ti-pencil" aria-hidden="true" /> Edit</button>
+                    <button type="button" style={{ ...btn, ...tone('red'), border: 'none' }} disabled={roleBusy} onClick={() => deleteRole(role)} aria-label={`Delete the ${role.name} role`}><i className="ti ti-trash" aria-hidden="true" /></button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            {!roleForm ? (
+              <div>
+                <button type="button" style={primary} onClick={() => { setRoleForm({ ...EMPTY_ROLE }); setRoleError(''); }}>+ New role</button>
+              </div>
+            ) : (
+              <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: 16, display: 'grid', gap: 14 }}>
+                <strong style={{ fontSize: 13 }}>{roleForm.id ? `Edit ${roles.find(r => r.id === roleForm.id)?.name || 'role'}` : 'New role'}</strong>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+                  <label style={label}>Role name
+                    <input value={roleForm.name} maxLength={40} onChange={e => setRoleForm({ ...roleForm, name: e.target.value })} style={input} placeholder="e.g. Cashier" />
+                  </label>
+                  <label style={label}>Description (optional)
+                    <input value={roleForm.description} maxLength={160} onChange={e => setRoleForm({ ...roleForm, description: e.target.value })} style={input} placeholder="e.g. Handles payments and reports" />
+                  </label>
+                </div>
+                {GROUPS.map(group => (
+                  <fieldset key={group} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+                    <legend style={{ fontSize: 11, fontWeight: 700, color: c.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8, padding: 0 }}>{group} this role can use</legend>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 240px), 1fr))', gap: 8 }}>
+                      {ACCESS_FEATURES.filter(f => f.group === group).map(feature => {
+                        const checked = roleForm.features.includes(feature.id);
+                        return (
+                          <label key={feature.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 11px', borderRadius: 10, cursor: 'pointer', border: `1px solid ${checked ? c.accent : c.border}`, background: checked ? (dark ? 'rgba(156,181,111,0.12)' : '#f3f8ec') : c.card }}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleRoleFeature(feature.id)} style={{ marginTop: 3, accentColor: c.accent }} />
+                            <span>
+                              <span style={{ fontSize: 12.5, fontWeight: 600, color: c.text }}>{feature.label}</span>
+                              <span style={{ display: 'block', fontSize: 11, color: c.muted, marginTop: 2 }}>{feature.description}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                ))}
+                <p style={{ margin: 0, fontSize: 11.5, color: c.muted, lineHeight: 1.6 }}>
+                  Changes apply to everyone with this role right away. User management, room prices and settings stay admin-only.
+                </p>
+                {roleError && <div role="alert" style={{ ...tone('red'), padding: '9px 12px', borderRadius: 9, fontSize: 12 }}>{roleError}</div>}
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  <button type="button" style={btn} onClick={() => { setRoleForm(null); setRoleError(''); }}>Cancel</button>
+                  <button type="button" disabled={roleBusy} onClick={saveRole} style={{ ...primary, padding: '9px 18px' }}>{roleBusy ? 'Saving…' : 'Save role'}</button>
+                </div>
+              </div>
+            )}
+            {!roleForm && roleError && <div role="alert" style={{ ...tone('red'), padding: '9px 12px', borderRadius: 9, fontSize: 12 }}>{roleError}</div>}
           </div>
         ))}
       </div>

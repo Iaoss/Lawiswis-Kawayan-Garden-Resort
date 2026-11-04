@@ -89,25 +89,28 @@ export function getTourCutoffError(date, tourPeriod = 'day', now = new Date()) {
 
 export const COTTAGE_OPTIONS = [
   { id: '', label: 'No cottage', price: 0, maxGuests: 0 },
-  // Resort rate card: Daybed ₱1,000, Cabana ₱1,500, Pavilion ₱3,000.
-  { id: 'daybed', label: 'Daybed (up to 6 guests)', price: 1000, maxGuests: 6 },
-  { id: 'cabana', label: 'Cabana (up to 10 guests)', price: 1500, maxGuests: 10 },
+  // Resort cottage rates.
+  { id: 'umbrella-hut', label: 'Umbrella Hut (up to 6 guests)', price: 500, maxGuests: 6 },
+  { id: 'garden-cabana', label: 'Garden Cabana (up to 10 guests)', price: 1000, maxGuests: 10 },
+  { id: 'poolside-cabana', label: 'Poolside Cabana (up to 10 guests)', price: 1500, maxGuests: 10 },
   { id: 'pavilion', label: 'Pavilion (up to 20 guests)', price: 3000, maxGuests: 20 },
 ];
 
 // Rates saved on bookings made before the cottage list changed. They're only
 // accepted when repricing those existing bookings (e.g. a date change).
 const LEGACY_COTTAGE_RATES = {
-  'umbrella-hut': [500, 1000],
-  'garden-cabana': [1000],
-  'poolside-cabana': [1500],
-  cabana: [1000],
+  'umbrella-hut': [1000],
+  daybed: [1000],
+  cabana: [1000, 1500],
 };
 const LEGACY_COTTAGE_LABELS = {
-  'umbrella-hut': 'Umbrella Hut / Daybed (up to 6 guests)',
-  'garden-cabana': 'Garden Cabana (up to 10 guests)',
-  'poolside-cabana': 'Poolside Cabana (up to 10 guests)',
+  daybed: 'Daybed (up to 6 guests)',
+  cabana: 'Cabana (up to 10 guests)',
 };
+
+// Older cottage ids, counted as the cottage that replaced them when
+// working out how many are still free.
+export const LEGACY_COTTAGE_IDS = { daybed: 'umbrella-hut', cabana: 'poolside-cabana' };
 
 // Looks up the fee for the cottage the guest picked, or null if it isn't on
 // the list. The browser only ever sends the cottage id, never the price.

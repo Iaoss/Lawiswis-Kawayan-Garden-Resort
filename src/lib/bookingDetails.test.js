@@ -97,8 +97,8 @@ describe('walk-in smart suggestions', () => {
     expect(ids).not.toContain('a');
   });
   test('suggests the smallest cottage that seats everyone', () => {
-    expect(suggestCottage(4).cottage.id).toBe('daybed');
-    expect(suggestCottage(8).cottage.id).toBe('cabana');
+    expect(suggestCottage(4).cottage.id).toBe('umbrella-hut');
+    expect(suggestCottage(8).cottage.id).toBe('garden-cabana');
     expect(suggestCottage(15).cottage.id).toBe('pavilion');
     expect(suggestCottage(25).note).toMatch(/another cottage/);
   });

@@ -26,6 +26,7 @@ import arrivalReminders from '../apiHandlers/arrival-reminders';
 import sendThankYou from '../apiHandlers/send-thank-you';
 import reservationStatus from '../apiHandlers/reservation-status';
 import staffBilling from '../apiHandlers/staff-billing';
+import staffUsers from '../apiHandlers/staff-users';
 import bookingReply from '../apiHandlers/booking-reply';
 import chatQuickReply from '../apiHandlers/chat-quick-reply';
 import createCottageReservation from '../apiHandlers/create-cottage-reservation';
@@ -58,6 +59,7 @@ const handlers = {
   'reservation-staff-action': reservationStaffAction,
   'reservation-status': reservationStatus,
   'staff-billing': staffBilling,
+  'staff-users': staffUsers,
   'create-corporate-reservation': createCorporateReservation,
   'public-feedback': publicFeedback,
   'submit-feedback': submitFeedback,

@@ -4,7 +4,7 @@ import { BRASS, CREAM, FOREST, FOREST_DEEP, LINE, PAPER, SERIF, SANS } from '../
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import {
   COTTAGE_OPTIONS, DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, cottageName,
-  getResortNow, getSwimmingRate, getTourCutoffError, getVatBreakdown,
+  getResortNow, getSwimmingRate, getTourCutoffError,
 } from '../../lib/bookingPricing';
 import { NAME_PATTERN } from '../../lib/nameValidation';
 import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError } from '../../lib/preferredContactMethods';
@@ -15,7 +15,6 @@ import { createPayMongoCheckout } from '../../lib/paymongo';
 // the swimming entrance per person plus the cottage.
 
 const peso = value => `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-const peso2 = value => `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const addMonthsKey = (dateKey, months) => {
   const [y, m, d] = dateKey.split('-').map(Number);
   const result = new Date(Date.UTC(y, m - 1 + months, 1));
@@ -84,7 +83,6 @@ export default function CottageBooking() {
     }
   }, [form.adults, form.children, form.tourPeriod, form.cottageId]);
   const total = pricing && !pricing.error ? pricing.subtotalAmount : 0;
-  const vat = getVatBreakdown(total);
   const dueNow = total > 0 ? getOnlinePaymentAmount(total, paymentChoice) : 0;
   const rate = getSwimmingRate(form.tourPeriod);
   const slot = form.tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT : DAYTOUR_TIME_SLOT;
@@ -94,7 +92,7 @@ export default function CottageBooking() {
     setError('');
     if (!resortOpen) return setError('Reservations are temporarily closed.');
     if (cutoffError) return setError(cutoffError);
-    if (!form.cottageId) return setError('Choose a cottage. Day and night tours need at least a cottage.');
+    if (!form.cottageId) return setError('Choose a cottage for your tour.');
     if (pricing?.error) return setError(pricing.error);
     if (!NAME_PATTERN.test(form.firstName.trim()) || !NAME_PATTERN.test(form.lastName.trim())) return setError('Enter a valid first and last name (2-35 letters each).');
     if (!/^09\d{9}$/.test(form.phone)) return setError('Enter a valid 11-digit mobile number, like 09171234567.');
@@ -147,7 +145,7 @@ export default function CottageBooking() {
         <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 10 }}>Day tour · Night tour</div>
         <h1 style={{ color: FOREST_DEEP, font: `500 clamp(30px, 5vw, 44px)/1.1 ${SERIF}`, margin: '0 0 10px' }}>Book a cottage for the day</h1>
         <p style={{ color: '#6b6a5c', font: `14px/1.7 ${SANS}`, margin: '0 0 26px', maxWidth: 640 }}>
-          No room needed. Swim and relax for the day or the evening with your own cottage. Day and night tours need at least a cottage; to stay overnight, <Link to="/rooms" style={{ color: FOREST }}>book a room</Link>.
+          No room needed. Swim and relax for the day or the evening with your own cottage. To book a room for your tour (cottage optional) or to stay overnight, <Link to="/rooms" style={{ color: FOREST }}>book a room</Link>.
         </p>
 
         <form onSubmit={submit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18, alignItems: 'start' }}>
@@ -248,7 +246,6 @@ export default function CottageBooking() {
                   <span>{left}</span><span style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{right}</span>
                 </div>
               );
-              const small = { font: `12px ${SANS}`, color: '#6b6a5c' };
               return (
                 <div style={{ display: 'grid', gap: 8, font: `13px ${SANS}`, color: '#44463b' }}>
                   {row(form.tourPeriod === 'night' ? 'Night tour' : 'Day tour', `${form.date} · ${slot.checkIn}–${slot.checkOut}`)}
@@ -256,9 +253,7 @@ export default function CottageBooking() {
                     peso(Number(form.adults) * rate.adult + Number(form.children) * rate.child))}
                   {row(`Cottage${form.cottageId ? `: ${cottageName(COTTAGES.find(c => c.id === form.cottageId))}` : ''}`,
                     form.cottageId ? peso(COTTAGES.find(c => c.id === form.cottageId).price) : 'Choose one')}
-                  {row('Total (VAT included)', total ? peso(total) : '—', { fontWeight: 700, color: FOREST_DEEP, borderTop: `1px solid ${LINE}`, paddingTop: 8 })}
-                  {total > 0 && row('Net of VAT', peso2(vat.net), small)}
-                  {total > 0 && row('12% VAT', peso2(vat.vat), small)}
+                  {row('Total', total ? peso(total) : '—', { fontWeight: 700, color: FOREST_DEEP, borderTop: `1px solid ${LINE}`, paddingTop: 8 })}
                 </div>
               );
             })()}

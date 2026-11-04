@@ -4,16 +4,20 @@
 // It runs on the server so amounts can't be edited in the browser; the
 // Firestore rules block these writes from the browser entirely.
 //
-//   { action: 'record-payment', reservationId, amount, method }
+//   { action: 'record-payment', reservationId, amount, method, officialReceiptNo? }
 //     Records a counter payment (cash, GCash, card, bank). The amount can't
-//     be more than the guest still owes. A receipt is emailed.
+//     be more than the guest still owes. A receipt is emailed. If the desk
+//     also wrote a paper receipt, its number is saved with the payment.
 //   { action: 'add-charge', reservationId, amount, description }
 //     Adds an extra charge (minibar, damage, etc.) to the guest's bill.
 //   { action: 'add-service', reservationId, serviceId, hours, persons }
 //     Adds a spa session or photoshoot package, priced from the rate card.
-//   { action: 'cancel-with-policy', reservationId, reason }
+//   { action: 'cancel-with-policy', reservationId, reason, preview? }
 //     Cancels a booking and records the fee and refund from the resort's
-//     cancellation policy, calculated here.
+//     cancellation policy, calculated here, then emails the guest a
+//     cancellation notice with a receipt. With preview: true it only returns
+//     the fee and refund. Receptionists need the admin's "Cancel bookings"
+//     access.
 //   { action: 'create-walk-in', booking: {...} }
 //     Creates a walk-in overnight stay, day tour or night tour, priced here
 //     with the same rules as online bookings and checked for double bookings.
@@ -23,9 +27,10 @@
 
 import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
-import { verifyStaff } from '../lib/verifyStaff';
+import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { describeBillingAction, logActivity } from '../lib/activityLog';
 import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
+import { sendCancellationEmail } from '../lib/email';
 import { shouldAutoConfirm } from '../lib/recordPayMongoPayment';
 import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
@@ -68,7 +73,8 @@ async function getReservation(transaction, reservationId) {
   return { ref, reservation: snapshot.data() };
 }
 
-async function recordPayment({ staff, reservationId, amount, method }) {
+async function recordPayment({ staff, reservationId, amount, method, officialReceiptNo }) {
+  const paperReceiptNo = cleanText(officialReceiptNo, 40);
   const paid = money(amount);
   if (!Number.isFinite(paid) || paid <= 0) throw new BillingError(400, 'Enter a payment amount greater than zero.');
   if (!COUNTER_PAYMENT_METHODS.includes(method)) throw new BillingError(400, 'Choose a valid payment method.');
@@ -118,7 +124,9 @@ async function recordPayment({ staff, reservationId, amount, method }) {
       roomNumber: reservation.roomNumber || '',
       amount: paid,
       method,
+      ...(paperReceiptNo ? { officialReceiptNo: paperReceiptNo } : {}),
       recordedBy: staff.uid,
+      recordedByName: staff.name || staff.email || '',
       createdAt: FieldValue.serverTimestamp(),
     });
     return { amountPaid, paymentStatus, balance: money(total - amountPaid), autoConfirmed, autoCheckedIn };
@@ -203,32 +211,62 @@ async function addService({ staff, reservationId, serviceId, hours, persons }) {
   });
 }
 
-async function cancelWithPolicy({ staff, reservationId, reason }) {
+async function cancelWithPolicy({ staff, reservationId, reason, preview = false }) {
+  if (staff.role === 'receptionist' && !staffCan(staff, 'cancel')) {
+    throw new BillingError(403, 'Receptionists can request a cancellation, but only an admin can cancel.');
+  }
   const policySnap = await adminDb.doc('settings/cancellationPolicy').get();
   const policy = policySnap.exists ? policySnap.data() : DEFAULT_CANCELLATION_POLICY;
-  return adminDb.runTransaction(async transaction => {
+  const cleanReason = cleanText(reason, 500);
+  const receiptNumber = typeof reservationId === 'string' ? `CXL-${reservationId.slice(0, 8).toUpperCase()}` : '';
+  const result = await adminDb.runTransaction(async transaction => {
     const { ref, reservation } = await getReservation(transaction, reservationId);
     if (['cancelled', 'checked-out'].includes(reservation.status)) {
       throw new BillingError(409, 'This booking is already cancelled or checked out.');
     }
-    const outcome = getStaffCancellationFee({ policy, checkIn: reservation.checkIn, totalAmount: reservation.totalAmount });
+    const outcome = getStaffCancellationFee({
+      policy, checkIn: reservation.checkIn, totalAmount: reservation.totalAmount, amountPaid: reservation.amountPaid || 0,
+    });
     if (!outcome) throw new BillingError(409, 'This booking’s check-in date or total is invalid, so the fee can’t be calculated.');
+    if (preview) return { preview: true, ...outcome, hasEmail: Boolean(reservation.email || reservation.guestEmail) };
     const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
     const roomSnap = roomRef ? await transaction.get(roomRef) : null;
     transaction.update(ref, {
       status: 'cancelled',
       cancellationRequested: false,
-      cancellationReason: cleanText(reason, 500),
+      cancellationReason: cleanReason,
       cancellationFee: outcome.fee,
+      cancellationFeeRate: outcome.rate,
+      cancellationTier: outcome.tier,
+      cancellationRetained: outcome.retained,
       refundAmount: outcome.refund,
+      cancellationReceiptNumber: receiptNumber,
       cancelledAt: new Date().toISOString(),
       cancelledBy: staff.uid,
+      cancelledByName: staff.name || staff.email || '',
       statusUpdatedAt: FieldValue.serverTimestamp(),
       statusUpdatedBy: staff.uid,
     });
     if (roomSnap?.exists) transaction.update(roomRef, { status: 'vacant' });
-    return { fee: outcome.fee, refund: outcome.refund, rate: outcome.rate };
+    return { ...outcome, reservation };
   });
+  if (result.preview) return result;
+
+  // The booking is cancelled either way; a failed email is reported to staff.
+  const { reservation, ...outcome } = result;
+  let emailSent = false;
+  let emailError = '';
+  try {
+    await sendCancellationEmail({
+      reservation, bookingRef: reservationId.slice(0, 8).toUpperCase(), receiptNumber, outcome, reason: cleanReason,
+    });
+    emailSent = true;
+    await adminDb.collection('reservations').doc(reservationId).update({ cancellationEmailSentAt: FieldValue.serverTimestamp() });
+  } catch (error) {
+    emailError = error.message || 'The cancellation email could not be sent.';
+    console.error('Cancellation email failed:', error);
+  }
+  return { ...outcome, receiptNumber, emailSent, emailError };
 }
 
 const isActive = r => !['cancelled', 'checked-out'].includes(String(r.status || '').toLowerCase());
@@ -358,10 +396,7 @@ async function createWalkIn({ staff, booking = {} }) {
   const cottageId = typeof booking.cottageId === 'string' ? booking.cottageId : '';
   const cottageFee = getCottageFee(cottageId);
   if (cottageFee === null) throw new BillingError(400, 'Choose a valid cottage.');
-  // Day and night tours need at least a cottage.
-  if (['day', 'night'].includes(booking.bookingOption) && !cottageId) {
-    throw new BillingError(400, 'Day and night tours need a cottage. Choose one for the guest.');
-  }
+  // A cottage is optional, including for day and night tours with a room.
   if (cottageId) {
     const tour = ['day', 'night'].includes(booking.bookingOption) ? booking.bookingOption : 'both';
     const fullError = cottageAvailabilityError(await getCottageAvailabilityFor(String(booking.checkIn || ''), tour), cottageId);

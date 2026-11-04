@@ -87,6 +87,58 @@ function useNotificationReservations() {
   return { reservations, ready };
 }
 
+const toMillis = value => (value?.toMillis ? value.toMillis() : value?.seconds ? value.seconds * 1000 : value ? new Date(value).getTime() || 0 : 0);
+
+// Unanswered contact inquiries and unread inbox emails from the last week.
+// Each feed is optional: receptionists only get inquiries when an admin gave
+// them that page, and only admins read the inbox.
+function useMessageNotifications({ prefix, showInquiries, showEmails }) {
+  const [inquiries, setInquiries] = useState([]);
+  const [emails, setEmails] = useState([]);
+
+  useEffect(() => {
+    if (!showInquiries) { setInquiries([]); return undefined; }
+    const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
+    return onSnapshot(query(collection(db, 'contacts'), where('createdAt', '>=', since)),
+      snapshot => setInquiries(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setInquiries([]));
+  }, [showInquiries]);
+
+  useEffect(() => {
+    if (!showEmails) { setEmails([]); return undefined; }
+    return onSnapshot(query(collection(db, 'emails'), where('folder', '==', 'inbox'), where('read', '==', false)),
+      snapshot => setEmails(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setEmails([]));
+  }, [showEmails]);
+
+  return useMemo(() => {
+    const weekAgo = Date.now() - NEW_BOOKING_DAYS * 86400000;
+    const inquiryItems = inquiries
+      .filter(item => item.status !== 'answered')
+      .map(item => ({
+        id: `inquiry_${item.id}`,
+        icon: 'ti-mail-question',
+        badge: 'Contact Inquiry',
+        message: `${item.name || item.email || 'Website visitor'} · ${item.subject || 'General Inquiry'}`,
+        details: String(item.message || '').slice(0, 110) || item.email || '',
+        timeMs: toMillis(item.createdAt),
+        path: `${prefix}/contact-inquiries`,
+      }));
+    const emailItems = emails
+      .filter(item => toMillis(item.date) >= weekAgo)
+      .map(item => ({
+        id: `email_${item.id}`,
+        icon: 'ti-mail',
+        badge: 'New Email',
+        message: `${item.fromName || item.from || 'Unknown sender'} · ${item.subject || '(no subject)'}`,
+        details: String(item.snippet || '').slice(0, 110),
+        timeMs: toMillis(item.date),
+        path: `${prefix}/email`,
+      }));
+    return [...inquiryItems, ...emailItems];
+  }, [inquiries, emails, prefix]);
+}
+
 const QUICK_LINKS = {
   '/admin': [
     { label: 'Bookings', icon: 'ti-calendar-event', path: '/admin/reservations', bg: 'rgba(200,240,110,0.1)', color: '#8fb83a' },
@@ -100,7 +152,7 @@ const QUICK_LINKS = {
   ],
 };
 
-export default function NotificationBell({ dark, accent, soundAlerts, prefix = '/admin' }) {
+export default function NotificationBell({ dark, accent, soundAlerts, prefix = '/admin', showInquiries = false, showEmails = false }) {
   const [open, setOpen] = useState(false);
   const [readIds, setReadIds] = useState(loadReadIds);
   const [now, setNow] = useState(() => Date.now());
@@ -115,9 +167,11 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
     return () => clearInterval(timer);
   }, []);
 
+  const messageItems = useMessageNotifications({ prefix, showInquiries, showEmails });
   const notifications = useMemo(
-    () => buildBookingNotifications(reservations, { prefix, now }),
-    [reservations, prefix, now],
+    () => [...buildBookingNotifications(reservations, { prefix, now }), ...messageItems]
+      .sort((a, b) => (b.timeMs || 0) - (a.timeMs || 0)),
+    [reservations, prefix, now, messageItems],
   );
   const unread = notifications.filter(n => !readIds.includes(n.id)).length;
 
@@ -224,7 +278,7 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
                     key={n.id}
                     type="button"
                     onClick={() => openItem(n)}
-                    aria-label={`${n.badge}: ${n.message}. Open booking.`}
+                    aria-label={`${n.badge}: ${n.message}. ${n.bookingId ? 'Open booking' : 'Open'}.`}
                     onMouseEnter={event => { event.currentTarget.style.background = c.hover; }}
                     onMouseLeave={event => { event.currentTarget.style.background = rowBg; }}
                     style={{

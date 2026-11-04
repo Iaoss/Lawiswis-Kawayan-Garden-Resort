@@ -15,9 +15,9 @@ export const AMENITY_GROUPS = [
     gradient: 'from-[#e3efe4] to-[#cfe3d2]',
     image: `${PHOTOS}/serenity-pool.webp`,
     alt: 'The Serenity pool surrounded by gardens',
-    description: 'Three pools for every age, with cabanas, daybeds and a poolside bar for lounging between dips.',
+    description: 'Three pools for every age, with umbrella huts, cabanas and a poolside bar for lounging between dips.',
     highlights: ['Adult pool (3–6 ft)', 'Kiddie pool (18 in)', 'Bubble pool (2 ft)'],
-    items: ['Adult Swimming Pool (3–6 ft)', 'Kiddie Pool (18 inches)', 'Bubble Pool (2 ft)', 'Jacuzzi Area', 'Poolside Bar', 'Poolside Cabanas', 'Poolside Pavilion', 'Covered Daybeds', 'Billiards / Mini Gym Area', 'Playground / Basketball Shooting Area'],
+    items: ['Adult Swimming Pool (3–6 ft)', 'Kiddie Pool (18 inches)', 'Bubble Pool (2 ft)', 'Jacuzzi Area', 'Poolside Bar', 'Umbrella Huts', 'Garden Cabanas', 'Poolside Cabanas', 'Poolside Pavilion', 'Billiards / Mini Gym Area', 'Playground / Basketball Shooting Area'],
   },
   {
     id: 'events',

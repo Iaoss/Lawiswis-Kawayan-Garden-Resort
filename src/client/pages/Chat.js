@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { auth, db } from '../../firebase/firebase';
+import { db } from '../../firebase/firebase';
 import { collection, addDoc, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
+import { askForAutoAnswer, loadQuickQuestions, sendQuickQuestion, sortChatMessages } from '../lib/chatAutoAnswer';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -87,10 +88,8 @@ export default function GuestChat() {
   useEffect(() => {
     if (!convId) return;
     const unsub = onSnapshot(collection(db, 'conversations', convId, 'messages'), snap => {
-      const loadedMessages = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (a.timestamp?.seconds || a.createdAt?.seconds || 0) - (b.timestamp?.seconds || b.createdAt?.seconds || 0));
-      setMessages(loadedMessages);
+      const loadedMessages = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setMessages(sortChatMessages(loadedMessages));
     }, error => {
       console.error('Unable to load guest chat messages:', error);
       setChatError('We could not load this conversation. Please check your connection and try again.');
@@ -100,10 +99,7 @@ export default function GuestChat() {
 
   useEffect(() => {
     let active = true;
-    fetch('/api/chat-quick-reply')
-      .then(response => (response.ok ? response.json() : { replies: [] }))
-      .then(result => { if (active) setQuickReplies(Array.isArray(result.replies) ? result.replies : []); })
-      .catch(() => { if (active) setQuickReplies([]); });
+    loadQuickQuestions().then(replies => { if (active) setQuickReplies(replies); });
     return () => { active = false; };
   }, []);
 
@@ -173,15 +169,7 @@ export default function GuestChat() {
     setQuickBusy(reply.id);
     setChatError('');
     try {
-      const user = auth.currentUser || await ensureGuestAuth();
-      const token = await user.getIdToken();
-      const response = await fetch('/api/chat-quick-reply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ conversationId: convId, replyId: reply.id }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'The answer could not be sent.');
+      await sendQuickQuestion(convId, reply.id);
     } catch (error) {
       setChatError(error.message || 'The answer could not be sent. Please type your question instead.');
     } finally {
@@ -220,6 +208,8 @@ export default function GuestChat() {
         unread: true,
       }, { merge: true });
       setNewMsg('');
+      // Known questions (rates, times, location…) are answered right away.
+      askForAutoAnswer(convId, text);
     } catch (error) {
       console.error('Unable to send guest chat message:', error);
       setChatError('Your message could not be sent. Please check your connection and try again.');
@@ -317,7 +307,7 @@ export default function GuestChat() {
                       color: m.sender === 'guest' ? '#d4f550' : '#111',
                       border: m.sender === 'guest' ? 'none' : '1px solid #e5e7eb',
                       borderRadius: m.sender === 'guest' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                      padding: '10px 14px', fontSize: '13px', lineHeight: '1.5',
+                      padding: '10px 14px', fontSize: '13px', lineHeight: '1.5', whiteSpace: 'pre-line', overflowWrap: 'anywhere',
                     }}>
                       {m.text}
                     </div>
@@ -337,7 +327,7 @@ export default function GuestChat() {
             {/* Quick replies: tap a question to get the resort's saved answer right away. */}
             {quickReplies.length > 0 && (
               <div style={{ padding: '8px 16px', borderTop: '1px solid #f3f4f6' }}>
-                <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '6px' }}>Quick answers — tap a question:</div>
+                <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '6px' }}>Instant answers — tap a question, or just type it:</div>
                 <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '2px' }}>
                   {quickReplies.map(reply => (
                     <button key={reply.id} type="button" disabled={!convId || Boolean(quickBusy)} onClick={() => sendQuickReply(reply)}

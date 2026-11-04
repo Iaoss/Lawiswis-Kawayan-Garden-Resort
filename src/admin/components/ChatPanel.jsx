@@ -114,7 +114,7 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
       }} />
 
       {/* Panel */}
-      <div style={{
+      <div className="portal-chat-panel" style={{
         position: 'fixed', top: 0, right: 0, height: '100vh', width: PANEL_WIDTH,
         maxWidth: '100vw', background: PANEL_BG, zIndex: 301,
         display: 'flex', flexDirection: 'column',
@@ -199,7 +199,7 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
                   <div style={{
                     background: ['staff', 'bot'].includes(m.sender) ? ACCENT : BUBBLE_BG,
                     border: ['staff', 'bot'].includes(m.sender) ? 'none' : `1px solid ${BORDER}`,
-                    borderRadius: 14, padding: '10px 14px', fontSize: 12,
+                    borderRadius: 14, padding: '10px 14px', fontSize: 12, whiteSpace: 'pre-line', overflowWrap: 'anywhere',
                     color: ['staff', 'bot'].includes(m.sender) ? ACCENT_TEXT : TEXT,
                   }}>
                     {m.text}

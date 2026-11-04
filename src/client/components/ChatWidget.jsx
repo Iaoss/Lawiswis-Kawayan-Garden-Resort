@@ -3,6 +3,7 @@ import { db } from '../../firebase/firebase';
 import { collection, addDoc, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
+import { askForAutoAnswer, loadQuickQuestions, sendQuickQuestion, sortChatMessages } from '../lib/chatAutoAnswer';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -38,7 +39,30 @@ export default function ChatWidget() {
   const [convId, setConvId] = useState(null);
   const [guestUid, setGuestUid] = useState(null);
   const [started, setStarted] = useState(false);
+  const [quickReplies, setQuickReplies] = useState([]);
+  const [quickBusy, setQuickBusy] = useState('');
   const bottomRef = useRef(null);
+
+  // Question buttons, loaded the first time the chat opens.
+  useEffect(() => {
+    if (!open || quickReplies.length) return undefined;
+    let active = true;
+    loadQuickQuestions().then(replies => { if (active) setQuickReplies(replies); });
+    return () => { active = false; };
+  }, [open, quickReplies.length]);
+
+  const sendQuickReply = async reply => {
+    if (!convId || quickBusy) return;
+    setQuickBusy(reply.id);
+    setChatError('');
+    try {
+      await sendQuickQuestion(convId, reply.id);
+    } catch (error) {
+      setChatError(error.message || 'The answer could not be sent. Please type your question instead.');
+    } finally {
+      setQuickBusy('');
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -78,9 +102,7 @@ export default function ChatWidget() {
   useEffect(() => {
     if (!convId) return;
     const unsub = onSnapshot(collection(db, 'conversations', convId, 'messages'), snap => {
-      const loadedMessages = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (a.timestamp?.seconds || a.createdAt?.seconds || 0) - (b.timestamp?.seconds || b.createdAt?.seconds || 0));
+      const loadedMessages = sortChatMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setMessages(loadedMessages.length ? loadedMessages : [{
         id: 'welcome',
         sender: 'system',
@@ -191,6 +213,8 @@ export default function ChatWidget() {
         unread: true,
       }, { merge: true });
       setNewMsg('');
+      // Known questions (rates, times, location…) are answered right away.
+      askForAutoAnswer(convId, text);
     } catch (error) {
       console.error('Unable to send guest chat message:', error);
       setChatError('Your message could not be sent. Please check your connection and try again.');
@@ -286,10 +310,11 @@ export default function ChatWidget() {
                   {messages.map(m => (
                     <div key={m.id} style={{ display: 'flex', justifyContent: m.sender === 'guest' ? 'flex-end' : 'flex-start' }}>
                       <div style={{ maxWidth: '78%', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        <div style={{ alignSelf: m.sender === 'guest' ? 'flex-end' : 'flex-start', background: m.sender === 'guest' ? DARK : '#fff', color: m.sender === 'guest' ? '#d4f550' : '#111', border: m.sender === 'guest' ? 'none' : '1px solid #e5e7eb', borderRadius: '18px', padding: '12px 14px', fontSize: '13px', lineHeight: 1.5 }}>
+                        <div style={{ alignSelf: m.sender === 'guest' ? 'flex-end' : 'flex-start', background: m.sender === 'guest' ? DARK : '#fff', color: m.sender === 'guest' ? '#d4f550' : '#111', border: m.sender === 'guest' ? 'none' : '1px solid #e5e7eb', borderRadius: '18px', padding: '12px 14px', fontSize: '13px', lineHeight: 1.5, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>
                           {m.text}
                         </div>
                         <div style={{ fontSize: '10px', color: '#9ca3af', textAlign: m.sender === 'guest' ? 'right' : 'left' }}>
+                          {m.sender === 'bot' && 'Automatic reply · '}
                           {(m.timestamp || m.createdAt)?.seconds ? new Date((m.timestamp || m.createdAt).seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
                         </div>
                       </div>
@@ -297,7 +322,20 @@ export default function ChatWidget() {
                   ))}
                   <div ref={bottomRef} />
                 </div>
-                <div style={{ padding: '12px 14px', borderTop: '1px solid #e5e7eb', background: '#fff' }}>
+                {quickReplies.length > 0 && (
+                  <div style={{ padding: '8px 14px 0', background: '#fff', borderTop: '1px solid #e5e7eb' }}>
+                    <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '6px' }}>Instant answers — tap a question, or just type it:</div>
+                    <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '6px' }}>
+                      {quickReplies.map(reply => (
+                        <button key={reply.id} type="button" disabled={!convId || Boolean(quickBusy)} onClick={() => sendQuickReply(reply)}
+                          style={{ background: quickBusy === reply.id ? DARK : '#eff6f0', border: `1px solid ${ACCENT}55`, borderRadius: '20px', padding: '6px 11px', fontSize: '11px', cursor: !convId || quickBusy ? 'wait' : 'pointer', whiteSpace: 'nowrap', fontFamily: "'Poppins', sans-serif", color: quickBusy === reply.id ? '#fff' : DARK, fontWeight: 600, flexShrink: 0 }}>
+                          {quickBusy === reply.id ? 'Sending…' : reply.question}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div style={{ padding: '12px 14px', borderTop: quickReplies.length ? 'none' : '1px solid #e5e7eb', background: '#fff' }}>
                   <div style={{ display: 'flex', gap: '10px' }}>
                     <input
                       value={newMsg}

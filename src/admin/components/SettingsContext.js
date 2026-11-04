@@ -94,6 +94,9 @@ export function SettingsProvider({ children }) {
     const zoomMap = { small: '0.9', medium: '1', large: '1.12' };
     root.style.fontSize = '';
     root.style.zoom = zoomMap[settings.fontSize] || '1';
+    // Screen-height parts (the sidebar) divide by this so they still fill
+    // exactly one screen at any text size (see portal-sidebar.css).
+    root.style.setProperty('--app-zoom', zoomMap[settings.fontSize] || '1');
     root.setAttribute('data-text-size', settings.fontSize || 'medium');
 
     // Accent color CSS variable

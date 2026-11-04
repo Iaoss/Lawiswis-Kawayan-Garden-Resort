@@ -34,7 +34,7 @@ const pages = {
           'Kiddie pool (18 inches deep)',
           'Bubble pool (2 ft deep)',
         ],
-        closing: 'We also have poolside cabanas, a bar, a pavilion, and covered daybeds for your comfort and relaxation.',
+        closing: 'We also have umbrella huts, garden and poolside cabanas, a bar and a pavilion for your comfort and relaxation.',
       },
       {
         question: 'Do you accommodate large groups for events and functions?',
@@ -154,7 +154,7 @@ const pages = {
     items: [
       ['1. Bookings', 'You agree that the details you give when booking are accurate and complete. All bookings are subject to availability. A booking stays pending until the required payment is received and confirmed; a verified online payment of at least the required deposit confirms it automatically, and a confirmation email is sent to you.'],
       ['2. Rates and payment', 'Rates are in Philippine pesos and follow the resort’s published rate card. The total, including extra guests and any cottage, is calculated by our system when you book and is shown before you pay. Online payments are made through PayMongo’s secure checkout. You may pay in full or pay a 50% deposit; the remaining balance must be settled before check-out. Extra services (such as spa or photoshoot packages), extra guests and late check-out charges are added to your bill. All rates include 12% VAT; receipts show the net amount and the VAT. At the resort we accept cash and QR payments only.'],
-      ['3. What you need to book', 'Overnight stays require a room; a cottage alone cannot be booked for an overnight stay. Day tours (8:00 AM to 5:00 PM) and night tours (5:00 PM to 10:00 PM) require at least a cottage, with or without a room.'],
+      ['3. What you need to book', 'Overnight stays require a room; a cottage alone cannot be booked for an overnight stay. Day tours (8:00 AM to 5:00 PM) and night tours (5:00 PM to 10:00 PM) need either a room or a cottage. When a room is booked, the cottage is optional.'],
       ['4. Check-in and check-out', 'Overnight stays: 10:00 AM to 8:00 AM, 2:00 PM to 12:00 NN, or 6:00 PM to 4:00 PM, as chosen when booking. Check-in times are flexible as long as the booked room is available. Late arrivals and walk-ins after 9:00 PM (even around midnight) are welcome; a 10% surcharge on the room rate applies when you arrive after 9:00 PM (for example, a ₱3,000 room becomes ₱3,300). A valid ID may be requested at check-in. Staying past your check-out time may incur a late check-out charge.'],
       ['5. Changes and cancellations', <>Date changes, cancellations and refunds follow our <Link to="/cancellation-policy" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>Cancellation &amp; Refund Policy</Link>.</>],
       ['6. Guests and room capacity', 'Each room has a maximum number of adults and children, shown when booking. The number of guests may not exceed the room’s capacity, and extra guests are charged according to the rate card.'],

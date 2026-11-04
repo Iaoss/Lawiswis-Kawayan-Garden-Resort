@@ -30,6 +30,8 @@ import { describeUnpaidFollowUp, isUnpaidOnlineBooking } from '../../lib/unpaidB
 import { getOnlinePaymentAmount } from '../../lib/paymentPolicy';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { getReservationRemarks } from '../../lib/reservationRemarks';
+import { staffApi } from '../lib/staffApi';
+import { getLiveStayLabels, formatStayDateTime } from '../../lib/stayTimes';
 
 const QUICK_VIEWS = {
   new: { label: 'New bookings', sortBy: 'booked', sortDir: 'desc' },
@@ -711,9 +713,16 @@ export default function Reservations() {
     });
   }, [overstayed]);
 
+  // Opening the dialog to cancel (not just request) asks the server what the
+  // fee and refund would be under the cancellation policy.
   const openCancellationDialog = (kind, reservation) => {
     setCancelReason(kind === 'approve' ? reservation.cancellationReason || '' : '');
-    setCancelDialog({ kind, reservation });
+    setCancelDialog({ kind, reservation, quote: null, quoteError: '' });
+    if (kind === 'request') return;
+    staffApi('staff-billing', { action: 'cancel-with-policy', reservationId: reservation.id, preview: true })
+      .then(quote => setCancelDialog(d => (d && d.reservation.id === reservation.id ? { ...d, quote } : d)))
+      .catch(error => setCancelDialog(d => (d && d.reservation.id === reservation.id
+        ? { ...d, quoteError: error.message || 'The fee could not be worked out.' } : d)));
   };
 
   // Changes a reservation's status on the server. The server enforces the
@@ -752,7 +761,14 @@ export default function Reservations() {
     try {
       const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason: statusReason, force });
       // Show the change right away; the live listener will confirm it.
-      setReservations(list => list.map(r => (r.id === id ? { ...r, status } : r)));
+      // The check-in / check-out time shows straight away too.
+      const stamp = new Date().toISOString();
+      setReservations(list => list.map(r => (r.id === id ? {
+        ...r,
+        status,
+        ...(status === 'checked-in' && !r.checkedInAt ? { checkedInAt: stamp } : {}),
+        ...(status === 'checked-out' && !r.checkedOutAt ? { checkedOutAt: stamp } : {}),
+      } : r)));
       if (status === 'cancelled') return;
       if (status === 'checked-out') {
         setToast({
@@ -924,9 +940,12 @@ export default function Reservations() {
     }
   };
 
-  const approveCancellation = async (reservation, reason) => {
-    await callReservationStatusApi({ action: 'set-status', reservationId: reservation.id, status: 'cancelled', reason: reason.trim() });
+  // Cancels under the cancellation policy: the server saves the fee and
+  // refund and emails the guest a cancellation receipt.
+  const cancelWithPolicy = async (reservation, reason) => {
+    const result = await staffApi('staff-billing', { action: 'cancel-with-policy', reservationId: reservation.id, reason: reason.trim() });
     await fetchReservations();
+    return result;
   };
 
   const denyCancellation = async (id) => {
@@ -940,13 +959,15 @@ export default function Reservations() {
     try {
       if (cancelDialog.kind === 'request') {
         await requestCancellation(cancelDialog.reservation.id, cancelReason);
-      } else if (cancelDialog.kind === 'approve') {
-        await approveCancellation(cancelDialog.reservation, cancelReason);
+        setToast({ type: 'success', text: 'Cancellation request submitted.' });
       } else {
-        await updateStatus(cancelDialog.reservation.id, 'cancelled', cancelReason);
+        const result = await cancelWithPolicy(cancelDialog.reservation, cancelReason);
+        const money = `Fee ₱${Number(result.fee || 0).toLocaleString()} · refund ₱${Number(result.refund || 0).toLocaleString()}`;
+        setToast(result.emailSent
+          ? { type: 'success', text: `Reservation cancelled. ${money}. Cancellation email and receipt ${result.receiptNumber} sent to the guest.` }
+          : { type: 'error', text: `Reservation cancelled (${money}), but the email was not sent: ${result.emailError || 'no email on this booking'}.` });
       }
       setCancelDialog(null);
-      setToast({ type: 'success', text: cancelDialog.kind === 'request' ? 'Cancellation request submitted.' : 'Reservation cancelled.' });
     } catch (error) {
       console.error('Unable to complete reservation cancellation:', error);
       setToast({ type: 'error', text: error.message || 'Cancellation could not be completed.' });
@@ -1001,7 +1022,7 @@ export default function Reservations() {
     .map(r => ({ r, due: getCheckoutDue(r, now) }))
     .filter(x => x.due)
     .sort((a, b) => a.due.dueMs - b.due.dueMs);
-  const billingPath = id => `${isReceptionist ? '/receptionist' : '/admin'}/billing?booking=${encodeURIComponent(id)}`;
+  const billingPath = id => `${isReceptionist ? '/receptionist' : '/admin'}/billing?booking=${encodeURIComponent(id)}&from=reservations`;
 
   const submitExtension = async () => {
     if (!extendDialog || extendDialog.busy) return;
@@ -1076,8 +1097,17 @@ export default function Reservations() {
       />
     );
   };
+  // Under the stepper: "Checked in 2:05 PM" while the guest is in, and the
+  // check-out time for 5 minutes after they leave.
   const renderActions = (r) => (
-    <div onClick={event => event.stopPropagation()} style={{ minWidth: 190 }}>{renderStepper(r, true)}</div>
+    <div onClick={event => event.stopPropagation()} style={{ minWidth: 190 }}>
+      {renderStepper(r, true)}
+      {getLiveStayLabels(r, now).map(label => (
+        <div key={label.type} style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: label.type === 'in' ? (dark ? '#93c5fd' : '#1d4ed8') : MUTED, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <i className={`ti ${label.type === 'in' ? 'ti-login' : 'ti-logout'}`} aria-hidden="true" />{label.text}
+        </div>
+      ))}
+    </div>
   );
   const canEditBooking = r => ['pending', 'confirmed', 'checked-in'].includes(r.status) && r.type !== 'corporate' && Boolean(r.roomId);
 
@@ -1213,6 +1243,37 @@ export default function Reservations() {
                 Are you sure you want to cancel the reservation for {cancelDialog.reservation.guestName || 'this guest'} (Room {cancelDialog.reservation.roomNumber || '—'})?
                 {cancelDialog.kind === 'request' && ' This will send a request to an administrator for approval.'}
               </p>
+              {cancelDialog.kind !== 'request' && (() => {
+                const q = cancelDialog.quote;
+                const peso = v => `₱${Number(v || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                if (cancelDialog.quoteError) {
+                  return <p style={{ color: '#dc2626', fontSize: '12px', margin: '0 0 14px' }}>{cancelDialog.quoteError}</p>;
+                }
+                if (!q) return <p style={{ color: MUTED, fontSize: '12px', margin: '0 0 14px' }}>Working out the cancellation fee…</p>;
+                const line = (label, value, strong) => (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '5px 0', fontSize: '12.5px', color: strong ? TEXT : MUTED, fontWeight: strong ? 700 : 400, borderTop: strong ? `1px solid ${BORDER2}` : 'none', marginTop: strong ? '4px' : 0 }}>
+                    <span>{label}</span><span style={{ color: TEXT }}>{value}</span>
+                  </div>
+                );
+                return (
+                  <div style={{ background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '12px', padding: '12px 14px', margin: '0 0 16px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: q.rate === 0 ? '#16a34a' : '#b45309', marginBottom: '6px' }}>
+                      {q.tier} · {q.daysBeforeCheckIn > 0 ? `${q.daysBeforeCheckIn} day${q.daysBeforeCheckIn === 1 ? '' : 's'} to go` : 'arrival day passed'}
+                    </div>
+                    {line('Booking total', peso(q.totalAmount))}
+                    {line('Guest has paid', peso(q.amountPaid))}
+                    {line(q.rate === 0 ? 'Cancellation fee (none)' : `Cancellation fee (${q.rate}%)`, peso(q.fee))}
+                    {line('Kept by the resort', peso(q.retained))}
+                    {line('Refund to the guest', peso(q.refund), true)}
+                    <div style={{ fontSize: '11px', color: MUTED, marginTop: '8px' }}>
+                      {q.hasEmail
+                        ? 'The guest will get an email with this breakdown and a cancellation receipt.'
+                        : 'This booking has no email address, so no cancellation email can be sent.'}
+                      {q.refund > 0 ? ' Give the refund to the guest after cancelling.' : ''}
+                    </div>
+                  </div>
+                );
+              })()}
               <label htmlFor="cancellation-reason" style={{ display: 'block', color: MUTED, fontSize: '12px', marginBottom: '6px' }}>Reason (optional)</label>
               <textarea id="cancellation-reason" value={cancelReason} onChange={event => setCancelReason(event.target.value)}
                 rows={3} maxLength={500} disabled={cancelBusy} placeholder="Enter a reason for cancellation"
@@ -1220,8 +1281,8 @@ export default function Reservations() {
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '9px', marginTop: '18px' }}>
                 <button type="button" disabled={cancelBusy} onClick={() => setCancelDialog(null)}
                   style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 14px', background: CARD2, color: TEXT, cursor: 'pointer' }}>Keep reservation</button>
-                <button type="button" disabled={cancelBusy} onClick={confirmCancellation}
-                  style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: '#dc2626', color: '#fff', fontWeight: 700, cursor: cancelBusy ? 'wait' : 'pointer' }}>
+                <button type="button" disabled={cancelBusy || (cancelDialog.kind !== 'request' && !cancelDialog.quote)} onClick={confirmCancellation}
+                  style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: '#dc2626', color: '#fff', fontWeight: 700, cursor: cancelBusy ? 'wait' : 'pointer', opacity: cancelDialog.kind !== 'request' && !cancelDialog.quote ? 0.6 : 1 }}>
                   {cancelBusy ? 'Processing…' : cancelDialog.kind === 'request' ? 'Confirm request' : 'Confirm cancellation'}
                 </button>
               </div>
@@ -1248,6 +1309,8 @@ export default function Reservations() {
             ]] : []),
             ['Check-in', [s.checkIn, s.checkInTime].filter(Boolean).join(' · ') || '—'],
             ['Check-out', [s.checkOut, s.checkOutTime].filter(Boolean).join(' · ') || '—'],
+            ...(s.checkedInAt ? [['Checked in at', formatStayDateTime(s.checkedInAt)]] : []),
+            ...(s.checkedOutAt ? [['Checked out at', formatStayDateTime(s.checkedOutAt)]] : []),
             ['Duration', nights(s)],
             ['Overstay', so ? `Overstayed by ${so.label}${s.overstay?.flaggedAt ? ' (flagged)' : ''}` : s.overstayMinutes ? 'Checked out late' : 'No'],
             ['Late Check-out Charges', getLateFeeTotal(s) > 0 ? money(getLateFeeTotal(s)) : 'None'],

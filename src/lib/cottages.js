@@ -1,13 +1,14 @@
 // How many of each cottage are free on a date, for a day tour or night tour.
 //
 // The resort's cottage counts are set by an admin in Settings (stored in
-// siteSettings/cottageInventory as { daybed, cabana, pavilion }). A count
+// siteSettings/cottageInventory as { 'umbrella-hut', 'garden-cabana',
+// 'poolside-cabana', pavilion }). A count
 // left empty means "not limited" — the system then never blocks that cottage.
 //
 // A cottage is in use by any active booking that rented it for that date:
 //   - day/night tours on that date and the same tour time, and
 //   - overnight stays covering that date (they keep it for the whole day).
-import { COTTAGE_OPTIONS } from './bookingPricing';
+import { COTTAGE_OPTIONS, LEGACY_COTTAGE_IDS } from './bookingPricing';
 
 export const COTTAGE_IDS = COTTAGE_OPTIONS.filter(option => option.id).map(option => option.id);
 
@@ -29,7 +30,8 @@ export function countCottagesInUse(reservations, date, tourPeriod, ignoreId = ''
   const counts = Object.fromEntries(COTTAGE_IDS.map(id => [id, 0]));
   reservations.forEach(r => {
     if (r.id === ignoreId || !cottageInUse(r, date, tourPeriod)) return;
-    if (counts[r.cottageId] !== undefined) counts[r.cottageId] += 1;
+    const id = LEGACY_COTTAGE_IDS[r.cottageId] || r.cottageId;
+    if (counts[id] !== undefined) counts[id] += 1;
   });
   return counts;
 }
@@ -44,7 +46,7 @@ export function normalizeCottageInventory(input = {}) {
   }));
 }
 
-// { daybed: { total, booked, left }, … } — left is null when not limited.
+// { 'umbrella-hut': { total, booked, left }, … } — left is null when not limited.
 export function getCottageAvailability(inventory, counts) {
   const clean = normalizeCottageInventory(inventory);
   return Object.fromEntries(COTTAGE_IDS.map(id => {

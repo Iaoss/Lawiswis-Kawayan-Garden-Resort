@@ -161,10 +161,7 @@ export default async function handler(req, res) {
     if (requestedCottageFee === null) {
       return res.status(400).json({ error: 'Choose a valid cottage option.' });
     }
-    // Day and night tours need at least a cottage.
-    if (bookingType === 'daytour' && !cottageId) {
-      return res.status(400).json({ error: 'Day and night tours need a cottage. Please choose one.', code: 'COTTAGE_REQUIRED' });
-    }
+    // A cottage is optional, including for day and night tours with a room.
     if (paymentMethod !== 'online') {
       return res.status(400).json({ error: 'Reservations must be paid online through PayMongo.' });
     }

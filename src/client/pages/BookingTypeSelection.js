@@ -14,7 +14,7 @@ export function BookingTypeSelectionModal({ open, onClose, onSelectPersonal, onS
         </button>
         <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '12px' }}>Choose your experience</div>
         <h1 id="booking-type-title" style={{ color: FOREST_DEEP, font: `500 clamp(34px, 5vw, 48px)/1.1 ${SERIF}`, margin: '0 0 12px' }}>How would you like to visit?</h1>
-        <p style={{ color: '#6b6a5c', font: `14px/1.7 ${SANS}`, margin: '0 0 30px' }}>Overnight stays need a room. Day and night tours need at least a cottage. Groups of 15 or more are priced per guest in our corporate package tiers.</p>
+        <p style={{ color: '#6b6a5c', font: `14px/1.7 ${SANS}`, margin: '0 0 30px' }}>Overnight stays need a room. Day and night tours need a room or a cottage; with a room, the cottage is optional. Groups of 15 or more are priced per guest in our corporate package tiers.</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(245px, 1fr))', gap: '14px' }}>
           <button type="button" onClick={onSelectPersonal} style={{ textAlign: 'left', border: `1px solid ${LINE}`, background: PAPER, padding: '23px', cursor: 'pointer', color: FOREST_DEEP, fontFamily: SANS }}>
             <span style={{ display: 'block', color: FOREST, font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '12px' }}>Room · Personal Booking</span>

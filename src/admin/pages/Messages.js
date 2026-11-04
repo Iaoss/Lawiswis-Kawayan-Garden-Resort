@@ -379,7 +379,7 @@ export default function Messages() {
                       <BeamAvatar seed={guestAvatarSeed(selected)} size={28} />
                     )}
                     <div style={{ maxWidth: '65%' }}>
-                      <div style={{ background: ['staff', 'bot'].includes(m.sender) ? DARK : C.card, color: ['staff', 'bot'].includes(m.sender) ? ACCENT : C.text, border: ['staff', 'bot'].includes(m.sender) ? 'none' : `1px solid ${C.border}`, borderRadius: ['staff', 'bot'].includes(m.sender) ? '16px 16px 4px 16px' : '16px 16px 16px 4px', padding: '10px 14px', fontSize: '13px', lineHeight: '1.5' }}>
+                      <div style={{ background: ['staff', 'bot'].includes(m.sender) ? DARK : C.card, color: ['staff', 'bot'].includes(m.sender) ? ACCENT : C.text, border: ['staff', 'bot'].includes(m.sender) ? 'none' : `1px solid ${C.border}`, borderRadius: ['staff', 'bot'].includes(m.sender) ? '16px 16px 4px 16px' : '16px 16px 16px 4px', padding: '10px 14px', fontSize: '13px', lineHeight: '1.5', whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>
                         {m.text}
                       </div>
                       <div style={{ fontSize: '10px', color: MUTED, marginTop: '4px', textAlign: ['staff', 'bot'].includes(m.sender) ? 'right' : 'left' }}>

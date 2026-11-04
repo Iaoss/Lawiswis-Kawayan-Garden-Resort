@@ -8,6 +8,7 @@ import ChatPanel from './ChatPanel';
 import logo from './logo-mark.png';
 import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
 import NotificationBell from './NotificationBell';
+import CheckInReminder from './CheckInReminder';
 import { AccountMenu, TopbarIconButton, topbarButtonStyle } from './TopbarControls';
 import {
   AnimatedSidebarInset,
@@ -195,7 +196,7 @@ export default function Layout({ children }) {
               onClick={() => setChatOpen(true)}
             />
 
-            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/admin" />
+            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/admin" showInquiries showEmails />
 
             <TopbarIconButton
               icon="ti-settings"
@@ -224,6 +225,7 @@ export default function Layout({ children }) {
 
       {/* Slide-in Messages panel */}
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
+      <CheckInReminder dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts !== false} prefix="/admin" />
     </AnimatedSidebarProvider>
   );
 }

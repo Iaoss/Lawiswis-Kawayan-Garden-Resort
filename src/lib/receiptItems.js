@@ -3,7 +3,7 @@
 // promo discount). `extras` is everything added later: spa, photoshoot,
 // other extra charges and late check-out fees. Sections with nothing in them
 // come back empty so the receipt can leave them out.
-import { COTTAGE_OPTIONS, getVatBreakdown } from './bookingPricing';
+import { getCottageLabel, getVatBreakdown } from './bookingPricing';
 
 const money = value => Math.round(Number(value || 0) * 100) / 100;
 
@@ -73,8 +73,9 @@ export function getReceiptLineItems(reservation = {}) {
   }
 
   if (cottageFee > 0) {
-    const cottage = COTTAGE_OPTIONS.find(option => option.id === reservation.cottageId);
-    booking.push({ label: `Cottage: ${cottage ? cottage.label.replace(/\s*\(.*\)$/, '') : 'Cottage rental'}`, amount: cottageFee });
+    // Older cottage names still show on bookings made with them.
+    const name = reservation.cottageId ? getCottageLabel(reservation.cottageId).replace(/\s*\(.*\)$/, '') : 'Cottage rental';
+    booking.push({ label: `Cottage: ${name}`, amount: cottageFee });
   }
   if (discount > 0) {
     booking.push({ label: `Promo discount${reservation.promoCode ? ` (${reservation.promoCode})` : ''}`, amount: -discount });

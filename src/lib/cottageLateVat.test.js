@@ -51,48 +51,48 @@ describe('late arrival after 9 PM', () => {
 
 describe('cottage-only day and night tours', () => {
   it('charges the entrance per person plus the cottage', () => {
-    const price = calculateCottageTourPrice({ adults: 4, children: 2, tourPeriod: 'day', cottageId: 'daybed' });
+    const price = calculateCottageTourPrice({ adults: 4, children: 2, tourPeriod: 'day', cottageId: 'umbrella-hut' });
     expect(price.entranceFee).toBe(4 * 375 + 2 * 275);
-    expect(price.subtotalAmount).toBe(2050 + 1000);
-    expect(calculateCottageTourPrice({ adults: 2, children: 0, tourPeriod: 'night', cottageId: 'cabana' }).subtotalAmount).toBe(950 + 1500);
+    expect(price.subtotalAmount).toBe(2050 + 500);
+    expect(calculateCottageTourPrice({ adults: 2, children: 0, tourPeriod: 'night', cottageId: 'poolside-cabana' }).subtotalAmount).toBe(950 + 1500);
   });
 
   it('needs a cottage that fits the group', () => {
     expect(() => calculateCottageTourPrice({ adults: 2, tourPeriod: 'day', cottageId: '' })).toThrow(/Choose a cottage/);
-    expect(() => calculateCottageTourPrice({ adults: 7, tourPeriod: 'day', cottageId: 'daybed' })).toThrow(/seats up to 6/);
+    expect(() => calculateCottageTourPrice({ adults: 7, tourPeriod: 'day', cottageId: 'umbrella-hut' })).toThrow(/seats up to 6/);
   });
 
   it('lists the entrance and the cottage on the receipt', () => {
     const items = getReceiptLineItems({
       cottageOnly: true, adults: 2, children: 1, tourPeriod: 'day', entranceAdultRate: 375, entranceChildRate: 275,
-      entranceFee: 1025, cottageId: 'cabana', cottageFee: 1500, totalAmount: 2525,
+      entranceFee: 1025, cottageId: 'poolside-cabana', cottageFee: 1500, totalAmount: 2525,
     }).booking;
     expect(items).toEqual([
       { label: 'Day tour entrance · 2 adults × ₱375, 1 child × ₱275', amount: 1025 },
-      { label: 'Cottage: Cabana', amount: 1500 },
+      { label: 'Cottage: Poolside Cabana', amount: 1500 },
     ]);
   });
 });
 
 describe('cottage availability', () => {
   const reservations = [
-    { id: 'a', status: 'confirmed', cottageId: 'cabana', bookingType: 'daytour', tourPeriod: 'day', checkIn: '2026-11-10', checkOut: '2026-11-10' },
-    { id: 'b', status: 'pending', cottageId: 'cabana', bookingType: 'daytour', tourPeriod: 'night', checkIn: '2026-11-10', checkOut: '2026-11-10' },
+    { id: 'a', status: 'confirmed', cottageId: 'poolside-cabana', bookingType: 'daytour', tourPeriod: 'day', checkIn: '2026-11-10', checkOut: '2026-11-10' },
+    { id: 'b', status: 'pending', cottageId: 'poolside-cabana', bookingType: 'daytour', tourPeriod: 'night', checkIn: '2026-11-10', checkOut: '2026-11-10' },
     { id: 'c', status: 'checked-in', cottageId: 'cabana', bookingType: 'overnight', checkIn: '2026-11-09', checkOut: '2026-11-11' },
-    { id: 'd', status: 'cancelled', cottageId: 'cabana', bookingType: 'daytour', tourPeriod: 'day', checkIn: '2026-11-10', checkOut: '2026-11-10' },
+    { id: 'd', status: 'cancelled', cottageId: 'poolside-cabana', bookingType: 'daytour', tourPeriod: 'day', checkIn: '2026-11-10', checkOut: '2026-11-10' },
   ];
 
   it('counts tours by tour time and overnight stays for every day of the stay', () => {
-    expect(countCottagesInUse(reservations, '2026-11-10', 'day').cabana).toBe(2);
-    expect(countCottagesInUse(reservations, '2026-11-10', 'night').cabana).toBe(2);
-    expect(countCottagesInUse(reservations, '2026-11-11', 'day').cabana).toBe(0);
+    expect(countCottagesInUse(reservations, '2026-11-10', 'day')['poolside-cabana']).toBe(2);
+    expect(countCottagesInUse(reservations, '2026-11-10', 'night')['poolside-cabana']).toBe(2);
+    expect(countCottagesInUse(reservations, '2026-11-11', 'day')['poolside-cabana']).toBe(0);
   });
 
   it('blocks a cottage when all of them are taken, and never when there is no limit', () => {
     const counts = countCottagesInUse(reservations, '2026-11-10', 'day');
-    expect(cottageAvailabilityError(getCottageAvailability({ cabana: 2 }, counts), 'cabana')).toMatch(/already booked/);
-    expect(cottageAvailabilityError(getCottageAvailability({ cabana: 3 }, counts), 'cabana')).toBe('');
-    expect(cottageAvailabilityError(getCottageAvailability({}, counts), 'cabana')).toBe('');
-    expect(normalizeCottageInventory({ daybed: '6', cabana: '', pavilion: -1 })).toEqual({ daybed: 6, cabana: null, pavilion: null });
+    expect(cottageAvailabilityError(getCottageAvailability({ 'poolside-cabana': 2 }, counts), 'poolside-cabana')).toMatch(/already booked/);
+    expect(cottageAvailabilityError(getCottageAvailability({ 'poolside-cabana': 3 }, counts), 'poolside-cabana')).toBe('');
+    expect(cottageAvailabilityError(getCottageAvailability({}, counts), 'poolside-cabana')).toBe('');
+    expect(normalizeCottageInventory({ 'umbrella-hut': '6', 'garden-cabana': '', pavilion: -1 })).toEqual({ 'umbrella-hut': 6, 'garden-cabana': null, 'poolside-cabana': null, pavilion: null });
   });
 });

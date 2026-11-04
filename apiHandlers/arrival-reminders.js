@@ -1,4 +1,9 @@
-// Daily cron (see vercel.json): emails guests whose check-in is tomorrow.
+// Cron (see vercel.json, 9 AM and 6 PM Philippine time): emails guests whose
+// check-in is tomorrow. Each guest gets it once; the evening run catches
+// bookings made after the morning run.
+//
+// Vercel only calls this with the right password when the CRON_SECRET
+// environment variable is set in the Vercel project settings.
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendArrivalReminderEmail } from '../lib/email';
 
@@ -12,7 +17,11 @@ function tomorrowKey() {
 
 export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET;
-  if (!secret || req.headers.authorization !== `Bearer ${secret}`) {
+  if (!secret) {
+    console.error('arrival-reminders: CRON_SECRET is not set in Vercel, so no reminders are sent.');
+    return res.status(500).json({ error: 'Reminders are not configured.' });
+  }
+  if (req.headers.authorization !== `Bearer ${secret}`) {
     return res.status(401).json({ error: 'Not authorized.' });
   }
   if (!adminDb) return res.status(500).json({ error: 'Service is not configured.' });

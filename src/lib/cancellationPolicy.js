@@ -155,14 +155,28 @@ export function getDateRangeNights(checkIn, checkOut) {
   return Math.ceil((end.getTime() - start.getTime()) / 86400000);
 }
 
-// Cancellation fee and refund used by the staff Cancellation Policy page.
-// Both the page (for the preview) and the server (which saves it) use this,
-// so the amount shown is the amount recorded.
-export function getStaffCancellationFee({ policy, checkIn, totalAmount, now = new Date() }) {
+// Cancellation fee and refund when staff cancel a booking. Both the screens
+// (for the preview) and the server (which saves it) use this, so the amount
+// shown is the amount recorded.
+//
+// The fee is a share of the booking total. The guest gets back what they
+// paid minus the fee; if they paid less than the fee, the resort keeps what
+// was paid and the guest owes nothing more. Without `amountPaid` the booking
+// is treated as fully paid.
+export function getStaffCancellationFee({ policy, checkIn, totalAmount, amountPaid, now = new Date() }) {
   const total = Number(totalAmount);
   const daysBeforeCheckIn = getDaysBeforeArrival(checkIn, now);
   if (daysBeforeCheckIn === null || !Number.isFinite(total) || total < 0) return null;
+  const paidValue = amountPaid === undefined || amountPaid === null ? total : Number(amountPaid);
+  const paid = Number.isFinite(paidValue) && paidValue > 0 ? Math.round(paidValue * 100) / 100 : 0;
   const { rate, tier, noShow } = getPolicyTier(daysBeforeCheckIn, policy);
   const fee = Math.round(total * rate) / 100;
-  return { daysBeforeCheckIn, rate, tier, noShow, totalAmount: total, fee, refund: Math.max(0, total - fee) };
+  const refund = Math.max(0, Math.round((paid - fee) * 100) / 100);
+  return {
+    daysBeforeCheckIn, rate, tier, noShow, totalAmount: total, fee,
+    amountPaid: paid,
+    // What the resort keeps from the money already paid.
+    retained: Math.round((paid - refund) * 100) / 100,
+    refund,
+  };
 }

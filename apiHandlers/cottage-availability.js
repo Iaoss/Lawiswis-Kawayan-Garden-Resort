@@ -1,10 +1,10 @@
 // /api/cottage-availability
 //
 //   GET ?date=YYYY-MM-DD&tourPeriod=day|night|both
-//       → { availability: { daybed: { total, booked, left }, … } }
+//       → { availability: { 'umbrella-hut': { total, booked, left }, … } }
 //       left is null when the admin hasn't set a limit for that cottage.
 //   GET (no date) → { inventory } for the Settings page.
-//   POST { daybed, cabana, pavilion }   (admin only)
+//   POST { 'umbrella-hut', 'garden-cabana', 'poolside-cabana', pavilion }   (admin only)
 //       Saves how many of each cottage the resort has. Empty = not limited.
 
 import { adminDb } from '../lib/firebaseAdmin';

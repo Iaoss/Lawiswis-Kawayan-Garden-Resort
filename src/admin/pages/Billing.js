@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '../../firebase/firebase';
 import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore';
+import { useLocation, useNavigate } from 'react-router-dom';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { createPayMongoCheckout, checkPayMongoCheckoutStatus } from '../../lib/paymongo';
@@ -13,6 +14,15 @@ import { appAlert } from '../../components/ui/app-dialog';
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
   const dark = settings?.darkMode;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const portalBase = location.pathname.startsWith('/receptionist') ? '/receptionist' : '/admin';
+  // Opened from the reservation list: offer a one-click way back to it.
+  const cameFromReservations = new URLSearchParams(location.search).get('from') === 'reservations';
+  const backToReservations = () => {
+    const booking = new URLSearchParams(location.search).get('booking');
+    navigate(`${portalBase}/reservations${booking ? `?booking=${encodeURIComponent(booking)}` : ''}`);
+  };
 
   // ── Ledger palette ─────────────────────────────────────────
   const PAPER    = dark ? '#0E1712' : '#F7F5EF';
@@ -43,6 +53,8 @@ export default function Billing() {
   const [paymentAmount, setPaymentAmount] = useState('');
   // How the guest paid at the desk. The resort has no card terminal.
   const [deskMethod, setDeskMethod] = useState('cash');
+  // Number on the paper receipt handed to the guest, if the desk writes one.
+  const [paperReceiptNo, setPaperReceiptNo] = useState('');
   const [success, setSuccess] = useState('');
 
   // ── PayMongo payment link ──────────────────────────────────
@@ -146,11 +158,13 @@ export default function Billing() {
     try {
       const result = await staffApi('staff-billing', {
         action: 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: deskMethod,
+        officialReceiptNo: paperReceiptNo.trim(),
       });
       setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus, ...(result.autoCheckedIn ? { status: 'checked-in' } : result.autoConfirmed ? { status: 'confirmed' } : {}) }));
       fetchReservations();
       setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${result.autoCheckedIn ? ' Fully paid: the guest is now checked in.' : result.autoConfirmed ? ' The booking is now confirmed.' : ''}${receiptNotice(result)}`);
       setPaymentAmount('');
+      setPaperReceiptNo('');
     } catch (error) {
       appAlert(error.message, { title: 'Couldn’t save', tone: 'danger' });
     } finally {
@@ -285,6 +299,10 @@ export default function Billing() {
   return (
     <PageLayout>
       <div style={{ fontFamily: SANS, background: PAPER, minHeight: '100vh', padding: '28px' }}>
+        <button type="button" onClick={backToReservations}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, background: 'transparent', color: INK, borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', marginBottom: 12, fontFamily: 'inherit' }}>
+          <i className="ti ti-arrow-left" aria-hidden="true" /> {cameFromReservations ? 'Back to reservation' : 'Reservations'}
+        </button>
         <h2 style={{ fontSize: '20px', fontWeight: '700', color: INK, marginBottom: '4px' }}>Billing</h2>
         <p style={{ fontSize: '12.5px', color: SUBINK, marginBottom: '20px' }}>Reservation charges and payment records.</p>
 
@@ -467,6 +485,10 @@ export default function Billing() {
                         <option value="qrph">QR payment (QR Ph)</option>
                         <option value="bank">Bank transfer</option>
                       </select>
+                      <input value={paperReceiptNo} onChange={e => setPaperReceiptNo(e.target.value)} maxLength={40}
+                        placeholder="Paper receipt no. (optional)" aria-label="Paper receipt number"
+                        title="If you also give the guest a paper receipt, type its number so the two can be matched later"
+                        style={{ ...inp, width: '100%', boxSizing: 'border-box', marginBottom: '8px' }} />
                       <button onClick={handlePayment}
                         disabled={!paymentAmount}
                         style={{

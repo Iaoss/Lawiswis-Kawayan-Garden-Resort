@@ -298,7 +298,7 @@ export default function WalkIn() {
     if (!selectedRoom) return appAlert('Choose a room for this guest first.', { title: 'No room selected', tone: 'warning' });
     if (stayError || !details) return appAlert(stayError || 'Choose the booking date first.', { title: 'Check the dates', tone: 'warning' });
     if (!isPreferredContactMethod(form.preferredContactMethod)) return appAlert('Choose how the guest prefers to be contacted.', { title: 'Contact method needed', tone: 'warning' });
-    if (isTour && !form.cottageId) return appAlert('Day and night tours need a cottage. Choose one under Guests → Cottage.', { title: 'Cottage needed', tone: 'warning' });
+    if (cottageOnly && !form.cottageId) return appAlert('Choose a cottage for this cottage-only tour.', { title: 'Cottage needed', tone: 'warning' });
     if (coupleGuestLimit !== null && (Number(form.adults) || 0) + (Number(form.children) || 0) > coupleGuestLimit) {
       setUpsellOpen(true);
       return;
@@ -567,7 +567,7 @@ export default function WalkIn() {
                       <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Room or cottage?</div>
                       <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>Day and night tours need at least a cottage. A room is optional.</div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-                        {[[false, 'Room + cottage', 'Pick a room below, then a cottage'], [true, 'Cottage only', 'No room — entrance + cottage']].map(([value, name, hint]) => (
+                        {[[false, 'Room', 'Pick a room below; a cottage is optional'], [true, 'Cottage only', 'No room — entrance + cottage']].map(([value, name, hint]) => (
                           <button key={name} type="button" onClick={() => { setForm(p => ({ ...p, cottageOnly: value })); if (!value && selectedRoom?.id === 'cottage-only') setSelectedRoom(null); }}
                             style={{ textAlign: 'left', border: `1.5px solid ${form.cottageOnly === value ? ACCENT : BORDER2}`, background: form.cottageOnly === value ? `${ACCENT}22` : CARD2, color: TEXT, borderRadius: 10, padding: '10px 12px', cursor: 'pointer', fontFamily: 'inherit' }}>
                             <div style={{ fontSize: 13, fontWeight: 700 }}>{name}</div>
@@ -814,11 +814,11 @@ export default function WalkIn() {
                           <input type="number" min="0" value={form.children} onChange={e => changeGuests('children', e.target.value)} style={inp} />
                         </div>
                         <div style={{ gridColumn: '1 / -1' }}>
-                          <label style={label}>{isTour ? 'Cottage * (required for tours)' : 'Cottage (optional)'}</label>
+                          <label style={label}>Cottage (optional)</label>
                           <select value={form.cottageId} onChange={e => setForm(p => ({ ...p, cottageId: e.target.value }))} style={inp}>
                             {COTTAGE_OPTIONS.map(option => (
-                              <option key={option.id || 'none'} value={option.id} disabled={(!option.id && isTour) || (option.id && cottageSoldOut(option.id))}>
-                                {option.id ? `${option.label} · ₱${option.price.toLocaleString()}${cottageLeftLabel(option.id)}` : isTour ? 'Choose a cottage' : option.label}
+                              <option key={option.id || 'none'} value={option.id} disabled={Boolean(option.id && cottageSoldOut(option.id))}>
+                                {option.id ? `${option.label} · ₱${option.price.toLocaleString()}${cottageLeftLabel(option.id)}` : option.label}
                               </option>
                             ))}
                           </select>

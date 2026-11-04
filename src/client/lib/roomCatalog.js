@@ -3,7 +3,7 @@ import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientThem
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
 /* ------------------------------------------------------------------ */
-/* Room catalog copied from lawiswiskawayanresort.com/regular-rooms    */
+/* Room catalog from lawiswiskawayanresort.com/our-rooms               */
 /* Matched to Firestore rooms by name (room.name or room.roomNumber).  */
 /* Firestore values (price, description, image, amenities) win when    */
 /* present; the catalog fills in whatever is missing.                  */
@@ -35,6 +35,36 @@ export const GROUPS = [
     capacity: 'Up to 6 guests',
     intro: 'Deluxe rooms with space for the whole family to rest, reconnect, and enjoy the garden.',
   },
+  {
+    title: 'Family Suites for 4',
+    price: 5600,
+    capacity: 'Up to 4 guests',
+    intro: 'Roomy suites for a family of four, with a modern design and a cozy, breezy feel.',
+  },
+  {
+    title: 'Family Suites for 6',
+    price: 7200,
+    capacity: 'Up to 6 guests',
+    intro: 'Suites with plenty of room for families or groups of six.',
+  },
+  {
+    title: 'Junior Suite for 4',
+    price: 8000,
+    capacity: 'Up to 4 guests',
+    intro: 'A refined suite for families or small groups of four.',
+  },
+  {
+    title: 'Presidential Suites',
+    price: 12000,
+    capacity: 'Up to 8–12 guests',
+    intro: 'Our largest suites, with open living areas for groups, families and small meetings.',
+  },
+  {
+    title: 'Main Villa',
+    price: 22000,
+    capacity: 'Up to 25 guests',
+    intro: 'A private villa in its own building, with a kitchen, for reunions, celebrations and company retreats.',
+  },
 ];
 
 // [name, image path, group index, description]
@@ -59,7 +89,32 @@ const CATALOG_ROWS = [
   ['Iglipan', '2024/10/Iglipan-05-1400x700-1.jpeg', 2, 'Iglipan provides a homely atmosphere in the old building. This room offers a cozy space for families to bond and unwind in a peaceful and comfortable setting.'],
   ['Panatag', '2024/10/Panatag-01-1400x700-1.jpeg', 3, 'True to its name, Panatag offers a serene and peaceful escape for families. This deluxe room is ideal for a restful stay, with a spacious layout that allows for bonding and relaxation.'],
   ['Payapa', '2024/10/Payapa-01-1400x700-1.jpeg', 3, 'Payapa is a sanctuary of tranquility for families. Designed with ample space, this deluxe room ensures comfort and relaxation for all members of the family.'],
+  ['Simoy', '2024/10/Simoy-01-1400x700-1.jpeg', 4, 'Simoy is a family suite with a fresh, calm feel and generous space. Unwind after a busy day in a breezy, peaceful setting.'],
+  ['Ligaya', '2024/10/Ligaya-01-1400x700-1.jpeg', 4, 'Ligaya is a roomy family suite with a modern design and a cozy feel, ideal for bonding and rest, close to the resort amenities.'],
+  ['Hapag', '2024/10/Hapag-06-1400x700-1.jpeg', 5, 'Hapag is a classic-style suite with a warm, welcoming atmosphere, made for relaxing. It comfortably fits up to six guests, for families or groups.'],
+  ['Dalisay', '2024/10/Dalisay-05-1400x700-1.jpeg', 5, 'Dalisay blends modern style with comfort and plenty of room to unwind, a clean and inviting space for families or groups of six.'],
+  ['Hiwaga', '2024/10/Hiwaga-02-1400x700-1.jpeg', 6, 'Hiwaga is a refined suite for families or small groups of four, combining plenty of space with modern amenities for a magical stay.'],
+  ['Halimuyak', '2024/10/Halimuyak-04-1400x700-1.jpeg', 7, 'Halimuyak mixes traditional charm with modern convenience. Its spacious layout suits both leisure and business, with room for meetings or team discussions in a quiet setting.'],
+  ['Paraiso', '2024/10/Paraiso-03-1400x700-1.jpeg', 7, 'Paraiso is our premier suite, with large open living areas for work and relaxation. Its modern, luxurious interiors and quiet atmosphere suit families, executives and small meetings.'],
+  ['Main Villa', '2024/10/Main-Villa-08-1400x700-1.jpeg', 8, 'The Main Villa is a large, private villa in its own building, with a kitchen. It is made for family reunions, celebrations and company retreats.'],
 ];
+
+// Where each room is, from the resort website.
+const LOCATIONS = {
+  minamahal: 'Second floor', bituin: 'Second floor · landscape views', dilag: 'First floor', tadhana: 'First floor',
+  hirang: 'First floor, new building', panaginip: 'First floor', aruga: 'First floor, old building',
+  giliw: 'First floor, old building', lambingan: 'Heart of the new building', irog: 'First floor, new building',
+  kalinga: 'Second floor', ugoy: 'Second floor, old building', aliwalas: 'First floor', ginhawa: 'First floor, old building',
+  iglipan: 'Old building', panatag: 'Main building', payapa: 'Main building', simoy: 'Second floor',
+  ligaya: 'First floor, new building', hapag: 'First floor, old building', dalisay: 'First floor, new building',
+  hiwaga: 'Second floor, new building', halimuyak: 'Second floor, old building', paraiso: 'Second floor, new building',
+  'main villa': 'Separate private building, with a kitchen',
+};
+
+// Bed set-up notes per group (index into GROUPS).
+const BED_NOTES = {
+  1: 'Couple room with the option to add an extra bed.',
+};
 
 const CATALOG = Object.fromEntries(
   CATALOG_ROWS.map(([name, path, group, description]) => [
@@ -93,7 +148,13 @@ export function decorateRoom(room, index) {
     cover,
     gallery,
     price: Number(room.price) || group?.price || 0,
-    description: room.description || entry?.description || 'A comfortable stay surrounded by the quiet rhythm of the garden.',
+    // The resort website's description comes first; a different short text
+    // saved in Room Management is shown as a tagline under the name.
+    description: entry?.description || room.description || 'A comfortable stay surrounded by the quiet rhythm of the garden.',
+    tagline: entry && room.description && room.description.trim() !== entry.description ? room.description.trim() : '',
+    location: room.location || LOCATIONS[key] || '',
+    bedNote: entry ? BED_NOTES[entry.group] || '' : '',
+    groupIntro: group?.intro || '',
     amenities: String(room.amenities || DEFAULT_AMENITIES).split(',').map(item => item.trim()).filter(Boolean),
   };
 }

@@ -68,18 +68,19 @@ describe('same-day overnight cutoff (Philippine time)', () => {
 });
 
 describe('cottage selection', () => {
-  it('uses the rate card cottage prices', () => {
+  it('uses the cottage rates', () => {
     expect(getCottageFee('')).toBe(0);
-    expect(getCottageFee('daybed')).toBe(1000);
-    expect(getCottageFee('cabana')).toBe(1500);
+    expect(getCottageFee('umbrella-hut')).toBe(500);
+    expect(getCottageFee('garden-cabana')).toBe(1000);
+    expect(getCottageFee('poolside-cabana')).toBe(1500);
     expect(getCottageFee('pavilion')).toBe(3000);
-    expect(getCottageFee('umbrella-hut')).toBeNull();
+    expect(getCottageFee('daybed')).toBeNull();
     expect(getCottageFee('bogus')).toBeNull();
   });
-  it('still reprices bookings saved with the old cabana rates', () => {
+  it('still reprices bookings saved with the old cottages', () => {
     const base = { room: { name: 'Couple Room' }, bookingType: 'overnight', nights: 1, adults: 2, children: 0 };
-    expect(calculateBookingPrice({ ...base, cottageId: 'umbrella-hut', cottageFee: 500 }).cottageFee).toBe(500);
-    expect(calculateBookingPrice({ ...base, cottageId: 'cabana', cottageFee: 1000 }).cottageFee).toBe(1000);
+    expect(calculateBookingPrice({ ...base, cottageId: 'daybed', cottageFee: 1000 }).cottageFee).toBe(1000);
+    expect(calculateBookingPrice({ ...base, cottageId: 'cabana', cottageFee: 1500 }).cottageFee).toBe(1500);
     expect(() => calculateBookingPrice({ ...base, cottageId: 'pavilion', cottageFee: 500 })).toThrow();
   });
 });

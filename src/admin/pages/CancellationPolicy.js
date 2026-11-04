@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../../firebase/firebase';
-import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+import { db, auth } from '../../firebase/firebase';
+import { collection, getDocs, doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { useStaffAccess } from '../lib/useStaffAccess';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
@@ -41,6 +42,12 @@ export default function CancellationPolicy({ embedded = false }) {
     return dark ? { background: c.dbg, color: c.dtext } : { background: c.lbg, color: c.ltext };
   };
 
+  // Receptionists without the admin's "Cancel bookings" access send a
+  // request for an admin to approve instead.
+  const access = useStaffAccess();
+  const isReceptionist = window.location.pathname.startsWith('/receptionist');
+  const canCancel = !isReceptionist || access.can('cancel');
+
   const [reservations, setReservations] = useState([]);
   const [policy, setPolicy] = useState({ ...DEFAULT_CANCELLATION_POLICY });
   const [selected, setSelected] = useState(null);
@@ -76,6 +83,7 @@ export default function CancellationPolicy({ embedded = false }) {
   // Preview only; the server recalculates the same fee when cancelling.
   const calculateFee = (reservation) => getStaffCancellationFee({
     policy, checkIn: reservation.checkIn, totalAmount: Number(reservation.totalAmount || 0),
+    amountPaid: Number(reservation.amountPaid || 0),
   });
 
   const handleSelect = (r) => {
@@ -89,11 +97,23 @@ export default function CancellationPolicy({ embedded = false }) {
     if (!selected || !cancelResult || cancelBusy) return;
     setCancelBusy(true);
     try {
-      // The server calculates and saves the fee and refund, and frees the room.
-      const result = await staffApi('staff-billing', {
-        action: 'cancel-with-policy', reservationId: selected.id, reason: cancelReason.trim(),
-      });
-      setSuccess(`Reservation for ${selected.guestName} cancelled. Fee: ₱${result.fee.toLocaleString()} · Refund: ₱${result.refund.toLocaleString()}`);
+      if (!canCancel) {
+        await updateDoc(doc(db, 'reservations', selected.id), {
+          cancellationRequested: true,
+          cancellationRequestedBy: auth.currentUser?.uid || null,
+          cancellationRequestedAt: serverTimestamp(),
+          cancellationReason: cancelReason.trim(),
+        });
+        setSuccess(`Cancellation request for ${selected.guestName} sent to an admin.`);
+      } else {
+        // The server calculates and saves the fee and refund, frees the room
+        // and emails the guest a cancellation receipt.
+        const result = await staffApi('staff-billing', {
+          action: 'cancel-with-policy', reservationId: selected.id, reason: cancelReason.trim(),
+        });
+        setSuccess(`Reservation for ${selected.guestName} cancelled. Fee: ₱${result.fee.toLocaleString()} · Refund: ₱${result.refund.toLocaleString()}. `
+          + (result.emailSent ? `Email and receipt ${result.receiptNumber} sent to the guest.` : `The email was not sent (${result.emailError || 'no email on this booking'}).`));
+      }
       setCancelError('');
       setSelected(null);
       setCancelResult(null);
@@ -277,8 +297,10 @@ export default function CancellationPolicy({ embedded = false }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {[
                     { label: 'Total booking amount', value: `₱${cancelResult.totalAmount.toLocaleString()}`, color: TEXT },
+                    { label: 'Guest has paid', value: `₱${cancelResult.amountPaid.toLocaleString()}`, color: TEXT },
                     { label: 'Cancellation rate', value: `${cancelResult.rate}%`, color: RED },
                     { label: 'Cancellation fee', value: `₱${cancelResult.fee.toLocaleString()}`, color: RED, bold: true },
+                    { label: 'Kept by the resort', value: `₱${cancelResult.retained.toLocaleString()}`, color: TEXT },
                   ].map(row => (
                     <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                       <span style={{ color: SUBTEXT }}>{row.label}</span>
@@ -317,6 +339,9 @@ export default function CancellationPolicy({ embedded = false }) {
             <h2 id="policy-cancel-title" style={{ color: TEXT, fontSize: '17px', margin: '0 0 10px' }}>Are you sure you want to cancel this reservation?</h2>
             <p style={{ color: SUBTEXT, fontSize: '13px', margin: '0 0 16px' }}>
               {selected.guestName} · Room {selected.roomNumber}. Cancellation fee: ₱{cancelResult.fee.toLocaleString()}; refund: ₱{cancelResult.refund.toLocaleString()}.
+              {canCancel
+                ? ' The guest will be emailed this breakdown with a cancellation receipt.'
+                : ' This sends a request to an admin, who makes the final cancellation.'}
             </p>
             <label htmlFor="policy-cancel-reason" style={{ display: 'block', color: SUBTEXT, fontSize: '12px', marginBottom: '6px' }}>Reason (optional)</label>
             <textarea id="policy-cancel-reason" value={cancelReason} onChange={event => setCancelReason(event.target.value)}
@@ -327,7 +352,7 @@ export default function CancellationPolicy({ embedded = false }) {
                 style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 14px', background: CARD2, color: TEXT, cursor: 'pointer' }}>Go back</button>
               <button type="button" disabled={cancelBusy} onClick={handleCancel}
                 style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: '#dc2626', color: '#fff', fontWeight: 700, cursor: cancelBusy ? 'wait' : 'pointer' }}>
-                {cancelBusy ? 'Processing…' : 'Confirm cancellation'}
+                {cancelBusy ? 'Processing…' : canCancel ? 'Confirm cancellation' : 'Send request'}
               </button>
             </div>
           </section>

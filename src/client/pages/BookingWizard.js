@@ -64,6 +64,9 @@ export default function BookingWizard() {
   const [roomsLoading, setRoomsLoading] = useState(true);
   const [availableIds, setAvailableIds] = useState(null);
   const [availabilityError, setAvailabilityError] = useState('');
+  // The room whose details panel is open (step 3).
+  const [detailsFor, setDetailsFor] = useState(null);
+  const [photoIndex, setPhotoIndex] = useState(0);
 
   const isTour = stay !== 'overnight';
   const stayEnd = isTour ? checkIn : checkOut;
@@ -75,6 +78,14 @@ export default function BookingWizard() {
       .catch(() => setRooms([]))
       .finally(() => setRoomsLoading(false));
   }, []);
+
+  // Close the details panel with Escape.
+  useEffect(() => {
+    if (!detailsFor) return undefined;
+    const onKey = event => { if (event.key === 'Escape') setDetailsFor(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [detailsFor]);
 
   // Scroll to the top whenever the step changes.
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step]);
@@ -206,7 +217,12 @@ export default function BookingWizard() {
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
           <div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>{entry.kind}</div>
           <strong style={{ font: `500 20px ${SERIF}`, color: INK }}>{room.title}</strong>
-          <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>Up to {getRoomCapacityPolicy(room)?.maxGuests || '—'} guests · {room.amenities.slice(0, 3).join(' · ')}</span>
+          <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>Up to {getRoomCapacityPolicy(room)?.maxGuests || '—'} guests{room.location ? ` · ${room.location}` : ''}</span>
+          <p style={{ margin: '2px 0 0', font: `12.5px/1.6 ${SANS}`, color: '#55584b', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{room.description}</p>
+          <button type="button" onClick={() => { setDetailsFor(entry); setPhotoIndex(0); }}
+            style={{ alignSelf: 'flex-start', border: 0, background: 'none', padding: '2px 0 6px', color: FOREST, font: `600 12px ${SANS}`, textDecoration: 'underline', textUnderlineOffset: 3, cursor: 'pointer' }}>
+            View room details
+          </button>
           <div style={{ marginTop: 'auto', paddingTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: `1px solid ${LINE}` }}>
             <span style={{ font: `600 18px ${SERIF}`, color: FOREST }}>{peso(price)}<small style={{ font: `11px ${SANS}`, color: '#8d8877' }}> for your group</small></span>
             <button type="button" onClick={() => chooseRoom(room)} style={{ ...primary, padding: '10px 16px', fontSize: 12 }}>Choose</button>
@@ -363,6 +379,73 @@ export default function BookingWizard() {
           </section>
         )}
       </div>
+
+      {detailsFor && (() => {
+        const { room, price } = detailsFor;
+        const policy = getRoomCapacityPolicy(room);
+        const photos = room.gallery?.length ? room.gallery : [room.cover];
+        const photo = photos[Math.min(photoIndex, photos.length - 1)];
+        const facts = [
+          ['Room type', room.groupTitle],
+          ['Location', room.location],
+          ['Guests', policy ? `Up to ${policy.maxGuests} guests${policy.maxAdults && policy.maxAdults < policy.maxGuests ? ` (max ${policy.maxAdults} adults)` : ''}` : room.capacity],
+          ['Beds', room.bedNote],
+          ['Your stay', `${STAYS.find(option => option.id === stay).name} · ${isTour ? longDate(checkIn) : `${longDate(checkIn)} → ${longDate(checkOut)}`}`],
+        ].filter(([, value]) => value);
+        return (
+          <div role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDetailsFor(null); }}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,20,.55)', zIndex: 1200, display: 'grid', placeItems: 'center', padding: 16 }}>
+            <section role="dialog" aria-modal="true" aria-label={`${room.title} details`}
+              style={{ background: '#fff', width: '100%', maxWidth: 720, maxHeight: 'calc(100vh - 32px)', overflowY: 'auto', boxSizing: 'border-box', fontFamily: SANS }}>
+              <div style={{ position: 'relative', background: '#e9e6dc' }}>
+                <img src={photo} alt={room.title} style={{ width: '100%', height: 'clamp(200px, 42vw, 340px)', objectFit: 'cover', display: 'block' }} />
+                <button type="button" onClick={() => setDetailsFor(null)} aria-label="Close"
+                  style={{ position: 'absolute', top: 12, right: 12, width: 36, height: 36, border: 0, borderRadius: '50%', background: 'rgba(255,255,255,.92)', color: INK, fontSize: 20, cursor: 'pointer' }}>×</button>
+                {photos.length > 1 && (
+                  <div style={{ position: 'absolute', bottom: 10, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 6 }}>
+                    {photos.map((src, index) => (
+                      <button key={src} type="button" aria-label={`Photo ${index + 1}`} onClick={() => setPhotoIndex(index)}
+                        style={{ width: 9, height: 9, padding: 0, borderRadius: '50%', border: 0, cursor: 'pointer', background: index === photoIndex ? '#fff' : 'rgba(255,255,255,.5)' }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ padding: 'clamp(18px, 4vw, 28px)', display: 'grid', gap: 14 }}>
+                <div>
+                  <div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>{detailsFor.kind || room.groupTitle}</div>
+                  <h2 style={{ margin: '4px 0 0', font: `500 clamp(24px, 4vw, 32px)/1.15 ${SERIF}`, color: FOREST_DEEP }}>{room.title}</h2>
+                </div>
+                {room.tagline && <p style={{ margin: 0, font: `italic 15px/1.6 ${SERIF}`, color: FOREST }}>{room.tagline}</p>}
+                <p style={{ margin: 0, font: `14px/1.8 ${SANS}`, color: '#4a4c40' }}>{room.description}</p>
+                {room.groupIntro && <p style={{ margin: 0, font: `13px/1.7 ${SANS}`, color: '#6b6a5c' }}>{room.groupIntro}</p>}
+                <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px 18px' }}>
+                  {facts.map(([label, value]) => (
+                    <div key={label} style={{ borderTop: `1px solid ${LINE}`, paddingTop: 8 }}>
+                      <dt style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase' }}>{label}</dt>
+                      <dd style={{ margin: '3px 0 0', font: `13px/1.5 ${SANS}`, color: INK }}>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                {room.amenities?.length > 0 && (
+                  <div>
+                    <div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: 8 }}>Amenities</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {room.amenities.map(item => <span key={item} style={{ background: CREAM, color: FOREST_DEEP, padding: '5px 10px', font: `12px ${SANS}` }}>{item}</span>)}
+                    </div>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
+                  <span style={{ font: `600 22px ${SERIF}`, color: FOREST }}>{peso(price)}<small style={{ font: `12px ${SANS}`, color: '#8d8877' }}> for {guests} guest{guests === 1 ? '' : 's'}</small></span>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="button" onClick={() => setDetailsFor(null)} style={secondary}>Back to rooms</button>
+                    <button type="button" onClick={() => chooseRoom(room)} style={primary}>Choose this room</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
     </main>
   );
 }

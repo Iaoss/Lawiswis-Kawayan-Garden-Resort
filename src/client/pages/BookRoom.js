@@ -8,7 +8,6 @@ import {
   calculateBookingPrice,
   MAX_DAY_VISITORS,
   LATE_ARRIVAL_SURCHARGE_RATE,
-  getVatBreakdown,
   getSwimmingRate,
   COTTAGE_OPTIONS,
   DAYTOUR_TIME_SLOT,
@@ -30,10 +29,10 @@ import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientThem
 import OccupancyBadge from '../components/OccupancyBadge';
 import BookingSteps from '../components/BookingSteps';
 import { Pagination, usePagination } from '../../components/ui/pagination';
-import DateOccupancy from '../../components/ui/date-occupancy';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
+import { decorateRoom } from '../lib/roomCatalog';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -704,11 +703,6 @@ export default function BookRoom() {
     if (!datesValid || nights <= 0) { setErrorMsg('Choose valid dates first.'); return false; }
     if (tourCutoffError) { setErrorMsg(tourCutoffError); return false; }
     if (guestCountViolation) { setErrorMsg(guestCountViolation); return false; }
-    if (form.bookingType === 'daytour' && !form.cottageId) {
-      setErrorMsg('Day and night tours need a cottage. Please choose one under "Cottage".');
-      document.getElementById('cottage-selection')?.focus();
-      return false;
-    }
     return true;
   };
   const checkDetailsStep = () => {
@@ -774,11 +768,6 @@ export default function BookRoom() {
     if (!isPreferredContactMethod(form.preferredContactMethod)) {
       setErrorMsg('Please choose a preferred contact method.');
       document.getElementById('preferredContactMethod')?.focus();
-      return;
-    }
-    if (form.bookingType === 'daytour' && !form.cottageId) {
-      setErrorMsg('Day and night tours need a cottage. Please choose one under "Cottage".');
-      document.getElementById('cottage-selection')?.focus();
       return;
     }
     const contactLinkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
@@ -1193,12 +1182,6 @@ export default function BookRoom() {
                     {tourCutoffError}
                   </div>
                 )}
-                <DateOccupancy
-                  date={form.checkIn}
-                  focus={form.bookingType === 'daytour' ? form.tourPeriod : 'overnight'}
-                  colors={{ accent: ACCENT, background: '#fff' }}
-                  style={{ gridColumn: '1 / -1' }}
-                />
                 {[
                   { key: 'adults', label: 'Adults', min: 1, rate: 800 },
                   { key: 'children', label: 'Children (under 10)', min: 0, rate: 400 },
@@ -1350,10 +1333,10 @@ export default function BookRoom() {
                   style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
               </div>
               <div style={{ marginTop: '14px' }}>
-                <label htmlFor="cottage-selection" style={{ fontSize: '11px', fontWeight: '600', color: isTourBooking && !form.cottageId ? '#9a3412' : '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  {isTourBooking ? 'Cottage * (required for day and night tours)' : 'Optional Cottage'}
+                <label htmlFor="cottage-selection" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Optional Cottage
                 </label>
-                <select id="cottage-selection" required={isTourBooking} value={form.cottageId} onChange={e => {
+                <select id="cottage-selection" value={form.cottageId} onChange={e => {
                   // The option value is only the cottage id; the server looks up the price.
                   const cottageId = e.target.value;
                   setForm(previous => ({ ...previous, cottageId }));
@@ -1363,10 +1346,10 @@ export default function BookRoom() {
                     const entry = option.id ? cottageAvailability?.[option.id] : null;
                     const soldOut = Boolean(entry && entry.left !== null && entry.left <= 0);
                     return (
-                      <option key={option.id || 'none'} value={option.id} disabled={soldOut || (!option.id && isTourBooking)}>
+                      <option key={option.id || 'none'} value={option.id} disabled={soldOut}>
                         {option.id
                           ? `${option.label} · ₱${option.price.toLocaleString()}${soldOut ? ' — fully booked' : entry && entry.left !== null ? ` — ${entry.left} left` : ''}`
-                          : isTourBooking ? 'Choose a cottage' : option.label}
+                          : option.label}
                       </option>
                     );
                   })}
@@ -1718,7 +1701,18 @@ export default function BookRoom() {
             </div>
             <div style={{ padding: '20px' }}>
               <div style={{ fontSize: '11px', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>{room.type}</div>
-              <div style={{ fontWeight: '700', fontSize: '18px', color: '#111', marginBottom: '12px' }}>Room {room.roomNumber}</div>
+              <div style={{ fontWeight: '700', fontSize: '18px', color: '#111', marginBottom: '8px' }}>Room {room.roomNumber}</div>
+              {(() => {
+                const details = decorateRoom(room, 0);
+                return (
+                  <div style={{ marginBottom: '14px' }}>
+                    {details.location && <div style={{ fontSize: '11px', color: ACCENT, fontWeight: 600, marginBottom: '6px' }}>{details.location}</div>}
+                    {details.tagline && <p style={{ margin: '0 0 4px', fontSize: '12px', fontStyle: 'italic', color: ACCENT }}>{details.tagline}</p>}
+                    <p style={{ margin: 0, fontSize: '12px', lineHeight: 1.65, color: '#4b5563' }}>{details.description}</p>
+                    {details.bedNote && <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#6b7280' }}>{details.bedNote}</p>}
+                  </div>
+                );
+              })()}
 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
                 {(room.amenities || 'AC, TV, WiFi').split(',').map(a => (
@@ -1774,19 +1768,9 @@ export default function BookRoom() {
                   <span>Subtotal</span><span>₱{totalAmount.toLocaleString()}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: '700', color: '#111', borderTop: '1px solid #f3f4f6', paddingTop: '14px' }}>
-                  <span>Total <span style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280' }}>(VAT included)</span></span>
+                  <span>Total</span>
                   <span style={{ color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
                 </div>
-                {bookingTotal > 0 && (() => {
-                  const vat = getVatBreakdown(bookingTotal);
-                  const two = value => value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                  return (
-                    <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '6px', display: 'grid', gap: '3px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Net of VAT</span><span>₱{two(vat.net)}</span></div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>12% VAT</span><span>₱{two(vat.vat)}</span></div>
-                    </div>
-                  );
-                })()}
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today ({depositPercentage}% deposit)</span><span>₱{depositAmount.toLocaleString()}</span></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '7px' }}><span>Balance due on arrival</span><span>₱{balanceAmount.toLocaleString()}</span></div>
               </div>

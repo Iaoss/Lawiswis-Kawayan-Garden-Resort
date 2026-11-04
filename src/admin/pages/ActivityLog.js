@@ -17,7 +17,7 @@ export const ACTION_GROUPS = [
   { id: 'cancellations', label: 'Cancellations & refunds', actions: ['reservation_cancelled', 'approve_refund', 'reject_refund', 'review_refund'] },
   { id: 'changes', label: 'Date-change requests', actions: ['approve_modification', 'reject_modification'] },
   { id: 'rooms', label: 'Rooms', actions: ['room_created', 'room_updated', 'room_deleted', 'room_status_changed'] },
-  { id: 'accounts', label: 'Staff accounts', actions: ['staff_account_created', 'staff_account_edited', 'staff_account_status', 'staff_password_reset', 'staff_access_granted', 'staff_access_removed'] },
+  { id: 'accounts', label: 'Staff accounts', actions: ['staff_account_created', 'staff_account_edited', 'staff_account_status', 'staff_password_reset', 'staff_access_granted', 'staff_access_removed', 'staff_account_deleted', 'staff_role_saved', 'staff_role_deleted'] },
   { id: 'resort', label: 'Resort status', actions: ['resort_status_changed'] },
 ];
 
