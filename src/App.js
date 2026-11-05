@@ -5,6 +5,7 @@ import { RequireFeature } from './admin/lib/useStaffAccess';
 import Home from './client/pages/Home';
 import ClientLayout from './client/components/ClientLayout';
 import { AppDialogHost } from './components/ui/app-dialog';
+import { IS_TEST_SITE } from './firebase/firebase';
 
 // Pages load on demand, so guests never download the staff portal code.
 const Login = lazy(() => import('./admin/pages/Login'));
@@ -90,6 +91,11 @@ function BookingPaymentResult() {
 function App() {
   return (
     <Router>
+      {IS_TEST_SITE && (
+        <div role="note" style={{ position: 'fixed', top: 0, left: '50%', transform: 'translateX(-50%)', zIndex: 3000, background: '#b91c1c', color: '#fff', font: "700 11px 'Poppins', sans-serif", letterSpacing: '.08em', padding: '3px 12px', borderRadius: '0 0 8px 8px', pointerEvents: 'none' }}>
+          TEST SITE · test data and PayMongo test mode only
+        </div>
+      )}
       <ScrollToTopOnPageChange />
       <Suspense fallback={<PageLoading />}>
       <Routes>

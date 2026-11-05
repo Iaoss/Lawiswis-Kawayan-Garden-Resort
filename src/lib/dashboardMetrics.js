@@ -84,7 +84,9 @@ export function getRevenueBySource(reservations, range = null) {
     const key = checkInKey(r);
     if (range && (!key || key < range.from || key > range.to)) return;
     if (r.status === 'cancelled') {
-      totals.cancellationFees += Number(r.cancellationFee || 0);
+      // What the resort actually kept from the guest's payments (older
+      // bookings only saved the fee).
+      totals.cancellationFees += Number(r.cancellationRetained ?? r.cancellationFee ?? 0);
       return;
     }
     const cottage = Number(r.cottageFee || 0);

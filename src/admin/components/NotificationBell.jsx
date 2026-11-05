@@ -64,6 +64,7 @@ function useNotificationReservations() {
       changes: query(reservations, where('modificationRequest.status', 'in', ACTIVE_MODIFICATION_STATUSES)),
       replies: query(reservations, where('unpaidFollowUp.guestReply', 'in', ['yes', 'no'])),
       checkedIn: query(reservations, where('status', '==', 'checked-in')),
+      holdConflicts: query(reservations, where('holdConflict', '==', true)),
     };
     const loaded = new Set();
     const stops = Object.entries(queries).map(([key, q]) => onSnapshot(q, snapshot => {
@@ -93,9 +94,18 @@ const toMillis = value => (value?.toMillis ? value.toMillis() : value?.seconds ?
 // Unanswered contact inquiries and unread inbox emails from the last week.
 // Each feed is optional: receptionists only get inquiries when an admin gave
 // them that page, and only admins read the inbox.
-function useMessageNotifications({ prefix, showInquiries, showEmails }) {
+function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPath }) {
   const [inquiries, setInquiries] = useState([]);
   const [emails, setEmails] = useState([]);
+  const [feedback, setFeedback] = useState([]);
+
+  // Unhappy guests (1–2★) from the last week, so staff can follow up quickly.
+  useEffect(() => {
+    const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
+    return onSnapshot(query(collection(db, 'feedback'), where('createdAt', '>=', since)),
+      snapshot => setFeedback(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setFeedback([]));
+  }, []);
 
   useEffect(() => {
     if (!showInquiries) { setInquiries([]); return undefined; }
@@ -136,8 +146,19 @@ function useMessageNotifications({ prefix, showInquiries, showEmails }) {
         timeMs: toMillis(item.date),
         path: `${prefix}/email`,
       }));
-    return [...inquiryItems, ...emailItems];
-  }, [inquiries, emails, prefix]);
+    const feedbackItems = feedback
+      .filter(item => Number(item.rating) > 0 && Number(item.rating) <= 2 && !item.read)
+      .map(item => ({
+        id: `negative-feedback_${item.id}`,
+        icon: 'ti-mood-sad',
+        badge: `Unhappy Guest · ${Number(item.rating)}★`,
+        message: `${item.isAnonymous ? 'Anonymous guest' : (item.guestName || 'A guest')}${item.roomName ? ` · ${item.roomName}` : ''}`,
+        details: String(item.comment || 'No comment left.').slice(0, 110),
+        timeMs: toMillis(item.createdAt),
+        path: feedbackPath || `${prefix}/feedback`,
+      }));
+    return [...inquiryItems, ...emailItems, ...feedbackItems];
+  }, [inquiries, emails, feedback, prefix, feedbackPath]);
 }
 
 const QUICK_LINKS = {
@@ -153,7 +174,7 @@ const QUICK_LINKS = {
   ],
 };
 
-export default function NotificationBell({ dark, accent, soundAlerts, prefix = '/admin', showInquiries = false, showEmails = false }) {
+export default function NotificationBell({ dark, accent, soundAlerts, prefix = '/admin', showInquiries = false, showEmails = false, feedbackPath = '' }) {
   const [open, setOpen] = useState(false);
   const [readIds, setReadIds] = useState(loadReadIds);
   const [now, setNow] = useState(() => Date.now());
@@ -168,7 +189,7 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
     return () => clearInterval(timer);
   }, []);
 
-  const messageItems = useMessageNotifications({ prefix, showInquiries, showEmails });
+  const messageItems = useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPath });
   const notifications = useMemo(
     () => [...buildBookingNotifications(reservations, { prefix, now }), ...messageItems]
       .sort((a, b) => (b.timeMs || 0) - (a.timeMs || 0)),

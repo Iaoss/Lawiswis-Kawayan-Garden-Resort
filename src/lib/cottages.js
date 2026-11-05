@@ -9,11 +9,13 @@
 //   - day/night tours on that date and the same tour time, and
 //   - overnight stays covering that date (they keep it for the whole day).
 import { COTTAGE_OPTIONS, LEGACY_COTTAGE_IDS } from './bookingPricing';
+import { holdsRoom } from './unpaidBookings';
 
 export const COTTAGE_IDS = COTTAGE_OPTIONS.filter(option => option.id).map(option => option.id);
 
 const dateKey = value => String(value || '').slice(0, 10);
-const isActive = r => !['cancelled', 'checked-out'].includes(String(r?.status || '').toLowerCase());
+// Expired unpaid online holds don't take a cottage either.
+const isActive = r => holdsRoom(r || {});
 
 export function cottageInUse(reservation, date, tourPeriod) {
   if (!reservation?.cottageId || !isActive(reservation)) return false;

@@ -1,5 +1,6 @@
 import { adminDb } from '../lib/firebaseAdmin';
 import { stayRangesOverlap } from '../src/lib/bookingPricing';
+import { holdsRoom } from '../src/lib/unpaidBookings';
 
 function formatDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -19,7 +20,7 @@ function addMonthsClamped(date, months) {
 
 // start === end means a single-day (day tour) range.
 function overlaps(start, end, reservation) {
-  return reservation.status !== 'cancelled'
+  return holdsRoom(reservation)
     && stayRangesOverlap(start, end, reservation.checkIn, reservation.checkOut);
 }
 

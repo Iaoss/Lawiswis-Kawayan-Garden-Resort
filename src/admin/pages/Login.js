@@ -9,6 +9,7 @@ import { ImageSlider } from '../../components/ui/image-slider.tsx';
 import { RESORT_IMAGES } from '../../client/components/clientTheme';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 import StaffPortalIntro from '../components/StaffPortalIntro';
+import { startShift } from '../lib/staffSession';
 
 const RESORT_SLIDES = [
   RESORT_IMAGES.hero,
@@ -23,7 +24,8 @@ export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => (new URLSearchParams(window.location.search).get('reason') === 'idle'
+    ? 'You were signed out after a period of inactivity. Please sign in again.' : ''));
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [resetSent, setResetSent] = useState(false);
@@ -52,6 +54,7 @@ export default function Login() {
           const destination = requestedPath.startsWith(permittedPrefix)
             ? requestedPath
             : role === 'admin' ? '/admin/dashboard' : '/receptionist/dashboard';
+          startShift(uid);
           navigate(destination, { replace: true });
         }
 

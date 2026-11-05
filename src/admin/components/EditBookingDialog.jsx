@@ -11,7 +11,7 @@ const peso = value => `₱${Number(value || 0).toLocaleString()}`;
 // dates, or change guest counts. Every change is priced by the server
 // (/api/staff-billing edit-booking, preview first), so the total shown is
 // the total that gets saved.
-export default function EditBookingDialog({ reservation, onClose, onSaved, colors }) {
+export default function EditBookingDialog({ reservation, onClose, onSaved, colors, isAdmin = false }) {
   const c = colors;
   const [form, setForm] = useState(() => ({
     bookingOption: getBookingOptionId(reservation),
@@ -28,7 +28,11 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
   const isTour = form.bookingOption !== 'overnight';
   // Policy: the arrival date can only move 30+ days ahead of it.
   const daysToArrival = getDaysBeforeArrival(reservation.checkIn);
-  const arrivalLocked = daysToArrival !== null && daysToArrival < DATE_CHANGE_NOTICE_DAYS;
+  const ruleApplies = daysToArrival !== null && daysToArrival < DATE_CHANGE_NOTICE_DAYS;
+  // Admins can waive the rule with a reason (typhoon, resort closure, emergency).
+  const [waive, setWaive] = useState(false);
+  const [waiveReason, setWaiveReason] = useState('');
+  const arrivalLocked = ruleApplies && !waive;
 
   const changes = {
     ...form,
@@ -43,19 +47,23 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
     let active = true;
     setQuoting(true);
     const timer = setTimeout(() => {
-      staffApi('staff-billing', { action: 'edit-booking', reservationId: reservation.id, changes: JSON.parse(changesKey), preview: true })
+      staffApi('staff-billing', { action: 'edit-booking', reservationId: reservation.id, changes: JSON.parse(changesKey), preview: true, waivePolicy: waive })
         .then(result => { if (active) { setQuote(result); setQuoteError(''); } })
         .catch(error => { if (active) { setQuote(null); setQuoteError(error.message); } })
         .finally(() => { if (active) setQuoting(false); });
     }, 350);
     return () => { active = false; clearTimeout(timer); };
-  }, [changesKey, reservation.id]);
+  }, [changesKey, reservation.id, waive]);
 
   const save = async () => {
     if (!quote || saving) return;
     setSaving(true);
     try {
-      const result = await staffApi('staff-billing', { action: 'edit-booking', reservationId: reservation.id, changes });
+      if (waive && waiveReason.trim().length < 5) {
+        setQuoteError('Write why the date-change rule is waived (for example "Typhoon, resort closed").');
+        return;
+      }
+      const result = await staffApi('staff-billing', { action: 'edit-booking', reservationId: reservation.id, changes, waivePolicy: waive, waiveReason: waiveReason.trim() });
       onSaved(result);
     } catch (error) {
       setQuoteError(error.message);
@@ -123,7 +131,18 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
         {arrivalLocked && (
           <div style={{ fontSize: 11, color: '#b45309', lineHeight: 1.5 }}>
             {daysToArrival <= 0 ? 'The stay has started' : `Arrival is ${daysToArrival} day${daysToArrival === 1 ? '' : 's'} away`}, so the {isTour ? 'date' : 'check-in date'} can't be moved under the resort policy.
-            To change it, cancel the booking (with the policy penalty) and make a new one.
+            To change it, cancel the booking (with the policy penalty) and make a new one{isAdmin ? ', or waive the rule below' : ''}.
+          </div>
+        )}
+        {isAdmin && ruleApplies && (
+          <div style={{ display: 'grid', gap: 6, border: `1px solid ${c.BORDER2}`, borderRadius: 10, padding: 10 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: c.TEXT, cursor: 'pointer' }}>
+              <input type="checkbox" checked={waive} onChange={e => setWaive(e.target.checked)} style={{ marginTop: 2 }} />
+              <span><strong>Waive the 30-day rule</strong> and move the dates anyway (typhoon, resort closure, emergency). Saved in the Activity Log.</span>
+            </label>
+            {waive && (
+              <input value={waiveReason} maxLength={300} onChange={e => setWaiveReason(e.target.value)} placeholder="Reason (required), e.g. Typhoon Kristine, resort closed" style={input} />
+            )}
           </div>
         )}
 

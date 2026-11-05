@@ -28,6 +28,7 @@ import reservationStatus from '../apiHandlers/reservation-status';
 import staffBilling from '../apiHandlers/staff-billing';
 import staffUsers from '../apiHandlers/staff-users';
 import imageUpload from '../apiHandlers/image-upload';
+import seasonalRates from '../apiHandlers/seasonal-rates';
 import bookingReply from '../apiHandlers/booking-reply';
 import chatQuickReply from '../apiHandlers/chat-quick-reply';
 import createCottageReservation from '../apiHandlers/create-cottage-reservation';
@@ -62,6 +63,7 @@ const handlers = {
   'staff-billing': staffBilling,
   'staff-users': staffUsers,
   'image-upload': imageUpload,
+  'seasonal-rates': seasonalRates,
   'create-corporate-reservation': createCorporateReservation,
   'public-feedback': publicFeedback,
   'submit-feedback': submitFeedback,

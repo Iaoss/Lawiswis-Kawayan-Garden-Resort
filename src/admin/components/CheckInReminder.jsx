@@ -4,8 +4,8 @@ import { db } from '../../firebase/firebase';
 import { getResortNow } from '../../lib/bookingPricing';
 import { getUpcomingCheckIns } from '../../lib/stayTimes';
 import { pushToast } from '../lib/staffToasts';
-import { staffApi } from '../lib/staffApi';
 import { isReadyToCheckIn } from '../../lib/reservationStatus';
+import { checkInGuest } from '../lib/checkInGuest';
 
 // Reminder for admins and receptionists: a guest's check-in time is 3
 // minutes away (offered until 15 minutes after the time). Shown once per
@@ -83,7 +83,8 @@ export default function CheckInReminder({ prefix = '/admin', soundAlerts = true 
         primary: ready ? {
           label: 'Check in',
           run: async () => {
-            await staffApi('reservation-status', { action: 'set-status', reservationId: item.id, status: 'checked-in' });
+            const done = await checkInGuest(booking || { id: item.id, guestName: item.guest });
+            if (!done) throw new Error('Check-in cancelled.');
             pushToast({ variant: 'success', title: `${item.guest} is checked in`, description: `${item.place} is now occupied.` });
           },
         } : null,

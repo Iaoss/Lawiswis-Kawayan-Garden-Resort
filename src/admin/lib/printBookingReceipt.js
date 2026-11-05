@@ -22,6 +22,11 @@ export function printBookingReceipt(reservation, payments = []) {
     : r.cottageOnly ? `Cottage · ${r.tourPeriod === 'night' ? 'Night tour' : 'Day tour'}`
       : r.roomName || `Room ${r.roomNumber || ''}${r.roomType ? ` (${r.roomType})` : ''}`;
   const issued = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' });
+  // Feedback QR for guests who are leaving (or have left), same as the
+  // thank-you email link. Same QR service as the Feedback & QR page.
+  const showFeedback = ['checked-in', 'checked-out'].includes(r.status);
+  const feedbackUrl = `${window.location.origin}/feedback?bookingId=${encodeURIComponent(r.id)}`;
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(feedbackUrl)}`;
 
   const paymentRows = payments.length
     ? payments.map(p => row(
@@ -43,6 +48,8 @@ export function printBookingReceipt(reservation, payments = []) {
   td { padding: 5px 0; border-bottom: 1px solid #eef0ee; vertical-align: top; }
   td:last-child { text-align: right; white-space: nowrap; padding-left: 12px; }
   .total td { font-weight: 700; border-top: 2px solid #163c2b; }
+  .feedback { display: flex; gap: 14px; align-items: center; border: 1px dashed #9cb56f; padding: 10px 12px; margin-top: 18px; break-inside: avoid; }
+  .feedback img { width: 90px; height: 90px; } .feedback strong { color: #163c2b; font-size: 13px; }
   .sign { display: flex; justify-content: space-between; gap: 30px; margin-top: 40px; }
   .sign div { flex: 1; border-top: 1px solid #111827; padding-top: 4px; text-align: center; font-size: 11px; color: #4b5563; }
   footer { margin-top: 18px; font-size: 10px; color: #6b7280; }
@@ -90,9 +97,10 @@ export function printBookingReceipt(reservation, payments = []) {
     ${r.cancellationReceiptNumber ? row('Cancellation receipt', esc(r.cancellationReceiptNumber)) : ''}
   </table>` : ''}
 
+  ${showFeedback ? `<div class="feedback"><img src="${esc(qrSrc)}" alt="Feedback QR code"><div><strong>How was your stay?</strong><br>Scan with your phone camera to rate us. It takes 1 minute and helps us improve.<br><small>${esc(feedbackUrl)}</small></div></div>` : ''}
   <div class="sign"><div>Received by (resort staff)</div><div>Guest signature</div></div>
   <footer>Keep this receipt for your records. Questions: contact the resort with booking #${esc(ref)}.</footer>
-  <script>window.onload = function () { window.print(); };</script>
+  <script>window.onload = function () { setTimeout(function () { window.print(); }, 400); };</script>
 </body></html>`;
 
   const win = window.open('', '_blank', 'width=720,height=900');

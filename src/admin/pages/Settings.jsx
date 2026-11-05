@@ -5,6 +5,9 @@ import { auth } from '../../firebase/firebase';
 import QuickRepliesManager from '../components/QuickRepliesManager';
 import CottageInventoryManager from '../components/CottageInventoryManager';
 import { appConfirm } from '../../components/ui/app-dialog';
+import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../../firebase/firebase';
+import { RECEPTIONIST_DASHBOARD_SECTIONS, getReceptionistSections } from '../../lib/receptionistDashboard';
 
 const ACCENT_COLORS = [
   { label: 'Lime',   value: '#9cb56f' },
@@ -17,7 +20,7 @@ const ACCENT_COLORS = [
 
 const TABS = [
   { id: 'appearance',    label: 'Appearance',    icon: 'ti-palette' },
-  { id: 'notifications', label: 'Notifications', icon: 'ti-bell' },
+  { id: 'notifications', label: 'Alerts & security', icon: 'ti-bell' },
   { id: 'regional',      label: 'Regional',      icon: 'ti-world' },
   { id: 'dashboard',     label: 'Dashboard',     icon: 'ti-layout-dashboard' },
   { id: 'availability',  label: 'Resort Status', icon: 'ti-building-store' },
@@ -109,6 +112,25 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState('appearance');
   // Only admins change the resort status, so receptionists don't see that tab.
   const isReceptionistPortal = window.location.pathname.startsWith('/receptionist');
+  // Admins choose what receptionists see on their dashboard (shared setting).
+  const [receptionistSections, setReceptionistSections] = useState(() => getReceptionistSections(null));
+  const [sectionsError, setSectionsError] = useState('');
+  useEffect(() => {
+    if (isReceptionistPortal) return undefined;
+    return onSnapshot(doc(db, 'settings', 'receptionistDashboard'),
+      snapshot => setReceptionistSections(getReceptionistSections(snapshot.data())),
+      () => setSectionsError('The receptionist dashboard settings could not be loaded.'));
+  }, [isReceptionistPortal]);
+  const toggleReceptionistSection = async (id, value) => {
+    const next = { ...receptionistSections, [id]: value };
+    setReceptionistSections(next);
+    setSectionsError('');
+    try {
+      await setDoc(doc(db, 'settings', 'receptionistDashboard'), { sections: next, updatedAt: serverTimestamp(), updatedBy: auth.currentUser?.email || '' });
+    } catch (error) {
+      setSectionsError(error.message || 'Could not save.');
+    }
+  };
   const [resortAvailable, setResortAvailable] = useState(true);
   const [resortLimited, setResortLimited] = useState(false);
   const [availabilityReason, setAvailabilityReason] = useState('');
@@ -339,6 +361,21 @@ export default function Settings() {
             </SettingRow>
           </Section>
         )}
+        {activeTab === 'notifications' && (
+          <Section title="Security on this computer" t={t}>
+            <SettingRow t={t} icon="ti-lock" label="Sign out when inactive" desc="Protects a shared front-desk computer if someone forgets to sign out">
+              <Toggle t={t} value={local.sessionTimeout !== false} onChange={v => set('sessionTimeout', v)} />
+            </SettingRow>
+            <SettingRow t={t} icon="ti-clock" label="Inactive for" desc="You get a warning 1 minute before" last>
+              <select value={String(local.autoLogout || '30')} disabled={local.sessionTimeout === false} onChange={e => set('autoLogout', e.target.value)} style={selectStyle}>
+                <option value="15">15 minutes</option>
+                <option value="30">30 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+              </select>
+            </SettingRow>
+          </Section>
+        )}
 
         {/* ── REGIONAL ── */}
         {activeTab === 'regional' && (
@@ -374,6 +411,17 @@ export default function Settings() {
             <SettingRow t={t} icon="ti-chart-bar" label="Revenue chart" desc="Show the 6-month revenue chart" last>
               <Toggle t={t} value={local.showRevenueChart} onChange={v => set('showRevenueChart', v)} />
             </SettingRow>
+          </Section>
+        )}
+        {activeTab === 'dashboard' && !isReceptionistPortal && (
+          <Section title="What receptionists see on their dashboard" t={t}>
+            {RECEPTIONIST_DASHBOARD_SECTIONS.map((section, index) => (
+              <SettingRow key={section.id} t={t} icon={section.icon} label={section.label} desc={section.desc} last={index === RECEPTIONIST_DASHBOARD_SECTIONS.length - 1}>
+                <Toggle t={t} value={receptionistSections[section.id]} onChange={v => toggleReceptionistSection(section.id, v)} />
+              </SettingRow>
+            ))}
+            {sectionsError && <div role="alert" style={{ color: '#dc2626', fontSize: 12, padding: '8px 0 0' }}>{sectionsError}</div>}
+            <div style={{ fontSize: 11.5, color: t.MUTED || '#9ca3af', padding: '8px 0 0' }}>Applies to every receptionist right away. Saved for everyone, not just this computer.</div>
           </Section>
         )}
 

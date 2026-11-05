@@ -11,6 +11,7 @@ import { getStayUnits, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getRequestedBookingFields } from '../src/lib/bookingDetails';
 import { getDateChangeBlock } from '../src/lib/cancellationPolicy';
 import { isUnpaidOnlineBooking } from '../src/lib/unpaidBookings';
+import { holdsRoom } from '../src/lib/unpaidBookings';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
 
@@ -344,8 +345,12 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     const requestedCheckOut = request.requestedCheckOut;
     // Re-checked at approval time: the 30-day window may have passed since
     // the guest asked.
-    const dateBlock = getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: requestedCheckIn });
-    if (dateBlock) throw new Error(`${dateBlock} Reject this request instead.`);
+    // Admins can waive the 30-day rule (e.g. typhoon closure), with a reason.
+    const waiving = body.waivePolicy === true && staff.role === 'admin';
+    if (body.waivePolicy === true && staff.role !== 'admin') throw new Error('Only an admin can waive the date-change rule.');
+    if (waiving && String(reason || '').trim().length < 5) throw new Error('Write why the date-change rule is waived.');
+    const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: requestedCheckIn });
+    if (dateBlock) throw new Error(`${dateBlock} Reject this request, or (admins) waive the rule with a reason.`);
     const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
     let change;
     if (roomRef) {
@@ -357,7 +362,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
       const conflict = conflicts.docs.some(doc => {
         if (doc.id === reservationId) return false;
         const other = doc.data();
-        return !['cancelled', 'checked-out', 'rejected'].includes(String(other.status || '').toLowerCase())
+        return holdsRoom(other)
           && typeof other.checkIn === 'string' && typeof other.checkOut === 'string'
           && stayRangesOverlap(requestedCheckIn, requestedCheckOut, other.checkIn.slice(0, 10), other.checkOut.slice(0, 10));
       });
@@ -621,7 +626,7 @@ export default async function handler(req, res) {
     } else if (['approve-modification', 'reject-modification'].includes(action)) {
       result = await decideModification({
         reservationRef, reservationId, requestId, staff, action, reason,
-        body: { updatedTotal },
+        body: { updatedTotal, waivePolicy: req.body?.waivePolicy === true },
         siteUrl: process.env.PUBLIC_SITE_URL || `https://${req.headers.host}`,
       });
     } else {

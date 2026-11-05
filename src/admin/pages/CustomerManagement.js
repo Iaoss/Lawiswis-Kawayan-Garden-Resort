@@ -5,6 +5,8 @@ import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { getReservationRemarks } from '../../lib/reservationRemarks';
+import { splitGuestName } from '../../lib/nameValidation';
+import { staffApi } from '../lib/staffApi';
 
 const normalizeStatus = status => String(status || 'pending').toLowerCase().trim().replace(/[\s_]+/g, '-');
 const dateKey = value => {
@@ -44,6 +46,42 @@ export default function CustomerManagement() {
   const [checkInStart, setCheckInStart] = useState('');
   const [checkInEnd, setCheckInEnd] = useState('');
   const [selected, setSelected] = useState(null);
+  // Edit guest info: the form, or null when closed.
+  const [editForm, setEditForm] = useState(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const openEdit = () => {
+    const names = splitGuestName(selected.guestName || '');
+    const latest = [...selected.stays].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))[0] || {};
+    setEditForm({
+      firstName: latest.firstName || names.firstName || '',
+      lastName: latest.lastName || names.lastName || '',
+      phone: selected.phone || '',
+      email: selected.email || '',
+      address: selected.address || '',
+    });
+    setEditError('');
+  };
+
+  const saveEdit = async event => {
+    event.preventDefault();
+    setEditBusy(true);
+    setEditError('');
+    try {
+      const result = await staffApi('staff-billing', { action: 'update-guest', reservationIds: selected.stays.map(r => r.id), ...editForm });
+      setNotice(`Saved. ${result.guestName}'s details were updated on ${result.updated} booking${result.updated === 1 ? '' : 's'}.`);
+      setEditForm(null);
+      setSelected(current => current && ({ ...current, guestName: result.guestName, phone: editForm.phone.replace(/\D/g, ''), email: editForm.email.trim().toLowerCase(), address: editForm.address.trim() }));
+      setReloadKey(key => key + 1);
+    } catch (error) {
+      setEditError(error.message || 'The guest details could not be saved.');
+    } finally {
+      setEditBusy(false);
+    }
+  };
 
   useEffect(() => {
     const fetch = async () => {
@@ -67,7 +105,7 @@ export default function CustomerManagement() {
       setCustomers(Object.values(map));
     };
     fetch();
-  }, []);
+  }, [reloadKey]);
 
   const filtered = customers.filter(c => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -157,7 +195,7 @@ export default function CustomerManagement() {
               <p style={{ textAlign: 'center', color: MUTED, padding: '32px 0', fontSize: '13px' }}>No customers found.</p>
             ) : (
               filtered.map((c, i) => (
-                <div key={i} onClick={() => setSelected(c)}
+                <div key={i} onClick={() => { setSelected(c); setEditForm(null); setNotice(""); }}
                   style={{
                     padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, cursor: 'pointer',
                     background: selected?.phone === c.phone ? SELECTED_BG : 'transparent',
@@ -191,7 +229,40 @@ export default function CustomerManagement() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
                     <BeamAvatar seed={guestAvatarSeed(selected)} size={48} title={`${selected.guestName || 'Guest'}'s avatar`} />
                     <h3 style={{ fontWeight: '600', color: TEXT, margin: 0, fontSize: '14px' }}>Guest Profile</h3>
+                    <button type="button" onClick={openEdit}
+                      style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${BORDER}`, background: CARD2, color: TEXT, borderRadius: 8, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                      <i className="ti ti-pencil" aria-hidden="true" /> Edit guest info
+                    </button>
                   </div>
+                  {notice && <div role="status" style={{ fontSize: 12, color: GREEN, margin: '-4px 0 12px' }}>{notice}</div>}
+                  {editForm && (
+                    <form onSubmit={saveEdit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                      {[
+                        ['firstName', 'First name', 'text', 35],
+                        ['lastName', 'Last name', 'text', 35],
+                        ['phone', 'Mobile number', 'tel', 11],
+                        ['email', 'Email', 'email', 120],
+                      ].map(([key, label, type, max]) => (
+                        <label key={key} style={{ display: 'grid', gap: 4, fontSize: 11, fontWeight: 600, color: SUBTEXT }}>{label}
+                          <input type={type} value={editForm[key]} maxLength={max}
+                            onChange={e => setEditForm(f => ({ ...f, [key]: key === 'phone' ? e.target.value.replace(/\D/g, '').slice(0, 11) : e.target.value }))}
+                            style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 10px', color: TEXT, font: 'inherit', fontSize: 13 }} />
+                        </label>
+                      ))}
+                      <label style={{ gridColumn: '1 / -1', display: 'grid', gap: 4, fontSize: 11, fontWeight: 600, color: SUBTEXT }}>Address
+                        <input value={editForm.address} maxLength={300} onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))}
+                          style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '8px 10px', color: TEXT, font: 'inherit', fontSize: 13 }} />
+                      </label>
+                      <div style={{ gridColumn: '1 / -1', fontSize: 11, color: MUTED }}>
+                        Saved on all {selected.stays.length} booking{selected.stays.length === 1 ? '' : 's'} of this guest, and recorded in the Activity Log.
+                      </div>
+                      {editError && <div role="alert" style={{ gridColumn: '1 / -1', fontSize: 12, color: '#dc2626' }}>{editError}</div>}
+                      <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                        <button type="button" disabled={editBusy} onClick={() => setEditForm(null)} style={{ border: `1px solid ${BORDER}`, background: CARD, color: TEXT, borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                        <button type="submit" disabled={editBusy} style={{ border: 'none', background: ACCENT, color: '#0a1a0a', borderRadius: 8, padding: '7px 14px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>{editBusy ? 'Saving…' : 'Save'}</button>
+                      </div>
+                    </form>
+                  )}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', fontSize: '13px' }}>
                     <div>
                       <p style={{ color: MUTED, margin: 0 }}>Full Name</p>

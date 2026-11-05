@@ -1,3 +1,4 @@
+import { getSeasonalAdjustment } from './seasonalRates';
 // Overnight check-in times. Check-in is flexible: a slot can still be booked
 // for today until the next slot starts (cutoffMinutes). Guests arriving after
 // 9:00 PM (walk-ins or late arrivals, even near midnight) book the late
@@ -390,6 +391,8 @@ export function calculateBookingPrice({
   cottageFee = 0,
   dayVisitors = null,
   lateArrival = false,
+  // { periods, checkIn, checkOut }: holiday / peak-season prices (optional).
+  season = null,
 }) {
   const { amount: baseRate, baseCapacity } = getRoomBaseRate(room, bookingType);
   const totalGuests = adults + children;
@@ -419,6 +422,12 @@ export function calculateBookingPrice({
     ? Math.round(baseRate * LATE_ARRIVAL_SURCHARGE_RATE * 100) / 100
     : 0;
 
+  // Holiday / peak season: a percentage on the room charge for the nights
+  // (or tour day) inside the period. Cottages and visitors aren't affected.
+  const seasonal = season?.periods?.length
+    ? getSeasonalAdjustment({ periods: season.periods, checkIn: season.checkIn, checkOut: season.checkOut, bookingType, roomCharge: baseRate * nights + extraGuestCharge })
+    : { amount: 0, label: '' };
+
   return {
     baseRate,
     baseCapacity,
@@ -436,7 +445,9 @@ export function calculateBookingPrice({
     dayVisitorPeriod: visitors?.tourPeriod || '',
     dayVisitorCharge,
     lateArrivalSurcharge,
-    subtotalAmount: baseRate * nights + extraGuestCharge + fee + dayVisitorCharge + lateArrivalSurcharge,
+    seasonalSurcharge: seasonal.amount,
+    seasonalLabel: seasonal.label,
+    subtotalAmount: Math.round((baseRate * nights + extraGuestCharge + fee + dayVisitorCharge + lateArrivalSurcharge + seasonal.amount) * 100) / 100,
   };
 }
 

@@ -9,6 +9,7 @@ import { Pagination, usePagination } from '../../components/ui/pagination';
 import { formatStayDateTime, getStayTimingDetails, toMillis } from '../../lib/stayTimes';
 import { getReceiptLineItems } from '../../lib/receiptItems';
 import { getReservationRemarks } from '../../lib/reservationRemarks';
+import { getBookingChanges } from '../../lib/bookingChanges';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import { paymentReceiptNumber, printBookingReceipt } from '../lib/printBookingReceipt';
 
@@ -312,6 +313,7 @@ function BookingDetails({ r, payments, onClose, onOpenReservations, onOpenBillin
             <Line t={t} label="Check-in (booked)" value={[formatDate(r.checkIn), r.checkInTime].filter(Boolean).join(' · ') || '—'} />
             <Line t={t} label="Check-out (booked)" value={[formatDate(r.checkOut), r.checkOutTime].filter(Boolean).join(' · ') || '—'} />
             <Line t={t} label="Checked in at" value={timing.checkIn.actual || 'Not checked in'} tone={r.checkedInAt ? green : t.MUTED} />
+            {r.checkInId && <Line t={t} label="ID shown" value={`${r.checkInId.type} ending ${r.checkInId.last4}`} />}
             {timing.checkIn.text && <Line t={t} label="Arrival" value={`${timing.checkIn.text}${timing.checkIn.booked ? ` (booked ${timing.checkIn.booked})` : ''}`} tone={timing.checkIn.tone === 'late' ? amber : green} />}
             <Line t={t} label="Checked out at" value={timing.checkOut.actual || 'Not checked out'} tone={r.checkedOutAt ? t.TEXT : t.MUTED} />
             {timing.checkOut.text && <Line t={t} label="Departure" value={`${timing.checkOut.text}${timing.checkOut.booked ? ` (booked ${timing.checkOut.booked})` : ''}`} tone={timing.checkOut.tone === 'late' ? amber : green} />}
@@ -360,6 +362,25 @@ function BookingDetails({ r, payments, onClose, onOpenReservations, onOpenBillin
               {r.cancellationReceiptNumber && <Line t={t} label="Cancellation receipt" value={`${r.cancellationReceiptNumber}${r.cancellationEmailSentAt ? ' · emailed' : ''}`} />}
             </section>
           )}
+
+          {(() => {
+            const changes = getBookingChanges(r);
+            if (!changes.length) return null;
+            return (
+              <section style={section}>
+                <p style={heading}>Changes ({changes.length})</p>
+                {changes.map(change => (
+                  <div key={change.key} style={{ padding: '6px 0', borderTop: `1px solid ${t.BORDER}`, fontSize: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                      <strong style={{ color: t.TEXT }}>{change.title}</strong>
+                      <span style={{ color: t.MUTED, whiteSpace: 'nowrap' }}>{change.at ? formatStayDateTime(change.at) : ''}</span>
+                    </div>
+                    <div style={{ color: t.SUBTEXT }}>{change.text}{change.by ? ` · by ${change.by}` : ''}</div>
+                  </div>
+                ))}
+              </section>
+            );
+          })()}
 
           {remarks.length > 0 && (
             <section style={section}>

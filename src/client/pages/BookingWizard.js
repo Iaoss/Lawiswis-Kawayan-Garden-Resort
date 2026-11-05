@@ -13,6 +13,7 @@ import {
   getStayDurationError, getStayUnits, getTourCutoffError,
 } from '../../lib/bookingPricing';
 import { MIN_GROUP_GUESTS } from '../../lib/corporatePackages';
+import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 
 // Step-by-step start of a booking: 1 Type (personal or group), 2 When (stay
 // type, dates, guests), 3 Choose a room (only rooms free on those dates,
@@ -49,6 +50,7 @@ export default function BookingWizard() {
   const today = getResortNow().dateKey;
   // Phones get a more compact layout (see src/client/mobile.css).
   const isPhone = useIsPhone();
+  const seasonPeriods = useSeasonPeriods();
   const maxDate = addMonthsKey(today, 2);
   const presetRoomId = params.get('room') || '';
 
@@ -159,6 +161,7 @@ export default function BookingWizard() {
       return calculateBookingPrice({
         room, bookingType: isTour ? 'daytour' : 'overnight', nights: Math.max(1, nights || 1),
         adults: Number(adults), children: Number(children), tourPeriod: isTour ? stay : 'day',
+        season: { periods: seasonPeriods, checkIn, checkOut: stayEnd },
       }).subtotalAmount;
     } catch { return null; }
   };
@@ -173,7 +176,7 @@ export default function BookingWizard() {
       // Cheapest first; at the same price, the room closest to the group size.
       .sort((a, b) => a.price - b.price || a.spare - b.spare || String(a.room.title).localeCompare(String(b.room.title)));
     return { fitting: fits, tooSmall: free.length - fits.length };
-  }, [rooms, availableIds, adults, children, stay, nights]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rooms, availableIds, adults, children, stay, nights, seasonPeriods]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const presetEntry = presetRoom ? fitting.find(entry => entry.room.id === presetRoom.id) : null;
   const { recommended, others } = pickRecommendedRooms(fitting.filter(entry => entry.room.id !== presetRoomId));

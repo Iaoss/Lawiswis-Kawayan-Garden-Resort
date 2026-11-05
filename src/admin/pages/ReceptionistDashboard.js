@@ -9,9 +9,11 @@ import ReceptionistLayout from '../components/ReceptionistLayout';
 import { useSettings } from '../components/SettingsContext';
 import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
 import { getOverstay, getOverstayStats, getPeriodRange, getReservationAverages, isReadyToCheckIn, manilaDateKey } from '../../lib/reservationStatus';
-import { staffApi } from '../lib/staffApi';
 import { appAlert } from '../../components/ui/app-dialog';
 import { getFeedbackSummary } from '../../lib/dashboardMetrics';
+import { printDailySheet } from '../lib/printDailySheet';
+import { checkInGuest as checkInWithId } from '../lib/checkInGuest';
+import { getReceptionistSections } from '../../lib/receptionistDashboard';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -68,13 +70,19 @@ export default function ReceptionistDashboard() {
 
   const [stats, setStats] = useState({ todayArrivals: 0, todayDepartures: 0, checkedIn: 0, pendingPayments: 0, availableRooms: 0, totalRooms: 0 });
   const [arrivals, setArrivals] = useState([]);
+  // Sections the admin chose to show (Settings → Dashboard).
+  const [show, setShow] = useState(() => getReceptionistSections(null));
+  useEffect(() => onSnapshot(doc(db, 'settings', 'receptionistDashboard'),
+    snapshot => setShow(getReceptionistSections(snapshot.data())),
+    () => setShow(getReceptionistSections(null))), []);
   const [checkingIn, setCheckingIn] = useState('');
 
   // One-click check-in for guests who already paid in full.
   const checkInGuest = async reservation => {
     setCheckingIn(reservation.id);
     try {
-      await staffApi('reservation-status', { action: 'set-status', reservationId: reservation.id, status: 'checked-in' });
+      const done = await checkInWithId(reservation);
+      if (!done) return;
       setArrivals(list => list.map(r => (r.id === reservation.id ? { ...r, status: 'checked-in', checkedInAt: new Date().toISOString() } : r)));
     } catch (error) {
       appAlert(error.message || 'The guest could not be checked in.', { title: 'Check-in failed', tone: 'warning' });
@@ -267,6 +275,7 @@ export default function ReceptionistDashboard() {
         </div>
 
         {/* Stats */}
+        {show.stats && (
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cards.length}, minmax(0, 1fr))`, gap: '14px', marginBottom: '24px' }}>
           {cards.map((c, index) => (
             <div
@@ -301,13 +310,19 @@ export default function ReceptionistDashboard() {
             </div>
           ))}
         </div>
+        )}
 
-        {settings.showRecentReservations !== false && (
+        {show.arrivals && settings.showRecentReservations !== false && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
           {/* Today's Arrivals */}
           <div style={S.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Today's Arrivals</div>
+              <button type="button" onClick={() => { if (!printDailySheet(allReservations)) appAlert('Allow pop-ups for this site to print the sheet.', { title: 'Pop-up blocked', tone: 'warning' }); }}
+                title="Print today's arrivals, departures and balances, in case the internet goes down"
+                style={{ marginLeft: 'auto', marginRight: 8, background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: TEXT }}>
+                <i className="ti ti-printer" aria-hidden="true" /> Print today's sheet
+              </button>
               <button type="button" onClick={() => navigate('/receptionist/reservations')}
                 style={{ background: ACCENT, border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: ACCENT_TEXT }}>
                 View all
@@ -405,6 +420,7 @@ export default function ReceptionistDashboard() {
         )}
 
         {/* Quick Actions */}
+        {show.quickActions && (
         <div style={{ ...S.card, marginTop: '16px' }}>
           <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '16px' }}>Quick Actions</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
@@ -424,8 +440,10 @@ export default function ReceptionistDashboard() {
             ))}
           </div>
         </div>
+        )}
 
         {/* Guest satisfaction (live from the QR feedback form) */}
+        {show.feedback && (
         <div style={{ ...S.card, marginTop: '16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
             <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Guest Satisfaction</div>
@@ -473,8 +491,10 @@ export default function ReceptionistDashboard() {
             </div>
           )}
         </div>
+        )}
 
         {/* ── Tasks + Overstaying guests ── */}
+        {show.tasks && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px' }}>
 
           {/* Tasks */}
@@ -573,8 +593,10 @@ export default function ReceptionistDashboard() {
             </div>
           </div>
         </div>
+        )}
 
         {/* ── Calendar ── */}
+        {show.calendar && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', marginTop: '16px' }}>
 
           <div style={S.card}>
@@ -677,6 +699,7 @@ export default function ReceptionistDashboard() {
             </div>
           </div>
         </div>
+        )}
       </div>
     </ReceptionistLayout>
   );

@@ -124,3 +124,28 @@ describe('ready to check in (paid in full)', () => {
     expect(isReadyToCheckIn({ ...paid, status: 'pending' }, now)).toBe(false);
   });
 });
+
+describe("front desk daily sheet", () => {
+  const { getDailySheet } = require('../admin/lib/printDailySheet');
+  const now = new Date('2026-11-05T04:00:00Z');
+  test('sorts bookings into arrivals, departures and in-house', () => {
+    const sheet = getDailySheet([
+      { id: 'a1', status: 'confirmed', checkIn: '2026-11-05', checkOut: '2026-11-06' },
+      { id: 'a2', status: 'cancelled', checkIn: '2026-11-05', checkOut: '2026-11-06' },
+      { id: 'd1', status: 'checked-in', checkIn: '2026-11-03', checkOut: '2026-11-05' },
+      { id: 'h1', status: 'checked-in', checkIn: '2026-11-04', checkOut: '2026-11-07' },
+      { id: 'x', status: 'confirmed', checkIn: '2026-11-09', checkOut: '2026-11-10' },
+    ], now);
+    expect(sheet.arrivals.map(r => r.id)).toEqual(['a1']);
+    expect(sheet.departures.map(r => r.id)).toEqual(['d1']);
+    expect(sheet.inHouse.map(r => r.id)).toEqual(['h1']);
+  });
+});
+
+test('ID shown at check-in keeps only the type and last 4', () => {
+  const { normalizeIdCheck } = require('./checkInId');
+  expect(normalizeIdCheck({ type: 'Passport', last4: 'p12x' })).toEqual({ type: 'Passport', last4: 'P12X' });
+  expect(normalizeIdCheck({ type: 'Passport', last4: '1234567' })).toBeNull();
+  expect(normalizeIdCheck({ type: 'Library card', last4: '1234' })).toBeNull();
+  expect(normalizeIdCheck(null)).toBeNull();
+});

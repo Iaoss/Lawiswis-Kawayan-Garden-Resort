@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
 import { collection, doc, getDoc, query, onSnapshot, where } from 'firebase/firestore';
-import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
 import logo from './logo-mark.png';
@@ -18,6 +18,9 @@ import {
 } from '../../components/ui/animated-sidebar.tsx';
 import PortalSidebar from './PortalSidebar';
 import './portal-sidebar.css';
+import ShiftSummaryDialog from './ShiftSummaryDialog';
+import { useIdleLogout } from '../lib/staffSession';
+import { CheckInIdHost } from './CheckInIdDialog';
 
 // ── Nav structure ────────────────────────────────────────────
 const navItems = [
@@ -111,7 +114,11 @@ export default function Layout({ children }) {
     };
   }, []);
 
-  const handleLogout = async () => { await signOut(auth); window.location.href = '/admin/login'; };
+  // Signing out shows the end-of-shift summary first.
+  const [shiftOpen, setShiftOpen] = useState(false);
+  const handleLogout = () => setShiftOpen(true);
+  // Shared front-desk computer: sign out after inactivity (Settings → Notifications & security).
+  useIdleLogout({ enabled: settings?.sessionTimeout !== false, minutes: Number(settings?.autoLogout) || 30 });
 
   const initials = adminName
     ? adminName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
@@ -226,6 +233,8 @@ export default function Layout({ children }) {
 
       {/* Slide-in Messages panel */}
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
+      <CheckInIdHost dark={dark} accent={ACCENT} />
+      <ShiftSummaryDialog open={shiftOpen} onClose={() => setShiftOpen(false)} staffName={adminName} dark={dark} accent={ACCENT} />
       <CheckInReminder soundAlerts={settings?.soundAlerts !== false} prefix="/admin" />
       <StaffToaster prefix="/admin" enabled={settings?.notifications !== false} />
     </AnimatedSidebarProvider>

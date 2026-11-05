@@ -56,6 +56,7 @@ export function getReceiptLineItems(reservation = {}) {
     const units = Math.max(1, Number(reservation.nights) || 1);
     const baseRate = money(reservation.baseRate);
     const lateArrival = money(reservation.lateArrivalSurcharge);
+    const seasonal = money(reservation.seasonalSurcharge);
     const extraGuests = money(reservation.extraGuestCharge);
     const dayVisitors = money(reservation.dayVisitorCharge);
     const room = reservation.roomName || `Room ${reservation.roomNumber || ''}${reservation.roomType ? ` (${reservation.roomType})` : ''}`.trim();
@@ -64,6 +65,7 @@ export function getReceiptLineItems(reservation = {}) {
       if (extraGuests > 0) booking.push({ label: 'Extra guests', amount: extraGuests });
       if (dayVisitors > 0) booking.push({ label: dayVisitorLabel(reservation), amount: dayVisitors });
       if (lateArrival > 0) booking.push({ label: 'Late arrival after 9:00 PM (10% of room rate)', amount: lateArrival });
+      if (seasonal !== 0) booking.push({ label: `${seasonal > 0 ? 'Peak-season rate' : 'Season discount'}${reservation.seasonalLabel ? ` · ${reservation.seasonalLabel}` : ''}`, amount: seasonal });
     } else {
       // Older bookings without a price breakdown: one room line.
       booking.push({ label: `${room} · ${unitLabel(reservation, units)}`, amount: money(total + discount - cottageFee - dayVisitors - lateArrival) });

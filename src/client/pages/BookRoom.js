@@ -34,6 +34,7 @@ import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import { decorateRoom } from '../lib/roomCatalog';
+import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -343,6 +344,7 @@ export default function BookRoom() {
       return { ...previous, bookingType: 'daytour', tourPeriod: choice, checkOut: previous.checkIn || previous.checkOut };
     });
   };
+  const seasonPeriods = useSeasonPeriods();
   const pricing = useMemo(() => room && nights > 0
     ? calculateBookingPrice({
       room,
@@ -355,8 +357,9 @@ export default function BookRoom() {
       cottageFee: getCottageFee(form.cottageId) ?? 0,
       dayVisitors: dayVisitors,
       lateArrival: lateArrivalChosen,
+      season: { periods: seasonPeriods, checkIn: form.checkIn, checkOut: form.checkOut },
     })
-    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, dayVisitors, lateArrivalChosen]);
+    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, dayVisitors, lateArrivalChosen, seasonPeriods, form.checkIn, form.checkOut]);
   const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
@@ -1758,6 +1761,10 @@ export default function BookRoom() {
                   <span>Late arrival after 9 PM (10% of room rate)</span>
                   <span>₱{pricing.lateArrivalSurcharge.toLocaleString()}</span>
                 </div>}
+                {pricing?.seasonalSurcharge ? <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: pricing.seasonalSurcharge > 0 ? '#9a3412' : '#15803d', marginBottom: '8px' }}>
+                  <span>{pricing.seasonalSurcharge > 0 ? 'Peak-season rate' : 'Season discount'} · {pricing.seasonalLabel}</span>
+                  <span>{pricing.seasonalSurcharge > 0 ? '' : '−'}₱{Math.abs(pricing.seasonalSurcharge).toLocaleString()}</span>
+                </div> : null}
                 {pricing?.dayVisitorCharge > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
                   <span>Day visitors</span>
                   <span>₱{pricing.dayVisitorCharge.toLocaleString()}</span>

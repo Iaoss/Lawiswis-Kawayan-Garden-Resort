@@ -9,6 +9,7 @@ import { useSettings } from '../components/SettingsContext';
 import { ROOM_TYPES, ROOM_TYPE_CATEGORY_MAP, normalizeRoomType } from '../utils/roomCatalog';
 import { resolveRoomImage } from '../../client/components/clientTheme';
 import { uploadImage } from '../lib/uploadImage';
+import SeasonalRatesManager from '../components/SeasonalRatesManager';
 
 // ── Cloudinary config ────────────────────────────────────────
 // Photos upload through the server, so no Cloudinary setting is in the page.
@@ -456,6 +457,11 @@ export default function RoomManagement() {
             {rooms.length} room{rooms.length === 1 ? '' : 's'} total · click a room to see its details
           </div>
         </motion.div>
+
+        {/* ── Holiday / peak-season prices (admins) ── */}
+        {!isReceptionist && (
+          <SeasonalRatesManager colors={{ CARD, BORDER, TEXT, SUBTEXT, INPUT_BG, ACCENT: settings?.accentColor || '#9cb56f' }} />
+        )}
 
         {/* ── Add/Edit Form ── */}
         <AnimatePresence initial={false}>

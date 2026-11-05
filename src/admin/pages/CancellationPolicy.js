@@ -7,6 +7,7 @@ import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { staffApi } from '../lib/staffApi';
 import { DEFAULT_CANCELLATION_POLICY, getStaffCancellationFee, normalizeCancellationPolicy } from '../../lib/cancellationPolicy';
+import ResortClosurePanel from '../components/ResortClosurePanel';
 
 // `embedded` is used when this renders inside the Settings page tab,
 // so it does not wrap itself in a second PageLayout.
@@ -357,6 +358,13 @@ export default function CancellationPolicy({ embedded = false }) {
             </div>
           </section>
         </div>
+      )}
+      {!isReceptionist && (
+        <ResortClosurePanel
+          reservations={reservations}
+          colors={{ CARD, CARD2, BORDER, TEXT, SUBTEXT, ACCENT, ACCENT_TEXT, dark }}
+          onChanged={fetchReservations}
+        />
       )}
     </>
   );

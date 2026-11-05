@@ -45,6 +45,7 @@ import {
   getOverstay,
   hasOutstandingBalance,
 } from '../src/lib/reservationStatus';
+import { normalizeIdCheck } from '../src/lib/checkInId';
 
 // Room status to set after a reservation changes (unchanged from the old
 // browser-side behaviour).
@@ -70,7 +71,7 @@ function paymentStatusFor(total, paid) {
   return paid > 0 ? 'partial' : 'pending';
 }
 
-async function setStatus({ transaction, reservationRef, reservation, staff, status, reason, force = false, closingNoShow = false }) {
+async function setStatus({ transaction, reservationRef, reservation, staff, status, reason, force = false, closingNoShow = false, idCheck = null }) {
   if (!RESERVATION_STATUSES.includes(status)) throw new StatusError(400, 'Choose a valid reservation status.');
   const current = String(reservation.status || 'pending');
   if (staff.role === 'receptionist' && current === 'cancelled') {
@@ -118,6 +119,9 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
     updates.cancellationReason = reason;
   }
   if (status === 'checked-in' && !reservation.checkedInAt) updates.checkedInAt = FieldValue.serverTimestamp();
+  // The ID the guest showed (type and last 4 characters only).
+  const id = status === 'checked-in' ? normalizeIdCheck(idCheck) : null;
+  if (id) updates.checkInId = { ...id, checkedBy: staff.name || staff.email || '', checkedByUid: staff.uid };
   if (status === 'checked-out') {
     updates.checkedOutAt = FieldValue.serverTimestamp();
     if (closingNoShow) updates.closedAsNoShow = true;
@@ -255,7 +259,7 @@ export default async function handler(req, res) {
       checkOutDate = reservation.checkOut || '';
       guestName = reservation.guestName || '';
       const context = { transaction, reservationRef, reservation, staff };
-      if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500), force: req.body?.force === true });
+      if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500), force: req.body?.force === true, idCheck: req.body?.idCheck });
       // Closes a past booking the guest never arrived for (pending/confirmed,
       // check-out date already passed, nothing owed). This is the only move
       // allowed to go straight to checked-out.

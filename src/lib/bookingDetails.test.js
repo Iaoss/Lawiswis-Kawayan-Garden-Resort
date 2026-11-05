@@ -139,3 +139,17 @@ describe('step 3 recommendations', () => {
     expect(recommended.map(r => r.room.id)).toEqual(['a', 'c', 'b']);
   });
 });
+
+describe('booking change history', () => {
+  const { getBookingChanges } = require('./bookingChanges');
+  test('lists staff edits and guest requests, newest first', () => {
+    const changes = getBookingChanges({
+      editHistory: [{ id: 'e1', editedAt: '2026-11-02T03:00:00Z', editedByName: 'Ana', from: { checkIn: '2026-11-20', checkOut: '2026-11-21', adults: 2, children: 0, totalAmount: 3000, bookingType: 'overnight' }, to: { checkIn: '2026-11-22', checkOut: '2026-11-23', adults: 3, children: 0, totalAmount: 3800, bookingType: 'overnight' } }],
+      modificationRequest: { id: 'm1', status: 'rejected', requestedAt: '2026-11-03T03:00:00Z', originalCheckIn: '2026-11-22', originalCheckOut: '2026-11-23', requestedCheckIn: '2026-11-25', requestedCheckOut: '2026-11-26', staffReason: 'Fully booked' },
+    });
+    expect(changes.map(c => c.title)).toEqual(['Guest asked to change dates · rejected', 'Edited by staff']);
+    expect(changes[1].text).toMatch(/Dates 2026-11-20 → 2026-11-21 → 2026-11-22 → 2026-11-23/);
+    expect(changes[1].text).toMatch(/Guests 2\+0 → 3\+0 · Total ₱3,000 → ₱3,800/);
+    expect(changes[0].text).toMatch(/Staff note: Fully booked/);
+  });
+});

@@ -62,3 +62,28 @@ describe('unpaid online bookings', () => {
     expect(shouldAutoConfirm({ ...pending, type: 'corporate' }, {}, 3000)).toBe(false);
   });
 });
+
+describe('room holds for unpaid online bookings', () => {
+  const { holdsRoom, isHoldExpired, getHoldExpiresMs } = require('./unpaidBookings');
+  const created = new Date('2026-11-05T02:00:00Z').getTime();
+  const unpaid = { type: 'online', status: 'pending', amountPaid: 0, createdAt: { seconds: created / 1000 } };
+
+  test('an unpaid online booking holds the room for an hour', () => {
+    expect(holdsRoom(unpaid, created + 59 * 60000)).toBe(true);
+    expect(holdsRoom(unpaid, created + 61 * 60000)).toBe(false);
+    expect(isHoldExpired(unpaid, created + 61 * 60000)).toBe(true);
+  });
+
+  test('a payment link from staff extends the hold by a day', () => {
+    const linked = { ...unpaid, unpaidFollowUp: { paymentLinkSentAt: new Date(created + 2 * 3600000).toISOString() } };
+    expect(getHoldExpiresMs(linked)).toBe(created + 26 * 3600000);
+    expect(holdsRoom(linked, created + 25 * 3600000)).toBe(true);
+  });
+
+  test('paid, walk-in and finished bookings follow their status', () => {
+    expect(holdsRoom({ ...unpaid, amountPaid: 1500 }, created + 10 * 3600000)).toBe(true);
+    expect(holdsRoom({ type: 'walk-in', status: 'pending' }, created + 10 * 3600000)).toBe(true);
+    expect(holdsRoom({ status: 'cancelled' })).toBe(false);
+    expect(holdsRoom({ status: 'checked-out' })).toBe(false);
+  });
+});

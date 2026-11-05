@@ -30,7 +30,8 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { describeBillingAction, logActivity } from '../lib/activityLog';
 import { sendPaymentReceipt } from '../lib/sendPaymentReceipt';
-import { sendCancellationEmail } from '../lib/email';
+import { CancelError, cancelBooking } from '../lib/cancelBooking';
+import { sendClosureNoticeEmail } from '../lib/email';
 import { shouldAutoConfirm } from '../lib/recordPayMongoPayment';
 import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
@@ -39,9 +40,11 @@ import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, getC
 import { getCottageAvailabilityFor } from '../lib/cottageStock';
 import { cottageAvailabilityError } from '../src/lib/cottages';
 import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
-import { DEFAULT_CANCELLATION_POLICY, getDateChangeBlock, getStaffCancellationFee } from '../src/lib/cancellationPolicy';
+import { getDateChangeBlock } from '../src/lib/cancellationPolicy';
 import { canAutoCheckIn, manilaDateKey } from '../src/lib/reservationStatus';
 import { isRoomGuest, priceService } from '../src/lib/services';
+import { holdsRoom } from '../src/lib/unpaidBookings';
+import { readSeasonPeriods } from '../lib/seasonStore';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -211,62 +214,95 @@ async function addService({ staff, reservationId, serviceId, hours, persons }) {
   });
 }
 
-async function cancelWithPolicy({ staff, reservationId, reason, preview = false }) {
+// Customer Management: correct a guest's name and contact details on all of
+// their bookings at once. Any staff member; every change is logged.
+async function updateGuest({ staff, reservationIds, firstName, lastName, phone, email, address }) {
+  const ids = Array.isArray(reservationIds) ? [...new Set(reservationIds.filter(id => typeof id === 'string' && id))].slice(0, 200) : [];
+  if (!ids.length) throw new BillingError(400, 'Choose the guest to update.');
+  const first = cleanText(firstName, 35);
+  const last = cleanText(lastName, 35);
+  if (!NAME_PATTERN.test(first) || !NAME_PATTERN.test(last)) throw new BillingError(400, 'Enter a valid first and last name (2–35 letters each).');
+  const cleanPhone = cleanText(phone, 20).replace(/\D/g, '');
+  if (cleanPhone && !/^09\d{9}$/.test(cleanPhone)) throw new BillingError(400, 'Enter an 11-digit mobile number starting with 09, or leave it empty.');
+  const cleanEmail = cleanText(email, 120).toLowerCase();
+  if (cleanEmail && !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(cleanEmail)) throw new BillingError(400, 'Enter a valid email address, or leave it empty.');
+  const cleanAddress = cleanText(address, 300);
+  const guestName = joinGuestName(first, last);
+
+  const batch = adminDb.batch();
+  let before = null;
+  for (const id of ids) {
+    const ref = adminDb.collection('reservations').doc(id);
+    const snapshot = await ref.get();
+    if (!snapshot.exists) throw new BillingError(404, 'One of this guest’s bookings no longer exists. Refresh the page.');
+    if (!before) before = snapshot.data();
+    batch.update(ref, {
+      firstName: first,
+      lastName: last,
+      guestName,
+      phone: cleanPhone,
+      email: cleanEmail,
+      emailLower: cleanEmail,
+      address: cleanAddress,
+      guestInfoUpdatedAt: FieldValue.serverTimestamp(),
+      guestInfoUpdatedBy: staff.name || staff.email || '',
+    });
+  }
+  await batch.commit();
+  const changed = [
+    before?.guestName !== guestName ? `name "${before?.guestName || ''}" → "${guestName}"` : '',
+    String(before?.phone || '') !== cleanPhone ? 'phone' : '',
+    String(before?.email || '').toLowerCase() !== cleanEmail ? 'email' : '',
+    String(before?.address || '') !== cleanAddress ? 'address' : '',
+  ].filter(Boolean);
+  return { updated: ids.length, guestName, changed };
+}
+
+// Resort closure (typhoon, flood): email every listed guest their options
+// (new dates or a full refund, no fee). Admin only. Bookings are checked on
+// the server: they must be active and overlap the closed dates.
+async function sendClosureNotices({ staff, reservationIds, closedFrom, closedTo, reason }) {
+  if (staff.role !== 'admin') throw new BillingError(403, 'Only an admin can send closure notices.');
+  const dateKey = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateKey.test(String(closedFrom)) || !dateKey.test(String(closedTo)) || closedTo < closedFrom) {
+    throw new BillingError(400, 'Choose the dates the resort is closed.');
+  }
+  const ids = Array.isArray(reservationIds) ? [...new Set(reservationIds.filter(id => typeof id === 'string' && id))].slice(0, 200) : [];
+  if (!ids.length) throw new BillingError(400, 'Choose at least one booking.');
+  const cleanReason = cleanText(reason, 120);
+  let sent = 0;
+  const failed = [];
+  for (const id of ids) {
+    const snapshot = await adminDb.collection('reservations').doc(id).get();
+    const reservation = snapshot.data();
+    const end = String(reservation?.checkOut || reservation?.checkIn || '').slice(0, 10);
+    const affected = reservation && ['pending', 'confirmed'].includes(reservation.status)
+      && stayRangesOverlap(closedFrom, closedTo, String(reservation.checkIn).slice(0, 10), end);
+    if (!affected || !(reservation.email || reservation.guestEmail)) { failed.push(id); continue; }
+    try {
+      await sendClosureNoticeEmail({ reservation, bookingRef: id.slice(0, 8).toUpperCase(), reason: cleanReason, closedFrom, closedTo });
+      await snapshot.ref.update({ closureNotice: { sentAt: FieldValue.serverTimestamp(), closedFrom, closedTo, reason: cleanReason, sentBy: staff.name || staff.email || '' } });
+      sent += 1;
+    } catch (error) {
+      console.error('Closure notice failed:', id, error);
+      failed.push(id);
+    }
+  }
+  return { sent, failed };
+}
+
+// Cancel with the policy fee, mark a no-show (noShow: true) or, for admins,
+// waive the policy (waive: true, with a reason). See lib/cancelBooking.js.
+async function cancelWithPolicy({ staff, reservationId, reason, preview = false, noShow = false, waive = false }) {
   if (staff.role === 'receptionist' && !staffCan(staff, 'cancel')) {
     throw new BillingError(403, 'Receptionists can request a cancellation, but only an admin can cancel.');
   }
-  const policySnap = await adminDb.doc('settings/cancellationPolicy').get();
-  const policy = policySnap.exists ? policySnap.data() : DEFAULT_CANCELLATION_POLICY;
-  const cleanReason = cleanText(reason, 500);
-  const receiptNumber = typeof reservationId === 'string' ? `CXL-${reservationId.slice(0, 8).toUpperCase()}` : '';
-  const result = await adminDb.runTransaction(async transaction => {
-    const { ref, reservation } = await getReservation(transaction, reservationId);
-    if (['cancelled', 'checked-out'].includes(reservation.status)) {
-      throw new BillingError(409, 'This booking is already cancelled or checked out.');
-    }
-    const outcome = getStaffCancellationFee({
-      policy, checkIn: reservation.checkIn, totalAmount: reservation.totalAmount, amountPaid: reservation.amountPaid || 0,
-    });
-    if (!outcome) throw new BillingError(409, 'This booking’s check-in date or total is invalid, so the fee can’t be calculated.');
-    if (preview) return { preview: true, ...outcome, hasEmail: Boolean(reservation.email || reservation.guestEmail) };
-    const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
-    const roomSnap = roomRef ? await transaction.get(roomRef) : null;
-    transaction.update(ref, {
-      status: 'cancelled',
-      cancellationRequested: false,
-      cancellationReason: cleanReason,
-      cancellationFee: outcome.fee,
-      cancellationFeeRate: outcome.rate,
-      cancellationTier: outcome.tier,
-      cancellationRetained: outcome.retained,
-      refundAmount: outcome.refund,
-      cancellationReceiptNumber: receiptNumber,
-      cancelledAt: new Date().toISOString(),
-      cancelledBy: staff.uid,
-      cancelledByName: staff.name || staff.email || '',
-      statusUpdatedAt: FieldValue.serverTimestamp(),
-      statusUpdatedBy: staff.uid,
-    });
-    if (roomSnap?.exists) transaction.update(roomRef, { status: 'vacant' });
-    return { ...outcome, reservation };
-  });
-  if (result.preview) return result;
-
-  // The booking is cancelled either way; a failed email is reported to staff.
-  const { reservation, ...outcome } = result;
-  let emailSent = false;
-  let emailError = '';
   try {
-    await sendCancellationEmail({
-      reservation, bookingRef: reservationId.slice(0, 8).toUpperCase(), receiptNumber, outcome, reason: cleanReason,
-    });
-    emailSent = true;
-    await adminDb.collection('reservations').doc(reservationId).update({ cancellationEmailSentAt: FieldValue.serverTimestamp() });
+    return await cancelBooking({ actor: staff, reservationId, reason, preview: preview === true, noShow: noShow === true, waive: waive === true });
   } catch (error) {
-    emailError = error.message || 'The cancellation email could not be sent.';
-    console.error('Cancellation email failed:', error);
+    if (error instanceof CancelError) throw new BillingError(error.httpStatus, error.message);
+    throw error;
   }
-  return { ...outcome, receiptNumber, emailSent, emailError };
 }
 
 const isActive = r => !['cancelled', 'checked-out'].includes(String(r.status || '').toLowerCase());
@@ -288,7 +324,7 @@ async function roomIsTaken(transaction, { roomId, roomNumber, checkIn, checkOut,
   return [...byId.docs, ...byNumber.docs].some(doc => {
     if (doc.id === ignoreId) return false;
     const r = doc.data();
-    if (!isActive(r) || (r.roomId && r.roomId !== roomId) || typeof r.checkIn !== 'string') return false;
+    if (!holdsRoom(r) || (r.roomId && r.roomId !== roomId) || typeof r.checkIn !== 'string') return false;
     const end = typeof r.checkOut === 'string' && r.checkOut ? r.checkOut.slice(0, 10) : r.checkIn.slice(0, 10);
     return stayRangesOverlap(checkIn, checkOut, r.checkIn.slice(0, 10), end);
   });
@@ -424,7 +460,7 @@ async function createWalkIn({ staff, booking = {} }) {
     // Priced exactly like an online booking (room rate + extra guests).
     let pricing;
     try {
-      pricing = priceBookingDetails(room, details, { cottageId, cottageFee });
+      pricing = priceBookingDetails(room, details, { cottageId, cottageFee, seasonPeriods: await readSeasonPeriods() });
     } catch (error) {
       throw new BillingError(409, error.message || `Room ${room.roomNumber} has no valid rate.`);
     }
@@ -452,6 +488,8 @@ async function createWalkIn({ staff, booking = {} }) {
       extraGuestCharge: pricing.extraGuestCharge,
       lateArrival: isLateArrivalTime(details.checkInTime) && details.bookingType === 'overnight',
       lateArrivalSurcharge: pricing.lateArrivalSurcharge || 0,
+      seasonalSurcharge: pricing.seasonalSurcharge || 0,
+      seasonalLabel: pricing.seasonalLabel || '',
       cottageId,
       cottageFee,
       subtotalAmount: totalAmount,
@@ -500,7 +538,11 @@ const ACTIVE_CHANGE_REQUESTS = ['requested', 'needs_review', 'awaiting_payment',
 // tour, move dates, or change guest counts. The server reprices it with the
 // same rules as a new booking. With `preview: true` it only returns the new
 // price, so staff can see it before saving.
-async function editBooking({ staff, reservationId, changes = {}, preview = false }) {
+async function editBooking({ staff, reservationId, changes = {}, preview = false, waivePolicy = false, waiveReason = '' }) {
+  // Admins may move dates inside the 30-day window (e.g. typhoon closure).
+  const waiving = waivePolicy === true;
+  if (waiving && staff.role !== 'admin') throw new BillingError(403, 'Only an admin can waive the date-change rule.');
+  if (waiving && !preview && cleanText(waiveReason, 300).length < 5) throw new BillingError(400, 'Write why the date-change rule is waived.');
   return adminDb.runTransaction(async transaction => {
     const { ref, reservation } = await getReservation(transaction, reservationId);
     if (!['pending', 'confirmed', 'checked-in'].includes(reservation.status)) {
@@ -529,7 +571,7 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
     // Policy: dates can't move less than 30 days before arrival or once the
     // stay has started (cancel and rebook instead). Extending or shortening
     // the check-out isn't a date move.
-    const dateBlock = getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: details.checkIn });
+    const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: details.checkIn });
     if (dateBlock) throw new BillingError(409, dateBlock);
     if (await roomIsTaken(transaction, {
       roomId: reservation.roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut, ignoreId: reservationId,
@@ -540,6 +582,7 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
     let pricing;
     try {
       pricing = priceBookingDetails(room, details, {
+        seasonPeriods: await readSeasonPeriods(),
         cottageId: reservation.cottageId || '',
         cottageFee: Number(reservation.cottageFee || 0),
         dayVisitors: getReservationDayVisitors(reservation),
@@ -569,17 +612,22 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
     if (preview) return { preview: true, ...quote };
 
     transaction.update(ref, {
+      ...(waiving ? { policyWaived: true, policyWaivedReason: cleanText(waiveReason, 300), policyWaivedBy: staff.name || staff.email || '' } : {}),
       ...details,
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
+      seasonalSurcharge: pricing.seasonalSurcharge || 0,
+      seasonalLabel: pricing.seasonalLabel || '',
       subtotalAmount: pricing.subtotalAmount,
       totalAmount,
       paymentStatus: paymentStatusFor(totalAmount + extraCharges, amountPaid),
       editHistory: FieldValue.arrayUnion({
         id: crypto.randomUUID(),
         editedBy: staff.uid,
+        editedByName: staff.name || staff.email || '',
         editedAt: new Date().toISOString(),
+        ...(waiving ? { waiveReason: cleanText(waiveReason, 300) } : {}),
         from: {
           bookingType: reservation.bookingType || '', tourPeriod: reservation.tourPeriod || '',
           checkIn: reservation.checkIn || '', checkOut: reservation.checkOut || '',
@@ -611,6 +659,8 @@ export default async function handler(req, res) {
     else if (body.action === 'cancel-with-policy') result = await cancelWithPolicy({ ...body, staff });
     else if (body.action === 'create-walk-in') result = await createWalkIn({ staff, booking: body.booking });
     else if (body.action === 'edit-booking') result = await editBooking({ ...body, staff });
+    else if (body.action === 'closure-notice') result = await sendClosureNotices({ ...body, staff });
+    else if (body.action === 'update-guest') result = await updateGuest({ ...body, staff });
     else return res.status(400).json({ error: 'Choose a valid billing action.' });
     // Previews change nothing, so they aren't logged.
     const entry = result?.preview ? null : describeBillingAction(body, result || {});

@@ -8,6 +8,7 @@ import { calculateReservationModification } from '../lib/reservationModification
 import { findNearestOpenDates } from '../src/lib/bookingSuggestions';
 import { getGroupAdvanceNoticeError } from '../src/lib/corporatePackages';
 import { manilaDateKey } from '../src/lib/reservationStatus';
+import { holdsRoom } from '../src/lib/unpaidBookings';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 const ACTIVE_REFUND_STATUSES = ['eligible', 'needs_review', 'approved', 'processing', 'awaiting_confirmation'];
@@ -291,7 +292,7 @@ async function requestScheduleChange(reservation, body) {
     const bookedRanges = roomBookings.docs
       .filter(doc => doc.id !== reservation.id)
       .map(doc => doc.data())
-      .filter(other => !['cancelled', 'checked-out', 'rejected'].includes(String(other.status || '').toLowerCase())
+      .filter(other => holdsRoom(other)
         && typeof other.checkIn === 'string' && typeof other.checkOut === 'string')
       .map(other => ({ checkIn: other.checkIn.slice(0, 10), checkOut: other.checkOut.slice(0, 10) }));
     const clash = bookedRanges.some(other => stayRangesOverlap(checkIn, checkOut, other.checkIn, other.checkOut));

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
 import { doc, getDoc, collection, query, onSnapshot, where } from 'firebase/firestore';
-import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
 import './portal-sidebar.css';
@@ -19,6 +19,9 @@ import PortalSidebar from './PortalSidebar';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { AccountMenu, TopbarIconButton, topbarButtonStyle } from './TopbarControls';
 import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
+import ShiftSummaryDialog from './ShiftSummaryDialog';
+import { useIdleLogout } from '../lib/staffSession';
+import { CheckInIdHost } from './CheckInIdDialog';
 
 const navItems = [
   { label: 'Dashboard', path: '/receptionist/dashboard', icon: 'ti-layout-dashboard' },
@@ -108,10 +111,11 @@ export default function ReceptionistLayout({ children }) {
     };
   }, []);
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    window.location.href = '/admin/login';
-  };
+  // Signing out shows the end-of-shift summary first.
+  const [shiftOpen, setShiftOpen] = useState(false);
+  const handleLogout = () => setShiftOpen(true);
+  // Shared front-desk computer: sign out after inactivity (Settings → Notifications & security).
+  useIdleLogout({ enabled: settings?.sessionTimeout !== false, minutes: Number(settings?.autoLogout) || 30 });
 
   const initials = staffName
     ? staffName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
@@ -200,7 +204,7 @@ export default function ReceptionistLayout({ children }) {
               onClick={() => setChatOpen(true)}
             />
 
-            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/receptionist" showInquiries={access.can('inquiries')} />
+            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/receptionist" showInquiries={access.can('inquiries')} feedbackPath={access.can('feedback') ? '/receptionist/feedback' : '/receptionist/dashboard'} />
 
             <TopbarIconButton
               icon="ti-settings"
@@ -228,6 +232,8 @@ export default function ReceptionistLayout({ children }) {
       </AnimatedSidebarInset>
 
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
+      <CheckInIdHost dark={dark} accent={ACCENT} />
+      <ShiftSummaryDialog open={shiftOpen} onClose={() => setShiftOpen(false)} staffName={staffName} dark={dark} accent={ACCENT} />
       <CheckInReminder soundAlerts={settings?.soundAlerts !== false} prefix="/receptionist" />
       <StaffToaster prefix="/receptionist" enabled={settings?.notifications !== false} />
     </AnimatedSidebarProvider>

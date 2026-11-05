@@ -119,6 +119,20 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
       });
     }
 
+    // Paid after the room hold ran out, and the room was taken meanwhile.
+    if (r.holdConflict && !['cancelled', 'checked-out'].includes(status)) {
+      items.push({
+        id: `hold-conflict_${r.id}`,
+        icon: 'ti-alert-octagon',
+        badge: 'Paid After Hold Expired',
+        message: `${guest} · ${ref(r.id)}`,
+        details: `Paid ${peso(r.amountPaid)} but the room was rebooked. Move them to another room or refund.`,
+        timeMs: toMs(r.holdConflictAt) || createdMs,
+        bookingId: r.id,
+        path,
+      });
+    }
+
     const refundOpen = ACTIVE_REFUND_STATUSES.includes(lower(r.refundRequestStatus));
     if (refundOpen || r.cancellationRequested) {
       items.push({

@@ -44,6 +44,8 @@ import {
 import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 import { getCottageAvailabilityFor } from '../lib/cottageStock';
 import { cottageAvailabilityError } from '../src/lib/cottages';
+import { holdsRoom } from '../src/lib/unpaidBookings';
+import { readSeasonPeriods } from '../lib/seasonStore';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -229,7 +231,8 @@ export default async function handler(req, res) {
 
     const hasOverlap = roomResSnap.docs.some((d) => {
       const r = d.data();
-      if (r.status === 'cancelled') return false; // cancelled bookings free up the dates
+      // Cancelled bookings and expired unpaid holds free up the dates.
+      if (!holdsRoom(r)) return false;
       const existingIn = toDateKey(r.checkIn);
       const existingOut = toDateKey(r.checkOut);
       if (!existingIn || !existingOut) return false;
@@ -251,6 +254,7 @@ export default async function handler(req, res) {
 
     // ---- 6. Create the reservation ---------------------------------------
     const nights = getStayUnits(checkIn, checkOut);
+    const seasonPeriods = await readSeasonPeriods();
     const pricing = calculateBookingPrice({
       room,
       bookingType,
@@ -262,6 +266,7 @@ export default async function handler(req, res) {
       cottageFee: requestedCottageFee,
       dayVisitors,
       lateArrival: Boolean(timeSlot.lateArrival),
+      season: { periods: seasonPeriods, checkIn, checkOut },
     });
     const totalAmount = pricing.subtotalAmount;
 
@@ -299,6 +304,8 @@ export default async function handler(req, res) {
       dayVisitorCharge: pricing.dayVisitorCharge,
       lateArrival: Boolean(timeSlot.lateArrival),
       lateArrivalSurcharge: pricing.lateArrivalSurcharge,
+      seasonalSurcharge: pricing.seasonalSurcharge || 0,
+      seasonalLabel: pricing.seasonalLabel || '',
       notes: notes || '',
       preferredContactMethod,
       contactLink: preferredContactMethod === 'Facebook Messenger' ? String(contactLink).trim() : '',
