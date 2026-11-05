@@ -207,3 +207,14 @@ describe('booking pricing', () => {
     })).toThrow('Choose a valid cottage rate.');
   });
 });
+
+describe('room capacity wording', () => {
+  const { describeRoomCapacity } = require('./bookingPricing');
+  test('couple rooms read "2 adults + 1 child", others "Up to N guests"', () => {
+    expect(describeRoomCapacity({ maxAdults: 2, maxChildren: 1, maxGuests: 3 })).toBe('2 adults + 1 child');
+    expect(describeRoomCapacity({ maxAdults: 2, maxChildren: 1, maxGuests: 2 })).toBe('Up to 2 guests');
+    expect(describeRoomCapacity({ maxAdults: 6, maxChildren: 6, maxGuests: 6 })).toBe('Up to 6 guests');
+    expect(describeRoomCapacity({ maxAdults: 3, maxChildren: 1, maxGuests: 4 })).toBe('3 adults + 1 child');
+    expect(describeRoomCapacity(null)).toBe('');
+  });
+});

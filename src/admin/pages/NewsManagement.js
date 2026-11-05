@@ -4,24 +4,11 @@ import { auth, db } from '../../firebase/firebase';
 import { collection, addDoc, getDocs, onSnapshot, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { safeHttpUrl } from '../../lib/safeUrl';
+import { uploadImage } from '../lib/uploadImage';
 
-// ── Cloudinary config (same account as Room Management) ─────
-const CLOUDINARY_CLOUD_NAME = 'x17b4eux';
-const CLOUDINARY_UPLOAD_PRESET = 'w8sfwf9b';
-
-const uploadToCloudinary = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-
-  const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
-    { method: 'POST', body: formData }
-  );
-  if (!res.ok) throw new Error('Cloudinary upload failed');
-  const data = await res.json();
-  return data.secure_url;
-};
+// Photos upload through the server, so no Cloudinary setting is in the page.
+const uploadToCloudinary = file => uploadImage(file, 'news');
 
 const LIME = '#9cb56f';
 const DARK = '#0a1a0a';
@@ -194,6 +181,11 @@ export default function NewsManagement() {
 
   const handleSubmit = async () => {
     if (!form.title || !form.category) return;
+    // Links must be ordinary web links (no javascript: and the like).
+    if (form.externalLink && !safeHttpUrl(form.externalLink)) {
+      setBroadcastError('The "Read more" link must start with https:// (or http://).');
+      return;
+    }
     if (notifySubscribers && form.status !== 'published') {
       setBroadcastError('Publish the article before sending it to subscribers.');
       return;

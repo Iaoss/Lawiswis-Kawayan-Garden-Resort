@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { adminDb } from '../lib/firebaseAdmin';
-import { verifyStaff } from '../lib/verifyStaff';
+import { staffCan, verifyStaff } from '../lib/verifyStaff';
+import { safeHttpUrl } from '../src/lib/safeUrl';
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -16,7 +17,10 @@ export default async function handler(req, res) {
     res.setHeader('Allow', ['POST']);
     return res.status(405).json({ error: 'Method not allowed' });
   }
-  if (!await verifyStaff(req)) return res.status(401).json({ error: 'Not authorized.' });
+  const staff = await verifyStaff(req);
+  if (!staff) return res.status(401).json({ error: 'Not authorized.' });
+  // Emailing every subscriber: admins, or staff given News access.
+  if (!staffCan(staff, 'news')) return res.status(403).json({ error: 'Only an admin can email subscribers.' });
   if (!adminDb) return res.status(503).json({ error: 'Newsletter service is unavailable.' });
 
   const { articleId } = req.body || {};
@@ -30,7 +34,9 @@ export default async function handler(req, res) {
       adminDb.collection('newsletterSubscribers').where('status', '==', 'active').get(),
     ]);
     if (!articleSnap.exists) return res.status(404).json({ error: 'Article not found.' });
-    const article = articleSnap.data();
+    const stored = articleSnap.data();
+    // Only plain web links go into the email.
+    const article = { ...stored, externalLink: safeHttpUrl(stored.externalLink), imageUrl: safeHttpUrl(stored.imageUrl) };
     if (article.status !== 'published') {
       return res.status(400).json({ error: 'Only published articles can be broadcast.' });
     }

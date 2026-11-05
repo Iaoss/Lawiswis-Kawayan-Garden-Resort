@@ -182,7 +182,7 @@ export default function Rooms() {
             style={{ flex: '1 1 260px', minWidth: '220px', border: `1px solid ${LINE}`, borderRadius: '999px', background: '#fff', padding: '14px 18px', color: INK, font: `12px ${SANS}`, outline: 'none' }}
           />
         </div>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '40px' }}>
+        <div className="rooms-filter-row" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '40px' }}>
           {['all', ...groupTitles].map(title => (
             <button key={title} type="button" onClick={() => setFilter(title)} className={`rooms-filter-chip ${filter === title ? 'active' : ''}`}>
               {title === 'all' ? 'All rooms' : title}

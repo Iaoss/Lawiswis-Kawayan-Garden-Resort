@@ -8,24 +8,11 @@ import { logStaffActivity } from '../lib/activityLog';
 import { useSettings } from '../components/SettingsContext';
 import { ROOM_TYPES, ROOM_TYPE_CATEGORY_MAP, normalizeRoomType } from '../utils/roomCatalog';
 import { resolveRoomImage } from '../../client/components/clientTheme';
+import { uploadImage } from '../lib/uploadImage';
 
 // ── Cloudinary config ────────────────────────────────────────
-const CLOUDINARY_CLOUD_NAME = 'x17b4eux';
-const CLOUDINARY_UPLOAD_PRESET = 'w8sfwf9b';
-
-const uploadToCloudinary = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-
-  const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
-    { method: 'POST', body: formData }
-  );
-  if (!res.ok) throw new Error('Cloudinary upload failed');
-  const data = await res.json();
-  return data.secure_url;
-};
+// Photos upload through the server, so no Cloudinary setting is in the page.
+const uploadToCloudinary = file => uploadImage(file, 'room');
 
 const LIME  = '#9cb56f';
 const DARK  = '#0a1a0a';

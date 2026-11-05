@@ -59,6 +59,9 @@ service cloud.firestore {
       allow read: if isAdminOr('activity');
       allow create: if isStaff()
         && request.resource.data.staffUid == request.auth.uid
+        // Can't pose as someone else: role and name must be the writer's own.
+        && request.resource.data.staffRole == userRole()
+        && request.resource.data.staffName == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('name', '')
         && request.resource.data.createdAt == request.time
         && request.resource.data.keys().hasOnly(['action', 'summary', 'reservationId', 'guestName', 'details', 'staffUid', 'staffName', 'staffEmail', 'staffRole', 'createdAt'])
         && request.resource.data.summary is string
@@ -110,20 +113,22 @@ service cloud.firestore {
 
     // ── Contact inquiries (created by the server) ───────────
     match /contacts/{contactId} {
-      allow read: if isStaff();
-      allow update: if isStaff();
+      allow read: if isAdminOr('inquiries');
+      // Mark answered / add a reply; the guest's message can't be edited.
+      allow update: if isAdminOr('inquiries')
+        && changedKeys().hasOnly(['status', 'answeredAt', 'read', 'replies']);
       allow delete: if isAdmin();
       allow create: if false;
     }
 
     // ── Newsletter subscribers (created by the server) ──────
     match /subscribers/{subscriberId} {
-      allow read: if isStaff();
+      allow read: if isAdmin();
       allow update, delete: if isAdmin();
       allow create: if false;
     }
     match /newsletterSubscribers/{subscriberId} {
-      allow read: if isStaff();
+      allow read: if isAdminOr('feedback') || isAdminOr('news');
       allow update: if isAdminOr('feedback');
       allow delete: if isAdmin();
       allow create: if false;
@@ -178,7 +183,10 @@ service cloud.firestore {
     // validates it, so browsers can't write here directly.
     match /feedback/{feedbackId} {
       allow create: if false;
-      allow read, update: if isStaff();
+      allow read: if isStaff();
+      allow update: if isStaff()
+        && changedKeys().hasOnly(['read'])
+        || (isAdminOr('feedback') && changedKeys().hasOnly(['read', 'publicStatus', 'publicDecidedAt']));
       allow delete: if isAdmin();
     }
 
@@ -238,6 +246,7 @@ service cloud.firestore {
           let d = request.resource.data;
           return d.keys().hasOnly(['text', 'sender', 'timestamp'])
             && d.sender == 'guest'
+            && d.timestamp == request.time
             && d.text is string
             && d.text.size() > 0
             && d.text.size() <= 2000;

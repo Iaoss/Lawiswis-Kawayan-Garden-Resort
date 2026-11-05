@@ -3,6 +3,7 @@ import { Timestamp, collection, onSnapshot, query, where } from 'firebase/firest
 import { db } from '../../firebase/firebase';
 import NotificationButton from '../../components/ui/notification-button';
 import { PulsingDot } from './TopbarControls';
+import { pushToast, variantForNotification } from '../lib/staffToasts';
 import {
   ACTIVE_MODIFICATION_STATUSES,
   ACTIVE_REFUND_STATUSES,
@@ -188,6 +189,15 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
     const fresh = ids.filter(id => !knownRef.current.has(id) && !readIds.includes(id));
     ids.forEach(id => knownRef.current.add(id));
     if (fresh.length > 0 && soundAlerts) playSound();
+    // Each new item also pops up in the corner (see StaffToaster).
+    notifications.filter(n => fresh.includes(n.id)).slice(0, 4).forEach(n => pushToast({
+      id: n.id,
+      variant: variantForNotification(n.id),
+      title: n.badge,
+      description: [n.message, n.details].filter(Boolean).join(' · '),
+      path: n.bookingId ? `${n.path}?booking=${encodeURIComponent(n.bookingId)}` : n.path,
+      actionLabel: n.bookingId ? 'Open booking' : 'Open',
+    }));
   }, [ready, notifications, readIds, soundAlerts]);
 
   const markRead = ids => {

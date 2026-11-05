@@ -10,6 +10,7 @@ import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { Skeleton } from '../../components/ui/v-skeleton-8-utils/skeleton.jsx';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
+import { safeHttpUrl } from '../../lib/safeUrl';
 import RoomCarousel from '../components/RoomCarousel';
 import { decorateRoom } from '../lib/roomCatalog';
 
@@ -647,10 +648,10 @@ export default function Home() {
         ) : (
           <div className="responsive-grid-3" style={{ gap: '24px' }}>
             {newsArticles.map((b, i) => (
-              <a key={b.id} href={b.externalLink || 'https://lawiswiskawayanresort.com/'} target="_blank" rel="noopener noreferrer"
+              <a key={b.id} href={safeHttpUrl(b.externalLink) || 'https://lawiswiskawayanresort.com/'} target="_blank" rel="noopener noreferrer"
                 style={{ background: PAPER, borderRadius: '6px', overflow: 'hidden', border: `1px solid ${LINE}`, cursor: 'pointer', display: 'block', textDecoration: 'none', color: 'inherit' }}>
                 <div style={{ height: '170px', overflow: 'hidden' }}>
-                  <img src={b.imageUrl ? optimizeImage(b.imageUrl, IMAGE_WIDTHS.card) : newsFallbackPhotos[i % newsFallbackPhotos.length]} alt={b.title} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={safeHttpUrl(b.imageUrl) ? optimizeImage(b.imageUrl, IMAGE_WIDTHS.card) : newsFallbackPhotos[i % newsFallbackPhotos.length]} alt={b.title} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 </div>
                 <div style={{ padding: '18px' }}>
                   <span style={{ background: CREAM, color: FOREST, fontSize: '9.5px', fontWeight: '600', letterSpacing: '0.05em', padding: '4px 10px', borderRadius: '3px', fontFamily: SANS }}>{b.category || 'News'}</span>

@@ -8,7 +8,7 @@
 //   body: { to, cc?, subject, text, inReplyTo?, references? }
 
 import nodemailer from 'nodemailer';
-import { verifyStaff } from '../lib/verifyStaff';
+import { staffCan, verifyStaff } from '../lib/verifyStaff';
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -32,6 +32,9 @@ export default async function handler(req, res) {
 
   const staff = await verifyStaff(req);
   if (!staff) return res.status(401).json({ error: 'Not authorized.' });
+  // Sending as the resort: admins (Email page), or receptionists an admin
+  // gave Contact Inquiries access (to reply to inquiries).
+  if (!staffCan(staff, 'inquiries')) return res.status(403).json({ error: 'Only an admin can send email from the resort account.' });
 
   try {
     const { to, cc, subject, text, inReplyTo, references } = req.body || {};

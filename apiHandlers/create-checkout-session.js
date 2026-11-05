@@ -111,7 +111,11 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Could not validate reservation payment' });
   }
 
-  const siteUrl = process.env.PUBLIC_SITE_URL || `https://${req.headers.host}`;
+  // Where PayMongo sends the guest back. Only our own site: a forged Host
+  // header must not turn this into a redirect to someone else's page.
+  const host = String(req.headers.host || '').toLowerCase();
+  const trustedHost = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.vercel\.app$/.test(host) || /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host);
+  const siteUrl = process.env.PUBLIC_SITE_URL || (trustedHost ? `https://${host}` : 'https://lawiswis-kawayan-garden-resort.vercel.app');
 
   try {
     const session = await createPayMongoCheckoutSession({
@@ -145,6 +149,7 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error('create-checkout-session failed:', err);
-    return res.status(502).json({ error: err.message || 'Failed to create checkout session' });
+    // Guests see a plain message; PayMongo's details stay in the server log.
+    return res.status(502).json({ error: 'The payment page could not be opened. Please try again in a moment.' });
   }
 }

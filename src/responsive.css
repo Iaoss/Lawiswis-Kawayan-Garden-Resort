@@ -44,9 +44,10 @@ html, body { max-width: 100%; overflow-x: clip; }
 
 /* ── Phones (≤ 767px) ─────────────────────────────────── */
 @media (max-width: 767px) {
-  /* Every multi-column grid becomes one column, except calendars. */
-  .portal-main-content [style*="grid-template-columns"]:not([style*="repeat(7"]),
-  .client-main [style*="grid-template-columns"]:not([style*="repeat(7"]):not([style*="repeat(2, minmax(0"]) {
+  /* Every multi-column grid becomes one column, except calendars and grids
+     marked "keep-columns" (they have their own phone layout). */
+  .portal-main-content [style*="grid-template-columns"]:not([style*="repeat(7"]):not(.keep-columns),
+  .client-main [style*="grid-template-columns"]:not([style*="repeat(7"]):not([style*="repeat(2, minmax(0"]):not(.keep-columns) {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 

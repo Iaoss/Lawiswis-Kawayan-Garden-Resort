@@ -13,6 +13,28 @@ const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 const ACTIVE_REFUND_STATUSES = ['eligible', 'needs_review', 'approved', 'processing', 'awaiting_confirmation'];
 const ACTIVE_MODIFICATION_STATUSES = ['requested', 'needs_review', 'approved', 'awaiting_payment', 'awaiting_refund'];
 
+// Only what the guest's booking page shows. Internal fields (staff ids,
+// payment processor references, audit data) never leave the server.
+function publicRefundDecision(decision) {
+  if (!decision || typeof decision !== 'object') return null;
+  return {
+    outcome: decision.outcome || '',
+    reason: String(decision.reason || ''),
+    alternatives: Array.isArray(decision.alternatives) ? decision.alternatives.map(String) : [],
+    refundableAmount: Number(decision.refundableAmount || 0),
+    feeAmount: decision.feeAmount == null ? null : Number(decision.feeAmount),
+    policyRate: decision.policyRate == null ? null : Number(decision.policyRate),
+  };
+}
+
+function publicModificationRequest(request) {
+  if (!request || typeof request !== 'object') return null;
+  const pick = ['id', 'status', 'outcome', 'reason', 'requestedCheckIn', 'requestedCheckOut', 'requestedBookingType',
+    'requestedTourPeriod', 'requestedCheckInTime', 'requestedCheckOutTime', 'requestedAdults', 'requestedChildren',
+    'paymentDue', 'refundDue', 'updatedTotal', 'checkoutUrl'];
+  return Object.fromEntries(pick.filter(key => request[key] !== undefined).map(key => [key, request[key]]));
+}
+
 function publicReservation(snapshot) {
   const reservation = snapshot.data();
   return {
@@ -26,8 +48,8 @@ function publicReservation(snapshot) {
     amountPaid: Number(reservation.amountPaid || 0),
     status: reservation.status || 'pending',
     refundRequestStatus: reservation.refundRequestStatus || '',
-    refundDecision: reservation.refundDecision || null,
-    modificationRequest: reservation.modificationRequest || null,
+    refundDecision: publicRefundDecision(reservation.refundDecision),
+    modificationRequest: publicModificationRequest(reservation.modificationRequest),
     adults: Number(reservation.adults || 0),
     children: Number(reservation.children || 0),
     type: reservation.type || '',
@@ -223,7 +245,7 @@ async function requestScheduleChange(reservation, body) {
   }
   if (data.modificationRequest
     && ACTIVE_MODIFICATION_STATUSES.includes(String(data.modificationRequest.status || '').toLowerCase())) {
-    return { alreadyRequested: true, modificationRequest: data.modificationRequest };
+    return { alreadyRequested: true, modificationRequest: publicModificationRequest(data.modificationRequest) };
   }
 
   // The guest can change the dates, switch between overnight / day tour /
@@ -352,7 +374,7 @@ async function requestScheduleChange(reservation, body) {
     }
     if (current.modificationRequest
       && ACTIVE_MODIFICATION_STATUSES.includes(String(current.modificationRequest.status || '').toLowerCase())) {
-      return { alreadyRequested: true, modificationRequest: current.modificationRequest };
+      return { alreadyRequested: true, modificationRequest: publicModificationRequest(current.modificationRequest) };
     }
     transaction.update(reservation.ref, { modificationRequest });
     const auditRef = reservation.ref.collection('modificationAudit').doc(modificationRequest.id);
@@ -383,7 +405,7 @@ async function requestScheduleChange(reservation, body) {
   } catch (emailError) {
     console.error('Could not send schedule change request email:', emailError);
   }
-  return { alreadyRequested: false, modificationRequest };
+  return { alreadyRequested: false, modificationRequest: publicModificationRequest(modificationRequest) };
 }
 
 // Online cancel, refund and date-change requests are turned off.

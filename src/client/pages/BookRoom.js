@@ -23,6 +23,7 @@ import {
   isCheckInPassed,
   getTourCutoffError,
   isSingleDayStay,
+  describeRoomCapacity,
 } from '../../lib/bookingPricing';
 import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
@@ -1270,7 +1271,9 @@ export default function BookRoom() {
                   <strong>This room is too small for {groupSize} guests.</strong> {roomCapacity?.label && roomCapacity.label !== 'Selected room' ? `${roomCapacity.label} rooms take` : 'It takes'} up to {roomCapacity?.maxGuests ?? baseCapacity} guest{(roomCapacity?.maxGuests ?? baseCapacity) === 1 ? '' : 's'}{maxExtraGuests > 0 ? ` (${maxExtraGuests} more than the base ${baseCapacity})` : ''}. Pick one of the rooms below that fits your group.
                 </div>
               )}
-              {groupSize > 0 && (
+              {/* The room was chosen in step 3, so other rooms only show here when
+                  the guest count changed and this room no longer fits. */}
+              {groupSize > 0 && guestCountViolation && (
                 <section aria-labelledby="room-suggestions-title" style={{ marginTop: '16px', border: '1px solid #d8e7db', background: '#f7fbf7', borderRadius: '12px', padding: '14px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline', flexWrap: 'wrap' }}>
                     <div>
@@ -1290,7 +1293,7 @@ export default function BookRoom() {
                           <article key={suggestedRoom.id} style={{ background: '#fff', border: '1px solid #d8e7db', borderRadius: '10px', padding: '12px', minWidth: 0 }}>
                             <strong style={{ display: 'block', color: DARK, fontSize: '13px' }}>{suggestedRoom.roomNumber || suggestedRoom.name || suggestedRoom.type}</strong>
                             {suggestedRoom.suggestedKind && <span style={{ display: 'block', marginTop: '3px', color: DARK, fontSize: '11px', fontWeight: 600 }}>{suggestedRoom.suggestedKind}</span>}
-                            <span style={{ display: 'block', marginTop: '3px', color: '#52725b', fontSize: '11px' }}>Up to {capacity?.maxGuests} guests{suggestedRoom.suggestedPrice < Number.MAX_SAFE_INTEGER ? ` · ₱${suggestedRoom.suggestedPrice.toLocaleString()} for your group` : ''}</span>
+                            <span style={{ display: 'block', marginTop: '3px', color: '#52725b', fontSize: '11px' }}>{describeRoomCapacity(capacity) || `Up to ${capacity?.maxGuests} guests`}{suggestedRoom.suggestedPrice < Number.MAX_SAFE_INTEGER ? ` · ₱${suggestedRoom.suggestedPrice.toLocaleString()} for your group` : ''}</span>
                             <div style={{ marginTop: '10px', fontSize: '11px', color: '#374151', lineHeight: 1.5 }}>
                               <div><strong>Layout:</strong> {details.layout}</div>
                               <div><strong>Comfort:</strong> {details.comfort}</div>

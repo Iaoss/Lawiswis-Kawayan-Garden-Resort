@@ -267,6 +267,17 @@ export function getRoomCapacityPolicy(room) {
   };
 }
 
+// Who a room is for, in words guests understand: "2 adults + 1 child" for a
+// couple room that also takes a child, otherwise "Up to 4 guests".
+export function describeRoomCapacity(policy) {
+  if (!policy || !policy.maxGuests) return '';
+  const extraChildren = Math.min(policy.maxChildren || 0, policy.maxGuests - (policy.maxAdults || policy.maxGuests));
+  if (policy.maxAdults && extraChildren > 0) {
+    return `${policy.maxAdults} adult${policy.maxAdults === 1 ? '' : 's'} + ${extraChildren} child${extraChildren === 1 ? '' : 'ren'}`;
+  }
+  return `Up to ${policy.maxGuests} guest${policy.maxGuests === 1 ? '' : 's'}`;
+}
+
 export function getGuestCountViolation(room, adults, children) {
   const policy = getRoomCapacityPolicy(room);
   if (!policy) return null;

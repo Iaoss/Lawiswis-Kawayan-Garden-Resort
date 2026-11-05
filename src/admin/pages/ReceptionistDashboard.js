@@ -8,7 +8,9 @@ import {
 import ReceptionistLayout from '../components/ReceptionistLayout';
 import { useSettings } from '../components/SettingsContext';
 import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
-import { getOverstay, getOverstayStats, getPeriodRange, getReservationAverages, manilaDateKey } from '../../lib/reservationStatus';
+import { getOverstay, getOverstayStats, getPeriodRange, getReservationAverages, isReadyToCheckIn, manilaDateKey } from '../../lib/reservationStatus';
+import { staffApi } from '../lib/staffApi';
+import { appAlert } from '../../components/ui/app-dialog';
 import { getFeedbackSummary } from '../../lib/dashboardMetrics';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -66,6 +68,20 @@ export default function ReceptionistDashboard() {
 
   const [stats, setStats] = useState({ todayArrivals: 0, todayDepartures: 0, checkedIn: 0, pendingPayments: 0, availableRooms: 0, totalRooms: 0 });
   const [arrivals, setArrivals] = useState([]);
+  const [checkingIn, setCheckingIn] = useState('');
+
+  // One-click check-in for guests who already paid in full.
+  const checkInGuest = async reservation => {
+    setCheckingIn(reservation.id);
+    try {
+      await staffApi('reservation-status', { action: 'set-status', reservationId: reservation.id, status: 'checked-in' });
+      setArrivals(list => list.map(r => (r.id === reservation.id ? { ...r, status: 'checked-in', checkedInAt: new Date().toISOString() } : r)));
+    } catch (error) {
+      appAlert(error.message || 'The guest could not be checked in.', { title: 'Check-in failed', tone: 'warning' });
+    } finally {
+      setCheckingIn('');
+    }
+  };
   const [departures, setDepartures] = useState([]);
   const [allReservations, setAllReservations] = useState([]);
 
@@ -319,6 +335,15 @@ export default function ReceptionistDashboard() {
                         <span style={{ background: dark ? '#14532d' : '#dcfce7', color: dark ? '#86efac' : '#16a34a', padding: '3px 8px', borderRadius: '20px', fontSize: '10px', fontWeight: '600' }}>
                           {r.status}
                         </span>
+                        {isReadyToCheckIn(r) && (
+                          <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '10px', fontWeight: 700, color: dark ? '#86efac' : '#15803d' }}>Paid in full · ready</span>
+                            <button type="button" disabled={checkingIn === r.id} onClick={() => checkInGuest(r)}
+                              style={{ border: 0, borderRadius: 7, padding: '3px 9px', fontSize: '10px', fontWeight: 700, cursor: checkingIn === r.id ? 'wait' : 'pointer', background: dark ? '#86efac' : '#15803d', color: dark ? '#052e16' : '#fff', fontFamily: "'Poppins', sans-serif" }}>
+                              {checkingIn === r.id ? 'Checking in…' : 'Check in'}
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}

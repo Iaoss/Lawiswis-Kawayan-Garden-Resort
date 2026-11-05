@@ -224,9 +224,9 @@ export default function ChatWidget() {
   };
 
   return (
-    <div style={{ position: 'fixed', right: '20px', bottom: '20px', zIndex: open ? 1000 : 40, fontFamily: "'Poppins', sans-serif" }}>
+    <div className="guest-chat" style={{ position: 'fixed', right: '20px', bottom: '20px', zIndex: open ? 1000 : 40, fontFamily: "'Poppins', sans-serif" }}>
       {open ? (
-        <div style={{ width: '320px', maxWidth: 'calc(100vw - 32px)', height: 'min(620px, calc(100dvh - 44px))', maxHeight: 'calc(100dvh - 44px)', background: '#fff', borderRadius: '24px', boxShadow: '0 30px 80px rgba(0,0,0,0.18)', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: '280px' }}>
+        <div className="guest-chat-panel" style={{ width: '320px', maxWidth: 'calc(100vw - 32px)', height: 'min(620px, calc(100dvh - 44px))', maxHeight: 'calc(100dvh - 44px)', background: '#fff', borderRadius: '24px', boxShadow: '0 30px 80px rgba(0,0,0,0.18)', overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: '280px' }}>
           <div style={{ background: DARK, color: '#fff', padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
             <div>
               <div style={{ fontWeight: '800', fontSize: '15px' }}>Lawiswis Support</div>
@@ -356,7 +356,7 @@ export default function ChatWidget() {
           </div>
         </div>
       ) : (
-        <button onClick={() => setOpen(true)} aria-label="Open chat"
+        <button className="guest-chat-fab" onClick={() => setOpen(true)} aria-label="Open chat"
           style={{ width: '60px', height: '60px', borderRadius: '50%', background: ACCENT, border: 'none', boxShadow: '0 20px 40px rgba(0,0,0,0.18)', color: '#fff', fontSize: '24px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <ChatIcon size={26} />
         </button>

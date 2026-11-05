@@ -105,3 +105,22 @@ describe('status steps', () => {
     expect(getStatusTransitionError('approved', 'checked-in')).toBe('');
   });
 });
+
+describe('ready to check in (paid in full)', () => {
+  const { isReadyToCheckIn } = require('./reservationStatus');
+  const now = new Date('2026-11-05T04:00:00Z'); // noon, Nov 5, Philippine time
+  const paid = { status: 'confirmed', checkIn: '2026-11-05', checkOut: '2026-11-06', totalAmount: 4600, amountPaid: 4600 };
+
+  test('confirmed, fully paid and arriving today', () => {
+    expect(isReadyToCheckIn(paid, now)).toBe(true);
+    expect(isReadyToCheckIn({ ...paid, checkIn: '2026-11-05', checkOut: '2026-11-05' }, now)).toBe(true);
+  });
+
+  test('not when money is owed, the date is wrong or the guest is already in', () => {
+    expect(isReadyToCheckIn({ ...paid, amountPaid: 2300 }, now)).toBe(false);
+    expect(isReadyToCheckIn({ ...paid, extraCharges: 500 }, now)).toBe(false);
+    expect(isReadyToCheckIn({ ...paid, checkIn: '2026-11-06', checkOut: '2026-11-07' }, now)).toBe(false);
+    expect(isReadyToCheckIn({ ...paid, status: 'checked-in' }, now)).toBe(false);
+    expect(isReadyToCheckIn({ ...paid, status: 'pending' }, now)).toBe(false);
+  });
+});

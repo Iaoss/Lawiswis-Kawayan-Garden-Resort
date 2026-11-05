@@ -315,7 +315,7 @@ export default function Reports() {
         </div>
 
         {/* Summary tiles */}
-        <div className="report-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+        <div className="report-summary-grid keep-columns" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px', marginBottom: '20px' }}>
           {summaryCards.map(c => (
             <div key={c.label} className="report-summary-card" style={{ background: c.bg, borderRadius: '16px', padding: '18px', color: '#fff', position: 'relative', overflow: 'hidden', minHeight: '104px' }}>
               <span className="report-icon" style={{ position: 'absolute', top: '14px', right: '14px', width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(255,255,255,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>

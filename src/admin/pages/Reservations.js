@@ -23,6 +23,7 @@ import {
   formatManilaTime,
   getScheduledCheckOutMs,
   MAX_LATE_CHECKOUT_HOURS,
+  isReadyToCheckIn,
 } from '../../lib/reservationStatus';
 import { appPrompt } from '../../components/ui/app-dialog';
 import { useStaffAccess } from '../lib/useStaffAccess';
@@ -1107,6 +1108,18 @@ export default function Reservations() {
           <i className={`ti ${label.type === 'in' ? 'ti-login' : 'ti-logout'}`} aria-hidden="true" />{label.text}
         </div>
       ))}
+      {/* Paid in full (e.g. online) and arriving today: one click on arrival. */}
+      {isReadyToCheckIn(r, now) && (
+        <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: dark ? '#86efac' : '#15803d', background: dark ? 'rgba(22,101,52,.35)' : '#dcfce7', borderRadius: 999, padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <i className="ti ti-circle-check" aria-hidden="true" /> Paid in full · ready to check in
+          </span>
+          <button type="button" disabled={statusBusyId === r.id} onClick={() => updateStatus(r.id, 'checked-in')}
+            style={{ border: 0, borderRadius: 8, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: statusBusyId === r.id ? 'wait' : 'pointer', background: dark ? '#86efac' : '#15803d', color: dark ? '#052e16' : '#fff', fontFamily: 'inherit' }}>
+            {statusBusyId === r.id ? 'Checking in…' : 'Check in'}
+          </button>
+        </div>
+      )}
     </div>
   );
   const canEditBooking = r => ['pending', 'confirmed', 'checked-in'].includes(r.status) && r.type !== 'corporate' && Boolean(r.roomId);

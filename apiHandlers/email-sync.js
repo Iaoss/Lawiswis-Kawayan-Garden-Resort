@@ -101,6 +101,8 @@ export default async function handler(req, res) {
 
   const staff = await verifyStaff(req);
   if (!staff) return res.status(401).json({ error: 'Not authorized.' });
+  // The inbox is admin-only (same as the Firestore rules for emails).
+  if (staff.role !== 'admin') return res.status(403).json({ error: 'Only an admin can read the resort inbox.' });
 
   if (!adminDb) {
     return res.status(500).json({

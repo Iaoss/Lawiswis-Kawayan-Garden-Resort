@@ -5,9 +5,11 @@ import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, FOREST_DEEP, INK, LINE, MOSS, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import BookingSteps from '../components/BookingSteps';
+import { useIsPhone } from '../lib/useIsPhone';
+import { pickRecommendedRooms } from '../../lib/bookingSuggestions';
 import { decorateRoom } from '../lib/roomCatalog';
 import {
-  calculateBookingPrice, getGuestCountViolation, getResortNow, getRoomCapacityPolicy,
+  calculateBookingPrice, describeRoomCapacity, getGuestCountViolation, getResortNow, getRoomCapacityPolicy,
   getStayDurationError, getStayUnits, getTourCutoffError,
 } from '../../lib/bookingPricing';
 import { MIN_GROUP_GUESTS } from '../../lib/corporatePackages';
@@ -18,9 +20,9 @@ import { MIN_GROUP_GUESTS } from '../../lib/corporatePackages';
 // (stay details, your details, review & pay) happens on /book/:roomId.
 
 const STAYS = [
-  { id: 'overnight', name: 'Overnight stay', hint: 'Sleep over · check out another day' },
-  { id: 'day', name: 'Day tour', hint: 'Same day · 8:00 AM – 5:00 PM' },
-  { id: 'night', name: 'Night tour', hint: 'Same day · 5:00 PM – 10:00 PM' },
+  { id: 'overnight', name: 'Overnight stay', hint: 'Sleep over · check out another day', phoneName: 'Overnight', phoneHint: 'Sleep over' },
+  { id: 'day', name: 'Day tour', hint: 'Same day · 8:00 AM – 5:00 PM', phoneHint: '8 AM – 5 PM' },
+  { id: 'night', name: 'Night tour', hint: 'Same day · 5:00 PM – 10:00 PM', phoneHint: '5 – 10 PM' },
 ];
 const MAX_PERSONAL_GUESTS = MIN_GROUP_GUESTS - 1;
 
@@ -45,6 +47,8 @@ export default function BookingWizard() {
   const [params, setParams] = useSearchParams();
   const { available: resortOpen, loading: resortLoading } = useResortAvailability();
   const today = getResortNow().dateKey;
+  // Phones get a more compact layout (see src/client/mobile.css).
+  const isPhone = useIsPhone();
   const maxDate = addMonthsKey(today, 2);
   const presetRoomId = params.get('room') || '';
 
@@ -164,15 +168,15 @@ export default function BookingWizard() {
     const free = rooms.filter(room => availableIds.includes(room.id));
     const fits = free
       .filter(room => !getGuestCountViolation(room, Number(adults), Number(children)))
-      .map(room => ({ room, price: priceFor(room), kind: getRoomCapacityPolicy(room)?.label || room.groupTitle }))
+      .map(room => ({ room, price: priceFor(room), kind: getRoomCapacityPolicy(room)?.label || room.groupTitle, spare: (getRoomCapacityPolicy(room)?.maxGuests || 99) - guests }))
       .filter(entry => entry.price !== null)
-      .sort((a, b) => a.price - b.price || String(a.room.title).localeCompare(String(b.room.title)));
+      // Cheapest first; at the same price, the room closest to the group size.
+      .sort((a, b) => a.price - b.price || a.spare - b.spare || String(a.room.title).localeCompare(String(b.room.title)));
     return { fitting: fits, tooSmall: free.length - fits.length };
   }, [rooms, availableIds, adults, children, stay, nights]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const presetEntry = presetRoom ? fitting.find(entry => entry.room.id === presetRoom.id) : null;
-  const recommended = fitting.filter(entry => entry.room.id !== presetRoomId).slice(0, 3);
-  const others = fitting.filter(entry => entry.room.id !== presetRoomId).slice(3);
+  const { recommended, others } = pickRecommendedRooms(fitting.filter(entry => entry.room.id !== presetRoomId));
 
   const chooseRoom = room => {
     navigate(`/book/${room.id}?checkIn=${encodeURIComponent(checkIn)}&checkOut=${encodeURIComponent(stayEnd)}`, {
@@ -217,8 +221,8 @@ export default function BookingWizard() {
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
           <div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>{entry.kind}</div>
           <strong style={{ font: `500 20px ${SERIF}`, color: INK }}>{room.title}</strong>
-          <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>Up to {getRoomCapacityPolicy(room)?.maxGuests || '—'} guests{room.location ? ` · ${room.location}` : ''}</span>
-          <p style={{ margin: '2px 0 0', font: `12.5px/1.6 ${SANS}`, color: '#55584b', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{room.description}</p>
+          <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>{describeRoomCapacity(getRoomCapacityPolicy(room)) || 'Ask us about capacity'}{room.location ? ` · ${room.location}` : ''}</span>
+          <p className="wizard-room-desc" style={{ margin: '2px 0 0', font: `12.5px/1.6 ${SANS}`, color: '#55584b', display: '-webkit-box', WebkitLineClamp: isPhone ? 2 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{room.description}</p>
           <button type="button" onClick={() => { setDetailsFor(entry); setPhotoIndex(0); }}
             style={{ alignSelf: 'flex-start', border: 0, background: 'none', padding: '2px 0 6px', color: FOREST, font: `600 12px ${SANS}`, textDecoration: 'underline', textUnderlineOffset: 3, cursor: 'pointer' }}>
             View room details
@@ -266,18 +270,18 @@ export default function BookingWizard() {
             <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 10 }}>Step 2 of 6</div>
             <h1 style={{ color: FOREST_DEEP, font: `500 clamp(28px, 5vw, 40px)/1.15 ${SERIF}`, margin: '0 0 8px' }}>When are you coming?</h1>
             {presetRoom && <p style={{ color: '#6b6a5c', font: `14px ${SANS}`, margin: '0 0 6px' }}>You picked <strong style={{ color: FOREST }}>{presetRoom.title}</strong>. We'll check it's free for your dates.</p>}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, margin: '18px 0' }}>
+            <div className="wizard-stay-options keep-columns" style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(3, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: isPhone ? 6 : 10, margin: isPhone ? '14px 0' : '18px 0' }}>
               {STAYS.map(option => {
                 const closed = option.id !== 'overnight' && checkIn === today && Boolean(getTourCutoffError(today, option.id));
                 return (
                   <button key={option.id} type="button" aria-pressed={stay === option.id} onClick={() => { setStay(option.id); setWhenError(''); }} style={choice(stay === option.id)}>
-                    <strong style={{ display: 'block', font: `600 15px ${SANS}` }}>{option.name}</strong>
-                    <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>{closed ? 'Closed for today — pick another date' : option.hint}</span>
+                    <strong style={{ display: 'block', font: `600 15px ${SANS}` }}>{isPhone && option.phoneName ? option.phoneName : option.name}</strong>
+                    <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>{closed ? (isPhone ? 'Closed today' : 'Closed for today — pick another date') : (isPhone ? option.phoneHint : option.hint)}</span>
                   </button>
                 );
               })}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
+            <div className="keep-columns" style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: isPhone ? 10 : 14 }}>
               <label style={label}>{isTour ? 'Date' : 'Check-in'}
                 <input type="date" min={today} max={maxDate} value={checkIn} onChange={e => { const value = e.target.value; setCheckIn(value); if (checkOut && checkOut <= value) setCheckOut(''); setWhenError(''); }} style={input} />
               </label>
@@ -287,7 +291,7 @@ export default function BookingWizard() {
                 </label>
               )}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginTop: 18 }}>
+            <div className="keep-columns" style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: isPhone ? 10 : 14, marginTop: 18 }}>
               <div style={label}>Adults{counter(Number(adults), setAdults, 1, 'adults')}</div>
               <div style={label}>Children (under 10){counter(Number(children), setChildren, 0, 'children')}</div>
             </div>
@@ -354,9 +358,9 @@ export default function BookingWizard() {
                     {recommended.length > 0 && (
                       <>
                         <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 4px' }}>Recommended for your group</h2>
-                        <p style={{ color: '#6b6a5c', font: `12px ${SANS}`, margin: '0 0 12px' }}>Free on your dates and fit {guests} guest{guests === 1 ? '' : 's'}, best value first.</p>
+                        <p style={{ color: '#6b6a5c', font: `12px ${SANS}`, margin: '0 0 12px' }}>Free on your dates: rooms made for {guests} guest{guests === 1 ? '' : 's'}, plus one with a little more space.</p>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16, marginBottom: 26 }}>
-                          {recommended.map((entry, index) => roomCard(entry, index === 0 ? 'Best value' : 'Recommended'))}
+                          {recommended.map(entry => roomCard(entry, entry.badge))}
                         </div>
                       </>
                     )}
@@ -388,7 +392,7 @@ export default function BookingWizard() {
         const facts = [
           ['Room type', room.groupTitle],
           ['Location', room.location],
-          ['Guests', policy ? `Up to ${policy.maxGuests} guests${policy.maxAdults && policy.maxAdults < policy.maxGuests ? ` (max ${policy.maxAdults} adults)` : ''}` : room.capacity],
+          ['Guests', describeRoomCapacity(policy) || room.capacity],
           ['Beds', room.bedNote],
           ['Your stay', `${STAYS.find(option => option.id === stay).name} · ${isTour ? longDate(checkIn) : `${longDate(checkIn)} → ${longDate(checkOut)}`}`],
         ].filter(([, value]) => value);

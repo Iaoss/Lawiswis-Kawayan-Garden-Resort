@@ -9,6 +9,7 @@ import logo from './logo-mark.png';
 import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
 import NotificationBell from './NotificationBell';
 import CheckInReminder from './CheckInReminder';
+import StaffToaster from './StaffToaster';
 import { AccountMenu, TopbarIconButton, topbarButtonStyle } from './TopbarControls';
 import {
   AnimatedSidebarInset,
@@ -163,7 +164,7 @@ export default function Layout({ children }) {
           </AnimatedSidebarTrigger>
           <div>
             <div style={{ fontWeight: '600', fontSize: '17px', color: SIDEBAR_TEXT }}>{currentLabel}</div>
-            <div style={{ fontSize: '11px', color: MUTED }}>HuaPro Resort Management System</div>
+            <div className="portal-topbar-subtitle" style={{ fontSize: '11px', color: MUTED }}>HuaPro Resort Management System</div>
           </div>
 
           <div className="topbar-dock" style={{ '--dock-accent': ACCENT, justifyContent: 'flex-end', flexShrink: 0, marginLeft: 'auto' }}>
@@ -225,7 +226,8 @@ export default function Layout({ children }) {
 
       {/* Slide-in Messages panel */}
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
-      <CheckInReminder dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts !== false} prefix="/admin" />
+      <CheckInReminder soundAlerts={settings?.soundAlerts !== false} prefix="/admin" />
+      <StaffToaster prefix="/admin" enabled={settings?.notifications !== false} />
     </AnimatedSidebarProvider>
   );
 }

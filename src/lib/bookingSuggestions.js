@@ -76,3 +76,25 @@ export function findNearestOpenDates({ checkIn, checkOut, bookedRanges = [], min
   }
   return results;
 }
+
+// Step 3 "Recommended for your group": up to 2 rooms made for exactly this
+// many guests, then 1 room with a little more space. `entries` are rooms that
+// fit, each { room, price, spare } where spare = room capacity − guests.
+// If there aren't enough exact fits, the cheapest other rooms fill in.
+export function pickRecommendedRooms(entries = []) {
+  const byPrice = (a, b) => a.price - b.price || String(a.room?.title || '').localeCompare(String(b.room?.title || ''));
+  const exact = entries.filter(entry => entry.spare === 0).sort(byPrice).slice(0, 2)
+    .map((entry, index) => ({ ...entry, badge: index === 0 ? 'Best fit' : 'Also fits' }));
+  const roomier = entries.filter(entry => entry.spare > 0)
+    .sort((a, b) => a.spare - b.spare || byPrice(a, b)).slice(0, 1)
+    .map(entry => ({ ...entry, badge: `Room for +${entry.spare}` }));
+  const picks = [...exact, ...roomier];
+  const chosen = new Set(picks.map(entry => entry.room?.id));
+  entries.filter(entry => !chosen.has(entry.room?.id)).sort(byPrice)
+    .slice(0, Math.max(0, 3 - picks.length))
+    .forEach(entry => { picks.push({ ...entry, badge: 'Recommended' }); chosen.add(entry.room?.id); });
+  return {
+    recommended: picks,
+    others: entries.filter(entry => !chosen.has(entry.room?.id)).sort(byPrice),
+  };
+}

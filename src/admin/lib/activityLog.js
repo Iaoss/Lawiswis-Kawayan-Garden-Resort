@@ -13,7 +13,8 @@ async function staffProfile(user) {
   const data = snapshot.data() || {};
   cachedProfile = {
     uid: user.uid,
-    name: String(data.name || '').slice(0, 80),
+    // Sent exactly as saved: the rules check it matches the user's name.
+    name: String(data.name || ''),
     email: String(data.email || user.email || '').slice(0, 120),
     role: String(data.role || '').slice(0, 20),
   };
@@ -38,6 +39,8 @@ export async function logStaffActivity(action, summary, { reservationId = '', gu
       createdAt: serverTimestamp(),
     });
   } catch (error) {
+    // The name or role may have just changed: read it again next time.
+    cachedProfile = null;
     console.warn('Activity log entry was not saved:', error);
   }
 }

@@ -118,3 +118,24 @@ describe('rate-card services', () => {
     expect(priceService('photoshoot', { persons: 5, hours: 10 }).error).toMatch(/8 AM–5 PM/);
   });
 });
+
+describe('step 3 recommendations', () => {
+  const { pickRecommendedRooms } = require('./bookingSuggestions');
+  const entry = (id, price, spare) => ({ room: { id, title: id }, price, spare });
+
+  test('2 rooms for exactly the group, then 1 with a little more space', () => {
+    const { recommended, others } = pickRecommendedRooms([
+      entry('aruga', 3000, 1), entry('bituin', 3000, 0), entry('tadhana', 3000, 0),
+      entry('minamahal', 3000, 0), entry('family', 4600, 2),
+    ]);
+    expect(recommended.map(r => [r.room.id, r.badge])).toEqual([
+      ['bituin', 'Best fit'], ['minamahal', 'Also fits'], ['aruga', 'Room for +1'],
+    ]);
+    expect(others.map(r => r.room.id)).toEqual(['tadhana', 'family']);
+  });
+
+  test('no exact fit: the closest bigger rooms fill in', () => {
+    const { recommended } = pickRecommendedRooms([entry('a', 4600, 1), entry('b', 6200, 3), entry('c', 5600, 1)]);
+    expect(recommended.map(r => r.room.id)).toEqual(['a', 'c', 'b']);
+  });
+});

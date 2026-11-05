@@ -49,6 +49,17 @@ export function canAutoCheckIn(reservation, now = new Date()) {
   return Boolean(checkIn) && checkIn <= today && (checkOut >= today || checkOut === checkIn);
 }
 
+// A confirmed booking that's fully paid (e.g. paid online) and arrives
+// today: staff only need to check the guest in when they come.
+export function isReadyToCheckIn(reservation, now = new Date()) {
+  if (String(reservation?.status || '').toLowerCase() !== 'confirmed') return false;
+  if (hasOutstandingBalance(reservation) || !(Number(reservation?.totalAmount) > 0)) return false;
+  const today = manilaDateKey(now);
+  const checkIn = String(reservation?.checkIn || '').slice(0, 10);
+  const checkOut = String(reservation?.checkOut || checkIn).slice(0, 10);
+  return Boolean(checkIn) && checkIn <= today && (checkOut > today || checkOut === checkIn);
+}
+
 export function getStatusTransitionError(from, to) {
   if (from === to) return '';
   if (!RESERVATION_STATUSES.includes(to)) return 'Choose a valid reservation status.';

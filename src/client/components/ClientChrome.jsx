@@ -4,6 +4,7 @@ import { BRASS, FOREST_DEEP, PAPER, SANS, LINE } from './clientTheme';
 import { useResortAvailability } from './ResortAvailabilityContext';
 import { BOOKING_TYPE_MODAL_EVENT } from '../lib/bookingTypeModal';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
+import '../mobile.css';
 
 const logo = optimizeImage('https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png', IMAGE_WIDTHS.logo);
 // Floating pill navbar colours.
@@ -202,14 +203,14 @@ export default function ClientChrome({ children }) {
         </div>
       )}
       <main className="client-main">{children}</main>
-      <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>
-        <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '34px' }}>
-          <div><img src={logo} alt="Lawiswis Kawayan" onClick={onFooterLogoTap} draggable={false} style={{ width: '180px', filter: 'brightness(0) invert(1)', marginBottom: '16px', WebkitTapHighlightColor: 'transparent', userSelect: 'none' }} /><p style={{ maxWidth: '300px', fontSize: '12px', lineHeight: 1.8, margin: 0 }}>A quiet bamboo garden hideaway in Calumpit, Bulacan, where work and play sit comfortably side by side.</p></div>
+      <footer className="client-footer" style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>
+        <div className="client-footer-grid" style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '34px' }}>
+          <div className="client-footer-brand"><img src={logo} alt="Lawiswis Kawayan" onClick={onFooterLogoTap} draggable={false} style={{ width: '180px', filter: 'brightness(0) invert(1)', marginBottom: '16px', WebkitTapHighlightColor: 'transparent', userSelect: 'none' }} /><p style={{ maxWidth: '300px', fontSize: '12px', lineHeight: 1.8, margin: 0 }}>A quiet bamboo garden hideaway in Calumpit, Bulacan, where work and play sit comfortably side by side.</p></div>
           <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>EXPLORE</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/rooms')} style={{ cursor: 'pointer' }}>Our rooms</span><span onClick={() => navigate('/about-us')} style={{ cursor: 'pointer' }}>Our story</span><span onClick={() => navigate('/amenities')} style={{ cursor: 'pointer' }}>Our amenities</span><span onClick={() => navigate('/contact-us')} style={{ cursor: 'pointer' }}>Contact us</span></div></div>
           <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>POLICIES</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/privacy-policy')} style={{ cursor: 'pointer' }}>Privacy Policy</span><span onClick={() => navigate('/terms-of-service')} style={{ cursor: 'pointer' }}>Terms of Service</span><span onClick={() => navigate('/cancellation-policy')} style={{ cursor: 'pointer' }}>Cancellation &amp; Refund Policy</span></div></div>
-          <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>VISIT</strong><p style={{ fontSize: '12px', lineHeight: 1.8, marginTop: '14px' }}>Open daily<br />Day tour 8:00 AM – 5:00 PM<br />Night tour 5:00 PM – 10:00 PM<br />Overnight check-in 10 AM, 2 PM or 6 PM<br />Late arrival after 9 PM (+10%)</p></div>
+          <div className="client-footer-visit"><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>VISIT</strong><p style={{ fontSize: '12px', lineHeight: 1.8, marginTop: '14px' }}>Open daily<br />Day tour 8:00 AM – 5:00 PM<br />Night tour 5:00 PM – 10:00 PM<br />Overnight check-in 10 AM, 2 PM or 6 PM<br />Late arrival after 9 PM (+10%)</p></div>
         </div>
-        <div style={{ maxWidth: '1100px', borderTop: `1px solid ${LINE}33`, margin: '30px auto 0', paddingTop: '18px', fontSize: '10px' }}>© 2026 Lawiswis Kawayan Garden Resort</div>
+        <div className="client-footer-bottom" style={{ maxWidth: '1100px', borderTop: `1px solid ${LINE}33`, margin: '30px auto 0', paddingTop: '18px', fontSize: '10px' }}>© 2026 Lawiswis Kawayan Garden Resort</div>
       </footer>
       <style>{`
         .client-header-wrap { position: sticky; top: 12px; z-index: 50; padding: 12px 16px 0; }
@@ -261,7 +262,6 @@ export default function ClientChrome({ children }) {
           .client-header-logo { width: 118px !important; }
           .client-header-cta { padding: 10px 14px !important; font-size: 10.5px !important; letter-spacing: 0.08em !important; }
           .client-mobile-menu-toggle { width: 38px !important; height: 38px !important; font-size: 19px !important; }
-          footer > div:first-child { grid-template-columns: 1fr !important; }
         }
       `}</style>
     </div>

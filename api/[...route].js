@@ -27,6 +27,7 @@ import sendThankYou from '../apiHandlers/send-thank-you';
 import reservationStatus from '../apiHandlers/reservation-status';
 import staffBilling from '../apiHandlers/staff-billing';
 import staffUsers from '../apiHandlers/staff-users';
+import imageUpload from '../apiHandlers/image-upload';
 import bookingReply from '../apiHandlers/booking-reply';
 import chatQuickReply from '../apiHandlers/chat-quick-reply';
 import createCottageReservation from '../apiHandlers/create-cottage-reservation';
@@ -60,6 +61,7 @@ const handlers = {
   'reservation-status': reservationStatus,
   'staff-billing': staffBilling,
   'staff-users': staffUsers,
+  'image-upload': imageUpload,
   'create-corporate-reservation': createCorporateReservation,
   'public-feedback': publicFeedback,
   'submit-feedback': submitFeedback,

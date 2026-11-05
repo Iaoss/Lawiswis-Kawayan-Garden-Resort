@@ -30,6 +30,15 @@
   --card-foreground: 222 47% 11%;
   --primary: 142 45% 38%;
   --primary-foreground: 0 0% 100%;
+  /* Alert toast colours */
+  --warning: 48 96% 59%;
+  --warning-foreground: 48 96% 5%;
+  --success: 142.1 76.2% 36.3%;
+  --success-foreground: 142.1 76.2% 95%;
+  --info: 215 91% 54%;
+  --info-foreground: 215 91% 95%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 98%;
 }
 
 :root[data-dark="true"] {
@@ -44,6 +53,15 @@
   --card-foreground: 60 10% 91%;
   --primary: 82 65% 55%;
   --primary-foreground: 100 40% 8%;
+  /* Alert toast colours */
+  --warning: 48 96% 59%;
+  --warning-foreground: 48 96% 5%;
+  --success: 142.1 70.6% 45.3%;
+  --success-foreground: 142.1 76.2% 95%;
+  --info: 213 94% 62%;
+  --info-foreground: 215 91% 95%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
 }
 
 body {
