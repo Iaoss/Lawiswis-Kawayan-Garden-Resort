@@ -4,6 +4,7 @@ import { getCorporateNights, getCorporatePackage, getGroupAdvanceNoticeError, ge
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
 import { getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
 import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -49,6 +50,9 @@ export default async function handler(req, res) {
           : 'Reservations are temporarily closed. Please contact the resort for updates.',
       });
     }
+    // Planned closed dates (maintenance): other dates can still be booked.
+    const closedPeriod = availabilitySnap.exists ? findClosedPeriod(availabilitySnap.data().closedDates, checkIn, checkOut) : null;
+    if (closedPeriod) return res.status(409).json({ error: closedPeriodMessage(closedPeriod) });
 
     // Group size: 15 to 250 guests, with a clear message either way.
     const guestError = getGroupGuestError(totalGuests);

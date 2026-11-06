@@ -37,6 +37,7 @@ import { getLiveStayLabels, formatStayDateTime } from '../../lib/stayTimes';
 import { DATE_CHANGE_NOTICE_DAYS, getDaysBeforeArrival } from '../../lib/cancellationPolicy';
 import { printDailySheet } from '../lib/printDailySheet';
 import { askCheckInId } from '../components/CheckInIdDialog';
+import { money } from '../lib/money';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -739,7 +740,7 @@ export default function Reservations() {
     let force = false;
     let statusReason = reason;
     if (status === 'checked-out' && hasOutstandingBalance(reservation)) {
-      const owedText = `₱${outstandingAmount(reservation).toLocaleString()}`;
+      const owedText = `${money(outstandingAmount(reservation))}`;
       if (!canOverrideCheckout) {
         setToast({ type: 'error', text: `This guest still owes ${owedText}. Collect payment in Billing before checking out.` });
         return;
@@ -842,7 +843,7 @@ export default function Reservations() {
     if (!lateFeeDialog || lateFeeBusy) return;
     const amount = Number(lateFeeDialog.amount);
     if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_LATE_FEE) {
-      setToast({ type: 'error', text: `Enter a late check-out charge between ₱1 and ₱${MAX_LATE_FEE.toLocaleString()}.` });
+      setToast({ type: 'error', text: `Enter a late check-out charge between ₱1 and ₱${MAX_LATE_FEE.toLocaleString()} (in pesos).` });
       return;
     }
     setLateFeeBusy(true);
@@ -854,7 +855,7 @@ export default function Reservations() {
         note: lateFeeDialog.note,
       });
       setLateFeeDialog(null);
-      setToast({ type: 'success', text: `Late check-out charge of ₱${amount.toLocaleString()} added. Balance due: ₱${Math.max(0, result.balance).toLocaleString()}.` });
+      setToast({ type: 'success', text: `Late check-out charge of ${money(amount)} added. Balance due: ${money(Math.max(0, result.balance))}.` });
     } catch (error) {
       setToast({ type: 'error', text: error.message });
     } finally {
@@ -955,7 +956,7 @@ export default function Reservations() {
         type: 'success',
         text: action === 'ask-guest-confirm'
           ? `Email sent to ${reservation.email || 'the guest'} asking them to confirm the booking.`
-          : `Payment link for ₱${Number(result.amount).toLocaleString()} emailed to ${reservation.email || 'the guest'}. The booking confirms itself once they pay.`,
+          : `Payment link for ${money(Number(result.amount))} emailed to ${reservation.email || 'the guest'}. The booking confirms itself once they pay.`,
       });
     } catch (error) {
       setToast({ type: 'error', text: error.message || 'The email could not be sent.' });
@@ -991,11 +992,11 @@ export default function Reservations() {
           return;
         }
         const result = await cancelWithPolicy(cancelDialog.reservation, cancelReason, { noShow, waive: cancelDialog.waive });
-        const money = `Fee ₱${Number(result.fee || 0).toLocaleString()} · refund ₱${Number(result.refund || 0).toLocaleString()}`;
+        const feeText = `Fee ${money(Number(result.fee || 0))} · refund ${money(Number(result.refund || 0))}`;
         const what = noShow ? 'Marked as a no-show' : 'Reservation cancelled';
         setToast(result.emailSent || (noShow && !(Number(result.amountPaid) > 0))
-          ? { type: 'success', text: `${what}. ${money}.${result.emailSent ? ` Email and receipt ${result.receiptNumber} sent to the guest.` : ''}` }
-          : { type: 'error', text: `${what} (${money}), but the email was not sent: ${result.emailError || 'no email on this booking'}.` });
+          ? { type: 'success', text: `${what}. ${feeText}.${result.emailSent ? ` Email and receipt ${result.receiptNumber} sent to the guest.` : ''}` }
+          : { type: 'error', text: `${what} (${feeText}), but the email was not sent: ${result.emailError || 'no email on this booking'}.` });
       }
       setCancelDialog(null);
     } catch (error) {
@@ -1066,7 +1067,7 @@ export default function Reservations() {
         note: extendDialog.note,
       });
       setExtendDialog(null);
-      setToast({ type: 'success', text: `${extendDialog.reservation.guestName || 'Guest'} can stay until ${result.untilLabel}.${result.fee ? ` ₱${Number(result.fee).toLocaleString()} late check-out fee added to the bill.` : ''}` });
+      setToast({ type: 'success', text: `${extendDialog.reservation.guestName || 'Guest'} can stay until ${result.untilLabel}.${result.fee ? ` ${money(Number(result.fee))} late check-out fee added to the bill.` : ''}` });
     } catch (error) {
       setExtendDialog(d => (d ? { ...d, busy: false } : d));
       setToast({ type: 'error', text: error.message || 'More time could not be given.' });
@@ -1117,8 +1118,8 @@ export default function Reservations() {
         lockedReason={lockedReason}
         colors={stepperColors}
         stepNotes={owes ? {
-          'checked-in': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. They must pay in full before check-in.`,
-          'checked-out': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. Collect payment first${canOverrideCheckout ? ', or override with a reason' : ''}.`,
+          'checked-in': `Guest owes ${money(outstandingAmount(r))}. They must pay in full before check-in.`,
+          'checked-out': `Guest owes ${money(outstandingAmount(r))}. Collect payment first${canOverrideCheckout ? ', or override with a reason' : ''}.`,
         } : {}}
         getStepError={to => getStatusTransitionError(r.status, to) || (to === 'checked-in' ? getEarlyCheckInError(r) || getCheckInPaymentError(r) : '')}
         onSelect={status => updateStatus(r.id, status)}
@@ -1211,7 +1212,7 @@ export default function Reservations() {
               setEditTarget(null);
               setToast({
                 type: 'success',
-                text: `Booking updated. New total ₱${Number(result.totalAmount).toLocaleString()}.${result.overpaid > 0 ? ` The guest overpaid ₱${Number(result.overpaid).toLocaleString()}; arrange a refund.` : ''}`,
+                text: `Booking updated. New total ${money(Number(result.totalAmount))}.${result.overpaid > 0 ? ` The guest overpaid ${money(Number(result.overpaid))}; arrange a refund.` : ''}`,
               });
               fetchReservations();
             }}
@@ -1316,7 +1317,7 @@ export default function Reservations() {
               )}
               {cancelDialog.kind !== 'request' && (() => {
                 const q = cancelDialog.quote;
-                const peso = v => `₱${Number(v || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                const peso = v => `${money(Number(v || 0))}`;
                 if (cancelDialog.quoteError) {
                   return <p style={{ color: '#dc2626', fontSize: '12px', margin: '0 0 14px' }}>{cancelDialog.quoteError}</p>;
                 }
@@ -1364,7 +1365,6 @@ export default function Reservations() {
         {selectedReservation && (() => {
           const s = selectedReservation;
           const sb = statusBadge(s.status);
-          const money = v => (v === undefined || v === null || v === '' ? '—' : `₱${Number(v).toLocaleString()}`);
           const so = getOverstay(s, now);
           const rows = [
             ['Phone Number', s.phone || 'Not provided'],
@@ -1478,12 +1478,12 @@ export default function Reservations() {
                         <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'}
                         <div style={{ fontSize: '11px', color: due.minutesLeft <= 30 ? '#d97706' : MUTED, fontWeight: due.minutesLeft <= 30 ? 700 : 400 }}>
                           Check-out at {formatManilaTime(due.dueMs)} · in {due.minutesLeft >= 60 ? `${Math.floor(due.minutesLeft / 60)}h ${due.minutesLeft % 60}m` : `${due.minutesLeft} min`}
-                          {owes ? ` · owes ₱${outstandingAmount(r).toLocaleString()}` : ' · fully paid'}
+                          {owes ? ` · owes ${money(outstandingAmount(r))}` : ' · fully paid'}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <button onClick={() => setSelectedId(r.id)} style={btn}>View</button>
-                        {owes && <button onClick={() => navigate(billingPath(r.id))} style={{ ...btn, color: '#d97706' }}>Collect ₱{outstandingAmount(r).toLocaleString()}</button>}
+                        {owes && <button onClick={() => navigate(billingPath(r.id))} style={{ ...btn, color: '#d97706' }}>Collect {money(outstandingAmount(r))}</button>}
                         <button onClick={() => setExtendDialog({ reservation: r, hours: 1, amount: '', note: '', busy: false })} style={btn}>Give more time</button>
                         <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
                           style={{ ...btn, background: ACCENT, color: ACCENT_TEXT, border: 'none', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
@@ -1507,7 +1507,7 @@ export default function Reservations() {
                       <div style={{ fontSize: '12px', color: TEXT }}>
                         <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'} · #{r.id.slice(0, 8).toUpperCase()}
                         <div style={{ fontSize: '10px', color: MUTED }}>
-                          {formatDate(r.checkIn)}{r.checkOut && r.checkOut !== r.checkIn ? ` – ${formatDate(r.checkOut)}` : ''} · ₱{total.toLocaleString()} · booked {followUpTime(r.createdAt)}
+                          {formatDate(r.checkIn)}{r.checkOut && r.checkOut !== r.checkIn ? ` – ${formatDate(r.checkOut)}` : ''} · {money(total)} · booked {followUpTime(r.createdAt)}
                           {r.email ? ` · ${r.email}` : ''}{r.phone ? ` · ${r.phone}` : ''}
                         </div>
                         <div style={{ fontSize: '11px', marginTop: '4px', fontWeight: 600, color: followUp.guestReply === 'no' ? '#dc2626' : followUp.guestReply === 'yes' ? (dark ? '#86efac' : '#15803d') : MUTED }}>
@@ -1524,10 +1524,10 @@ export default function Reservations() {
                           <>
                             <button disabled={busy || !r.email} onClick={() => followUpUnpaid('send-payment-link', r, 'deposit')}
                               style={{ ...btn, background: '#166534', color: '#fff', border: 0 }}>
-                              Send deposit link ₱{deposit.toLocaleString()}
+                              Send deposit link {money(deposit)}
                             </button>
                             <button disabled={busy || !r.email} onClick={() => followUpUnpaid('send-payment-link', r, 'full')} style={btn}>
-                              Send full link ₱{total.toLocaleString()}
+                              Send full link {money(total)}
                             </button>
                           </>
                         )}
@@ -1568,8 +1568,8 @@ export default function Reservations() {
                       <div style={{ fontSize: '10px', color: MUTED }}>
                         Overstayed {info.label} · was due {formatDate(r.checkOut)} {r.checkOutTime || DEFAULT_CHECKOUT_TIME}
                         {r.phone ? ` · ${r.phone}` : ''}
-                        {getLateFeeTotal(r) > 0 ? ` · Late fees ₱${getLateFeeTotal(r).toLocaleString()}` : ''}
-                        {hasOutstandingBalance(r) ? ` · Owes ₱${outstandingAmount(r).toLocaleString()}` : ''}
+                        {getLateFeeTotal(r) > 0 ? ` · Late fees ${money(getLateFeeTotal(r))}` : ''}
+                        {hasOutstandingBalance(r) ? ` · Owes ${money(outstandingAmount(r))}` : ''}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -1630,7 +1630,7 @@ export default function Reservations() {
                   <article key={`refund-${r.id}`} style={{ background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '16px' }}>
                     <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Refund request · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
                     <p style={{ margin: '8px 0', color: MUTED, fontSize: '12px' }}>
-                      {r.refundDecision?.reason || 'Staff review requested'} · Proposed refund ₱{Number(r.refundDecision?.refundableAmount || 0).toLocaleString()}
+                      {r.refundDecision?.reason || 'Staff review requested'} · Proposed refund {money(Number(r.refundDecision?.refundableAmount || 0))}
                     </p>
                     {r.refundDecision?.alternatives?.length > 0 && (
                       <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '11px' }}>Options: {r.refundDecision.alternatives.join(' ')}</p>
@@ -1679,8 +1679,8 @@ export default function Reservations() {
                             style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 7, padding: '8px' }} />
                         </label>
                       )}
-                      {request.paymentDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>50% deposit due on extension: ₱{Number(request.paymentDue).toLocaleString()}</p>}
-                      {request.refundDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>Calculated refund after reduction: ₱{Number(request.refundDue).toLocaleString()}</p>}
+                      {request.paymentDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>50% deposit due on extension: {money(Number(request.paymentDue))}</p>}
+                      {request.refundDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>Calculated refund after reduction: {money(Number(request.refundDue))}</p>}
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <button disabled={decisionBusy === r.id} onClick={() => decideRequest(
                           'approve-modification', r,

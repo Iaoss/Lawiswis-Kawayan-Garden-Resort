@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
-import { onSnapshot, collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { onSnapshot, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import RoomExcelImport from '../components/RoomExcelImport';
 import { logStaffActivity } from '../lib/activityLog';
@@ -11,6 +11,9 @@ import { resolveRoomImage } from '../../client/components/clientTheme';
 import { uploadImage } from '../lib/uploadImage';
 import SeasonalRatesManager from '../components/SeasonalRatesManager';
 import { formatSeasonDates, getCurrentOrNextSeason, normalizeSeasonPeriods, seasonalNightlyRate } from '../../lib/seasonalRates';
+import { money } from '../lib/money';
+import { formatClockLabel, getRoomsNotReadyForArrivals } from '../lib/roomReadiness';
+import { manilaDateKey } from '../../lib/reservationStatus';
 
 // ── Cloudinary config ────────────────────────────────────────
 // Photos upload through the server, so no Cloudinary setting is in the page.
@@ -92,9 +95,9 @@ const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', statu
 
 // Activity Log line for a room save; price and status changes are spelled out.
 function describeRoomSave(before, after) {
-  if (!before) return `Added Room ${after.roomNumber} (${after.type}, ₱${Number(after.price || 0).toLocaleString()})`;
+  if (!before) return `Added Room ${after.roomNumber} (${after.type}, ${money(Number(after.price || 0))})`;
   const changes = [];
-  if (Number(before.price) !== Number(after.price)) changes.push(`price ₱${Number(before.price || 0).toLocaleString()} → ₱${Number(after.price || 0).toLocaleString()}`);
+  if (Number(before.price) !== Number(after.price)) changes.push(`price ${money(Number(before.price || 0))} → ${money(Number(after.price || 0))}`);
   if (before.status !== after.status) changes.push(`status ${badgeLabel(before.status)} → ${badgeLabel(after.status)}`);
   return `Updated Room ${after.roomNumber}${changes.length ? `: ${changes.join(', ')}` : ''}`;
 }
@@ -123,6 +126,14 @@ export default function RoomManagement() {
   useEffect(() => onSnapshot(doc(db, 'settings', 'seasonalRates'),
     snapshot => setSeasonPeriods(normalizeSeasonPeriods(snapshot.data())),
     () => setSeasonPeriods([])), []);
+  // Today's arrivals, to warn when their room is still being cleaned.
+  const [arrivalsToday, setArrivalsToday] = useState([]);
+  useEffect(() => {
+    const today = manilaDateKey();
+    return onSnapshot(query(collection(db, 'reservations'), where('checkIn', '>=', today), where('checkIn', '<=', `${today}`)),
+      snapshot => setArrivalsToday(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setArrivalsToday([]));
+  }, []);
   const season = getCurrentOrNextSeason(seasonPeriods, new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10));
   // Escape closes the details window.
   useEffect(() => {
@@ -370,7 +381,7 @@ export default function RoomManagement() {
           <div style={{ height: 1, background: BORDER, margin: '10px 0' }} />
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 17, fontWeight: 800, color: dark ? LIME : '#111' }}>
-              ₱{Number(room.price).toLocaleString()}<span style={{ fontSize: 10, fontWeight: 400, color: MUTED }}>/night</span>
+              {money(Number(room.price))}<span style={{ fontSize: 10, fontWeight: 400, color: MUTED }}>/night</span>
             </span>
             <span style={{ fontSize: 10, color: SUBTEXT, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               Details <i className="ti ti-arrow-up-right" style={{ fontSize: 12 }} />
@@ -380,7 +391,7 @@ export default function RoomManagement() {
             <div title={`${season.name}: ${season.percent > 0 ? '+' : ''}${season.percent}% on nights from ${season.from} to ${season.to}`}
               style={{ marginTop: 6, fontSize: 10.5, fontWeight: 600, color: season.percent > 0 ? '#b45309' : '#15803d', display: 'flex', alignItems: 'center', gap: 4 }}>
               <i className="ti ti-calendar-dollar" aria-hidden="true" />
-              ₱{seasonalNightlyRate(room.price, season).toLocaleString()}/night on {formatSeasonDates(season)} ({season.percent > 0 ? '+' : ''}{season.percent}%)
+              {money(seasonalNightlyRate(room.price, season))}/night on {formatSeasonDates(season)} ({season.percent > 0 ? '+' : ''}{season.percent}%)
             </div>
           )}
         </div>
@@ -417,10 +428,10 @@ export default function RoomManagement() {
               <div style={{ fontSize: 11, color: MUTED }}>#{room.id.slice(0, 6).toUpperCase()} · {room.type}{m.bed ? ` · ${m.bed}` : ''}{m.size ? ` · ${m.size}` : ''}</div>
             </div>
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 19, fontWeight: 800, color: dark ? LIME : '#111' }}>₱{Number(room.price).toLocaleString()}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/night</span></div>
+              <div style={{ fontSize: 19, fontWeight: 800, color: dark ? LIME : '#111' }}>{money(Number(room.price))}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/night</span></div>
               {season && Number(room.price) > 0 && (
                 <div style={{ fontSize: 11, fontWeight: 600, color: season.percent > 0 ? '#b45309' : '#15803d' }}>
-                  ₱{seasonalNightlyRate(room.price, season).toLocaleString()} on {formatSeasonDates(season)} · {season.name}
+                  {money(seasonalNightlyRate(room.price, season))} on {formatSeasonDates(season)} · {season.name}
                 </div>
               )}
             </div>
@@ -643,6 +654,20 @@ export default function RoomManagement() {
           )}
         </AnimatePresence>
 
+        {getRoomsNotReadyForArrivals(rooms, arrivalsToday, manilaDateKey()).map(({ room, arrivals, first }) => (
+          <div key={`not-ready-${room.id}`} role="alert" style={{ marginBottom: 10, padding: '12px 14px', borderRadius: 12, background: dark ? '#3b1d1d' : '#fef2f2', border: `1px solid ${dark ? '#7f1d1d' : '#fecaca'}`, color: dark ? '#fca5a5' : '#991b1b', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <i className="ti ti-bucket-droplet" style={{ fontSize: 18 }} />
+            <div style={{ flex: '1 1 240px' }}>
+              <strong>Room {room.roomNumber} is still {String(room.status).toLowerCase()}</strong>, and a guest is staying there today:
+              {' '}{first.guestName || 'Guest'} checks in at {formatClockLabel(first.checkInTime)}{arrivals.length > 1 ? ` (+${arrivals.length - 1} more)` : ''}.
+              <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>Clean it first. When it's ready, mark it as available.</div>
+            </div>
+            <button type="button" onClick={() => markCleaned(room)}
+              style={{ padding: '8px 14px', background: '#166534', color: '#fff', border: 0, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Mark as available
+            </button>
+          </div>
+        ))}
         {statusError && (
           <div role="alert" style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 10, background: dark ? '#7f1d1d' : '#fee2e2', color: dark ? '#fca5a5' : '#991b1b', fontSize: 12 }}>
             {statusError}

@@ -4,6 +4,7 @@ import { useSettings, DEFAULT_SETTINGS, DASHBOARD_KEYS } from '../components/Set
 import { auth } from '../../firebase/firebase';
 import QuickRepliesManager from '../components/QuickRepliesManager';
 import CottageInventoryManager from '../components/CottageInventoryManager';
+import ClosedDatesManager from '../components/ClosedDatesManager';
 import { appConfirm } from '../../components/ui/app-dialog';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
@@ -386,6 +387,17 @@ export default function Settings() {
                 <option value="USD">USD — US Dollar ($)</option>
               </select>
             </SettingRow>
+            {local.currency === 'USD' && (
+              <SettingRow t={t} icon="ti-arrows-exchange" label="Exchange rate"
+                desc="Pesos per US$1. Amounts in the staff portal are converted with this rate. Guests are still charged in pesos, and amounts you type (payments, prices) are in pesos.">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 13 }}>$1 = ₱</span>
+                  <input type="number" min="1" step="0.01" value={local.usdRate ?? 58}
+                    onChange={e => set('usdRate', e.target.value === '' ? '' : Number(e.target.value))}
+                    style={{ ...selectStyle, width: 90 }} />
+                </div>
+              </SettingRow>
+            )}
             <SettingRow t={t} icon="ti-calendar" label="Date format" desc="How dates appear across the system" last>
               <select value={local.dateFormat} onChange={e => set('dateFormat', e.target.value)} style={selectStyle}>
                 <option value="MM/DD/YYYY">MM/DD/YYYY</option>
@@ -470,6 +482,7 @@ export default function Settings() {
               style={{ margin: '4px 0 16px', padding: '9px 16px', border: 0, borderRadius: 9, background: t.ACCENT, color: t.ACCENT_TEXT, fontSize: 12, fontWeight: 700, cursor: availabilitySaving ? 'wait' : 'pointer', opacity: availabilitySaving || availabilityLoading ? 0.65 : 1 }}>
               {availabilitySaving ? 'Saving…' : 'Save resort status'}
             </button>
+            <ClosedDatesManager t={t} />
             <CottageInventoryManager t={t} />
           </Section>
         )}

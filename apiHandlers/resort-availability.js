@@ -1,6 +1,8 @@
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { verifyStaff } from '../lib/verifyStaff';
 import { logActivity } from '../lib/activityLog';
+import { formatClosedRange, getClosedDatesError, normalizeClosedDates, upcomingClosedDates } from '../src/lib/closedDates';
+import { manilaDateKey } from '../src/lib/reservationStatus';
 
 // Resort status shown on the website:
 //   open    - bookings work as usual
@@ -21,6 +23,7 @@ export default async function handler(req, res) {
         available,
         limited: available && data.limited === true,
         reason: String(data.reason || ''),
+        closedDates: upcomingClosedDates(data.closedDates, manilaDateKey()),
       });
     } catch (error) {
       console.error('Resort availability read failed:', error);
@@ -35,6 +38,26 @@ export default async function handler(req, res) {
   if (!staff) return res.status(401).json({ error: 'Not authorized.' });
   if (staff.role !== 'admin') return res.status(403).json({ error: 'Only an admin can change the resort status.' });
   if (!adminDb) return res.status(503).json({ error: 'Availability settings are unavailable.' });
+
+  // Planned closed dates only (Settings → "Closed dates").
+  if (Array.isArray(req.body?.closedDates) && req.body.available === undefined) {
+    const listError = getClosedDatesError(req.body.closedDates);
+    if (listError) return res.status(400).json({ error: listError });
+    const closedDates = normalizeClosedDates(req.body.closedDates);
+    try {
+      await adminDb.doc(SETTINGS_DOC).set({ closedDates, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      await logActivity(staff, {
+        action: 'resort_status_changed',
+        summary: closedDates.length
+          ? `Set closed dates: ${closedDates.map(item => `${formatClosedRange(item)}${item.reason ? ` (${item.reason})` : ''}`).join('; ')}`.slice(0, 300)
+          : 'Removed all planned closed dates',
+      });
+      return res.status(200).json({ closedDates: upcomingClosedDates(closedDates, manilaDateKey()) });
+    } catch (error) {
+      console.error('Closed dates save failed:', error);
+      return res.status(500).json({ error: 'Could not save the closed dates.' });
+    }
+  }
 
   const { available, limited = false, reason = '' } = req.body || {};
   if (typeof available !== 'boolean' || typeof limited !== 'boolean' || typeof reason !== 'string' || reason.length > 300) {

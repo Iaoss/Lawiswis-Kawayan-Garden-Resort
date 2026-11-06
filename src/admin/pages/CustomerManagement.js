@@ -7,6 +7,7 @@ import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx
 import { getReservationRemarks } from '../../lib/reservationRemarks';
 import { splitGuestName } from '../../lib/nameValidation';
 import { staffApi } from '../lib/staffApi';
+import { money } from '../lib/money';
 
 const normalizeStatus = status => String(status || 'pending').toLowerCase().trim().replace(/[\s_]+/g, '-');
 const dateKey = value => {
@@ -287,7 +288,7 @@ export default function CustomerManagement() {
                     <div>
                       <p style={{ color: MUTED, margin: 0 }}>Total Spent</p>
                       <p style={{ fontWeight: '600', color: GREEN, margin: '2px 0 0' }}>
-                        ₱{selected.stays.reduce((s, r) => s + Number(r.totalAmount || 0), 0).toLocaleString()}
+                        {money(selected.stays.reduce((s, r) => s + Number(r.totalAmount || 0), 0))}
                       </p>
                     </div>
                   </div>
@@ -316,7 +317,7 @@ export default function CustomerManagement() {
                           <td style={{ padding: '10px 16px', color: TEXT }}>Room {r.roomNumber}</td>
                           <td style={{ padding: '10px 16px', color: TEXT }}>{formatDate(r.checkIn)}</td>
                           <td style={{ padding: '10px 16px', color: TEXT }}>{formatDate(r.checkOut)}</td>
-                          <td style={{ padding: '10px 16px', color: TEXT }}>₱{Number(r.totalAmount).toLocaleString()}</td>
+                          <td style={{ padding: '10px 16px', color: TEXT }}>{money(Number(r.totalAmount))}</td>
                           <td style={{ padding: '10px 16px', textTransform: 'capitalize' }}>
                             <span style={{ background: STATUS_BG, color: STATUS_TEXT, padding: '3px 10px', borderRadius: '20px', fontSize: '11px' }}>
                               {r.status}

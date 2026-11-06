@@ -6,6 +6,9 @@ import { useSettings } from '../components/SettingsContext';
 import { getReservationRemarks } from '../../lib/reservationRemarks';
 import { getVatBreakdown } from '../../lib/bookingPricing';
 import { getStayTimingDetails } from '../../lib/stayTimes';
+import { money } from '../lib/money';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { formatManilaTime, getScheduledCheckOutMs } from '../../lib/reservationStatus';
 
 const STATUS_OPTIONS = [
   ['pending', 'Pending'], ['confirmed', 'Confirmed'], ['checked-in', 'Checked In'],
@@ -69,8 +72,16 @@ export default function Reports() {
   const [checkInPreset, setCheckInPreset] = useState('all');
   const [checkInStart, setCheckInStart] = useState('');
   const [checkInEnd, setCheckInEnd] = useState('');
-  const [bookedStart, setBookedStart] = useState('');
-  const [bookedEnd, setBookedEnd] = useState('');
+  // Which date the range filters: when guests arrive, or when they booked.
+  const [dateField, setDateField] = useState('checkIn');
+  const navigate = useNavigate();
+  const location = useLocation();
+  const portal = location.pathname.startsWith('/receptionist') ? '/receptionist' : '/admin';
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
   const [roomFilter, setRoomFilter] = useState('all');
   // Adds the actual check-in / check-out times to the table (and the print).
   const [showStayTimes, setShowStayTimes] = useState(false);
@@ -111,11 +122,17 @@ export default function Reports() {
 
   const filtered = reservations.filter(r => {
     const matchesStatus = statusFilter === 'all' || normalizeStatus(r.status) === statusFilter;
-    const matchesCheckIn = isWithinRange(r.checkIn, checkInFrom, checkInTo);
-    const matchesDateBooked = isWithinRange(getDateBooked(r), bookedStart, bookedEnd);
+    const matchesDates = isWithinRange(dateField === 'booked' ? getDateBooked(r) : r.checkIn, checkInFrom, checkInTo);
     const matchesRoom = roomFilter === 'all' || roomLabel(r) === roomFilter;
-    return matchesStatus && matchesCheckIn && matchesDateBooked && matchesRoom;
+    return matchesStatus && matchesDates && matchesRoom;
   });
+
+  // Checked-in guests whose check-out time has come (or is within 30 min).
+  const readyToCheckOut = reservations
+    .filter(r => normalizeStatus(r.status) === 'checked-in')
+    .map(r => ({ r, due: getScheduledCheckOutMs(r) }))
+    .filter(({ due }) => due && due - now <= 30 * 60000)
+    .sort((a, b) => a.due - b.due);
 
   // Guests checked out while still owing money, with the reason staff gave.
   const unpaidCheckouts = filtered.filter(r => Number(r.checkedOutWithBalance) > 0);
@@ -162,16 +179,14 @@ export default function Reports() {
     setCheckInPreset('all');
     setCheckInStart('');
     setCheckInEnd('');
-    setBookedStart('');
-    setBookedEnd('');
+    setDateField('checkIn');
     setRoomFilter('all');
     setShowStayTimes(false);
   };
 
   const filterSummary = [
     `Status: ${statusFilter === 'all' ? 'All' : STATUS_OPTIONS.find(([value]) => value === statusFilter)?.[1]}`,
-    `Check-in: ${checkInFrom || checkInTo ? `${checkInFrom || 'Any'} to ${checkInTo || 'Any'}` : 'All dates'}`,
-    `Booked: ${bookedStart || bookedEnd ? `${bookedStart || 'Any'} to ${bookedEnd || 'Any'}` : 'All dates'}`,
+    `${dateField === 'booked' ? 'Date booked' : 'Check-in'}: ${checkInFrom || checkInTo ? `${checkInFrom || 'Any'} to ${checkInTo || 'Any'}` : 'All dates'}`,
     `Room: ${roomFilter === 'all' ? 'All rooms' : roomFilter}`,
     ...(showStayTimes ? ['Showing actual check-in/out times'] : []),
   ].join(' | ');
@@ -231,8 +246,8 @@ export default function Reports() {
   ];
 
   const summaryCards = [
-    { label: 'Total Revenue',      value: `₱${totalRevenue.toLocaleString()}`, icon: 'ti-cash',            bg: GRADIENTS.revenue,
-      note: `Incl. 12% VAT ₱${getVatBreakdown(totalRevenue).vat.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · net ₱${getVatBreakdown(totalRevenue).net.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+    { label: 'Total Revenue',      value: `${money(totalRevenue)}`, icon: 'ti-cash',            bg: GRADIENTS.revenue,
+      note: `Incl. 12% VAT ${money(getVatBreakdown(totalRevenue).vat)} · net ${money(getVatBreakdown(totalRevenue).net)}` },
     { label: 'Total Reservations', value: totalReservations,                   icon: 'ti-calendar-event',  bg: GRADIENTS.bookings },
     { label: 'Checked Out',        value: checkedOut,                          icon: 'ti-logout',          bg: GRADIENTS.checkout },
     { label: 'Cancelled',          value: cancelledCount,                      icon: 'ti-calendar-off',    bg: GRADIENTS.cancel },
@@ -314,6 +329,24 @@ export default function Reports() {
           </button>
         </div>
 
+        {readyToCheckOut.length > 0 && (
+          <div className="report-print-controls" style={{ ...card, padding: '12px 14px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', borderColor: '#f59e0b' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, color: dark ? '#fbbf24' : '#b45309' }}>
+              <i className="ti ti-door-exit" /> Guest{readyToCheckOut.length === 1 ? '' : 's'} ready to check out ({readyToCheckOut.length})
+            </span>
+            {readyToCheckOut.map(({ r, due }) => {
+              const late = now > due;
+              return (
+                <button key={r.id} type="button" onClick={() => navigate(`${portal}/billing?booking=${encodeURIComponent(r.id)}&from=reports`)}
+                  title="Open the bill to check this guest out"
+                  style={{ background: late ? (dark ? '#3b1d1d' : '#fef2f2') : (dark ? '#3a2a0d' : '#fffbeb'), color: late ? (dark ? '#fca5a5' : '#b91c1c') : (dark ? '#fcd34d' : '#92400e'), border: `1px solid ${late ? '#f87171' : '#fbbf24'}`, borderRadius: 999, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                  {r.guestName || 'Guest'} · {roomLabel(r) || 'Room'} · {late ? 'was due' : 'due'} {formatManilaTime(due)}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Summary tiles */}
         <div className="report-summary-grid keep-columns" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '16px', marginBottom: '20px' }}>
           {summaryCards.map(c => (
@@ -345,7 +378,15 @@ export default function Reports() {
             </select>
           </div>
           <div>
-            <label style={lbl}>Check-in Range</label>
+            <label style={lbl}>Filter dates by</label>
+            <select value={dateField} onChange={e => setDateField(e.target.value)} style={{ ...inp, width: '100%' }}
+              title="Check-in date: when guests arrive. Date booked: when the booking was made.">
+              <option value="checkIn">Check-in date (arrivals)</option>
+              <option value="booked">Date booked (new bookings)</option>
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Dates</label>
             <select value={checkInPreset} onChange={e => setCheckInPreset(e.target.value)} style={{ ...inp, width: '100%' }}>
               <option value="all">All Dates</option>
               <option value="today">Today</option>
@@ -357,23 +398,15 @@ export default function Reports() {
           {checkInPreset === 'custom' && (
             <>
               <div>
-                <label style={lbl}>Check-in From</label>
+                <label style={lbl}>From</label>
                 <input type="date" value={checkInStart} max={checkInEnd || undefined} onChange={e => setCheckInStart(e.target.value)} style={{ ...inp, width: '100%' }} />
               </div>
               <div>
-                <label style={lbl}>Check-in To</label>
+                <label style={lbl}>To</label>
                 <input type="date" value={checkInEnd} min={checkInStart || undefined} onChange={e => setCheckInEnd(e.target.value)} style={{ ...inp, width: '100%' }} />
               </div>
             </>
           )}
-          <div>
-            <label style={lbl}>Date Booked From</label>
-            <input type="date" value={bookedStart} max={bookedEnd || undefined} onChange={e => setBookedStart(e.target.value)} style={{ ...inp, width: '100%' }} />
-          </div>
-          <div>
-            <label style={lbl}>Date Booked To</label>
-            <input type="date" value={bookedEnd} min={bookedStart || undefined} onChange={e => setBookedEnd(e.target.value)} style={{ ...inp, width: '100%' }} />
-          </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: TEXT, cursor: 'pointer', padding: '10px 0' }}>
             <input type="checkbox" checked={showStayTimes} onChange={e => setShowStayTimes(e.target.checked)} />
             Show actual check-in &amp; check-out times (early/late, time at the resort)
@@ -452,7 +485,7 @@ export default function Reports() {
                 <div style={{ width: '100%', background: TRACK, borderRadius: '999px', height: '8px' }}>
                   <div style={{ background: statusBarColors[s.value], height: '8px', borderRadius: '999px', width: `${totalReservations ? (s.count / totalReservations) * 100 : 0}%` }} />
                 </div>
-                <p style={{ fontSize: '11px', color: MUTED, margin: '6px 0 0' }}>₱{s.amount.toLocaleString()}</p>
+                <p style={{ fontSize: '11px', color: MUTED, margin: '6px 0 0' }}>{money(s.amount)}</p>
               </div>
             ))}
           </div>
@@ -463,7 +496,7 @@ export default function Reports() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '10px', flexWrap: 'wrap' }}>
             <h3 style={cardTitle}>Checked Out with Unpaid Balance</h3>
             <span style={{ fontSize: '12px', color: SUBTEXT }}>
-              {unpaidCheckouts.length} guest{unpaidCheckouts.length === 1 ? '' : 's'} · ₱{unpaidTotal.toLocaleString()} unpaid
+              {unpaidCheckouts.length} guest{unpaidCheckouts.length === 1 ? '' : 's'} · {money(unpaidTotal)} unpaid
             </span>
           </div>
           {unpaidCheckouts.length === 0 ? (
@@ -483,7 +516,7 @@ export default function Reports() {
                     <tr key={r.id} style={{ borderBottom: `1px solid ${BORDER}` }}>
                       <td style={{ padding: '9px 12px', fontWeight: 600, color: TEXT }}>{r.guestName}</td>
                       <td style={{ padding: '9px 12px', color: TEXT }}>{formatDate(r.checkOut)}</td>
-                      <td style={{ padding: '9px 12px', color: dark ? '#fca5a5' : '#b91c1c', fontWeight: 600 }}>₱{Number(r.checkedOutWithBalance).toLocaleString()}</td>
+                      <td style={{ padding: '9px 12px', color: dark ? '#fca5a5' : '#b91c1c', fontWeight: 600 }}>{money(Number(r.checkedOutWithBalance))}</td>
                       <td style={{ padding: '9px 12px', color: TEXT }}>{r.checkedOutWithBalanceReason || 'No reason recorded'}</td>
                       <td style={{ padding: '9px 12px', color: SUBTEXT }}>{r.checkedOutWithBalanceByName || '—'}</td>
                     </tr>
@@ -556,7 +589,7 @@ export default function Reports() {
                           </>
                         );
                       })()}
-                      <td style={{ padding: '12px 16px', color: TEXT }}>₱{Number(r.totalAmount || 0).toLocaleString()}</td>
+                      <td style={{ padding: '12px 16px', color: TEXT }}>{money(Number(r.totalAmount || 0))}</td>
                       <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>
                         <span className="report-status-pill" style={{ ...reservationStatusStyle(r.status), padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 600 }}>{String(r.status || 'pending').replace(/-/g, ' ')}</span>
                       </td>

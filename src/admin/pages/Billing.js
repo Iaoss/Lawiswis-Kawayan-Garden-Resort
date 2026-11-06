@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../firebase/firebase';
 import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -11,6 +11,7 @@ import { SERVICES, getService, isRoomGuest, priceService } from '../../lib/servi
 import { getVatBreakdown } from '../../lib/bookingPricing';
 import { getScheduledCheckOutMs, formatManilaTime } from '../../lib/reservationStatus';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
+import QRCode from 'qrcode';
 
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
@@ -230,6 +231,32 @@ export default function Billing() {
       setStatusChecking(false);
     }
   };
+
+  // QR of the payment link, so a guest at the desk can scan and pay on their phone.
+  const [payQr, setPayQr] = useState('');
+  useEffect(() => {
+    if (!payLink) { setPayQr(''); return undefined; }
+    let active = true;
+    QRCode.toDataURL(payLink, { width: 240, margin: 1, errorCorrectionLevel: 'M' })
+      .then(url => { if (active) setPayQr(url); })
+      .catch(() => { if (active) setPayQr(''); });
+    return () => { active = false; };
+  }, [payLink]);
+
+  // While the QR is showing, check every 8 seconds if the guest has paid.
+  const checkStatusRef = useRef(null);
+  checkStatusRef.current = handleCheckStatus;
+  useEffect(() => {
+    if (!checkoutSessionId) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const { status } = await checkPayMongoCheckoutStatus(checkoutSessionId);
+        if (status === 'paid') { clearInterval(timer); checkStatusRef.current?.(); }
+        if (status === 'expired') { clearInterval(timer); setStatusResult('expired'); }
+      } catch { /* try again on the next tick */ }
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [checkoutSessionId]);
 
   const copyPayLink = async () => {
     try {
@@ -526,8 +553,8 @@ export default function Billing() {
                       </button>
                     </div>
                     <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, marginBottom: 2 }}><i className="ti ti-link" aria-hidden="true" /> Pay online (send a link)</div>
-                      <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>The guest pays by GCash, Maya, GrabPay or card on their phone.</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, marginBottom: 2 }}><i className="ti ti-qrcode" aria-hidden="true" /> Pay online (scan or send a link)</div>
+                      <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>The guest pays on their own phone by QR Ph, GCash, Maya, GrabPay or card. Make the link, then let them scan the QR code on this screen, or copy the link and send it by chat or text.</div>
                       {!payLink ? (
                         <button type="button" onClick={handleGeneratePayMongoLink} disabled={payLinkLoading || !paymentAmount || Number(paymentAmount) <= 0}
                           style={{ ...btn('brass'), width: '100%', opacity: payLinkLoading || !paymentAmount ? 0.5 : 1 }}>
@@ -535,6 +562,15 @@ export default function Billing() {
                         </button>
                       ) : (
                         <div style={{ display: 'grid', gap: 8 }}>
+                          {payQr && (
+                            <div style={{ display: 'grid', justifyItems: 'center', gap: 6, padding: 12, background: '#fff', borderRadius: 10, border: `1px solid ${BORDER}` }}>
+                              <img src={payQr} alt="QR code of the payment link" width={200} height={200} style={{ display: 'block' }} />
+                              <div style={{ fontSize: 11.5, color: '#374151', textAlign: 'center', fontWeight: 600 }}>
+                                Guest: scan with your phone camera to pay {formatCurrency(paymentAmount)}
+                              </div>
+                              <div style={{ fontSize: 10.5, color: '#6b7280', textAlign: 'center' }}>Waiting for payment… this updates by itself.</div>
+                            </div>
+                          )}
                           <div style={{ display: 'flex', gap: 6 }}>
                             <input readOnly value={payLink} onFocus={e => e.target.select()} style={{ ...inp, flex: 1, minWidth: 0, fontSize: 11, color: SUBTEXT }} />
                             <button type="button" onClick={copyPayLink} style={btn()}>Copy</button>

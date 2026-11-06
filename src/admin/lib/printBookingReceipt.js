@@ -3,6 +3,22 @@
 // print it and hand it to the guest as their paper receipt.
 import { getReceiptLineItems } from '../../lib/receiptItems';
 import { formatStayDateTime } from '../../lib/stayTimes';
+import QRCode from 'qrcode';
+
+// QR as an inline SVG, made right here (no outside website), so it always
+// prints. Built synchronously so the print window isn't blocked as a pop-up.
+function qrSvg(text, size = 140) {
+  try {
+    const { modules } = QRCode.create(text, { errorCorrectionLevel: 'M' });
+    const n = modules.size;
+    const quiet = 2;
+    let path = '';
+    for (let y = 0; y < n; y += 1) for (let x = 0; x < n; x += 1) if (modules.get(x, y)) path += `M${x + quiet} ${y + quiet}h1v1h-1z`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${n + quiet * 2} ${n + quiet * 2}" shape-rendering="crispEdges" role="img" aria-label="Feedback QR code"><rect width="100%" height="100%" fill="#fff"/><path d="${path}" fill="#000"/></svg>`;
+  } catch {
+    return '';
+  }
+}
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const peso = value => `${Number(value) < 0 ? '−' : ''}₱${Math.abs(Number(value || 0)).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -23,10 +39,10 @@ export function printBookingReceipt(reservation, payments = []) {
       : r.roomName || `Room ${r.roomNumber || ''}${r.roomType ? ` (${r.roomType})` : ''}`;
   const issued = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' });
   // Feedback QR for guests who are leaving (or have left), same as the
-  // thank-you email link. Same QR service as the Feedback & QR page.
+  // thank-you email link. 
   const showFeedback = ['checked-in', 'checked-out'].includes(r.status);
   const feedbackUrl = `${window.location.origin}/feedback?bookingId=${encodeURIComponent(r.id)}`;
-  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(feedbackUrl)}`;
+  const qr = showFeedback ? qrSvg(feedbackUrl) : '';
 
   const paymentRows = payments.length
     ? payments.map(p => row(
@@ -49,7 +65,7 @@ export function printBookingReceipt(reservation, payments = []) {
   td:last-child { text-align: right; white-space: nowrap; padding-left: 12px; }
   .total td { font-weight: 700; border-top: 2px solid #163c2b; }
   .feedback { display: flex; gap: 14px; align-items: center; border: 1px dashed #9cb56f; padding: 10px 12px; margin-top: 18px; break-inside: avoid; }
-  .feedback img { width: 90px; height: 90px; } .feedback strong { color: #163c2b; font-size: 13px; }
+  .feedback img, .feedback svg { width: 90px; height: 90px; } .feedback strong { color: #163c2b; font-size: 13px; }
   .sign { display: flex; justify-content: space-between; gap: 30px; margin-top: 40px; }
   .sign div { flex: 1; border-top: 1px solid #111827; padding-top: 4px; text-align: center; font-size: 11px; color: #4b5563; }
   footer { margin-top: 18px; font-size: 10px; color: #6b7280; }
@@ -97,7 +113,7 @@ export function printBookingReceipt(reservation, payments = []) {
     ${r.cancellationReceiptNumber ? row('Cancellation receipt', esc(r.cancellationReceiptNumber)) : ''}
   </table>` : ''}
 
-  ${showFeedback ? `<div class="feedback"><img src="${esc(qrSrc)}" alt="Feedback QR code"><div><strong>How was your stay?</strong><br>Scan with your phone camera to rate us. It takes 1 minute and helps us improve.<br><small>${esc(feedbackUrl)}</small></div></div>` : ''}
+  ${showFeedback ? `<div class="feedback">${qr}<div><strong>How was your stay?</strong><br>Scan with your phone camera to rate us. It takes 1 minute and helps us improve.<br><small>${esc(feedbackUrl)}</small></div></div>` : ''}
   <div class="sign"><div>Received by (resort staff)</div><div>Guest signature</div></div>
   <footer>Keep this receipt for your records. Questions: contact the resort with booking #${esc(ref)}.</footer>
   <script>window.onload = function () { setTimeout(function () { window.print(); }, 400); };</script>

@@ -4,12 +4,13 @@ import { Timestamp, collection, onSnapshot, query, where } from 'firebase/firest
 import { db } from '../../firebase/firebase';
 import { AlertToast } from '../../components/ui/alert-toast.tsx';
 import { dismissToast, pushToast, setToastsEnabled, subscribeToasts } from '../lib/staffToasts';
+import { money } from '../lib/money';
 
 // Pop-up alerts in the bottom-right corner of the staff portal. The bell
 // (NotificationBell) and the check-in reminder push alerts here; this
 // component also watches for payments received and new guest chat messages.
 
-const peso = value => `₱${Number(value || 0).toLocaleString('en-PH', { maximumFractionDigits: 2 })}`;
+const peso = value => money(value);
 const ref = id => `#${String(id || '').slice(0, 8).toUpperCase()}`;
 const METHODS = { cash: 'cash', gcash: 'GCash', paymaya: 'Maya', maya: 'Maya', grab_pay: 'GrabPay', card: 'card', qrph: 'QR Ph', bank: 'bank transfer' };
 

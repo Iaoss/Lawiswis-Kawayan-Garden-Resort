@@ -5,6 +5,7 @@ import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
+import { money } from '../lib/money';
 
 const paymentDateValue = payment => payment.paidAt || payment.paymentDate || payment.createdAt || payment.date;
 const paymentDateMillis = payment => {
@@ -23,7 +24,7 @@ const RANGES = [
   { id: 'all', label: 'All time',     days: null },
 ];
 
-const peso = (n, digits = 0) => `₱${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits })}`;
+const peso = value => money(value);
 
 const dayKey = ms => {
   const d = new Date(ms);

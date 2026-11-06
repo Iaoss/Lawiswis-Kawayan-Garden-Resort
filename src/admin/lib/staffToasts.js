@@ -65,7 +65,7 @@ export function pushToast({ id, variant = 'info', title, description = '', path 
 
 // Colour for a bell notification, from its id.
 export function variantForNotification(id = '') {
-  if (id.startsWith('checkout-late') || id.startsWith('hold-conflict') || id.startsWith('negative-feedback')) return 'error';
+  if (id.startsWith('checkout-late') || id.startsWith('hold-conflict') || id.startsWith('negative-feedback') || id.startsWith('room-not-ready')) return 'error';
   if (/^(checkout-due|cancellation-requested|refund-requested|date-change)/.test(id)) return 'warning';
   if (id.startsWith('new-booking') || id.startsWith('guest-reply')) return 'info';
   return 'info';

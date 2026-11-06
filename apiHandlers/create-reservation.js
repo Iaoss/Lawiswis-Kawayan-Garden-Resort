@@ -46,6 +46,7 @@ import { getCottageAvailabilityFor } from '../lib/cottageStock';
 import { cottageAvailabilityError } from '../src/lib/cottages';
 import { holdsRoom } from '../src/lib/unpaidBookings';
 import { readSeasonPeriods } from '../lib/seasonStore';
+import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -119,6 +120,9 @@ export default async function handler(req, res) {
           : 'Reservations are temporarily closed. Please contact the resort for updates.',
       });
     }
+    // Planned closed dates (maintenance): other dates can still be booked.
+    const closedPeriod = availabilitySnap.exists ? findClosedPeriod(availabilitySnap.data().closedDates, checkIn, checkOut) : null;
+    if (closedPeriod) return res.status(409).json({ error: closedPeriodMessage(closedPeriod) });
 
     // ---- 2. Basic validation -------------------------------------------
     if (typeof roomId !== 'string' || typeof email !== 'string'

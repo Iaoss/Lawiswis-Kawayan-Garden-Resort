@@ -14,6 +14,7 @@ import { getFeedbackSummary } from '../../lib/dashboardMetrics';
 import { printDailySheet } from '../lib/printDailySheet';
 import { checkInGuest as checkInWithId } from '../lib/checkInGuest';
 import { getReceptionistSections } from '../../lib/receptionistDashboard';
+import { money } from '../lib/money';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -256,7 +257,7 @@ export default function ReceptionistDashboard() {
     },
     {
       label: 'Overstaying Now', value: analytics.overstays.activeCount, icon: 'ti-clock-exclamation', to: '/receptionist/reservations?view=overstayed',
-      detail: `${analytics.overstays.historicalCount} in last 30 days · ₱${analytics.overstays.lateFeeTotal.toLocaleString()} late fees`,
+      detail: `${analytics.overstays.historicalCount} in last 30 days · ${money(analytics.overstays.lateFeeTotal)} late fees`,
     },
     { label: 'Currently Checked In', value: stats.checkedIn, icon: 'ti-home-check', to: '/receptionist/reservations?view=checked-in' },
     { label: 'Pending Payments', value: stats.pendingPayments, icon: 'ti-clock', to: '/receptionist/reservations?view=pending-payment' },
@@ -398,7 +399,7 @@ export default function ReceptionistDashboard() {
                         <td style={{ ...S.td, fontWeight: '500' }}>{r.guestName}</td>
                         <td style={S.td}>Room {r.roomNumber}</td>
                         <td style={{ ...S.td, color: balance > 0 ? unpaidColor : clearedColor, fontWeight: '600' }}>
-                          ₱{balance.toLocaleString()}
+                          {money(balance)}
                         </td>
                         <td style={S.td}>
                           <span style={{

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { DEFAULT_USD_RATE, money, setMoneySettings } from '../lib/money';
 
 const STORAGE_KEY = 'lkgr_admin_settings';
 
@@ -10,6 +11,7 @@ export const DEFAULT_SETTINGS = {
   language: 'en',
   timezone: 'Asia/Manila',
   currency: 'PHP',
+  usdRate: DEFAULT_USD_RATE, // pesos per US$1, for showing amounts in dollars
   dateFormat: 'MM/DD/YYYY',
   notifications: true,
   soundAlerts: false,
@@ -115,18 +117,9 @@ export function SettingsProvider({ children }) {
     return isNaN(d.getTime()) ? null : d;
   };
 
-  const formatCurrency = (amount) => {
-    const num = Number(amount) || 0;
-    try {
-      return new Intl.NumberFormat('en-PH', {
-        style: 'currency',
-        currency: settings.currency || 'PHP',
-        minimumFractionDigits: 2,
-      }).format(num);
-    } catch {
-      return `₱${num.toFixed(2)}`;
-    }
-  };
+  // Amounts are stored in pesos; in USD mode they're converted for display.
+  setMoneySettings({ currency: settings.currency, usdRate: settings.usdRate });
+  const formatCurrency = (amount) => money(amount, { decimals: 2 });
 
   const formatDate = (value, options) => {
     const date = toJsDate(value);

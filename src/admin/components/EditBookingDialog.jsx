@@ -4,8 +4,9 @@ import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import { OVERNIGHT_TIME_SLOTS, isCheckInPassed, isTourStartPassed } from '../../lib/bookingPricing';
 import { DATE_CHANGE_NOTICE_DAYS, getDaysBeforeArrival } from '../../lib/cancellationPolicy';
 import { staffApi } from '../lib/staffApi';
+import { money } from '../lib/money';
 
-const peso = value => `₱${Number(value || 0).toLocaleString()}`;
+const peso = value => money(value);
 
 // Staff edit of a booking: switch overnight / day tour / night tour, move
 // dates, or change guest counts. Every change is priced by the server

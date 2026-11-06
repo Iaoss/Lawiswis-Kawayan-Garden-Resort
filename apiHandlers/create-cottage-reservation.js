@@ -18,6 +18,7 @@ import {
   getTourCutoffError,
 } from '../src/lib/bookingPricing';
 import { cottageAvailabilityError } from '../src/lib/cottages';
+import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 
 const addMonthsKey = (dateKey, months) => {
   const [y, m, d] = dateKey.split('-').map(Number);
@@ -47,6 +48,9 @@ export default async function handler(req, res) {
       const reason = String(availabilitySnap.data().reason || '').trim();
       return res.status(409).json({ error: reason ? `Reservations are temporarily closed. ${reason}` : 'Reservations are temporarily closed.' });
     }
+    // Planned closed dates (maintenance): other dates can still be booked.
+    const closedPeriod = availabilitySnap.exists ? findClosedPeriod(availabilitySnap.data().closedDates, date, date) : null;
+    if (closedPeriod) return res.status(409).json({ error: closedPeriodMessage(closedPeriod) });
 
     const first = String(firstName || '').trim();
     const last = String(lastName || '').trim();

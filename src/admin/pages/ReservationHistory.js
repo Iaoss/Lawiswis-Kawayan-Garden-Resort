@@ -12,8 +12,9 @@ import { getReservationRemarks } from '../../lib/reservationRemarks';
 import { getBookingChanges } from '../../lib/bookingChanges';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import { paymentReceiptNumber, printBookingReceipt } from '../lib/printBookingReceipt';
+import { money } from '../lib/money';
 
-const peso = value => `${Number(value) < 0 ? '−' : ''}₱${Math.abs(Number(value || 0)).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const peso = value => money(value);
 const METHOD_LABELS = { cash: 'Cash', gcash: 'GCash', qrph: 'QR Ph', bank: 'Bank transfer', card: 'Card', online: 'Online', paymaya: 'Maya', grab_pay: 'GrabPay' };
 
 export default function ReservationHistory() {
@@ -198,7 +199,7 @@ export default function ReservationHistory() {
                           return <p style={small}><i className="ti ti-logout" aria-hidden="true" /> {formatStayDateTime(r.checkedOutAt)}{timing.checkOut.text ? ` · ${timing.checkOut.text}` : ''}{timing.duration ? ` · stayed ${timing.duration}` : ''}</p>;
                         })()}
                       </td>
-                      <td style={{ padding: '12px 16px', fontWeight: '600', color: TEXT }}>₱{Number(r.totalAmount || 0).toLocaleString()}</td>
+                      <td style={{ padding: '12px 16px', fontWeight: '600', color: TEXT }}>{money(Number(r.totalAmount || 0))}</td>
                       <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>
                         <span style={{ ...badgeStyle, ...badge(paymentBadgeKind(r.paymentStatus)) }}>
                           {r.paymentStatus || 'pending'}

@@ -31,6 +31,7 @@ import OccupancyBadge from '../components/OccupancyBadge';
 import BookingSteps from '../components/BookingSteps';
 import { Pagination, usePagination } from '../../components/ui/pagination';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
+import { closedPeriodMessage, findClosedPeriod } from '../../lib/closedDates';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import { decorateRoom } from '../lib/roomCatalog';
@@ -158,7 +159,7 @@ const WALLETS = [
 export default function BookRoom() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { available: resortAvailable, reason: unavailableReason, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
+  const { available: resortAvailable, reason: unavailableReason, closedDates, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const today = formatDate(new Date());
   const maximumBookingDate = formatDate(addMonths(new Date(), 2));
   const isBookingsRoute = window.location.pathname === '/my-bookings';
@@ -761,6 +762,8 @@ export default function BookRoom() {
       return;
     }
     if (!room) return;
+    const closedPeriod = findClosedPeriod(closedDates, form.checkIn, singleDay ? form.checkIn : form.checkOut);
+    if (closedPeriod) { setErrorMsg(closedPeriodMessage(closedPeriod)); return; }
     const guestErrors = {
       firstName: validateField('firstName', form.firstName),
       lastName: validateField('lastName', form.lastName),
@@ -1137,6 +1140,10 @@ export default function BookRoom() {
                   {resortAvailable && !dateEditor.open && <button type="button" onClick={openDateEditor} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Change dates</button>}
                   {resortAvailable && dateEditor.open && renderDateEditor()}
                   {!resortAvailable && <div style={{ marginTop: 5 }}>{availabilityError || unavailableReason || 'Reservations are temporarily closed.'}</div>}
+                  {resortAvailable && (() => {
+                    const closedPeriod = findClosedPeriod(closedDates, form.checkIn, singleDay ? form.checkIn : form.checkOut);
+                    return closedPeriod ? <div role="alert" style={{ marginTop: 6, color: '#991b1b', fontWeight: 600 }}>{closedPeriodMessage(closedPeriod)}</div> : null;
+                  })()}
                 </div>
                 <div>
                   <label htmlFor="booking-type" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Booking Type</label>

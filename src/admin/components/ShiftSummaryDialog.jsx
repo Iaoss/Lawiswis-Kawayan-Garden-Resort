@@ -4,12 +4,13 @@ import { auth, db } from '../../firebase/firebase';
 import { getOutstandingBalance, getOverstay } from '../../lib/reservationStatus';
 import { getShiftStart, signOutTo } from '../lib/staffSession';
 import { logStaffActivity } from '../lib/activityLog';
+import { money } from '../lib/money';
 
 // End-of-shift summary, shown when staff sign out: what they collected (by
 // payment method), guests still owing money, open requests and overstays,
 // so the next shift knows. Confirming saves it in the Activity Log.
 
-const peso = value => `₱${Number(value || 0).toLocaleString('en-PH', { maximumFractionDigits: 2 })}`;
+const peso = value => money(value);
 const METHOD_LABELS = { cash: 'Cash', gcash: 'GCash', qrph: 'QR Ph', bank: 'Bank transfer', card: 'Card', online: 'Online', paymaya: 'Maya', grab_pay: 'GrabPay' };
 
 export default function ShiftSummaryDialog({ open, onClose, staffName = '', dark, accent }) {

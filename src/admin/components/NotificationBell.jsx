@@ -11,6 +11,8 @@ import {
   buildBookingNotifications,
   formatNotificationTime,
 } from '../lib/bookingNotifications';
+import { roomNotReadyNotifications } from '../lib/roomReadiness';
+import { manilaDateKey } from '../../lib/reservationStatus';
 
 // Bell in the staff top bar (admin and receptionist). Each notification card
 // is one button: clicking anywhere on it opens that booking.
@@ -65,6 +67,8 @@ function useNotificationReservations() {
       replies: query(reservations, where('unpaidFollowUp.guestReply', 'in', ['yes', 'no'])),
       checkedIn: query(reservations, where('status', '==', 'checked-in')),
       holdConflicts: query(reservations, where('holdConflict', '==', true)),
+      // Today's arrivals, to warn when their room is still being cleaned.
+      arrivingToday: query(reservations, where('checkIn', '>=', manilaDateKey()), where('checkIn', '<=', `${manilaDateKey()}`)),
     };
     const loaded = new Set();
     const stops = Object.entries(queries).map(([key, q]) => onSnapshot(q, snapshot => {
@@ -190,10 +194,18 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
   }, []);
 
   const messageItems = useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPath });
+  // Room status, to warn when a room is still being cleaned on arrival day.
+  const [rooms, setRooms] = useState([]);
+  useEffect(() => onSnapshot(collection(db, 'rooms'),
+    snapshot => setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+    () => setRooms([])), []);
   const notifications = useMemo(
-    () => [...buildBookingNotifications(reservations, { prefix, now }), ...messageItems]
-      .sort((a, b) => (b.timeMs || 0) - (a.timeMs || 0)),
-    [reservations, prefix, now, messageItems],
+    () => [
+      ...roomNotReadyNotifications(rooms, reservations, { todayKey: manilaDateKey(new Date(now)), prefix, now }),
+      ...buildBookingNotifications(reservations, { prefix, now }),
+      ...messageItems,
+    ].sort((a, b) => (b.timeMs || 0) - (a.timeMs || 0)),
+    [reservations, rooms, prefix, now, messageItems],
   );
   const unread = notifications.filter(n => !readIds.includes(n.id)).length;
 
