@@ -22,6 +22,10 @@ import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-
 import ShiftSummaryDialog from './ShiftSummaryDialog';
 import { useIdleLogout } from '../lib/staffSession';
 import { CheckInIdHost } from './CheckInIdDialog';
+import { loadCottageCatalogOnce } from '../../lib/useCottageCatalog';
+
+// Start loading the admin's cottage list as soon as the site opens.
+loadCottageCatalogOnce();
 
 const navItems = [
   { label: 'Dashboard', path: '/receptionist/dashboard', icon: 'ti-layout-dashboard' },

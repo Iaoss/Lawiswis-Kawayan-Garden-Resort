@@ -21,6 +21,10 @@ import './portal-sidebar.css';
 import ShiftSummaryDialog from './ShiftSummaryDialog';
 import { useIdleLogout } from '../lib/staffSession';
 import { CheckInIdHost } from './CheckInIdDialog';
+import { loadCottageCatalogOnce } from '../../lib/useCottageCatalog';
+
+// Start loading the admin's cottage list as soon as the site opens.
+loadCottageCatalogOnce();
 
 // ── Nav structure ────────────────────────────────────────────
 const navItems = [

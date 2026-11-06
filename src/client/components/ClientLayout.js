@@ -5,6 +5,10 @@ import ChatWidget from './ChatWidget';
 import ClientChrome from './ClientChrome';
 import ResortAvailabilityNotice from './ResortAvailabilityNotice';
 import { ResortAvailabilityProvider } from './ResortAvailabilityContext';
+import { loadCottageCatalogOnce } from '../../lib/useCottageCatalog';
+
+// Start loading the admin's cottage list as soon as the site opens.
+loadCottageCatalogOnce();
 
 export default function ClientLayout() {
   const location = useLocation();

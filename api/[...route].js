@@ -29,6 +29,8 @@ import staffBilling from '../apiHandlers/staff-billing';
 import staffUsers from '../apiHandlers/staff-users';
 import imageUpload from '../apiHandlers/image-upload';
 import seasonalRates from '../apiHandlers/seasonal-rates';
+import cottageTypes from '../apiHandlers/cottage-types';
+import { loadCottageCatalog } from '../lib/cottageCatalog';
 import bookingReply from '../apiHandlers/booking-reply';
 import chatQuickReply from '../apiHandlers/chat-quick-reply';
 import createCottageReservation from '../apiHandlers/create-cottage-reservation';
@@ -64,6 +66,7 @@ const handlers = {
   'staff-users': staffUsers,
   'image-upload': imageUpload,
   'seasonal-rates': seasonalRates,
+  'cottage-types': cottageTypes,
   'create-corporate-reservation': createCorporateReservation,
   'public-feedback': publicFeedback,
   'submit-feedback': submitFeedback,
@@ -117,6 +120,8 @@ export default async function handler(req, res) {
 
   try {
     if (!RAW_BODY_ROUTES.has(endpoint)) await parseBody(req);
+    // Every price check uses the admin's current cottage list.
+    await loadCottageCatalog();
     return await endpointHandler(req, res);
   } catch (error) {
     console.error(`API ${endpoint} failed:`, error);

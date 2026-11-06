@@ -9,6 +9,8 @@ import { findNearestOpenDates } from '../src/lib/bookingSuggestions';
 import { getGroupAdvanceNoticeError } from '../src/lib/corporatePackages';
 import { manilaDateKey } from '../src/lib/reservationStatus';
 import { holdsRoom } from '../src/lib/unpaidBookings';
+import { canClosureReschedule, getClosureMoveError, getSamePriceSuggestions, sameLengthCheckOut } from '../src/lib/closureReschedule';
+import { readSeasonPeriods } from '../lib/seasonStore';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 const ACTIVE_REFUND_STATUSES = ['eligible', 'needs_review', 'approved', 'processing', 'awaiting_confirmation'];
@@ -32,7 +34,7 @@ function publicModificationRequest(request) {
   if (!request || typeof request !== 'object') return null;
   const pick = ['id', 'status', 'outcome', 'reason', 'requestedCheckIn', 'requestedCheckOut', 'requestedBookingType',
     'requestedTourPeriod', 'requestedCheckInTime', 'requestedCheckOutTime', 'requestedAdults', 'requestedChildren',
-    'paymentDue', 'refundDue', 'updatedTotal', 'checkoutUrl'];
+    'paymentDue', 'refundDue', 'updatedTotal', 'checkoutUrl', 'closureMove', 'suggestions', 'staffReason'];
   return Object.fromEntries(pick.filter(key => request[key] !== undefined).map(key => [key, request[key]]));
 }
 
@@ -51,6 +53,11 @@ function publicReservation(snapshot) {
     refundRequestStatus: reservation.refundRequestStatus || '',
     refundDecision: publicRefundDecision(reservation.refundDecision),
     modificationRequest: publicModificationRequest(reservation.modificationRequest),
+    // Resort closed on these dates: the guest can pick new dates online.
+    closure: reservation.closureNotice?.closedFrom
+      ? { from: reservation.closureNotice.closedFrom, to: reservation.closureNotice.closedTo || reservation.closureNotice.closedFrom, reason: reservation.closureNotice.reason || '' }
+      : null,
+    canReschedule: canClosureReschedule(reservation),
     adults: Number(reservation.adults || 0),
     children: Number(reservation.children || 0),
     type: reservation.type || '',
@@ -239,6 +246,79 @@ async function previewRefund(reservation) {
   };
 }
 
+// After a resort closure: the guest picks a new start date; everything else
+// (type, guests, length, price) stays the same. Staff approve or reject it.
+async function requestClosureMove(reservation, body, maxDateKey) {
+  const data = reservation.data();
+  const today = manilaDateKey();
+  const checkIn = String(body.checkIn || '').slice(0, 10);
+  const moveError = getClosureMoveError(data, checkIn, { today, maxDate: maxDateKey });
+  if (moveError) return { error: moveError };
+  const checkOut = sameLengthCheckOut(data, checkIn);
+
+  if (data.roomId) {
+    const roomBookings = await adminDb.collection('reservations').where('roomId', '==', data.roomId).get();
+    const bookedRanges = roomBookings.docs
+      .filter(doc => doc.id !== reservation.id)
+      .map(doc => doc.data())
+      .filter(other => holdsRoom(other) && typeof other.checkIn === 'string')
+      .map(other => ({ checkIn: other.checkIn.slice(0, 10), checkOut: String(other.checkOut || other.checkIn).slice(0, 10) }));
+    if (bookedRanges.some(other => stayRangesOverlap(checkIn, checkOut, other.checkIn, other.checkOut))) {
+      const suggestions = getSamePriceSuggestions({
+        reservation: data, requestedCheckIn: checkIn, bookedRanges, seasonPeriods: await readSeasonPeriods(), today, maxDate: maxDateKey,
+      });
+      return {
+        error: suggestions.length
+          ? 'Your room is already booked on those dates. These dates are free for the same room and price:'
+          : 'Your room is already booked on those dates, and no nearby dates are free. Please contact the resort.',
+        suggestions,
+      };
+    }
+  }
+
+  const modificationRequest = {
+    id: crypto.randomUUID(),
+    status: 'requested',
+    outcome: 'eligible',
+    closureMove: true,
+    reason: 'Moving because the resort was closed: same price, no fee.',
+    requestedCheckIn: checkIn,
+    requestedCheckOut: checkOut,
+    originalCheckIn: data.checkIn,
+    originalCheckOut: data.checkOut,
+    originalTotal: Number(data.totalAmount || 0),
+    proposedTotal: Number(data.totalAmount || 0),
+    updatedTotal: Number(data.totalAmount || 0),
+    difference: 0,
+    changeType: 'closure_move',
+    cancellationFee: 0,
+    refundDue: 0,
+    balanceDue: 0,
+    paymentDue: 0,
+    requestedAt: FieldValue.serverTimestamp(),
+  };
+  const result = await adminDb.runTransaction(async transaction => {
+    const current = (await transaction.get(reservation.ref)).data();
+    if (!current || !canClosureReschedule(current)) return { error: 'This booking can no longer be moved online. Please contact the resort.' };
+    if (current.modificationRequest && ACTIVE_MODIFICATION_STATUSES.includes(String(current.modificationRequest.status || '').toLowerCase())) {
+      return { alreadyRequested: true, modificationRequest: publicModificationRequest(current.modificationRequest) };
+    }
+    transaction.update(reservation.ref, { modificationRequest });
+    return { alreadyRequested: false };
+  });
+  if (result.error || result.alreadyRequested) return result;
+  try {
+    await sendScheduleChangeEmail({
+      reservation: data,
+      bookingRef: reservation.id.slice(0, 8).toUpperCase(),
+      change: { ...modificationRequest, checkIn, checkOut },
+    });
+  } catch (emailError) {
+    console.error('Could not send the closure move request email:', emailError);
+  }
+  return { alreadyRequested: false, modificationRequest: publicModificationRequest(modificationRequest) };
+}
+
 async function requestScheduleChange(reservation, body) {
   const data = reservation.data();
   if (!['pending', 'confirmed'].includes(String(data.status || '').toLowerCase())) {
@@ -255,6 +335,10 @@ async function requestScheduleChange(reservation, body) {
   const today = new Date();
   const maxDate = new Date(today.getFullYear(), today.getMonth() + 2, today.getDate());
   const maxDateKey = `${maxDate.getFullYear()}-${String(maxDate.getMonth() + 1).padStart(2, '0')}-${String(maxDate.getDate()).padStart(2, '0')}`;
+
+  // Resort closure: only the dates move (same type, guests, length and
+  // price), with no fee and no 30-day rule. Staff still approve it.
+  if (canClosureReschedule(data)) return requestClosureMove(reservation, body, maxDateKey);
   const option = isCorporate ? '' : (body.bookingOption || getBookingOptionId(data));
   const normalized = isCorporate
     ? null
@@ -435,7 +519,9 @@ export default async function handler(req, res) {
     }
     // Guests now contact the resort to cancel or move a booking; staff
     // handle it from the reservation list.
-    if (GUEST_REQUESTS_DISABLED && ['refund-preview', 'refund', 'schedule-change'].includes(action)) {
+    // Exception: after a resort closure, guests can pick new dates online.
+    const closureMove = action === 'schedule-change' && canClosureReschedule(reservation.data());
+    if (GUEST_REQUESTS_DISABLED && !closureMove && ['refund-preview', 'refund', 'schedule-change'].includes(action)) {
       return res.status(403).json({ error: 'To move or cancel a booking, please contact the resort by phone, email or chat.' });
     }
     if (action === 'refund-preview') {

@@ -39,11 +39,22 @@ export default function BookingHistory() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+  // Moving a booking online after a resort closure.
+  const [moveDate, setMoveDate] = useState('');
+  const [moveError, setMoveError] = useState('');
+  const [moveSuggestions, setMoveSuggestions] = useState([]);
+  const [moving, setMoving] = useState(false);
   const pagination = usePagination(bookings, { pageSize: 5 });
 
   useEffect(() => {
     const history = readStoredValue('booking_history', []);
     setBookings(Array.isArray(history) ? history.filter(item => item && item.bookingId) : []);
+
+    // The closure email links here with the booking number filled in.
+    try {
+      const ref = new URLSearchParams(window.location.search).get('ref');
+      if (ref) setReference(ref.slice(0, 32));
+    } catch (urlError) { /* ignore */ }
 
     const profile = readStoredValue('guest_profile', {});
     if (profile && typeof profile === 'object') {
@@ -82,6 +93,81 @@ export default function BookingHistory() {
     }
   };
 
+  const requestClosureMove = async checkIn => {
+    if (!lookupResult || !checkIn) return;
+    setMoving(true);
+    setMoveError('');
+    setMoveSuggestions([]);
+    try {
+      const result = await sendGuestAction('schedule-change', reference.trim(), { checkIn });
+      setLookupResult(current => ({ ...current, modificationRequest: result.modificationRequest || current.modificationRequest, canReschedule: true }));
+      setNotice('Your new dates were sent. The resort will confirm them by email.');
+    } catch (moveFailure) {
+      setMoveError(moveFailure.message || 'Could not send your new dates.');
+      setMoveSuggestions(moveFailure.suggestions || []);
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  const stayLength = booking => Math.max(0, Math.round((Date.parse(`${String(booking.checkOut || booking.checkIn).slice(0, 10)}T00:00:00Z`) - Date.parse(`${String(booking.checkIn).slice(0, 10)}T00:00:00Z`)) / 86400000));
+  const addDays = (key, days) => {
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+  };
+
+  const suggestionButtons = (list, disabled) => (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+      {list.map(option => (
+        <button key={option.checkIn} type="button" disabled={disabled} onClick={() => requestClosureMove(option.checkIn)}
+          style={{ border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '8px 12px', background: '#fff', color: DARK, fontWeight: 700, cursor: disabled ? 'default' : 'pointer' }}>
+          {formatMDY(option.checkIn)}{option.checkOut && option.checkOut !== option.checkIn ? ` – ${formatMDY(option.checkOut)}` : ''}
+        </button>
+      ))}
+    </div>
+  );
+
+  // Shown when the resort closed on this booking's dates.
+  const renderClosureMove = booking => {
+    if (!booking.canReschedule || !booking.closure) return null;
+    const request = booking.modificationRequest;
+    const pending = request && ['requested', 'needs_review', 'approved', 'awaiting_payment', 'awaiting_refund'].includes(request.status);
+    const rejected = request?.status === 'rejected';
+    const length = stayLength(booking);
+    const minDate = addDays(new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10), 1);
+    return (
+      <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: '#fff7ed', border: '1px solid #fed7aa', color: '#374151', fontSize: 13, lineHeight: 1.6 }}>
+        <strong style={{ color: '#9a3412' }}>The resort is closed {formatMDY(booking.closure.from)}{booking.closure.to !== booking.closure.from ? ` – ${formatMDY(booking.closure.to)}` : ''}{booking.closure.reason ? ` (${booking.closure.reason})` : ''}.</strong>
+        <div style={{ marginTop: 4 }}>Pick new dates below. Your booking keeps the same room, booking type, guests and price, with no fee. The resort confirms the new dates by email.</div>
+        {pending ? (
+          <div style={{ marginTop: 10, fontWeight: 600 }}>New dates sent: {formatMDY(request.requestedCheckIn)}{request.requestedCheckOut !== request.requestedCheckIn ? ` – ${formatMDY(request.requestedCheckOut)}` : ''}. Waiting for the resort to confirm.</div>
+        ) : (
+          <>
+            {rejected && (
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: '#fef2f2', color: '#991b1b' }}>
+                The resort could not take {formatMDY(request.requestedCheckIn)}{request.staffReason ? `: ${request.staffReason}` : '.'}
+                {request.suggestions?.length > 0 && <div style={{ color: '#374151', marginTop: 6 }}>These dates are free for the same price. Tap one to request it:</div>}
+                {request.suggestions?.length > 0 && suggestionButtons(request.suggestions, moving)}
+              </div>
+            )}
+            <form onSubmit={event => { event.preventDefault(); requestClosureMove(moveDate); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 10 }}>
+              <label style={{ display: 'grid', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                New check-in date
+                <input type="date" required min={minDate} value={moveDate} onChange={event => setMoveDate(event.target.value)} style={{ border: '1px solid #d1d5db', borderRadius: 8, padding: '9px 10px', fontSize: 14 }} />
+              </label>
+              {moveDate && <div style={{ fontSize: 12, paddingBottom: 10 }}>Check-out: <strong>{formatMDY(addDays(moveDate, length))}</strong></div>}
+              <button type="submit" disabled={moving || !moveDate} style={{ border: 0, borderRadius: 8, padding: '10px 16px', background: DARK, color: '#fff', fontWeight: 700, cursor: moving ? 'default' : 'pointer' }}>
+                {moving ? 'Sending...' : 'Request these dates'}
+              </button>
+            </form>
+            {moveError && <div style={{ marginTop: 8, color: '#b91c1c', fontWeight: 600 }}>{moveError}</div>}
+            {moveSuggestions.length > 0 && suggestionButtons(moveSuggestions, moving)}
+          </>
+        )}
+      </div>
+    );
+  };
+
   const renderBooking = booking => (
     <article key={booking.bookingId} style={{ border: '1px solid #e5e7eb', borderRadius: 14, padding: 18, background: '#fff' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -114,6 +200,7 @@ export default function BookingHistory() {
           {booking.modificationRequest.reason && <div style={{ marginTop: 4 }}>{booking.modificationRequest.reason}</div>}
         </div>
       )}
+      {renderClosureMove(booking)}
       {['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase()) && (
         <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: '#eff6f0', color: '#374151', fontSize: 13, lineHeight: 1.6 }}>
           <strong style={{ color: DARK }}>Need to move or cancel this booking?</strong>

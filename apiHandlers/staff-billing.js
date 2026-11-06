@@ -585,6 +585,7 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
         seasonPeriods: await readSeasonPeriods(),
         cottageId: reservation.cottageId || '',
         cottageFee: Number(reservation.cottageFee || 0),
+        keepCottageFee: true,
         dayVisitors: getReservationDayVisitors(reservation),
       });
     } catch (error) {

@@ -110,8 +110,8 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
       items.push({
         id: `date-change_${request.id || r.id}`,
         icon: 'ti-calendar-time',
-        badge: 'Change Requested',
-        message: `${guest} · ${ref(r.id)}`,
+        badge: request.closureMove ? 'Closure Reschedule' : 'Change Requested',
+        message: `${guest} · ${ref(r.id)}${request.closureMove ? ' · same price, approve or reject' : ''}`,
         details: `${request.originalCheckIn || r.checkIn || '—'} → ${request.requestedCheckIn || r.checkIn || '—'} · ${lower(request.status).replaceAll('_', ' ')}`,
         timeMs: toMs(request.requestedAt) || toMs(r.updatedAt) || createdMs,
         bookingId: r.id,

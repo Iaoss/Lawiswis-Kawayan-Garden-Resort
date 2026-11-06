@@ -35,6 +35,7 @@ import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } 
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import { decorateRoom } from '../lib/roomCatalog';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
+import { useCottageCatalog } from '../../lib/useCottageCatalog';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -183,6 +184,7 @@ export default function BookRoom() {
   // The form is split into steps so it isn't all on one screen:
   // 0 Stay details, 1 Your details, 2 Review & pay.
   const [formStep, setFormStep] = useState(0);
+  useCottageCatalog(); // the admin's current cottage list
   // Saving the guest's details on this device is opt-in (off unless they
   // already chose to save them before). See the Privacy Policy.
   const [rememberDetails, setRememberDetails] = useState(() => Boolean(readLocalValue(GUEST_PROFILE_KEY, null)));

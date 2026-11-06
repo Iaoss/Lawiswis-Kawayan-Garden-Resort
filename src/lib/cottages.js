@@ -8,10 +8,11 @@
 // A cottage is in use by any active booking that rented it for that date:
 //   - day/night tours on that date and the same tour time, and
 //   - overnight stays covering that date (they keep it for the whole day).
-import { COTTAGE_OPTIONS, LEGACY_COTTAGE_IDS } from './bookingPricing';
+import { COTTAGE_IDS, COTTAGE_OPTIONS, LEGACY_COTTAGE_IDS } from './bookingPricing';
 import { holdsRoom } from './unpaidBookings';
 
-export const COTTAGE_IDS = COTTAGE_OPTIONS.filter(option => option.id).map(option => option.id);
+// The live list of cottage ids (updated when an admin edits the cottages).
+export { COTTAGE_IDS };
 
 const dateKey = value => String(value || '').slice(0, 10);
 // Expired unpaid online holds don't take a cottage either.

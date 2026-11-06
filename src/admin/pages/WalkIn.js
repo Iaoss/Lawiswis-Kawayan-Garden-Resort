@@ -18,6 +18,7 @@ import { staffApi } from '../lib/staffApi';
 import { appAlert } from '../../components/ui/app-dialog';
 import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
+import { useCottageCatalog } from '../../lib/useCottageCatalog';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'This room is full for that many guests. Couple rooms take 2 guests; a Couple Room with Extra Bed takes a third adult. For bigger groups, choose a Family Room or Family Suite.';
 
@@ -208,6 +209,7 @@ export default function WalkIn() {
   };
 
   const seasonPeriods = useSeasonPeriods();
+  useCottageCatalog(); // the admin's current cottage list
   const totalAmount = (() => {
     if (cottageOnly) {
       try {

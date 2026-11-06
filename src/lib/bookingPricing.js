@@ -88,14 +88,73 @@ export function getTourCutoffError(date, tourPeriod = 'day', now = new Date()) {
     : `Today's day tour started at ${DAYTOUR_TIME_SLOT.checkIn}, so it can no longer be booked. Please choose another date or the night swimming tour.`;
 }
 
-export const COTTAGE_OPTIONS = [
-  { id: '', label: 'No cottage', price: 0, maxGuests: 0 },
-  // Resort cottage rates.
-  { id: 'umbrella-hut', label: 'Umbrella Hut (up to 6 guests)', price: 500, maxGuests: 6 },
-  { id: 'garden-cabana', label: 'Garden Cabana (up to 10 guests)', price: 1000, maxGuests: 10 },
-  { id: 'poolside-cabana', label: 'Poolside Cabana (up to 10 guests)', price: 1500, maxGuests: 10 },
-  { id: 'pavilion', label: 'Pavilion (up to 20 guests)', price: 3000, maxGuests: 20 },
+// ── Cottages ───────────────────────────────────────────────────────────
+// The cottage list is set by an admin (Settings → Resort Status → Cottages)
+// and saved in settings/cottageTypes as
+//   { cottages: [{ id, name, maxGuests, price, archived? }] }
+// These defaults are used until then. The server (api/[...route].js) and the
+// browser (useCottageCatalog) load the saved list and call
+// applyCottageCatalog(), which updates COTTAGE_OPTIONS and COTTAGE_IDS in
+// place, so every page and price check uses the same list.
+// Removed cottages are kept as "archived": they can't be booked any more,
+// but old bookings keep their name and price.
+export const DEFAULT_COTTAGES = [
+  { id: 'umbrella-hut', name: 'Umbrella Hut', maxGuests: 6, price: 500 },
+  { id: 'garden-cabana', name: 'Garden Cabana', maxGuests: 10, price: 1000 },
+  { id: 'poolside-cabana', name: 'Poolside Cabana', maxGuests: 10, price: 1500 },
+  { id: 'pavilion', name: 'Pavilion', maxGuests: 20, price: 3000 },
 ];
+const NO_COTTAGE = { id: '', label: 'No cottage', price: 0, maxGuests: 0 };
+const cottageOption = c => ({ id: c.id, name: c.name, label: `${c.name} (up to ${c.maxGuests} guests)`, price: c.price, maxGuests: c.maxGuests });
+
+export const COTTAGE_OPTIONS = [NO_COTTAGE, ...DEFAULT_COTTAGES.map(cottageOption)];
+export const COTTAGE_IDS = DEFAULT_COTTAGES.map(c => c.id);
+const ARCHIVED_COTTAGES = {};
+let cottageCatalogVersion = 0;
+export const getCottageCatalogVersion = () => cottageCatalogVersion;
+
+const COTTAGE_ID = /^[a-z0-9][a-z0-9-]{1,39}$/;
+// Cleans a saved list: valid ids, names, sizes and prices only.
+export function normalizeCottageCatalog(doc) {
+  const list = Array.isArray(doc?.cottages) ? doc.cottages : null;
+  if (!list) return null;
+  const seen = new Set();
+  return list
+    .map(c => ({
+      id: String(c?.id || ''),
+      name: String(c?.name || '').trim().slice(0, 40),
+      maxGuests: Math.round(Number(c?.maxGuests)),
+      price: Math.round(Number(c?.price) * 100) / 100,
+      archived: c?.archived === true,
+    }))
+    .filter(c => COTTAGE_ID.test(c.id) && !seen.has(c.id) && seen.add(c.id) && c.name.length >= 2
+      && Number.isInteger(c.maxGuests) && c.maxGuests >= 1 && c.maxGuests <= 200
+      && Number.isFinite(c.price) && c.price > 0 && c.price <= 100000);
+}
+
+export function getCottageCatalogError(cottage, others = []) {
+  const name = String(cottage.name || '').trim();
+  if (name.length < 2) return 'Give the cottage a name (at least 2 letters).';
+  if (others.some(o => o.id !== cottage.id && !o.archived && o.name.trim().toLowerCase() === name.toLowerCase())) return 'Another cottage already has that name.';
+  const guests = Number(cottage.maxGuests);
+  if (!Number.isInteger(guests) || guests < 1 || guests > 200) return 'Enter how many guests it fits (1 to 200).';
+  const price = Number(cottage.price);
+  if (!Number.isFinite(price) || price <= 0 || price > 100000) return 'Enter a price from ₱1 to ₱100,000.';
+  return '';
+}
+
+// Uses a saved list (from settings/cottageTypes). null keeps the defaults.
+export function applyCottageCatalog(doc) {
+  const list = normalizeCottageCatalog(doc);
+  if (!list) return false;
+  const active = list.filter(c => !c.archived);
+  COTTAGE_OPTIONS.splice(0, COTTAGE_OPTIONS.length, NO_COTTAGE, ...active.map(cottageOption));
+  COTTAGE_IDS.splice(0, COTTAGE_IDS.length, ...active.map(c => c.id));
+  Object.keys(ARCHIVED_COTTAGES).forEach(id => { delete ARCHIVED_COTTAGES[id]; });
+  list.filter(c => c.archived).forEach(c => { ARCHIVED_COTTAGES[c.id] = cottageOption(c); });
+  cottageCatalogVersion += 1;
+  return true;
+}
 
 // Rates saved on bookings made before the cottage list changed. They're only
 // accepted when repricing those existing bookings (e.g. a date change).
@@ -121,7 +180,8 @@ export function getCottageFee(cottageId) {
 }
 
 export function getCottageLabel(cottageId) {
-  return COTTAGE_OPTIONS.find(item => item.id === cottageId)?.label || LEGACY_COTTAGE_LABELS[cottageId] || 'Cottage';
+  return COTTAGE_OPTIONS.find(item => item.id === cottageId)?.label || ARCHIVED_COTTAGES[cottageId]?.label
+    || LEGACY_COTTAGE_LABELS[cottageId] || 'Cottage';
 }
 
 // Resort rate card. `daytour` is the room rate for both day tours and night
@@ -393,6 +453,9 @@ export function calculateBookingPrice({
   lateArrival = false,
   // { periods, checkIn, checkOut }: holiday / peak-season prices (optional).
   season = null,
+  // Repricing an existing booking: keep the cottage fee it was booked at,
+  // even if the admin has since changed or removed that cottage.
+  keepCottageFee = false,
 }) {
   const { amount: baseRate, baseCapacity } = getRoomBaseRate(room, bookingType);
   const totalGuests = adults + children;
@@ -406,7 +469,11 @@ export function calculateBookingPrice({
     : getSwimmingRate(tourPeriod);
   const extraGuestCharge = (extraAdults * extraRate.adult + extraChildren * extraRate.child) * nights;
   const fee = Number(cottageFee);
+  // Removed (archived) cottages and older rates are only accepted when an
+  // existing booking is repriced; new bookings can't choose them.
   const validCottageFee = getCottageFee(cottageId) === fee
+    || (keepCottageFee && Boolean(cottageId) && Number.isFinite(fee) && fee >= 0)
+    || ARCHIVED_COTTAGES[cottageId]?.price === fee
     || Boolean(LEGACY_COTTAGE_RATES[cottageId]?.includes(fee));
 
   if (!Number.isInteger(nights) || nights < 1) throw new Error('Choose valid stay dates.');

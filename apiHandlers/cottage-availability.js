@@ -12,6 +12,7 @@ import { verifyStaff } from '../lib/verifyStaff';
 import { logActivity } from '../lib/activityLog';
 import { COTTAGE_INVENTORY_DOC, getCottageAvailabilityFor, readCottageInventory } from '../lib/cottageStock';
 import { COTTAGE_IDS, normalizeCottageInventory } from '../src/lib/cottages';
+import { loadCottageCatalog } from '../lib/cottageCatalog';
 
 export default async function handler(req, res) {
   if (!adminDb) return res.status(503).json({ error: 'Cottage availability is temporarily unavailable.' });
@@ -38,6 +39,8 @@ export default async function handler(req, res) {
   }
   const staff = await verifyStaff(req);
   if (!staff || staff.role !== 'admin') return res.status(403).json({ error: 'Only an admin can change the cottage counts.' });
+  // Include cottages the admin has just added.
+  await loadCottageCatalog({ force: true });
   const inventory = normalizeCottageInventory(req.body || {});
   const invalid = COTTAGE_IDS.filter(id => {
     const raw = req.body?.[id];

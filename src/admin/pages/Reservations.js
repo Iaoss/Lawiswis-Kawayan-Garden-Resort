@@ -26,7 +26,7 @@ import {
   isReadyToCheckIn,
   manilaDateKey,
 } from '../../lib/reservationStatus';
-import { appPrompt } from '../../components/ui/app-dialog';
+import { appConfirm, appPrompt } from '../../components/ui/app-dialog';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { describeUnpaidFollowUp, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
 import { getOnlinePaymentAmount } from '../../lib/paymentPolicy';
@@ -751,6 +751,17 @@ export default function Reservations() {
       if (!overrideReason) return;
       force = true;
       statusReason = overrideReason.trim();
+    }
+    // Checking out can't be undone: confirm, especially before the guest's
+    // check-out time (an accidental click while the guest is still here).
+    if (status === 'checked-out' && !force) {
+      const scheduled = getScheduledCheckOutMs(reservation);
+      const early = scheduled ? scheduled - Date.now() : 0;
+      const ok = await appConfirm(
+        `Check out ${reservation.guestName || 'this guest'} now?${scheduled ? ` Their check-out time is ${formatManilaTime(scheduled)}${early > 30 * 60000 ? `, ${Math.round(early / 3600000 * 10) / 10} hours from now` : ''}.` : ''} Only continue if the guest has returned the key and is leaving.`,
+        { title: early > 30 * 60000 ? 'Check out early?' : 'Is this guest ready to check out?', tone: early > 30 * 60000 ? 'warning' : 'info', confirmLabel: 'Yes, check out' },
+      );
+      if (!ok) return;
     }
     // Checking in: record which ID the guest showed (staff can skip).
     let idCheck;
@@ -1655,7 +1666,7 @@ export default function Reservations() {
                   const requiresManualPrice = request.outcome === 'needs_review';
                   return (
                     <article key={`modification-${r.id}`} style={{ background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '16px' }}>
-                      <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Schedule change · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
+                      <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>{request.closureMove ? 'Closure reschedule (same price, no fee)' : 'Schedule change'} · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
                       <p style={{ margin: '8px 0', color: MUTED, fontSize: '12px' }}>
                         {request.originalCheckIn} – {request.originalCheckOut} → {request.requestedCheckIn} – {request.requestedCheckOut}
                       </p>
@@ -1675,7 +1686,7 @@ export default function Reservations() {
                           'approve-modification', r,
                           requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {},
                         )} style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Approve</button>
-                        {isAdmin && (getDaysBeforeArrival(r.checkIn) ?? 99) < DATE_CHANGE_NOTICE_DAYS && (
+                        {isAdmin && !request.closureMove && (getDaysBeforeArrival(r.checkIn) ?? 99) < DATE_CHANGE_NOTICE_DAYS && (
                           <button disabled={decisionBusy === r.id} onClick={() => decideRequest(
                             'approve-modification', r,
                             { ...(requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {}), waivePolicy: true },

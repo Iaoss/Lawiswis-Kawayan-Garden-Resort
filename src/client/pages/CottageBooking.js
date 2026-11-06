@@ -10,6 +10,7 @@ import { NAME_PATTERN } from '../../lib/nameValidation';
 import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError } from '../../lib/preferredContactMethods';
 import { RESERVATION_DEPOSIT_PERCENTAGE, getOnlinePaymentAmount } from '../../lib/paymentPolicy';
 import { createPayMongoCheckout } from '../../lib/paymongo';
+import { useCottageCatalog } from '../../lib/useCottageCatalog';
 
 // Day tour or night tour with just a cottage — no room needed. Guests pay
 // the swimming entrance per person plus the cottage.
@@ -24,9 +25,11 @@ const addMonthsKey = (dateKey, months) => {
 };
 const readLocal = (key, fallback) => { try { const v = window.localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } };
 
-const COTTAGES = COTTAGE_OPTIONS.filter(option => option.id);
 
 export default function CottageBooking() {
+  // The admin's current cottage list (Settings → Resort Status → Cottages).
+  useCottageCatalog();
+  const COTTAGES = COTTAGE_OPTIONS.filter(option => option.id);
   const navigate = useNavigate();
   // Filled in from the booking steps (/book): date, tour time and guests.
   const [query] = useSearchParams();
@@ -252,7 +255,7 @@ export default function CottageBooking() {
                   {row(`Entrance · ${form.adults} adult${Number(form.adults) === 1 ? '' : 's'}${Number(form.children) ? `, ${form.children} child${Number(form.children) === 1 ? '' : 'ren'}` : ''}`,
                     peso(Number(form.adults) * rate.adult + Number(form.children) * rate.child))}
                   {row(`Cottage${form.cottageId ? `: ${cottageName(COTTAGES.find(c => c.id === form.cottageId))}` : ''}`,
-                    form.cottageId ? peso(COTTAGES.find(c => c.id === form.cottageId).price) : 'Choose one')}
+                    form.cottageId ? peso(COTTAGES.find(c => c.id === form.cottageId)?.price) : 'Choose one')}
                   {row('Total', total ? peso(total) : '—', { fontWeight: 700, color: FOREST_DEEP, borderTop: `1px solid ${LINE}`, paddingTop: 8 })}
                 </div>
               );

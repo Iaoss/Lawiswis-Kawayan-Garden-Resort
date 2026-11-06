@@ -102,7 +102,7 @@ export function normalizeBookingDetails(input = {}, { room = null, now = new Dat
 }
 
 // Price for a booking's room, type, dates and guests (before any discount).
-export function priceBookingDetails(room, details, { cottageId = '', cottageFee = 0, dayVisitors = null, seasonPeriods = null } = {}) {
+export function priceBookingDetails(room, details, { cottageId = '', cottageFee = 0, dayVisitors = null, seasonPeriods = null, keepCottageFee = false } = {}) {
   return calculateBookingPrice({
     room,
     bookingType: details.bookingType,
@@ -115,6 +115,7 @@ export function priceBookingDetails(room, details, { cottageId = '', cottageFee 
     dayVisitors,
     lateArrival: details.bookingType === 'overnight' && isLateArrivalTime(details.checkInTime),
     season: seasonPeriods?.length ? { periods: seasonPeriods, checkIn: details.checkIn, checkOut: details.checkOut } : null,
+    keepCottageFee,
   });
 }
 

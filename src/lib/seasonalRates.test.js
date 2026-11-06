@@ -32,3 +32,13 @@ describe('seasonal rates', () => {
     expect(normalizeSeasonPeriods({ periods: [holyWeek, { id: 'bad', name: 'x', from: 'no', to: 'no', percent: 5 }] })).toHaveLength(1);
   });
 });
+
+test('finds the holiday happening now or coming up, with its nightly price', () => {
+  const { getCurrentOrNextSeason, seasonalNightlyRate, formatSeasonDates } = require('./seasonalRates');
+  const periods = [{ id: 'a', name: 'Holiday', from: '2026-11-06', to: '2026-11-07', percent: 20 }, { id: 'b', name: 'Christmas', from: '2026-12-23', to: '2027-01-02', percent: 30 }];
+  expect(getCurrentOrNextSeason(periods, '2026-11-06').id).toBe('a');
+  expect(getCurrentOrNextSeason(periods, '2026-11-08').id).toBe('b');
+  expect(getCurrentOrNextSeason(periods, '2026-11-08', 10)).toBeNull();
+  expect(seasonalNightlyRate(3000, periods[0])).toBe(3600);
+  expect(formatSeasonDates(periods[0])).toMatch(/Nov 6.?7/);
+});

@@ -12,6 +12,8 @@ import { getRequestedBookingFields } from '../src/lib/bookingDetails';
 import { getDateChangeBlock } from '../src/lib/cancellationPolicy';
 import { isUnpaidOnlineBooking } from '../src/lib/unpaidBookings';
 import { holdsRoom } from '../src/lib/unpaidBookings';
+import { getSamePriceSuggestions } from '../src/lib/closureReschedule';
+import { readSeasonPeriods } from '../lib/seasonStore';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
 
@@ -325,9 +327,26 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     }
     const auditRef = reservationRef.collection('modificationAudit').doc();
     if (action === 'reject-modification') {
+      // Offer the guest the closest free dates for the same room that keep
+      // the same price (shown on their booking page and in the email).
+      let suggestions = [];
+      if (reservation.roomId) {
+        const others = await transaction.get(adminDb.collection('reservations').where('roomId', '==', reservation.roomId));
+        const bookedRanges = others.docs.filter(doc => doc.id !== reservationId).map(doc => doc.data())
+          .filter(other => holdsRoom(other) && typeof other.checkIn === 'string')
+          .map(other => ({ checkIn: other.checkIn.slice(0, 10), checkOut: String(other.checkOut || other.checkIn).slice(0, 10) }));
+        const todayKey = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+        const max = new Date(Date.now() + 8 * 3600000);
+        max.setUTCMonth(max.getUTCMonth() + 2);
+        suggestions = getSamePriceSuggestions({
+          reservation, requestedCheckIn: request.requestedCheckIn, bookedRanges, seasonPeriods: body.seasonPeriods || [],
+          today: todayKey, maxDate: max.toISOString().slice(0, 10),
+        });
+      }
       transaction.update(reservationRef, {
         'modificationRequest.status': 'rejected',
         'modificationRequest.staffReason': reason,
+        'modificationRequest.suggestions': suggestions,
         'modificationRequest.decidedAt': FieldValue.serverTimestamp(),
         'modificationRequest.decidedBy': staff.uid,
       });
@@ -335,7 +354,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
         action: 'schedule_change_rejected', staffUid: staff.uid, reason,
         createdAt: FieldValue.serverTimestamp(),
       });
-      return { rejected: true, reservation };
+      return { rejected: true, reservation: { ...reservation, modificationRequest: { ...request, suggestions } } };
     }
 
     if (!ACTIVE_RESERVATION_STATUSES.includes(String(reservation.status || '').toLowerCase())) {
@@ -346,9 +365,10 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     // Re-checked at approval time: the 30-day window may have passed since
     // the guest asked.
     // Admins can waive the 30-day rule (e.g. typhoon closure), with a reason.
-    const waiving = body.waivePolicy === true && staff.role === 'admin';
-    if (body.waivePolicy === true && staff.role !== 'admin') throw new Error('Only an admin can waive the date-change rule.');
-    if (waiving && String(reason || '').trim().length < 5) throw new Error('Write why the date-change rule is waived.');
+    const closureMove = request.closureMove === true;
+    const waiving = closureMove || (body.waivePolicy === true && staff.role === 'admin');
+    if (!closureMove && body.waivePolicy === true && staff.role !== 'admin') throw new Error('Only an admin can waive the date-change rule.');
+    if (waiving && !closureMove && String(reason || '').trim().length < 5) throw new Error('Write why the date-change rule is waived.');
     const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: requestedCheckIn });
     if (dateBlock) throw new Error(`${dateBlock} Reject this request, or (admins) waive the rule with a reason.`);
     const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
@@ -368,7 +388,12 @@ async function decideModification({ reservationRef, reservationId, requestId, st
       });
       if (conflict) throw new Error('The requested dates are no longer available.');
       const policySnapshot = await transaction.get(adminDb.doc('settings/cancellationPolicy'));
-      change = calculateReservationModification(
+      change = closureMove ? {
+        outcome: 'eligible', reason: 'Moved because the resort was closed: same price, no fee.',
+        checkIn: requestedCheckIn, checkOut: requestedCheckOut, oldTotal: Number(reservation.totalAmount || 0),
+        updatedTotal: Number(reservation.totalAmount || 0), difference: 0, changeType: 'closure_move', paymentDue: 0, refundDue: 0, cancellationFee: 0,
+        nights: reservation.bookingType === 'daytour' ? getStayUnits(requestedCheckIn, requestedCheckOut) : getDateRangeNights(requestedCheckIn, requestedCheckOut),
+      } : calculateReservationModification(
         reservation, roomSnapshot.data(), requestedCheckIn, requestedCheckOut,
         policySnapshot.exists ? policySnapshot.data() : DEFAULT_CANCELLATION_POLICY,
         getRequestedBookingFields(request),
@@ -626,7 +651,7 @@ export default async function handler(req, res) {
     } else if (['approve-modification', 'reject-modification'].includes(action)) {
       result = await decideModification({
         reservationRef, reservationId, requestId, staff, action, reason,
-        body: { updatedTotal, waivePolicy: req.body?.waivePolicy === true },
+        body: { updatedTotal, waivePolicy: req.body?.waivePolicy === true, seasonPeriods: action === 'reject-modification' ? await readSeasonPeriods() : [] },
         siteUrl: process.env.PUBLIC_SITE_URL || `https://${req.headers.host}`,
       });
     } else {

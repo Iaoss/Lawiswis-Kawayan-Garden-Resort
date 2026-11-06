@@ -73,3 +73,27 @@ export function getSeasonalAdjustment({ periods = [], checkIn, checkOut, booking
   const label = list.map(p => `${p.name} ${p.percent > 0 ? '+' : ''}${p.percent}%${dates.length > 1 ? ` (${p.units} ${unit}${p.units === 1 ? '' : 's'})` : ''}`).join(', ');
   return { amount: Math.round(amount * 100) / 100, label, periods: list };
 }
+
+// The period happening now, or the next one within `horizonDays`, for showing
+// holiday prices next to the normal rate. null if there's none.
+export function getCurrentOrNextSeason(periods = [], todayKey = new Date().toISOString().slice(0, 10), horizonDays = 60) {
+  const limit = addDays(todayKey, horizonDays);
+  return periods.find(p => p.from <= todayKey && todayKey <= p.to)
+    || periods.filter(p => p.from > todayKey && p.from <= limit).sort((a, b) => a.from.localeCompare(b.from))[0]
+    || null;
+}
+
+export const seasonalNightlyRate = (rate, period) => Math.round(Number(rate || 0) * (1 + (period?.percent || 0) / 100));
+
+// "Nov 6–7" / "Dec 24, 2026 – Jan 2, 2027"
+export function formatSeasonDates(period) {
+  if (!period) return '';
+  const date = key => new Date(`${key}T00:00:00`);
+  const from = date(period.from);
+  const to = date(period.to);
+  const sameYear = from.getFullYear() === to.getFullYear();
+  const md = d => d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
+  if (period.from === period.to) return md(from);
+  if (sameYear && from.getMonth() === to.getMonth()) return `${md(from)}–${to.getDate()}`;
+  return sameYear ? `${md(from)} – ${md(to)}` : `${md(from)}, ${from.getFullYear()} – ${md(to)}, ${to.getFullYear()}`;
+}

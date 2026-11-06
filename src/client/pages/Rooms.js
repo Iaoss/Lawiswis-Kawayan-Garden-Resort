@@ -8,6 +8,8 @@ import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 
 import { GROUPS, OTHER_GROUP, UP, decorateRoom } from '../lib/roomCatalog';
+import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
+import { formatSeasonDates, getCurrentOrNextSeason, seasonalNightlyRate } from '../../lib/seasonalRates';
 
 const HERO_IMAGE = optimizeImage(`${UP}2020/01/hero192x-scaled.jpg`, IMAGE_WIDTHS.hero);
 
@@ -16,6 +18,13 @@ const peso = value => `₱${Number(value || 0).toLocaleString('en-PH')}`;
 export default function Rooms() {
   const location = useLocation();
   const navigate = useNavigate();
+  // Holiday / peak-season price happening now or coming up.
+  const season = getCurrentOrNextSeason(useSeasonPeriods(), new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10));
+  const seasonNote = (price, size = 11) => (season && Number(price) > 0 ? (
+    <span style={{ display: 'block', color: season.percent > 0 ? '#9a3412' : '#15803d', font: `600 ${size}px ${SANS}`, marginTop: 2 }}>
+      {peso(seasonalNightlyRate(price, season))} / night on {formatSeasonDates(season)} ({season.name})
+    </span>
+  ) : null);
   const { available: resortAvailable, error: availabilityStatusError, loading: resortStatusLoading } = useResortAvailability();
   const canBook = resortAvailable && !resortStatusLoading && !availabilityStatusError;
   const [rooms, setRooms] = useState([]);
@@ -235,6 +244,7 @@ export default function Rooms() {
                             <span style={{ color: INK, font: `600 20px ${SERIF}` }}>
                               {peso(room.price)}
                               <small style={{ color: '#8d8877', font: `10px ${SANS}` }}> / night</small>
+                              {seasonNote(room.price, 10.5)}
                             </span>
                             <button type="button" disabled={!canBook} onClick={() => bookRoom(room)} style={bookButtonStyle()}>
                               {bookLabel()}
@@ -291,6 +301,7 @@ export default function Rooms() {
                 <div style={{ color: INK, font: `600 30px ${SERIF}`, marginBottom: '4px' }}>
                   {peso(selectedRoom.price)}
                   <small style={{ color: '#8d8877', font: `12px ${SANS}` }}> / night</small>
+                  {seasonNote(selectedRoom.price, 12)}
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse', margin: '16px 0 22px', font: `13px ${SANS}` }}>
                   <tbody>

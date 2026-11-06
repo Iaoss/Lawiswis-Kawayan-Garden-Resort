@@ -16,7 +16,7 @@ export const ACTION_GROUPS = [
   { id: 'bookings', label: 'Bookings', actions: ['walk_in_created', 'booking_edited', 'status_changed', 'no_show_closed', 'overstay_flagged', 'guest_info_updated'] },
   { id: 'cancellations', label: 'Cancellations & refunds', actions: ['reservation_cancelled', 'reservation_no_show', 'closure_notice_sent', 'approve_refund', 'reject_refund', 'review_refund'] },
   { id: 'changes', label: 'Date-change requests', actions: ['approve_modification', 'reject_modification'] },
-  { id: 'rooms', label: 'Rooms', actions: ['room_created', 'room_updated', 'room_deleted', 'room_status_changed', 'season_rate_saved', 'season_rate_removed'] },
+  { id: 'rooms', label: 'Rooms', actions: ['room_created', 'room_updated', 'room_deleted', 'room_status_changed', 'season_rate_saved', 'season_rate_removed', 'cottages_updated', 'cottage_inventory_changed'] },
   { id: 'accounts', label: 'Staff accounts', actions: ['staff_account_created', 'staff_account_edited', 'staff_account_status', 'staff_password_reset', 'staff_access_granted', 'staff_access_removed', 'staff_account_deleted', 'staff_role_saved', 'staff_role_deleted', 'shift_handover'] },
   { id: 'resort', label: 'Resort status', actions: ['resort_status_changed'] },
 ];

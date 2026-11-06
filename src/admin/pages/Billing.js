@@ -9,7 +9,8 @@ import { SortControls, sortRecords } from '../lib/listSort';
 import { receiptNotice, staffApi } from '../lib/staffApi';
 import { SERVICES, getService, isRoomGuest, priceService } from '../../lib/services';
 import { getVatBreakdown } from '../../lib/bookingPricing';
-import { appAlert } from '../../components/ui/app-dialog';
+import { getScheduledCheckOutMs, formatManilaTime } from '../../lib/reservationStatus';
+import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
@@ -24,20 +25,24 @@ export default function Billing() {
     navigate(`${portalBase}/reservations${booking ? `?booking=${encodeURIComponent(booking)}` : ''}`);
   };
 
-  // ── Ledger palette ─────────────────────────────────────────
-  const PAPER    = dark ? '#0E1712' : '#F7F5EF';
-  const INK      = dark ? '#EDEBE3' : '#1B2B22';
-  const SUBINK   = dark ? '#A9B4AC' : '#5B6660';
-  const MUTED    = dark ? '#6F7A73' : '#9A9E96';
-  const LINE     = dark ? '#26332C' : '#DAD5C7';
-  const SURFACE  = dark ? '#152019' : '#FFFFFF';
-  const SURFACE2 = dark ? '#1B281F' : '#F1EEE4';
-  const SELECTED = dark ? '#233A2A' : '#EFEEE0';
+  // ── Colours: the same as the other staff pages (Payments, Reports…) ──
+  const BG       = dark ? '#020b09' : '#f4f6f4';
+  const CARD     = dark ? '#1c1c1c' : '#ffffff';
+  const CARD2    = dark ? '#282827' : '#f9fafb';
+  const BORDER   = dark ? '#2a2a28' : '#e5e7eb';
+  const TEXT     = dark ? '#f0f0f0' : '#1f2937';
+  const SUBTEXT  = dark ? '#c7c7c0' : '#4b5563';
+  const MUTED    = '#9ca3af';
+  const SELECTED = dark ? '#242b1e' : '#f3f8ec';
+  const ACCENT   = settings?.accentColor || '#9cb56f';
+  const ACCENT_TEXT = '#0a1a0a';
   const BRASS    = '#A67C3D';
   const BRASS_TEXT = '#221604';
-  const LEDGER_GREEN = dark ? '#8FCB9B' : '#2F5233';
-  const BRICK    = dark ? '#E0A0A0' : '#9C3B3B';
-  const OK_BG    = dark ? '#1E3324' : '#E8F0E5';
+  const GREEN    = dark ? '#86efac' : '#15803d';
+  const GREEN_BTN = '#2f6b3a';
+  const RED      = dark ? '#fca5a5' : '#b91c1c';
+  const OK_BG    = dark ? '#14532d' : '#dcfce7';
+  const OK_TEXT  = dark ? '#86efac' : '#166534';
 
   const SANS = "'Poppins', sans-serif";
   const MONO = "'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace";
@@ -268,22 +273,17 @@ export default function Billing() {
   };
 
   const inp = {
-    border: `1px solid ${LINE}`, borderRadius: '6px', padding: '9px 12px',
-    fontSize: '13px', fontFamily: SANS,
-    background: dark ? '#0E1712' : '#FFFFFF', color: INK, outline: 'none', boxSizing: 'border-box',
+    border: `1px solid ${BORDER}`, borderRadius: 9, padding: '9px 11px',
+    fontSize: 13, fontFamily: SANS, background: CARD2, color: TEXT, outline: 'none', boxSizing: 'border-box',
   };
 
   const money = { fontFamily: MONO, fontVariantNumeric: 'tabular-nums' };
 
   const Receipt = ({ label, value, strong }) => (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
-      <span style={{ color: strong ? INK : SUBINK, fontSize: strong ? '13px' : '12.5px', fontWeight: strong ? 600 : 400 }}>
-        {label}
-      </span>
-      <span style={{ flex: 1, borderBottom: `1px dotted ${LINE}`, marginBottom: '3px' }} />
-      <span style={{ ...money, color: strong ? undefined : INK, fontSize: strong ? '16px' : '13px', fontWeight: strong ? 700 : 500 }}>
-        {value}
-      </span>
+      <span style={{ color: strong ? TEXT : SUBTEXT, fontSize: strong ? '13px' : '12.5px', fontWeight: strong ? 700 : 400 }}>{label}</span>
+      <span style={{ flex: 1, borderBottom: `1px dotted ${BORDER}`, marginBottom: '3px' }} />
+      <span style={{ ...money, color: TEXT, fontSize: strong ? '15px' : '13px', fontWeight: strong ? 700 : 500 }}>{value}</span>
     </div>
   );
 
@@ -296,280 +296,277 @@ export default function Billing() {
   const selectedService = getService(service.serviceId);
   const servicePrice = selected ? priceService(service.serviceId, { ...service, roomGuest: isRoomGuest(selected) }) : null;
 
+  // ── Check-out with a confirmation (it can't be undone) ─────
+  const confirmAndCheckout = async () => {
+    if (totalBalance(selected) > 0) {
+      appAlert('Collect the remaining balance before checking this guest out.', { title: 'Balance still due', tone: 'warning' });
+      return;
+    }
+    const scheduled = getScheduledCheckOutMs(selected);
+    const early = scheduled ? scheduled - Date.now() : 0;
+    const when = scheduled
+      ? `${new Date(scheduled).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' })} at ${formatManilaTime(scheduled)}`
+      : 'not set';
+    const hoursEarly = Math.floor(early / 3600000);
+    const minutesEarly = Math.round((early % 3600000) / 60000);
+    const earlyText = early > 30 * 60000
+      ? ` That's ${hoursEarly ? `${hoursEarly} h ` : ''}${minutesEarly} min before their check-out time.`
+      : '';
+    const ok = await appConfirm(
+      `Check out ${selected.guestName || 'this guest'} now? Their check-out time is ${when}.${earlyText} Only continue if the guest has returned the key and is leaving. The room will be set to cleaning and a thank-you email is sent.`,
+      { title: early > 30 * 60000 ? 'Check out early?' : 'Is this guest ready to check out?', tone: early > 30 * 60000 ? 'warning' : 'info', confirmLabel: 'Yes, check out' },
+    );
+    if (ok) handleCheckout();
+  };
+
+  const card = { background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '18px 20px' };
+  const stepTitle = (number, title, hint) => (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 14 }}>
+      <span style={{ width: 24, height: 24, borderRadius: '50%', background: ACCENT, color: ACCENT_TEXT, display: 'grid', placeItems: 'center', fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{number}</span>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 14, color: TEXT }}>{title}</div>
+        {hint && <div style={{ fontSize: 11.5, color: SUBTEXT, marginTop: 2 }}>{hint}</div>}
+      </div>
+    </div>
+  );
+  const statusPill = status => {
+    const map = {
+      'checked-in': dark ? ['#1e3a5f', '#93c5fd'] : ['#dbeafe', '#1d4ed8'],
+      confirmed: dark ? ['#14532d', '#86efac'] : ['#dcfce7', '#15803d'],
+      pending: dark ? ['#78350f', '#fde68a'] : ['#fef3c7', '#b45309'],
+    };
+    const [bg, fg] = map[status] || map.pending;
+    return <span style={{ background: bg, color: fg, borderRadius: 999, padding: '2px 9px', fontSize: 10.5, fontWeight: 700, textTransform: 'capitalize', whiteSpace: 'nowrap' }}>{String(status || 'pending').replace('-', ' ')}</span>;
+  };
+  const btn = (kind = 'plain') => ({
+    border: kind === 'plain' ? `1px solid ${BORDER}` : 'none',
+    background: kind === 'primary' ? ACCENT : kind === 'green' ? GREEN_BTN : kind === 'brass' ? BRASS : CARD2,
+    color: kind === 'primary' ? ACCENT_TEXT : kind === 'green' ? '#fff' : kind === 'brass' ? BRASS_TEXT : TEXT,
+    borderRadius: 9, padding: '9px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: SANS, whiteSpace: 'nowrap',
+  });
+
+  const balance = selected ? totalBalance(selected) : 0;
+  const lineItems = selected && Array.isArray(selected.extraChargeItems) ? selected.extraChargeItems : [];
+  const otherExtras = selected ? Math.max(0, Number(selected.extraCharges || 0) - lineItems.reduce((s, i) => s + Number(i.amount || 0), 0)) : 0;
+
   return (
     <PageLayout>
-      <div style={{ fontFamily: SANS, background: PAPER, minHeight: '100vh', padding: '28px' }}>
-        <button type="button" onClick={backToReservations}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${LINE}`, background: 'transparent', color: INK, borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', marginBottom: 12, fontFamily: 'inherit' }}>
-          <i className="ti ti-arrow-left" aria-hidden="true" /> {cameFromReservations ? 'Back to reservation' : 'Reservations'}
-        </button>
-        <h2 style={{ fontSize: '20px', fontWeight: '700', color: INK, marginBottom: '4px' }}>Billing</h2>
-        <p style={{ fontSize: '12.5px', color: SUBINK, marginBottom: '20px' }}>Reservation charges and payment records.</p>
+      <div style={{ fontFamily: SANS, background: BG, minHeight: '100vh', padding: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+          <div>
+            <button type="button" onClick={backToReservations}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${BORDER}`, background: 'transparent', color: TEXT, borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', marginBottom: 10, fontFamily: 'inherit' }}>
+              <i className="ti ti-arrow-left" aria-hidden="true" /> {cameFromReservations ? 'Back to reservation' : 'Reservations'}
+            </button>
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: TEXT, margin: 0 }}>Billing</h2>
+            <p style={{ fontSize: 12.5, color: SUBTEXT, margin: '3px 0 0' }}>Pick a guest, add anything they used, take payment, then check them out.</p>
+          </div>
+        </div>
 
         {success && (
-          <div style={{ background: OK_BG, color: LEDGER_GREEN, padding: '10px 14px', borderRadius: '8px', marginBottom: '18px', fontSize: '13px', border: `1px solid ${LINE}` }}>
-            {success}
+          <div role="status" style={{ background: OK_BG, color: OK_TEXT, padding: '10px 14px', borderRadius: 10, marginBottom: 16, fontSize: 13, display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+            <span>{success}</span>
+            <button type="button" aria-label="Dismiss" onClick={() => setSuccess('')} style={{ border: 0, background: 'none', color: 'inherit', cursor: 'pointer', fontSize: 15 }}>×</button>
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: '24px' }}>
-          {/* Reservation list — plain list, not cards */}
-          <div>
-            <h3 style={{ fontWeight: '600', color: SUBINK, fontSize: '12px', margin: '0 0 10px', textTransform: 'none' }}>Active reservations</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
-              <input type="search" value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Search guest, room, phone or #ref"
-                aria-label="Search reservations"
-                style={{ ...inp, padding: '8px 10px', fontSize: '12px' }} />
-              <SortControls sortBy={sortBy} sortDir={sortDir} onSortBy={setSortBy} onSortDir={setSortDir}
-                style={{ border: `1px solid ${LINE}`, borderRadius: '6px', padding: '7px 8px', fontSize: '12px', fontFamily: SANS, background: SURFACE, color: INK, outline: 'none' }} />
-            </div>
-            {shownReservations.length === 0 ? (
-              <p style={{ color: MUTED, fontSize: '13px', padding: '12px 0' }}>{reservations.length === 0 ? 'No active reservations.' : 'No reservations match your search.'}</p>
-            ) : (
-              <div style={{ borderTop: `1px solid ${LINE}` }}>
-                {shownReservations.map(r => (
-                  <div key={r.id} onClick={() => selectReservation(r)}
-                    style={{
-                      padding: '11px 10px', borderBottom: `1px solid ${LINE}`, cursor: 'pointer',
-                      background: selected?.id === r.id ? SELECTED : 'transparent',
-                      borderLeft: selected?.id === r.id ? `3px solid ${BRASS}` : '3px solid transparent',
-                    }}>
-                    <p style={{ fontWeight: '600', fontSize: '13px', color: INK, margin: 0 }}>{r.guestName}</p>
-                    <p style={{ fontSize: '11px', color: MUTED, margin: '2px 0 6px' }}>
-                      Room {r.roomNumber} · {formatDate(r.checkIn)} → {formatDate(r.checkOut)}
-                    </p>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: '11px', color: SUBINK }}>Balance</span>
-                      <span style={{ ...money, fontSize: '12px', fontWeight: '700', color: totalBalance(r) > 0 ? BRICK : LEDGER_GREEN }}>
-                        {formatCurrency(totalBalance(r))}
-                      </span>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 300px) 1fr', gap: 20, alignItems: 'start' }}>
+          {/* ── Guests with an open bill ── */}
+          <div style={{ ...card, padding: 14, position: 'sticky', top: 76 }}>
+            <div style={{ fontWeight: 700, color: TEXT, fontSize: 13, marginBottom: 10 }}>Open bills ({shownReservations.length})</div>
+            <input type="search" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search guest, room, phone or #ref" aria-label="Search reservations"
+              style={{ ...inp, width: '100%', marginBottom: 8 }} />
+            <SortControls sortBy={sortBy} sortDir={sortDir} onSortBy={setSortBy} onSortDir={setSortDir}
+              style={{ ...inp, padding: '7px 8px', fontSize: 12 }} />
+            <div style={{ marginTop: 10, maxHeight: 'calc(100vh - 300px)', overflowY: 'auto', display: 'grid', gap: 6 }}>
+              {shownReservations.length === 0 ? (
+                <p style={{ color: MUTED, fontSize: 13, padding: '12px 0' }}>{reservations.length === 0 ? 'No open bills.' : 'No guests match your search.'}</p>
+              ) : shownReservations.map(r => {
+                const owes = totalBalance(r);
+                const active = selected?.id === r.id;
+                return (
+                  <button type="button" key={r.id} onClick={() => selectReservation(r)}
+                    style={{ textAlign: 'left', border: `1px solid ${active ? ACCENT : BORDER}`, background: active ? SELECTED : CARD2, borderRadius: 10, padding: '10px 11px', cursor: 'pointer', fontFamily: SANS }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+                      <span style={{ fontWeight: 700, fontSize: 13, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.guestName || 'Guest'}</span>
+                      {statusPill(r.status)}
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                    <div style={{ fontSize: 11, color: MUTED, margin: '3px 0 6px' }}>
+                      {r.cottageOnly ? 'Cottage' : `Room ${r.roomNumber || '—'}`} · {formatDate(r.checkIn)}{r.checkOut && r.checkOut !== r.checkIn ? ` → ${formatDate(r.checkOut)}` : ''}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                      <span style={{ color: SUBTEXT }}>{owes > 0 ? 'Still owes' : 'Paid in full'}</span>
+                      <span style={{ ...money, fontWeight: 700, color: owes > 0 ? RED : GREEN }}>{formatCurrency(Math.max(0, owes))}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Detail panel */}
+          {/* ── The selected guest's bill ── */}
           <div>
             {!selected ? (
-              <div style={{ padding: '40px', textAlign: 'center', color: MUTED, border: `1px dashed ${LINE}`, borderRadius: '10px' }}>
-                Select a reservation to manage billing.
+              <div style={{ ...card, padding: 40, textAlign: 'center', color: MUTED, borderStyle: 'dashed' }}>
+                <i className="ti ti-receipt" aria-hidden="true" style={{ fontSize: 30, display: 'block', marginBottom: 8 }} />
+                Select a guest on the left to see their bill.
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-
-                {/* Receipt-style summary */}
-                <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: '10px', padding: '20px 24px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '14px' }}>
-                    <h3 style={{ fontWeight: '700', color: INK, margin: 0, fontSize: '15px' }}>{selected.guestName}</h3>
-                    <span style={{ fontSize: '12px', color: SUBINK }}>Room {selected.roomNumber} · {selected.roomType}</span>
+              <div style={{ display: 'grid', gap: 16 }}>
+                {/* Summary */}
+                <div style={{ ...card, display: 'flex', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <h3 style={{ margin: 0, fontSize: 18, color: TEXT }}>{selected.guestName}</h3>
+                      {statusPill(selected.status)}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: SUBTEXT, marginTop: 4 }}>
+                      {selected.cottageOnly ? 'Cottage-only tour' : `Room ${selected.roomNumber || '—'}${selected.roomType ? ` · ${selected.roomType}` : ''}`}
+                      {' · '}{formatDate(selected.checkIn)}{selected.checkInTime ? ` ${selected.checkInTime}` : ''}
+                      {selected.checkOut && selected.checkOut !== selected.checkIn ? ` → ${formatDate(selected.checkOut)}` : ''}{selected.checkOutTime ? ` (out ${selected.checkOutTime})` : ''}
+                    </div>
+                    <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>Booking #{selected.id.slice(0, 8).toUpperCase()}{selected.phone ? ` · ${selected.phone}` : ''}</div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
-                    <Receipt label={selected.cottageOnly ? 'Entrance + cottage' : 'Room charge'} value={formatCurrency(selected.totalAmount)} />
-                    <Receipt label="Extra charges" value={formatCurrency(selected.extraCharges || 0)} />
-                    {Array.isArray(selected.extraChargeItems) && selected.extraChargeItems.length > 0 && (
-                      <div style={{ display: 'grid', gap: '4px', paddingLeft: '12px' }}>
-                        {selected.extraChargeItems.map(item => (
-                          <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: SUBINK }}>
-                            <span>{item.description}</span><span style={money}>{formatCurrency(item.amount)}</span>
-                          </div>
-                        ))}
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 11, color: SUBTEXT, textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>{balance > 0 ? 'Balance due' : 'Paid in full'}</div>
+                    <div style={{ ...money, fontSize: 28, fontWeight: 800, color: balance > 0 ? RED : GREEN }}>{formatCurrency(Math.max(0, balance))}</div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, alignItems: 'start' }}>
+                  {/* The bill */}
+                  <div style={card}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: TEXT, marginBottom: 12 }}><i className="ti ti-file-invoice" aria-hidden="true" /> Bill</div>
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      <Receipt label={selected.cottageOnly ? 'Entrance + cottage' : 'Booking (room, guests, cottage)'} value={formatCurrency(selected.totalAmount)} />
+                      {lineItems.map(item => <Receipt key={item.id || item.description} label={item.description} value={formatCurrency(item.amount)} />)}
+                      {otherExtras > 0.004 && <Receipt label="Other charges" value={formatCurrency(otherExtras)} />}
+                      <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 8 }}>
+                        <Receipt label="Total" value={formatCurrency(Number(selected.totalAmount || 0) + Number(selected.extraCharges || 0))} strong />
                       </div>
-                    )}
-                    <Receipt label="Paid to date" value={`− ${formatCurrency(totalPaid(selected))}`} />
-                    {(() => {
-                      const vat = getVatBreakdown(Number(selected.totalAmount || 0) + Number(selected.extraCharges || 0));
-                      return (
-                        <div style={{ fontSize: '11px', color: SUBINK, display: 'grid', gap: '3px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Total charges (VAT included)</span><span style={money}>{formatCurrency(vat.total)}</span></div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Net of VAT · 12% VAT</span><span style={money}>{formatCurrency(vat.net)} · {formatCurrency(vat.vat)}</span></div>
-                        </div>
-                      );
-                    })()}
-                    <div style={{ borderTop: `1px solid ${LINE}`, marginTop: '4px', paddingTop: '10px' }}>
-                      <Receipt label="Balance due" value={formatCurrency(totalBalance(selected))} strong />
+                      <Receipt label="Paid so far" value={`− ${formatCurrency(totalPaid(selected))}`} />
+                      <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 8 }}>
+                        <Receipt label={balance > 0 ? 'Balance due' : 'Balance'} value={formatCurrency(Math.max(0, balance))} strong />
+                      </div>
+                      {(() => {
+                        const vat = getVatBreakdown(Number(selected.totalAmount || 0) + Number(selected.extraCharges || 0));
+                        return <div style={{ fontSize: 11, color: MUTED }}>Prices include 12% VAT ({formatCurrency(vat.vat)}); net of VAT {formatCurrency(vat.net)}.</div>;
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* 1 · Add to the bill */}
+                  <div style={card}>
+                    {stepTitle(1, 'Add to the bill', 'Anything the guest used during the stay.')}
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      <label style={{ fontSize: 11, fontWeight: 600, color: SUBTEXT }}>Extra charge</label>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input value={extraCharge.description} onChange={e => setExtraCharge({ ...extraCharge, description: e.target.value })}
+                          placeholder="e.g. Food, laundry, damage" style={{ ...inp, flex: 1, minWidth: 0 }} />
+                        <input type="number" value={extraCharge.amount} onChange={e => setExtraCharge({ ...extraCharge, amount: e.target.value })}
+                          placeholder="₱" style={{ ...inp, width: 90 }} />
+                        <button type="button" onClick={handleAddExtra} disabled={billingBusy || !extraCharge.description || !extraCharge.amount} style={{ ...btn(), opacity: !extraCharge.description || !extraCharge.amount ? 0.6 : 1 }}>Add</button>
+                      </div>
+                      <label style={{ fontSize: 11, fontWeight: 600, color: SUBTEXT, marginTop: 6 }}>Service from the rate card</label>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <select value={service.serviceId} aria-label="Service"
+                          onChange={e => setService({ serviceId: e.target.value, hours: e.target.value === 'spa' ? 1 : 4, persons: 5 })}
+                          style={{ ...inp, flex: '1 1 150px' }}>
+                          {SERVICES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                        </select>
+                        <input type="number" aria-label="Hours" title="Hours" min={service.serviceId === 'spa' ? 1 : 4} max={selectedService?.maxHours} value={service.hours}
+                          onChange={e => setService(prev => ({ ...prev, hours: e.target.value }))} style={{ ...inp, width: 70 }} />
+                        {service.serviceId === 'photoshoot' && (
+                          <input type="number" aria-label="People" title="People" min="1" max={selectedService?.maxPersons} value={service.persons}
+                            onChange={e => setService(prev => ({ ...prev, persons: e.target.value }))} style={{ ...inp, width: 70 }} />
+                        )}
+                        <button type="button" onClick={handleAddService} disabled={billingBusy || !servicePrice || Boolean(servicePrice.error)} style={btn()}>
+                          Add {servicePrice && !servicePrice.error ? formatCurrency(servicePrice.amount) : ''}
+                        </button>
+                      </div>
+                      <div style={{ fontSize: 11, color: servicePrice?.error ? RED : MUTED }}>
+                        {servicePrice?.error || `${selectedService?.summary || ''} ${service.serviceId === 'photoshoot' ? '(hours, people)' : '(hours)'}`}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Extra charge */}
-                <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: '10px', padding: '18px 24px' }}>
-                  <h3 style={{ fontWeight: '600', color: INK, marginBottom: '12px', fontSize: '13px' }}>Add extra charge</h3>
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    <input value={extraCharge.description}
-                      onChange={e => setExtraCharge({ ...extraCharge, description: e.target.value })}
-                      placeholder="Description (e.g. F&B, laundry)"
-                      style={{ ...inp, flex: 1 }} />
-                    <input type="number" value={extraCharge.amount}
-                      onChange={e => setExtraCharge({ ...extraCharge, amount: e.target.value })}
-                      placeholder="Amount"
-                      style={{ ...inp, width: '120px' }} />
-                    <button onClick={handleAddExtra}
-                      style={{ background: SURFACE2, color: INK, border: `1px solid ${LINE}`, borderRadius: '6px', padding: '9px 18px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', fontFamily: SANS }}>
-                      Add
-                    </button>
-                  </div>
-                </div>
-
-                {/* Rate-card services */}
-                <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: '10px', padding: '18px 24px' }}>
-                  <h3 style={{ fontWeight: '600', color: INK, marginBottom: '4px', fontSize: '13px' }}>Add service</h3>
-                  <p style={{ fontSize: '11.5px', color: SUBINK, margin: '0 0 12px' }}>{selectedService?.summary}</p>
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                    <label style={{ display: 'grid', gap: '4px', fontSize: '11px', color: SUBINK }}>Service
-                      <select value={service.serviceId}
-                        onChange={e => setService({ serviceId: e.target.value, hours: e.target.value === 'spa' ? 1 : 4, persons: 5 })}
-                        style={{ ...inp, minWidth: '180px' }}>
-                        {SERVICES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
-                      </select>
-                    </label>
-                    <label style={{ display: 'grid', gap: '4px', fontSize: '11px', color: SUBINK }}>Hours
-                      <input type="number" min={service.serviceId === 'spa' ? 1 : 4} max={selectedService?.maxHours} value={service.hours}
-                        onChange={e => setService(prev => ({ ...prev, hours: e.target.value }))} style={{ ...inp, width: '90px' }} />
-                    </label>
-                    {service.serviceId === 'photoshoot' && (
-                      <label style={{ display: 'grid', gap: '4px', fontSize: '11px', color: SUBINK }}>People
-                        <input type="number" min="1" max={selectedService?.maxPersons} value={service.persons}
-                          onChange={e => setService(prev => ({ ...prev, persons: e.target.value }))} style={{ ...inp, width: '90px' }} />
-                      </label>
-                    )}
-                    <button onClick={handleAddService} disabled={billingBusy || !servicePrice || Boolean(servicePrice.error)}
-                      style={{ background: SURFACE2, color: INK, border: `1px solid ${LINE}`, borderRadius: '6px', padding: '9px 18px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', fontFamily: SANS }}>
-                      Add {servicePrice && !servicePrice.error ? formatCurrency(servicePrice.amount) : ''}
-                    </button>
-                  </div>
-                  {servicePrice?.error ? (
-                    <div style={{ marginTop: '8px', fontSize: '11.5px', color: BRICK }}>{servicePrice.error}</div>
-                  ) : servicePrice?.breakdown && (
-                    <div style={{ marginTop: '10px', display: 'grid', gap: '3px' }}>
-                      {servicePrice.breakdown.map(([label, amount]) => (
-                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: SUBINK }}>
-                          <span>{label}</span><span style={money}>{formatCurrency(amount)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Payment — two clearly separate lanes */}
-                <div style={{ background: SURFACE, border: `1px solid ${LINE}`, borderRadius: '10px', padding: '18px 24px' }}>
-                  <h3 style={{ fontWeight: '600', color: INK, marginBottom: '14px', fontSize: '13px' }}>Accept payment</h3>
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-                    <input type="number" value={paymentAmount}
-                      onChange={e => { setPaymentAmount(e.target.value); setStatusResult(''); }}
-                      placeholder="Amount"
-                      style={{ ...inp, flex: 1, minWidth: 0 }} />
-                    {totalBalance(selected) > 0 && (
-                      <button type="button" onClick={() => { setPaymentAmount(String(Math.round(totalBalance(selected) * 100) / 100)); setStatusResult(''); }}
-                        style={{ ...inp, cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                        Full balance {formatCurrency(totalBalance(selected))}
+                {/* 2 · Take payment */}
+                <div style={card}>
+                  {stepTitle(2, 'Take payment', balance > 0
+                    ? (['pending', 'confirmed'].includes(selected.status) ? 'Paying the full balance on the stay date checks the guest in automatically.' : 'Collect what the guest still owes.')
+                    : 'Nothing is owed right now.')}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+                    <input type="number" value={paymentAmount} onChange={e => { setPaymentAmount(e.target.value); setStatusResult(''); }}
+                      placeholder="Amount (₱)" aria-label="Amount" style={{ ...inp, flex: '1 1 160px', fontSize: 15, fontWeight: 700 }} />
+                    {balance > 0 && (
+                      <button type="button" onClick={() => { setPaymentAmount(String(Math.round(balance * 100) / 100)); setStatusResult(''); }} style={btn()}>
+                        Full balance {formatCurrency(balance)}
                       </button>
                     )}
                   </div>
-                  {['pending', 'confirmed'].includes(selected.status) && totalBalance(selected) > 0 && (
-                    <p style={{ fontSize: '11.5px', color: SUBINK, margin: '-6px 0 14px' }}>
-                      Guests pay in full before entering. Paying the full balance on the stay date checks the guest in automatically.
-                    </p>
-                  )}
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1px 1fr', gap: '20px' }}>
-                    {/* Cash lane */}
-                    <div>
-                      <p style={{ fontSize: '11px', color: SUBINK, margin: '0 0 8px', fontWeight: 600 }}>At the front desk (cash or QR — no cards)</p>
-                      <select value={deskMethod} onChange={e => setDeskMethod(e.target.value)} aria-label="Payment method"
-                        style={{ ...inp, width: '100%', marginBottom: '8px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 14 }}>
+                    <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, marginBottom: 2 }}><i className="ti ti-cash" aria-hidden="true" /> Paid here at the desk</div>
+                      <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>Cash, GCash or QR scanned at the counter. No card terminal.</div>
+                      <select value={deskMethod} onChange={e => setDeskMethod(e.target.value)} aria-label="Payment method" style={{ ...inp, width: '100%', marginBottom: 8 }}>
                         <option value="cash">Cash</option>
                         <option value="gcash">GCash</option>
                         <option value="qrph">QR payment (QR Ph)</option>
                         <option value="bank">Bank transfer</option>
                       </select>
                       <input value={paperReceiptNo} onChange={e => setPaperReceiptNo(e.target.value)} maxLength={40}
-                        placeholder="Paper receipt no. (optional)" aria-label="Paper receipt number"
-                        title="If you also give the guest a paper receipt, type its number so the two can be matched later"
-                        style={{ ...inp, width: '100%', boxSizing: 'border-box', marginBottom: '8px' }} />
-                      <button onClick={handlePayment}
-                        disabled={!paymentAmount}
-                        style={{
-                          width: '100%', background: LEDGER_GREEN, color: '#F7F5EF', border: 'none', borderRadius: '6px',
-                          padding: '10px 14px', fontSize: '13px', fontWeight: '700', cursor: paymentAmount ? 'pointer' : 'default',
-                          opacity: paymentAmount ? 1 : 0.5, fontFamily: SANS,
-                        }}>
-                        Record {deskMethod === 'cash' ? 'cash' : deskMethod === 'gcash' ? 'GCash' : deskMethod === 'qrph' ? 'QR' : 'bank'} payment
+                        placeholder="Paper receipt no. (only if you wrote one)" aria-label="Paper receipt number"
+                        title="If you also hand the guest a paper receipt, type its number so the two can be matched later"
+                        style={{ ...inp, width: '100%', marginBottom: 8 }} />
+                      <button type="button" onClick={handlePayment} disabled={!paymentAmount || billingBusy}
+                        style={{ ...btn('green'), width: '100%', opacity: paymentAmount ? 1 : 0.5 }}>
+                        {billingBusy ? 'Saving…' : `Record ${deskMethod === 'cash' ? 'cash' : deskMethod === 'gcash' ? 'GCash' : deskMethod === 'qrph' ? 'QR' : 'bank'} payment${paymentAmount ? ` of ${formatCurrency(paymentAmount)}` : ''}`}
                       </button>
                     </div>
-
-                    <div style={{ background: LINE }} />
-
-                    {/* Online lane */}
-                    <div>
-                      <p style={{ fontSize: '11px', color: SUBINK, margin: '0 0 8px', fontWeight: 600 }}>Online — GCash, Maya, GrabPay, card</p>
-
+                    <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: TEXT, marginBottom: 2 }}><i className="ti ti-link" aria-hidden="true" /> Pay online (send a link)</div>
+                      <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>The guest pays by GCash, Maya, GrabPay or card on their phone.</div>
                       {!payLink ? (
-                        <button
-                          onClick={handleGeneratePayMongoLink}
-                          disabled={payLinkLoading || !paymentAmount || Number(paymentAmount) <= 0}
-                          style={{
-                            width: '100%', background: BRASS, color: BRASS_TEXT, border: 'none', borderRadius: '6px',
-                            padding: '10px 14px', fontSize: '13px', fontWeight: '700',
-                            cursor: (payLinkLoading || !paymentAmount) ? 'default' : 'pointer',
-                            opacity: (payLinkLoading || !paymentAmount || Number(paymentAmount) <= 0) ? 0.5 : 1,
-                            fontFamily: SANS,
-                          }}>
-                          {payLinkLoading ? 'Generating…' : 'Generate payment link'}
+                        <button type="button" onClick={handleGeneratePayMongoLink} disabled={payLinkLoading || !paymentAmount || Number(paymentAmount) <= 0}
+                          style={{ ...btn('brass'), width: '100%', opacity: payLinkLoading || !paymentAmount ? 0.5 : 1 }}>
+                          {payLinkLoading ? 'Making the link…' : 'Make a payment link'}
                         </button>
                       ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          <div style={{ display: 'flex', gap: '6px' }}>
-                            <input readOnly value={payLink} onFocus={e => e.target.select()}
-                              style={{ ...inp, flex: 1, color: SUBINK, fontSize: '11px' }} />
-                            <button onClick={copyPayLink}
-                              style={{ background: SURFACE2, color: INK, border: `1px solid ${LINE}`, borderRadius: '6px', padding: '9px 12px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: SANS }}>
-                              Copy
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <input readOnly value={payLink} onFocus={e => e.target.select()} style={{ ...inp, flex: 1, minWidth: 0, fontSize: 11, color: SUBTEXT }} />
+                            <button type="button" onClick={copyPayLink} style={btn()}>Copy</button>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button type="button" onClick={() => window.open(payLink, '_blank', 'noopener,noreferrer')} style={{ ...btn(), flex: 1 }}>Open</button>
+                            <button type="button" onClick={handleCheckStatus} disabled={statusChecking} style={{ ...btn('green'), flex: 2, opacity: statusChecking ? 0.6 : 1 }}>
+                              {statusChecking ? 'Checking…' : 'Has the guest paid?'}
                             </button>
                           </div>
-                          <button onClick={() => window.open(payLink, '_blank', 'noopener,noreferrer')}
-                            style={{ background: 'transparent', color: SUBINK, border: `1px solid ${LINE}`, borderRadius: '6px', padding: '8px 12px', fontSize: '11.5px', fontWeight: '600', cursor: 'pointer', fontFamily: SANS }}>
-                            Preview link
-                          </button>
-
-                          <button onClick={handleCheckStatus}
-                            disabled={statusChecking}
-                            style={{
-                              background: LEDGER_GREEN, color: '#F7F5EF', border: 'none', borderRadius: '6px',
-                              padding: '9px 12px', fontSize: '12px', fontWeight: '700', cursor: statusChecking ? 'default' : 'pointer',
-                              opacity: statusChecking ? 0.6 : 1, fontFamily: SANS, marginTop: '4px',
-                            }}>
-                            {statusChecking ? 'Checking with PayMongo…' : 'Check payment status'}
-                          </button>
-                          {statusResult === 'unpaid' && (
-                            <p style={{ fontSize: '11px', color: SUBINK, margin: 0 }}>Not paid yet — the guest hasn't completed checkout.</p>
-                          )}
-                          {statusResult === 'expired' && (
-                            <p style={{ fontSize: '11px', color: BRICK, margin: 0 }}>This link has expired. Generate a new one.</p>
-                          )}
+                          {statusResult === 'unpaid' && <div style={{ fontSize: 11, color: SUBTEXT }}>Not paid yet. The guest hasn't finished paying.</div>}
+                          {statusResult === 'expired' && <div style={{ fontSize: 11, color: RED }}>This link has expired. Make a new one.</div>}
                         </div>
                       )}
-
-                      {payLinkError && (
-                        <p style={{ marginTop: '8px', fontSize: '11.5px', color: BRICK }}>{payLinkError}</p>
-                      )}
+                      {payLinkError && <div style={{ marginTop: 8, fontSize: 11.5, color: RED }}>{payLinkError}</div>}
+                      <div style={{ fontSize: 10.5, color: MUTED, marginTop: 8 }}>Online payments appear here by themselves. If the guest says they paid, press "Has the guest paid?".</div>
                     </div>
                   </div>
-                  <p style={{ fontSize: '11px', color: MUTED, marginTop: '14px', lineHeight: 1.5 }}>
-                    Balances update automatically when PayMongo's webhook confirms a payment. If a guest says they've paid but the balance hasn't moved, use "Check payment status" to confirm directly with PayMongo and post it manually.
-                  </p>
                 </div>
 
-                <button onClick={handleCheckout}
-                  style={{
-                    width: '100%', background: INK, color: PAPER,
-                    border: 'none', borderRadius: '8px', padding: '13px',
-                    fontWeight: '700', fontSize: '13.5px', cursor: 'pointer', fontFamily: SANS,
-                  }}>
-                  Complete checkout
-                </button>
+                {/* 3 · Check out */}
+                <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                  <div>
+                    {stepTitle(3, 'Check out', selected.status === 'checked-in'
+                      ? (balance > 0 ? 'Collect the balance first.' : `When the guest returns the key and leaves${selected.checkOutTime ? ` (check-out time ${selected.checkOutTime})` : ''}.`)
+                      : 'Only for guests who are checked in.')}
+                  </div>
+                  <button type="button" onClick={confirmAndCheckout} disabled={selected.status !== 'checked-in' || balance > 0}
+                    style={{ ...btn('primary'), padding: '11px 20px', opacity: selected.status !== 'checked-in' || balance > 0 ? 0.5 : 1, cursor: selected.status !== 'checked-in' || balance > 0 ? 'not-allowed' : 'pointer' }}>
+                    <i className="ti ti-logout" aria-hidden="true" /> Check out guest
+                  </button>
+                </div>
               </div>
             )}
           </div>
