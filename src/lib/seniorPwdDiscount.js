@@ -48,8 +48,9 @@ export function getDiscountIdError({ kind, idNumber, holderName, birthDate, expi
     if (age === null) return 'Enter the birth date shown on the senior citizen ID.';
     if (age < 60) return `The ID holder is ${age}. The senior citizen discount is for guests 60 and older.`;
   }
-  if (kind === 'pwd') {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(expiryDate || ''))) return 'Enter the expiry date on the PWD ID.';
+  // Expiry is optional (not every ID shows one), but an expired ID is refused.
+  if (kind === 'pwd' && expiryDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(expiryDate))) return 'Enter a valid expiry date, or leave it blank.';
     if (today && expiryDate < today) return 'This PWD ID has expired. Ask for a valid ID.';
   }
   if (checked !== true) return 'Confirm you checked the physical ID and that the photo matches the guest.';
@@ -74,6 +75,12 @@ export function calculateSeniorPwdDiscount({ amount, totalGuests, qualifiedGuest
     qualified,
     guests,
   };
+}
+
+// 0314100000003045 → 03-1410-000-0003045 (how the DOH registry writes it).
+export function formatPwdId(id) {
+  const digits = String(id || '').replace(/\D/g, '');
+  return digits.length === 16 ? `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6, 9)}-${digits.slice(9)}` : String(id || '').trim();
 }
 
 export const normalizeIdNumber = id => String(id || '').replace(/[\s-]/g, '').toUpperCase();

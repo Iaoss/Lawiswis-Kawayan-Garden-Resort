@@ -13,6 +13,7 @@ test('ID checks', () => {
   const base = { holderName: 'Juan Cruz', today: '2026-11-06', checked: true };
   expect(getDiscountIdError({ ...base, kind: 'pwd', idNumber: '13-7404-000-0001234', expiryDate: '2027-01-01' })).toBe('');
   expect(getDiscountIdError({ ...base, kind: 'pwd', idNumber: '12345', expiryDate: '2027-01-01' })).toMatch(/not a valid PWD/);
+  expect(getDiscountIdError({ ...base, kind: 'pwd', idNumber: '0314100000003045' })).toBe('');
   expect(getDiscountIdError({ ...base, kind: 'pwd', idNumber: '13-7404-000-0001234', expiryDate: '2026-01-01' })).toMatch(/expired/);
   expect(getDiscountIdError({ ...base, kind: 'senior', idNumber: 'OSCA-1234', birthDate: '1970-05-01' })).toMatch(/60 and older/);
   expect(getDiscountIdError({ ...base, kind: 'senior', idNumber: 'OSCA-1234', birthDate: '1960-05-01' })).toBe('');

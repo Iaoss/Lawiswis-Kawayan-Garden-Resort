@@ -14,6 +14,7 @@ import {
 } from '../../lib/bookingPricing';
 import { MIN_GROUP_GUESTS } from '../../lib/corporatePackages';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
+import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
 
 // Step-by-step start of a booking: 1 Type (personal or group), 2 When (stay
 // type, dates, guests), 3 Choose a room (only rooms free on those dates,
@@ -166,8 +167,47 @@ export default function BookingWizard() {
     } catch { return null; }
   };
 
-  const { fitting, tooSmall } = useMemo(() => {
-    if (!availableIds) return { fitting: [], tooSmall: 0 };
+  // Several rooms: the guest adds rooms and the group is split across them.
+  const [picked, setPicked] = useState([]);
+  const priceForCounts = (room, a, c) => {
+    try {
+      return calculateBookingPrice({
+        room, bookingType: isTour ? 'daytour' : 'overnight', nights: Math.max(1, nights || 1),
+        adults: a, children: c, tourPeriod: isTour ? stay : 'day',
+        season: { periods: seasonPeriods, checkIn, checkOut: stayEnd },
+      }).subtotalAmount;
+    } catch { return null; }
+  };
+  const togglePicked = room => setPicked(current => (current.includes(room.id)
+    ? current.filter(id => id !== room.id)
+    : current.length >= MAX_ROOMS_PER_BOOKING ? current : [...current, room.id]));
+  const pickedRooms = picked.map(id => rooms.find(room => room.id === id)).filter(Boolean);
+  const split = pickedRooms.length
+    ? splitGuestsAcrossRooms(pickedRooms, Number(adults), Number(children), {
+      fits: (room, a, c) => !getGuestCountViolation(room, a, c),
+      priceOf: (room, a, c) => priceForCounts(room, a, c) ?? 1e9,
+    })
+    : null;
+  const splitTotal = split ? split.reduce((sum, item, i) => sum + (priceForCounts(pickedRooms[i], item.adults, item.children) || 0), 0) : 0;
+  const continueWithPicked = () => {
+    if (!split) return;
+    navigate(`/book/${split[0].roomId}?checkIn=${encodeURIComponent(checkIn)}&checkOut=${encodeURIComponent(stayEnd)}`, {
+      state: {
+        bookingForm: {
+          bookingType: isTour ? 'daytour' : 'overnight',
+          tourPeriod: isTour ? stay : 'day',
+          adults: Number(adults),
+          children: Number(children),
+          checkIn,
+          checkOut: stayEnd,
+        },
+        extraRoomIds: split.slice(1).map(item => item.roomId),
+      },
+    });
+  };
+
+  const { fitting, tooSmall, partRooms = [] } = useMemo(() => {
+    if (!availableIds) return { fitting: [], tooSmall: 0, partRooms: [] };
     const free = rooms.filter(room => availableIds.includes(room.id));
     const fits = free
       .filter(room => !getGuestCountViolation(room, Number(adults), Number(children)))
@@ -175,7 +215,7 @@ export default function BookingWizard() {
       .filter(entry => entry.price !== null)
       // Cheapest first; at the same price, the room closest to the group size.
       .sort((a, b) => a.price - b.price || a.spare - b.spare || String(a.room.title).localeCompare(String(b.room.title)));
-    return { fitting: fits, tooSmall: free.length - fits.length };
+    return { fitting: fits, tooSmall: free.length - fits.length, partRooms: free.filter(room => getGuestCountViolation(room, Number(adults), Number(children))) };
   }, [rooms, availableIds, adults, children, stay, nights, seasonPeriods]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const presetEntry = presetRoom ? fitting.find(entry => entry.room.id === presetRoom.id) : null;
@@ -231,8 +271,23 @@ export default function BookingWizard() {
             View room details
           </button>
           <div style={{ marginTop: 'auto', paddingTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: `1px solid ${LINE}` }}>
-            <span style={{ font: `600 18px ${SERIF}`, color: FOREST }}>{peso(price)}<small style={{ font: `11px ${SANS}`, color: '#8d8877' }}> for your group</small></span>
-            <button type="button" onClick={() => chooseRoom(room)} style={{ ...primary, padding: '10px 16px', fontSize: 12 }}>Choose</button>
+            <span style={{ font: `600 18px ${SERIF}`, color: FOREST }}>
+              {entry.partOnly ? <><small style={{ font: `11px ${SANS}`, color: '#8d8877' }}>from </small>{peso(entry.fromPrice)}</> : <>{peso(price)}<small style={{ font: `11px ${SANS}`, color: '#8d8877' }}> for your group</small></>}
+            </span>
+            <span style={{ display: 'flex', gap: 6 }}>
+              {(() => {
+                const added = picked.includes(room.id);
+                const full = !added && picked.length >= MAX_ROOMS_PER_BOOKING;
+                return (
+                  <button type="button" onClick={() => togglePicked(room)} disabled={full} aria-pressed={added}
+                    title={full ? `Up to ${MAX_ROOMS_PER_BOOKING} rooms` : 'Book this room together with other rooms'}
+                    style={{ ...secondary, padding: '10px 12px', fontSize: 12, background: added ? '#eef3ea' : '#fff', opacity: full ? 0.5 : 1 }}>
+                    {added ? '✓ Added' : '+ Add room'}
+                  </button>
+                );
+              })()}
+              {!entry.partOnly && <button type="button" onClick={() => chooseRoom(room)} style={{ ...primary, padding: '10px 16px', fontSize: 12 }}>Choose</button>}
+            </span>
           </div>
         </div>
       </article>
@@ -354,7 +409,9 @@ export default function BookingWizard() {
                 )}
                 {fitting.length === 0 ? (
                   <div style={{ ...card, color: '#6b6a5c' }}>
-                    No room is free for {guests} guest{guests === 1 ? '' : 's'} on those dates. Try other dates{isTour ? ', or book just a cottage above' : ''}.
+                    {partRooms.length
+                      ? `No single room fits ${guests} guests. Add 2 or more rooms below and we'll split your group between them.`
+                      : `No room is free for ${guests} guest${guests === 1 ? '' : 's'} on those dates. Try other dates${isTour ? ', or book just a cottage above' : ''}.`}
                   </div>
                 ) : (
                   <>
@@ -377,7 +434,35 @@ export default function BookingWizard() {
                     )}
                   </>
                 )}
-                {tooSmall > 0 && <p style={{ color: '#8d8877', font: `12px ${SANS}`, margin: '16px 0 0' }}>{tooSmall} free room{tooSmall === 1 ? ' is' : 's are'} hidden because {tooSmall === 1 ? 'it is' : 'they are'} too small for your group.</p>}
+                {tooSmall > 0 && guests > 1 && (
+                  <>
+                    <h2 style={{ font: `500 20px ${SERIF}`, color: FOREST_DEEP, margin: '26px 0 4px' }}>Or split your group into more rooms</h2>
+                    <p style={{ color: '#6b6a5c', font: `12px ${SANS}`, margin: '0 0 12px' }}>These rooms are too small for all {guests} of you, but you can add two or more and we'll split your group.</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
+                      {partRooms.map(room => roomCard({ room, partOnly: true, fromPrice: priceForCounts(room, 1, 0), kind: getRoomCapacityPolicy(room)?.label || room.groupTitle }, ''))}
+                    </div>
+                  </>
+                )}
+                {picked.length > 0 && (
+                  <div role="status" style={{ position: 'sticky', bottom: 12, zIndex: 20, marginTop: 20, background: FOREST_DEEP, color: '#fff', padding: '14px 16px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', boxShadow: '0 12px 30px rgba(0,0,0,.25)' }}>
+                    <div style={{ flex: '1 1 260px', font: `13px/1.6 ${SANS}` }}>
+                      <strong>{picked.length} room{picked.length === 1 ? '' : 's'} for {guests} guest{guests === 1 ? '' : 's'}</strong>
+                      <div style={{ opacity: 0.9 }}>
+                        {split
+                          ? split.map((item, i) => `${pickedRooms[i].title}: ${item.adults} adult${item.adults === 1 ? '' : 's'}${item.children ? `, ${item.children} child${item.children === 1 ? '' : 'ren'}` : ''}`).join(' · ')
+                          : picked.length === 1
+                            ? 'Add one more room to split your group.'
+                            : `These rooms don't fit all ${guests} of you. Add or swap a room.`}
+                      </div>
+                    </div>
+                    {split && <strong style={{ font: `600 18px ${SERIF}` }}>{peso(splitTotal)}</strong>}
+                    <button type="button" onClick={() => setPicked([])} style={{ ...secondary, padding: '9px 12px', fontSize: 12 }}>Clear</button>
+                    <button type="button" onClick={continueWithPicked} disabled={!split}
+                      style={{ ...primary, padding: '10px 16px', fontSize: 12, background: '#d4f550', color: FOREST_DEEP, opacity: split ? 1 : 0.5 }}>
+                      Continue with {picked.length} room{picked.length === 1 ? '' : 's'} →
+                    </button>
+                  </div>
+                )}
               </>
             )}
             <div style={{ marginTop: 22 }}>
@@ -442,10 +527,16 @@ export default function BookingWizard() {
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
-                  <span style={{ font: `600 22px ${SERIF}`, color: FOREST }}>{peso(price)}<small style={{ font: `12px ${SANS}`, color: '#8d8877' }}> for {guests} guest{guests === 1 ? '' : 's'}</small></span>
+                  <span style={{ font: `600 22px ${SERIF}`, color: FOREST }}>
+                    {detailsFor.partOnly
+                      ? <><small style={{ font: `12px ${SANS}`, color: '#8d8877' }}>from </small>{peso(detailsFor.fromPrice)}</>
+                      : <>{peso(price)}<small style={{ font: `12px ${SANS}`, color: '#8d8877' }}> for {guests} guest{guests === 1 ? '' : 's'}</small></>}
+                  </span>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button type="button" onClick={() => setDetailsFor(null)} style={secondary}>Back to rooms</button>
-                    <button type="button" onClick={() => chooseRoom(room)} style={primary}>Choose this room</button>
+                    {detailsFor.partOnly
+                      ? <button type="button" onClick={() => { togglePicked(room); setDetailsFor(null); }} style={primary}>{picked.includes(room.id) ? 'Remove room' : '+ Add room'}</button>
+                      : <button type="button" onClick={() => chooseRoom(room)} style={primary}>Choose this room</button>}
                   </div>
                 </div>
               </div>

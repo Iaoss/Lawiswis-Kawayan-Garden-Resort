@@ -32,7 +32,7 @@ import BookingSteps from '../components/BookingSteps';
 import { Pagination, usePagination } from '../../components/ui/pagination';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { closedPeriodMessage, findClosedPeriod } from '../../lib/closedDates';
-import ExtraRoomsPicker, { extraRoomsViolation } from '../components/ExtraRoomsPicker';
+import { splitGuestsAcrossRooms } from '../../lib/groupBooking';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import { decorateRoom } from '../lib/roomCatalog';
@@ -349,13 +349,42 @@ export default function BookRoom() {
     });
   };
   const seasonPeriods = useSeasonPeriods();
+  const [availableRooms, setAvailableRooms] = useState([]);
+  // Several rooms (picked on "Choose a room"): the group the guest entered is
+  // split across them automatically, cheapest split first.
+  const [extraRoomIds] = useState(() => (Array.isArray(location.state?.extraRoomIds) ? location.state.extraRoomIds.slice(0, 2) : []));
+  const priceRoomFor = (target, a, c) => {
+    try {
+      return calculateBookingPrice({
+        room: target, bookingType: form.bookingType, nights: Math.max(1, nights || 1), adults: a, children: c,
+        tourPeriod: form.bookingType === 'daytour' ? form.tourPeriod : 'day', cottageId: '', cottageFee: 0,
+        lateArrival: lateArrivalChosen, season: { periods: seasonPeriods, checkIn: form.checkIn, checkOut: form.checkOut },
+      }).subtotalAmount;
+    } catch { return null; }
+  };
+  const extraRoomDocs = extraRoomIds.map(id => availableRooms.find(item => item.id === id)).filter(Boolean);
+  const roomsLoaded = extraRoomDocs.length === extraRoomIds.length;
+  const roomSplit = room && extraRoomIds.length && roomsLoaded
+    ? splitGuestsAcrossRooms([room, ...extraRoomDocs], Number(form.adults), Number(form.children), {
+      fits: (target, a, c) => !getGuestCountViolation(target, a, c),
+      priceOf: (target, a, c) => priceRoomFor(target, a, c) ?? 1e9,
+    })
+    : null;
+  const splitProblem = extraRoomIds.length && roomsLoaded && room && !roomSplit
+    ? `These ${extraRoomIds.length + 1} rooms don't fit ${Number(form.adults) + Number(form.children)} guests. Go back and change the rooms.`
+    : '';
+  const mainAdults = roomSplit ? roomSplit[0].adults : Number(form.adults);
+  const mainChildren = roomSplit ? roomSplit[0].children : Number(form.children);
+  const extraRooms = roomSplit
+    ? roomSplit.slice(1).map((item, i) => ({ ...item, roomNumber: extraRoomDocs[i].roomNumber, price: priceRoomFor(extraRoomDocs[i], item.adults, item.children) || 0 }))
+    : [];
   const pricing = useMemo(() => room && nights > 0
     ? calculateBookingPrice({
       room,
       bookingType: form.bookingType,
       nights,
-      adults: Number(form.adults),
-      children: Number(form.children),
+      adults: mainAdults,
+      children: mainChildren,
       tourPeriod: form.tourPeriod,
       cottageId: form.cottageId,
       cottageFee: getCottageFee(form.cottageId) ?? 0,
@@ -363,14 +392,13 @@ export default function BookRoom() {
       lateArrival: lateArrivalChosen,
       season: { periods: seasonPeriods, checkIn: form.checkIn, checkOut: form.checkOut },
     })
-    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId, dayVisitors, lateArrivalChosen, seasonPeriods, form.checkIn, form.checkOut]);
+    : null, [room, nights, form.bookingType, mainAdults, mainChildren, form.tourPeriod, form.cottageId, dayVisitors, lateArrivalChosen, seasonPeriods, form.checkIn, form.checkOut]);
   const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
   const discountAmount = activePromo?.discountAmount || 0;
   const bookingTotal = useMemo(() => Math.max(0, totalAmount - discountAmount), [totalAmount, discountAmount]);
   // More rooms for the same stay (booked and paid together).
-  const [extraRooms, setExtraRooms] = useState([]);
   const extrasTotal = extraRooms.reduce((sum, item) => sum + Number(item.price || 0), 0);
   const grandTotal = Math.round((bookingTotal + extrasTotal) * 100) / 100;
   const paymentChoice = selectedPaymentChoice || 'deposit';
@@ -379,9 +407,10 @@ export default function BookRoom() {
   const depositAmount = grandTotal > 0 ? getOnlinePaymentAmount(grandTotal, 'deposit') : 0;
   const balanceAmount = Math.max(0, grandTotal - depositAmount);
   const roomCapacity = getRoomCapacityPolicy(room);
-  const guestCountViolation = getGuestCountViolation(room, Number(form.adults), Number(form.children));
+  const guestCountViolation = extraRoomIds.length
+    ? (roomsLoaded ? splitProblem : '')
+    : getGuestCountViolation(room, Number(form.adults), Number(form.children));
   const maxExtraGuests = roomCapacity ? Math.max(0, roomCapacity.maxGuests - (pricing?.baseCapacity || 2)) : 0;
-  const [availableRooms, setAvailableRooms] = useState([]);
   const [roomSuggestionsLoading, setRoomSuggestionsLoading] = useState(false);
   const baseCapacity = pricing?.baseCapacity || 2;
   const groupSize = Number(form.adults) + Number(form.children);
@@ -769,8 +798,7 @@ export default function BookRoom() {
     if (!room) return;
     const closedPeriod = findClosedPeriod(closedDates, form.checkIn, singleDay ? form.checkIn : form.checkOut);
     if (closedPeriod) { setErrorMsg(closedPeriodMessage(closedPeriod)); return; }
-    const extraProblem = extraRoomsViolation(availableRooms, extraRooms);
-    if (extraProblem) { setErrorMsg(extraProblem); return; }
+    if (extraRoomIds.length && !roomSplit) { setErrorMsg(splitProblem || 'Your rooms are still loading. Try again in a moment.'); return; }
     const guestErrors = {
       firstName: validateField('firstName', form.firstName),
       lastName: validateField('lastName', form.lastName),
@@ -833,8 +861,8 @@ export default function BookRoom() {
           checkOutTime: form.bookingType === 'daytour'
             ? (form.tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT.checkOut : DAYTOUR_TIME_SLOT.checkOut)
             : OVERNIGHT_TIME_SLOTS.find(slot => slot.id === form.overnightTimeSlot).checkOut,
-          adults: Number(form.adults),
-          children: Number(form.children),
+          adults: mainAdults,
+          children: mainChildren,
           bookingType: form.bookingType,
           tourPeriod: form.tourPeriod,
           cottageId: form.cottageId,
@@ -1354,22 +1382,28 @@ export default function BookRoom() {
                 </div>
               )}
 
-              {room && form.checkIn && form.checkOut && (
-                <ExtraRoomsPicker
-                  mainRoom={room}
-                  rooms={availableRooms}
-                  checkIn={form.checkIn}
-                  checkOut={form.checkOut}
-                  stayEnd={singleDay ? form.checkIn : form.checkOut}
-                  bookingType={form.bookingType}
-                  tourPeriod={form.tourPeriod}
-                  nights={nights}
-                  seasonPeriods={seasonPeriods}
-                  lateArrival={lateArrivalChosen}
-                  value={extraRooms}
-                  onChange={setExtraRooms}
-                  colors={{ DARK, ACCENT }}
-                />
+              {extraRoomIds.length > 0 && (
+                <div style={{ marginTop: 14, border: '1px solid #dfe7da', borderRadius: 12, padding: 14, background: '#f7faf5' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: 13, color: DARK }}>Your {extraRoomIds.length + 1} rooms</strong>
+                    <button type="button" onClick={backToRoomChoice} style={{ border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}>Change rooms</button>
+                  </div>
+                  {!roomsLoaded || !room ? (
+                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>Loading your rooms…</div>
+                  ) : roomSplit ? (
+                    <div style={{ display: 'grid', gap: 4, marginTop: 8, fontSize: 12.5, color: '#374151' }}>
+                      {[{ roomNumber: room.roomNumber, adults: mainAdults, children: mainChildren, price: totalAmount }, ...extraRooms].map(item => (
+                        <div key={item.roomNumber} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                          <span>Room {item.roomNumber} · {item.adults} adult{item.adults === 1 ? '' : 's'}{item.children ? `, ${item.children} child${item.children === 1 ? '' : 'ren'}` : ''}</span>
+                          <span style={{ fontWeight: 600 }}>₱{Number(item.price || 0).toLocaleString()}</span>
+                        </div>
+                      ))}
+                      <div style={{ fontSize: 11.5, color: '#6b7280', marginTop: 2 }}>We split your group between the rooms the cheapest way. The cottage stays with the first room.</div>
+                    </div>
+                  ) : (
+                    <div role="alert" style={{ fontSize: 12.5, color: '#b91c1c', marginTop: 6 }}>{splitProblem}</div>
+                  )}
+                </div>
               )}
               <div style={{ marginTop: '14px' }}>
                 <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Special Requests (optional)</label>

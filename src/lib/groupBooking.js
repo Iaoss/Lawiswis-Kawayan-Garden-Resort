@@ -36,3 +36,39 @@ export function getAdditionalRoomsError(mainRoomId, additionalRooms) {
   }
   return '';
 }
+
+// Splits the group (adults, children) across the chosen rooms so every room
+// is within its limits and has at least one adult. When several splits work,
+// the cheapest one wins (priceOf(room, adults, children)); without a price
+// function, the first room is filled first.
+// Returns [{ roomId, adults, children }] in the rooms' order, or null.
+export function splitGuestsAcrossRooms(rooms, adults, children, { fits, priceOf } = {}) {
+  const totalAdults = Math.max(0, Math.floor(Number(adults) || 0));
+  const totalChildren = Math.max(0, Math.floor(Number(children) || 0));
+  if (!rooms.length || totalAdults < rooms.length) return null;
+  const roomFits = fits || (() => true);
+  let best = null;
+  let bestPrice = Infinity;
+  let tried = 0;
+  const walk = (index, leftAdults, leftChildren, picked) => {
+    if (tried > 20000) return;
+    if (index === rooms.length - 1) {
+      tried += 1;
+      if (leftAdults < 1 || !roomFits(rooms[index], leftAdults, leftChildren)) return;
+      const plan = [...picked, { roomId: rooms[index].id, adults: leftAdults, children: leftChildren }];
+      const price = priceOf ? plan.reduce((sum, item, i) => sum + (priceOf(rooms[i], item.adults, item.children) || 0), 0) : 0;
+      if (!best || price < bestPrice) { best = plan; bestPrice = price; }
+      return;
+    }
+    const roomsLeft = rooms.length - index - 1;
+    for (let a = leftAdults - roomsLeft; a >= 1; a -= 1) {
+      for (let c = leftChildren; c >= 0; c -= 1) {
+        if (!roomFits(rooms[index], a, c)) continue;
+        walk(index + 1, leftAdults - a, leftChildren - c, [...picked, { roomId: rooms[index].id, adults: a, children: c }]);
+        if (best && !priceOf) return;
+      }
+    }
+  };
+  walk(0, totalAdults, totalChildren, []);
+  return best;
+}

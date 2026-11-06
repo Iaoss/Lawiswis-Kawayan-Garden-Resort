@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { staffApi } from '../lib/staffApi';
 import { money } from '../lib/money';
 import {
-  CHECK_METHODS, DISCOUNT_KINDS, PHILSYS_VERIFY_URL, PWD_VERIFY_URL, calculateSeniorPwdDiscount, getDiscountIdError,
+  CHECK_METHODS, DISCOUNT_KINDS, PHILSYS_VERIFY_URL, PWD_VERIFY_URL, calculateSeniorPwdDiscount, formatPwdId, getDiscountIdError,
 } from '../../lib/seniorPwdDiscount';
 
 const empty = { kind: 'senior', holderName: '', idNumber: '', birthDate: '', expiryDate: '', checked: false, checkMethod: '' };
@@ -57,7 +57,7 @@ export default function SeniorPwdDiscountForm({ reservation, colors, inp, btn, o
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <span style={small}>Senior citizen / PWD discount</span>
         {!open && used.length < totalGuests && (
-          <button type="button" onClick={() => setOpen(true)} style={btn()}>Add discount</button>
+          <button type="button" onClick={() => { setForm(f => ({ ...f, holderName: f.holderName || (used.length ? '' : reservation.guestName || '') })); setOpen(true); }} style={btn()}>Add discount</button>
         )}
       </div>
       {used.map(item => (
@@ -83,7 +83,7 @@ export default function SeniorPwdDiscountForm({ reservation, colors, inp, btn, o
             </label>
           ) : (
             <>
-              <label style={small}>Expiry date on the ID
+              <label style={small}>Expiry date on the ID (if shown)
                 <input type="date" value={form.expiryDate} onChange={e => set('expiryDate', e.target.value)} style={{ ...inp, display: 'block', width: '100%', marginTop: 4 }} />
               </label>
             </>
@@ -92,7 +92,7 @@ export default function SeniorPwdDiscountForm({ reservation, colors, inp, btn, o
             <span style={small}>Check that the ID is real</span>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {form.kind === 'pwd' && (
-                <button type="button" onClick={() => openLookup(PWD_VERIFY_URL, form.idNumber.trim())} style={{ ...btn(), flex: '1 1 160px' }}>
+                <button type="button" onClick={() => openLookup(PWD_VERIFY_URL, formatPwdId(form.idNumber))} style={{ ...btn(), flex: '1 1 160px' }}>
                   🔎 Search DOH PWD registry
                 </button>
               )}
@@ -102,7 +102,7 @@ export default function SeniorPwdDiscountForm({ reservation, colors, inp, btn, o
             </div>
             <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.5 }}>
               {form.kind === 'pwd'
-                ? 'Opens the DOH site beside this page with the ID number copied. Paste it (Ctrl+V), search, and make sure the name matches the card.'
+                ? 'Opens the DOH site beside this page with the ID number copied (with dashes). Paste it (Ctrl+V) and search. "No record found" does not mean the ID is fake: many towns have not added their IDs to the DOH list yet. Then check the card, or call the town’s PDAO office.'
                 : 'Senior IDs are made by each town, so there is no national list. Ask for their national ID too and check it on PhilSys; the name and birth date should match.'}
             </div>
             <select value={form.checkMethod} onChange={e => set('checkMethod', e.target.value)} style={inp} aria-label="How did you check the ID">
