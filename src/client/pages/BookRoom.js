@@ -32,6 +32,7 @@ import BookingSteps from '../components/BookingSteps';
 import { Pagination, usePagination } from '../../components/ui/pagination';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { closedPeriodMessage, findClosedPeriod } from '../../lib/closedDates';
+import ExtraRoomsPicker, { extraRoomsViolation } from '../components/ExtraRoomsPicker';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import { decorateRoom } from '../lib/roomCatalog';
@@ -368,11 +369,15 @@ export default function BookRoom() {
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
   const discountAmount = activePromo?.discountAmount || 0;
   const bookingTotal = useMemo(() => Math.max(0, totalAmount - discountAmount), [totalAmount, discountAmount]);
+  // More rooms for the same stay (booked and paid together).
+  const [extraRooms, setExtraRooms] = useState([]);
+  const extrasTotal = extraRooms.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  const grandTotal = Math.round((bookingTotal + extrasTotal) * 100) / 100;
   const paymentChoice = selectedPaymentChoice || 'deposit';
-  const onlinePaymentAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, paymentChoice) : 0;
+  const onlinePaymentAmount = grandTotal > 0 ? getOnlinePaymentAmount(grandTotal, paymentChoice) : 0;
   const depositPercentage = RESERVATION_DEPOSIT_PERCENTAGE;
-  const depositAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, 'deposit') : 0;
-  const balanceAmount = Math.max(0, bookingTotal - depositAmount);
+  const depositAmount = grandTotal > 0 ? getOnlinePaymentAmount(grandTotal, 'deposit') : 0;
+  const balanceAmount = Math.max(0, grandTotal - depositAmount);
   const roomCapacity = getRoomCapacityPolicy(room);
   const guestCountViolation = getGuestCountViolation(room, Number(form.adults), Number(form.children));
   const maxExtraGuests = roomCapacity ? Math.max(0, roomCapacity.maxGuests - (pricing?.baseCapacity || 2)) : 0;
@@ -764,6 +769,8 @@ export default function BookRoom() {
     if (!room) return;
     const closedPeriod = findClosedPeriod(closedDates, form.checkIn, singleDay ? form.checkIn : form.checkOut);
     if (closedPeriod) { setErrorMsg(closedPeriodMessage(closedPeriod)); return; }
+    const extraProblem = extraRoomsViolation(availableRooms, extraRooms);
+    if (extraProblem) { setErrorMsg(extraProblem); return; }
     const guestErrors = {
       firstName: validateField('firstName', form.firstName),
       lastName: validateField('lastName', form.lastName),
@@ -835,6 +842,7 @@ export default function BookRoom() {
           notes: form.notes,
           paymentMethod: form.paymentMethod,
           promoCode: activePromo?.code || '',
+          additionalRooms: extraRooms.map(item => ({ roomId: item.roomId, adults: Number(item.adults), children: Number(item.children) })),
           website: form.website,
         }),
       });
@@ -874,10 +882,10 @@ export default function BookRoom() {
 
       const historyEntry = {
         bookingId: reservationId,
-        roomName: `Room ${room.roomNumber} (${room.type})`,
+        roomName: extraRooms.length ? `Rooms ${[room.roomNumber, ...extraRooms.map(item => item.roomNumber)].join(', ')}` : `Room ${room.roomNumber} (${room.type})`,
         checkIn: form.checkIn,
         checkOut: form.checkOut,
-        totalAmount: Number(data.totalAmount || 0),
+        totalAmount: Number(data.groupTotal ?? data.totalAmount ?? 0),
         status: 'Pending',
         createdAt: new Date().toISOString(),
       };
@@ -889,11 +897,11 @@ export default function BookRoom() {
 
       // The server priced this booking itself. If that differs from what this
       // page showed (stale rates, or the page was edited), ask before paying.
-      const serverTotal = Number(data.totalAmount || 0);
-      if (Math.round(serverTotal * 100) !== Math.round(bookingTotal * 100)) {
+      const serverTotal = Number(data.groupTotal ?? data.totalAmount ?? 0);
+      if (Math.round(serverTotal * 100) !== Math.round(grandTotal * 100)) {
         const serverDue = getOnlinePaymentAmount(serverTotal, paymentChoice);
         const proceed = await appConfirm(
-          `The resort's price for this booking is ₱${serverTotal.toLocaleString()}, not the ₱${bookingTotal.toLocaleString()} shown on this page.\nContinue to pay ₱${serverDue.toLocaleString()} now?`,
+          `The resort's price for this booking is ₱${serverTotal.toLocaleString()}, not the ₱${grandTotal.toLocaleString()} shown on this page.\nContinue to pay ₱${serverDue.toLocaleString()} now?`,
           { title: 'The price has changed', tone: 'warning', confirmLabel: `Pay ₱${serverDue.toLocaleString()}`, cancelLabel: 'Not now' },
         );
         if (!proceed) {
@@ -986,13 +994,19 @@ export default function BookRoom() {
             <span style={{ color: '#6b7280' }}>Check-out</span>
             <span style={{ fontWeight: '600' }}>{form.checkOut}</span>
           </div>
+          {extraRooms.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}>
+              <span style={{ color: '#6b7280' }}>Rooms</span>
+              <span style={{ fontWeight: '600' }}>{[room?.roomNumber, ...extraRooms.map(item => item.roomNumber)].filter(Boolean).map(n => `Room ${n}`).join(', ')}</span>
+            </div>
+          )}
           {activePromo && <>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}><span style={{ color: '#6b7280' }}>Subtotal</span><span style={{ fontWeight: '600' }}>₱{totalAmount.toLocaleString()}</span></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px', color: '#15803d' }}><span>{activePromo.code} discount</span><span>−₱{discountAmount.toLocaleString()}</span></div>
           </>}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', borderTop: '1px solid #e5e7eb', paddingTop: '10px', marginTop: '10px' }}>
             <span style={{ fontWeight: '600' }}>Total Amount</span>
-            <span style={{ fontWeight: '700', color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
+            <span style={{ fontWeight: '700', color: ACCENT }}>₱{grandTotal.toLocaleString()}</span>
           </div>
         </div>
         <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '20px' }}>
@@ -1340,8 +1354,25 @@ export default function BookRoom() {
                 </div>
               )}
 
+              {room && form.checkIn && form.checkOut && (
+                <ExtraRoomsPicker
+                  mainRoom={room}
+                  rooms={availableRooms}
+                  checkIn={form.checkIn}
+                  checkOut={form.checkOut}
+                  stayEnd={singleDay ? form.checkIn : form.checkOut}
+                  bookingType={form.bookingType}
+                  tourPeriod={form.tourPeriod}
+                  nights={nights}
+                  seasonPeriods={seasonPeriods}
+                  lateArrival={lateArrivalChosen}
+                  value={extraRooms}
+                  onChange={setExtraRooms}
+                  colors={{ DARK, ACCENT }}
+                />
+              )}
               <div style={{ marginTop: '14px' }}>
-                <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Special Requests</label>
+                <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Special Requests (optional)</label>
                 <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
                   placeholder="Any special requests or notes..."
                   rows={3}
@@ -1389,11 +1420,11 @@ export default function BookRoom() {
               </div>
               <div className="responsive-grid-2" style={{ gap: '14px' }}>
                 {[
-                  { label: 'First Name *', key: 'firstName', placeholder: 'Juan', type: 'text', required: true },
-                  { label: 'Last Name *', key: 'lastName', placeholder: 'dela Cruz', type: 'text', required: true },
-                  { label: 'Phone Number *', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: true },
-                  { label: 'Email Address *', key: 'email', placeholder: 'juan@email.com', type: 'email', required: true },
-                  { label: 'Address', key: 'address', placeholder: 'City, Province', type: 'text', required: false },
+                  { label: 'First Name', key: 'firstName', placeholder: 'Juan', type: 'text', required: true },
+                  { label: 'Last Name', key: 'lastName', placeholder: 'dela Cruz', type: 'text', required: true },
+                  { label: 'Phone Number', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: true },
+                  { label: 'Email Address', key: 'email', placeholder: 'juan@email.com', type: 'email', required: true },
+                  { label: 'Address (optional)', key: 'address', placeholder: 'City, Province', type: 'text', required: false },
                 ].map(f => (
                   <div key={f.key}>
                     <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</label>
@@ -1415,7 +1446,7 @@ export default function BookRoom() {
                   </div>
                 ))}
                 <div>
-                  <label htmlFor="preferredContactMethod" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preferred Contact Method *</label>
+                  <label htmlFor="preferredContactMethod" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preferred Contact Method</label>
                   <select id="preferredContactMethod" name="preferredContactMethod" required value={form.preferredContactMethod}
                     onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))}
                     style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: '#fff' }}>
@@ -1436,7 +1467,7 @@ export default function BookRoom() {
                   })()}
                   {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
                     <div style={{ marginTop: '8px' }}>
-                      <label htmlFor="contactLink" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Facebook profile link *</label>
+                      <label htmlFor="contactLink" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Facebook profile link</label>
                       <input id="contactLink" name="contactLink" type="url" required maxLength={200} value={form.contactLink}
                         onChange={e => setForm(previous => ({ ...previous, contactLink: e.target.value }))}
                         placeholder="https://www.facebook.com/your.name"
@@ -1510,8 +1541,8 @@ export default function BookRoom() {
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', marginBottom: '12px' }}>
                     {[
-                      { value: 'full', label: 'Pay in full', amount: bookingTotal },
-                      { value: 'deposit', label: `${depositPercentage}% deposit`, amount: bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, 'deposit') : 0 },
+                      { value: 'full', label: 'Pay in full', amount: grandTotal },
+                      { value: 'deposit', label: `${depositPercentage}% deposit`, amount: grandTotal > 0 ? getOnlinePaymentAmount(grandTotal, 'deposit') : 0 },
                     ].map(option => (
                       <button key={option.value} type="button" onClick={() => setSelectedPaymentChoice(option.value)}
                         style={{
@@ -1528,7 +1559,7 @@ export default function BookRoom() {
                   </div>
                   <div style={{ background: LIGHT, borderRadius: '12px', padding: '16px', fontSize: '12px', color: '#374151', lineHeight: '1.6' }}>
                     You'll be redirected to PayMongo to pay <strong>₱{onlinePaymentAmount.toLocaleString()}</strong> now.
-                    {' '}Reservation total: <strong>₱{bookingTotal.toLocaleString()}</strong>.
+                    {' '}Reservation total: <strong>₱{grandTotal.toLocaleString()}</strong>{extraRooms.length ? ` for ${extraRooms.length + 1} rooms` : ''}.
                     {paymentChoice === 'deposit' && <> The remaining balance must be paid before checkout, in cash or by QR at the resort.</>}
                     {' '}Card, GCash, Maya, and GrabPay payments are processed securely by PayMongo.
                   </div>
@@ -1783,12 +1814,18 @@ export default function BookRoom() {
                   <span>₱{pricing.cottageFee.toLocaleString()}</span>
                 </div>}
                 {activePromo && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#15803d', marginBottom: '8px' }}><span>Discount · {activePromo.code}</span><span>−₱{discountAmount.toLocaleString()}</span></div>}
+                {extraRooms.map(item => (
+                  <div key={item.roomId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                    <span>Room {item.roomNumber} · {item.adults} adult{item.adults === 1 ? '' : 's'}{item.children ? `, ${item.children} child${item.children === 1 ? '' : 'ren'}` : ''}</span>
+                    <span>₱{Number(item.price || 0).toLocaleString()}</span>
+                  </div>
+                ))}
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
                   <span>Subtotal</span><span>₱{totalAmount.toLocaleString()}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: '700', color: '#111', borderTop: '1px solid #f3f4f6', paddingTop: '14px' }}>
                   <span>Total</span>
-                  <span style={{ color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
+                  <span style={{ color: ACCENT }}>₱{grandTotal.toLocaleString()}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today ({depositPercentage}% deposit)</span><span>₱{depositAmount.toLocaleString()}</span></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '7px' }}><span>Balance due on arrival</span><span>₱{balanceAmount.toLocaleString()}</span></div>

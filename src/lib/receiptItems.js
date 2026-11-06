@@ -86,7 +86,8 @@ export function getReceiptLineItems(reservation = {}) {
   const itemized = Array.isArray(reservation.extraChargeItems) ? reservation.extraChargeItems : [];
   itemized.forEach(item => {
     const amount = money(item?.amount);
-    if (amount > 0) extras.push({ label: String(item.description || 'Extra charge'), amount, service: Boolean(item.serviceId) });
+    // Senior / PWD discounts are saved as negative lines.
+    if (amount > 0 || (amount < 0 && item.kind === 'discount')) extras.push({ label: String(item.description || 'Extra charge'), amount, service: Boolean(item.serviceId), discount: amount < 0 });
   });
   const lateFees = Array.isArray(reservation.lateCheckoutCharges) ? reservation.lateCheckoutCharges : [];
   lateFees.forEach(fee => {

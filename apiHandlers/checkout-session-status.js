@@ -99,6 +99,14 @@ export default async function handler(req, res) {
           console.error('Auto-confirmation email failed:', emailErr);
         }
       }
+      for (const linked of result.group || []) {
+        try {
+          await sendPaymentReceipt(adminDb, FieldValue, linked.paymentDocumentId);
+          if (linked.autoConfirmed) await sendConfirmationEmailOnce(adminDb, FieldValue, linked.reservationId);
+        } catch (emailErr) {
+          console.error('Linked room email failed:', emailErr);
+        }
+      }
       try {
         receipt = await sendPaymentReceipt(adminDb, FieldValue, result.paymentDocumentId);
       } catch (emailErr) {

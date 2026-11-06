@@ -118,6 +118,20 @@ async function computeRefundDecision(reservation) {
     amount: data.totalAmount,
     amountPaid: recordedPaid,
   });
+  // Resort closed on the guest's dates (typhoon, emergency): no fee, 100% back.
+  if (canClosureReschedule(data)) {
+    decision = {
+      ...decision,
+      outcome: recordedPaid > 0 ? 'eligible' : decision.outcome,
+      reason: recordedPaid > 0
+        ? 'The resort is closed on your dates, so there is no cancellation fee. 100% of what you paid will be refunded.'
+        : 'The resort is closed on your dates. Nothing was paid, so the resort will simply cancel the booking with no fee.',
+      alternatives: [],
+      policyRate: 0,
+      feeAmount: 0,
+      refundableAmount: recordedPaid,
+    };
+  }
 
   if (data.disputeStatus || data.paymentDisputeStatus) {
     decision = {
@@ -520,7 +534,8 @@ export default async function handler(req, res) {
     // Guests now contact the resort to cancel or move a booking; staff
     // handle it from the reservation list.
     // Exception: after a resort closure, guests can pick new dates online.
-    const closureMove = action === 'schedule-change' && canClosureReschedule(reservation.data());
+    // After a resort closure, guests can move or cancel (full refund) online.
+    const closureMove = ['schedule-change', 'refund', 'refund-preview'].includes(action) && canClosureReschedule(reservation.data());
     if (GUEST_REQUESTS_DISABLED && !closureMove && ['refund-preview', 'refund', 'schedule-change'].includes(action)) {
       return res.status(403).json({ error: 'To move or cancel a booking, please contact the resort by phone, email or chat.' });
     }

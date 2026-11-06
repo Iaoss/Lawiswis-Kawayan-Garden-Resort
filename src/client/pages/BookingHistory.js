@@ -110,6 +110,28 @@ export default function BookingHistory() {
     }
   };
 
+  // Closure: cancel online with no fee and a 100% refund (staff send it).
+  const [refundBusy, setRefundBusy] = useState(false);
+  const requestClosureRefund = async () => {
+    if (!lookupResult || refundBusy) return;
+    if (!window.confirm('Cancel this booking and get back 100% of what you paid? This cannot be undone.')) return;
+    setRefundBusy(true);
+    setMoveError('');
+    try {
+      const result = await sendGuestAction('refund', reference.trim());
+      setLookupResult(current => ({
+        ...current,
+        refundRequestStatus: result.outcome || current.refundRequestStatus || 'eligible',
+        refundDecision: result.decision ? { outcome: result.decision.outcome, reason: result.decision.reason, refundableAmount: result.decision.refundableAmount } : current.refundDecision,
+      }));
+      setNotice('Cancellation sent. The resort will cancel your booking with no fee and refund 100% of what you paid. You will get an email.');
+    } catch (failure) {
+      setMoveError(failure.message || 'Could not send the cancellation.');
+    } finally {
+      setRefundBusy(false);
+    }
+  };
+
   const stayLength = booking => Math.max(0, Math.round((Date.parse(`${String(booking.checkOut || booking.checkIn).slice(0, 10)}T00:00:00Z`) - Date.parse(`${String(booking.checkIn).slice(0, 10)}T00:00:00Z`)) / 86400000));
   const addDays = (key, days) => {
     const [y, m, d] = key.split('-').map(Number);
@@ -130,6 +152,13 @@ export default function BookingHistory() {
   // Shown when the resort closed on this booking's dates.
   const renderClosureMove = booking => {
     if (!booking.canReschedule || !booking.closure) return null;
+    if (booking.refundRequestStatus) {
+      return (
+        <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: '#eff6f0', color: '#374151', fontSize: 13, lineHeight: 1.6 }}>
+          <strong style={{ color: DARK }}>Cancellation requested.</strong> No fee: the resort refunds 100% of what you paid and confirms by email.
+        </div>
+      );
+    }
     const request = booking.modificationRequest;
     const pending = request && ['requested', 'needs_review', 'approved', 'awaiting_payment', 'awaiting_refund'].includes(request.status);
     const rejected = request?.status === 'rejected';
@@ -138,7 +167,18 @@ export default function BookingHistory() {
     return (
       <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: '#fff7ed', border: '1px solid #fed7aa', color: '#374151', fontSize: 13, lineHeight: 1.6 }}>
         <strong style={{ color: '#9a3412' }}>The resort is closed {formatMDY(booking.closure.from)}{booking.closure.to !== booking.closure.from ? ` – ${formatMDY(booking.closure.to)}` : ''}{booking.closure.reason ? ` (${booking.closure.reason})` : ''}.</strong>
-        <div style={{ marginTop: 4 }}>Pick new dates below. Your booking keeps the same room, booking type, guests and price, with no fee. The resort confirms the new dates by email.</div>
+        <div style={{ marginTop: 4 }}>Sorry for the trouble. You have two choices, both with <strong>no fee</strong>:</div>
+        <ol style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+          <li><strong>Rebook:</strong> pick your preferred new date below. Same room, booking type, guests and price. The resort checks it and confirms by email; if it's not free, we suggest the closest free dates.</li>
+          <li><strong>Cancel:</strong> get back <strong>100%</strong> of what you paid.{' '}
+            {!pending && (
+              <button type="button" onClick={requestClosureRefund} disabled={refundBusy}
+                style={{ border: '1px solid #b91c1c', background: '#fff', color: '#b91c1c', borderRadius: 8, padding: '4px 10px', fontWeight: 700, cursor: refundBusy ? 'wait' : 'pointer', marginLeft: 4 }}>
+                {refundBusy ? 'Sending…' : 'Cancel with full refund'}
+              </button>
+            )}
+          </li>
+        </ol>
         {pending ? (
           <div style={{ marginTop: 10, fontWeight: 600 }}>New dates sent: {formatMDY(request.requestedCheckIn)}{request.requestedCheckOut !== request.requestedCheckIn ? ` – ${formatMDY(request.requestedCheckOut)}` : ''}. Waiting for the resort to confirm.</div>
         ) : (

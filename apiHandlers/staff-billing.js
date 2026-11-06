@@ -45,6 +45,7 @@ import { canAutoCheckIn, manilaDateKey } from '../src/lib/reservationStatus';
 import { isRoomGuest, priceService } from '../src/lib/services';
 import { holdsRoom } from '../src/lib/unpaidBookings';
 import { readSeasonPeriods } from '../lib/seasonStore';
+import { CHECK_METHODS, DISCOUNT_KINDS, calculateSeniorPwdDiscount, getDiscountIdError, normalizeIdNumber } from '../src/lib/seniorPwdDiscount';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -179,6 +180,69 @@ async function addCharge({ staff, reservationId, amount, description }) {
       paymentStatus: paymentStatusFor(total, Number(reservation.amountPaid || 0)),
     });
     return { extraCharges, balance: money(total - Number(reservation.amountPaid || 0)) };
+  });
+}
+
+// Senior citizen / PWD discount: staff checked the physical ID. The amount
+// is worked out here (20% off the VAT-free share of each qualified guest).
+// The same ID can't be used twice on one booking or on another booking for
+// overlapping dates.
+async function applyDiscount({ staff, reservationId, kind, idNumber, holderName, birthDate, expiryDate, qualifiedGuests, checked, checkMethod }) {
+  const today = manilaDateKey();
+  const idError = getDiscountIdError({ kind, idNumber, holderName, birthDate, expiryDate, today, checked, checkMethod: checkMethod || '' });
+  if (idError) throw new BillingError(400, idError);
+  const normalizedId = normalizeIdNumber(idNumber);
+  const sameId = await adminDb.collection('reservations').where('discountIdNumbers', 'array-contains', normalizedId).get();
+  return adminDb.runTransaction(async transaction => {
+    const { ref, reservation } = await getReservation(transaction, reservationId);
+    if (['cancelled', 'checked-out'].includes(reservation.status)) {
+      throw new BillingError(409, 'Discounts can only be added to an active booking.');
+    }
+    const start = String(reservation.checkIn || '').slice(0, 10);
+    const end = String(reservation.checkOut || reservation.checkIn || '').slice(0, 10);
+    const clash = sameId.docs.find(doc => {
+      if (doc.id === ref.id) return true;
+      const other = doc.data();
+      if (['cancelled'].includes(other.status)) return false;
+      return stayRangesOverlap(start, end, String(other.checkIn || '').slice(0, 10), String(other.checkOut || other.checkIn || '').slice(0, 10));
+    });
+    if (clash) {
+      throw new BillingError(409, clash.id === ref.id
+        ? 'This ID was already used for a discount on this booking.'
+        : `This ID is already used on booking #${clash.id.slice(0, 8).toUpperCase()} for the same dates. One ID covers one guest only.`);
+    }
+    const totalGuests = Math.max(1, Number(reservation.totalGuests || 0) || (Number(reservation.adults || 0) + Number(reservation.children || 0)) || 1);
+    const usedSlots = (reservation.discounts || []).length;
+    const qualified = Math.max(1, Math.floor(Number(qualifiedGuests) || 1));
+    if (usedSlots + qualified > totalGuests) throw new BillingError(400, `This booking has ${totalGuests} guest(s); ${usedSlots} already have a discount.`);
+    const quote = calculateSeniorPwdDiscount({ amount: reservation.totalAmount, totalGuests, qualifiedGuests: 1 });
+    if (quote.total <= 0) throw new BillingError(400, 'There is no booking amount to discount.');
+    const label = `${DISCOUNT_KINDS[kind].label} discount (20% + VAT-free) · ${cleanText(holderName, 60)} · ID ${cleanText(idNumber, 40)}`;
+    const extraCharges = money(Number(reservation.extraCharges || 0) - quote.total);
+    const total = Number(reservation.totalAmount || 0) + extraCharges;
+    const record = {
+      id: crypto.randomUUID(),
+      kind,
+      holderName: cleanText(holderName, 80),
+      idNumber: cleanText(idNumber, 40),
+      ...(kind === 'senior' ? { birthDate: String(birthDate).slice(0, 10) } : { expiryDate: String(expiryDate).slice(0, 10) }),
+      amount: quote.total,
+      vatRemoved: quote.vatRemoved,
+      discount20: quote.discount20,
+      checkMethod,
+      checkMethodLabel: CHECK_METHODS[checkMethod],
+      verifiedBy: staff.name || staff.email || staff.uid,
+      verifiedByUid: staff.uid,
+      verifiedAt: new Date().toISOString(),
+    };
+    transaction.update(ref, {
+      extraCharges,
+      extraChargeItems: FieldValue.arrayUnion({ id: record.id, description: label, amount: -quote.total, kind: 'discount', addedBy: staff.uid, addedAt: record.verifiedAt }),
+      discounts: FieldValue.arrayUnion(record),
+      discountIdNumbers: FieldValue.arrayUnion(normalizedId),
+      paymentStatus: paymentStatusFor(total, Number(reservation.amountPaid || 0)),
+    });
+    return { discount: quote.total, label, extraCharges, balance: money(total - Number(reservation.amountPaid || 0)) };
   });
 }
 
@@ -657,6 +721,7 @@ export default async function handler(req, res) {
     if (body.action === 'record-payment') result = await recordPayment({ ...body, staff });
     else if (body.action === 'add-charge') result = await addCharge({ ...body, staff });
     else if (body.action === 'add-service') result = await addService({ ...body, staff });
+    else if (body.action === 'apply-discount') result = await applyDiscount({ ...body, staff });
     else if (body.action === 'cancel-with-policy') result = await cancelWithPolicy({ ...body, staff });
     else if (body.action === 'create-walk-in') result = await createWalkIn({ staff, booking: body.booking });
     else if (body.action === 'edit-booking') result = await editBooking({ ...body, staff });

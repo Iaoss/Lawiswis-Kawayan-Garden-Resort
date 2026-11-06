@@ -86,7 +86,18 @@ export default async function handler(req, res) {
       if (Number(reservation.amountPaid || 0) > 0) {
         return res.status(409).json({ error: 'A payment has already been recorded for this reservation' });
       }
-      checkoutAmount = getOnlinePaymentAmount(Number(reservation.totalAmount || 0), paymentChoice);
+      let bookingTotal = Number(reservation.totalAmount || 0);
+      const linkedIds = Array.isArray(reservation.groupReservationIds) ? reservation.groupReservationIds.filter(id => id !== reservationId) : [];
+      if (linkedIds.length) {
+        const linked = await Promise.all(linkedIds.map(id => adminDb.collection('reservations').doc(id).get()));
+        const active = linked.filter(snap => snap.exists && !['cancelled', 'checked-out'].includes(String(snap.data().status || '').toLowerCase()));
+        if (active.some(snap => Number(snap.data().amountPaid || 0) > 0)) {
+          return res.status(409).json({ error: 'A payment has already been recorded for one of these rooms' });
+        }
+        bookingTotal += active.reduce((sum, snap) => sum + Number(snap.data().totalAmount || 0), 0);
+        description = `${active.length + 1} rooms (${[reservation.roomNumber, ...active.map(snap => snap.data().roomNumber)].filter(Boolean).map(n => `Room ${n}`).join(', ')}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`;
+      }
+      checkoutAmount = getOnlinePaymentAmount(bookingTotal, paymentChoice);
     } else {
       if (modificationRequestId) {
         const modification = reservation.modificationRequest;

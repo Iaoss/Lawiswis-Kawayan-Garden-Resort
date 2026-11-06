@@ -454,6 +454,14 @@ export default async function handler(req, res) {
       });
       const modification = await completeModificationPayment(db, FieldValue, info);
       await sendPaymentReceipt(db, FieldValue, result.paymentDocumentId);
+      for (const linked of result.group || []) {
+        try {
+          await sendPaymentReceipt(db, FieldValue, linked.paymentDocumentId);
+          if (linked.autoConfirmed) await sendConfirmationEmailOnce(db, FieldValue, linked.reservationId);
+        } catch (emailError) {
+          console.error('Linked room email failed:', emailError);
+        }
+      }
       // The payment confirmed the booking: send the confirmation email too.
       // An email problem must not make PayMongo retry the payment.
       if (result.autoConfirmed) {

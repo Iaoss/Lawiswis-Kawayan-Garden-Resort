@@ -246,7 +246,7 @@ export default function CorporateBooking() {
               <label style={labelStyle}>Contact last name<input required minLength="2" maxLength="35" name="lastName" value={form.lastName} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Email address<input required type="email" maxLength="254" name="email" value={form.email} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Mobile number<input required type="tel" inputMode="numeric" pattern="09[0-9]{9}" maxLength="11" placeholder="09XXXXXXXXX" name="phone" value={form.phone} onChange={changeField} style={inputStyle} /></label>
-              <label style={labelStyle}>Preferred Contact Method *<select required name="preferredContactMethod" value={form.preferredContactMethod} onChange={changeField} style={inputStyle}><option value="">Select a method</option>{PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select>
+              <label style={labelStyle}>Preferred Contact Method<select required name="preferredContactMethod" value={form.preferredContactMethod} onChange={changeField} style={inputStyle}><option value="">Select a method</option>{PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select>
                 {['Email', 'Phone'].includes(form.preferredContactMethod) && (
                   <span style={{ font: `500 12px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none', color: FOREST_DEEP }}>
                     {(form.preferredContactMethod === 'Email' ? form.email : form.phone).trim()
@@ -256,7 +256,7 @@ export default function CorporateBooking() {
                 )}
               </label>
               {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
-                <label style={labelStyle}>Facebook profile link *
+                <label style={labelStyle}>Facebook profile link
                   <input required type="url" maxLength="200" name="contactLink" value={form.contactLink} onChange={changeField} placeholder="https://www.facebook.com/your.name" style={inputStyle} />
                   <span style={{ font: `500 11px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none', color: form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink) ? '#b42318' : '#6b7280' }}>
                     {(form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink)) || 'Copy the link from your Facebook profile and paste it here.'}
@@ -280,7 +280,7 @@ export default function CorporateBooking() {
               <input type="checkbox" name="accommodationInterest" checked={form.accommodationInterest} onChange={changeField} style={{ marginTop: '3px' }} />
               Please include optional accommodation and meal package options (without meals, plated meals, or managed buffet meals) in our follow-up.
             </label>
-            <label style={{ ...labelStyle, marginTop: '18px' }}>Additional details<textarea name="notes" maxLength="1000" rows="4" value={form.notes} onChange={changeField} placeholder="Tell us about your retreat, seminar, or event needs." style={{ ...inputStyle, resize: 'vertical' }} /></label>
+            <label style={{ ...labelStyle, marginTop: '18px' }}>Additional details (optional)<textarea name="notes" maxLength="1000" rows="4" value={form.notes} onChange={changeField} placeholder="Tell us about your retreat, seminar, or event needs." style={{ ...inputStyle, resize: 'vertical' }} /></label>
           </section>
 
           {errorMessage && <div role="alert" style={{ background: '#fff1f0', border: '1px solid #efc2bf', color: '#9b2c24', padding: '14px', font: `12px/1.6 ${SANS}` }}>{errorMessage}</div>}

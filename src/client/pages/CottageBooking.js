@@ -184,7 +184,7 @@ export default function CottageBooking() {
             </section>
 
             <section style={card}>
-              <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 4px' }}>Choose your cottage *</h2>
+              <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 4px' }}>Choose your cottage</h2>
               <p style={{ color: '#6b6a5c', font: `12px ${SANS}`, margin: '0 0 14px' }}>Required for day and night tours.</p>
               <div style={{ display: 'grid', gap: 10 }}>
                 {COTTAGES.map(cottage => {
@@ -213,11 +213,11 @@ export default function CottageBooking() {
             <section style={card}>
               <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 14px' }}>Your details</h2>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-                <label style={label}>First name *<input required maxLength={35} value={form.firstName} onChange={e => set('firstName', e.target.value)} style={input} autoComplete="given-name" /></label>
-                <label style={label}>Last name *<input required maxLength={35} value={form.lastName} onChange={e => set('lastName', e.target.value)} style={input} autoComplete="family-name" /></label>
-                <label style={label}>Mobile number *<input required inputMode="numeric" maxLength={11} placeholder="09XXXXXXXXX" value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} style={input} autoComplete="tel" /></label>
-                <label style={label}>Email *<input required type="email" maxLength={254} value={form.email} onChange={e => set('email', e.target.value)} style={input} autoComplete="email" /></label>
-                <label style={label}>Preferred contact method *
+                <label style={label}>First name<input required maxLength={35} value={form.firstName} onChange={e => set('firstName', e.target.value)} style={input} autoComplete="given-name" /></label>
+                <label style={label}>Last name<input required maxLength={35} value={form.lastName} onChange={e => set('lastName', e.target.value)} style={input} autoComplete="family-name" /></label>
+                <label style={label}>Mobile number<input required inputMode="numeric" maxLength={11} placeholder="09XXXXXXXXX" value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} style={input} autoComplete="tel" /></label>
+                <label style={label}>Email<input required type="email" maxLength={254} value={form.email} onChange={e => set('email', e.target.value)} style={input} autoComplete="email" /></label>
+                <label style={label}>Preferred contact method
                   <select required value={form.preferredContactMethod} onChange={e => set('preferredContactMethod', e.target.value)} style={input}>
                     <option value="">Select a method</option>
                     {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
@@ -227,12 +227,12 @@ export default function CottageBooking() {
                   )}
                 </label>
                 {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
-                  <label style={label}>Facebook profile link *
+                  <label style={label}>Facebook profile link
                     <input required type="url" maxLength={200} placeholder="https://www.facebook.com/your.name" value={form.contactLink} onChange={e => set('contactLink', e.target.value)} style={input} />
                   </label>
                 )}
               </div>
-              <label style={{ ...label, marginTop: 12 }}>Special requests
+              <label style={{ ...label, marginTop: 12 }}>Special requests (optional)
                 <textarea rows={3} maxLength={1000} value={form.notes} onChange={e => set('notes', e.target.value)} style={{ ...input, resize: 'vertical' }} />
               </label>
               <div aria-hidden="true" style={{ position: 'absolute', left: -9999, width: 1, height: 1, overflow: 'hidden' }}>

@@ -15,6 +15,7 @@ import { groupTooLargeNote, suggestCottage, suggestRooms } from '../../lib/booki
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { staffApi } from '../lib/staffApi';
+import OnlinePaymentQr from '../components/OnlinePaymentQr';
 import { appAlert } from '../../components/ui/app-dialog';
 import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
@@ -910,11 +911,14 @@ export default function WalkIn() {
                     </div>
                   ) : owedNow <= 0 ? (
                     <div role="status" style={{ background: SUCCESS_BG, color: SUCCESS_TEXT, borderRadius: 10, padding: '12px 14px', fontSize: 13, fontWeight: 600, marginBottom: 14 }}>
-                      Fully paid. Check the guest in from Reservations when they arrive on {created.stayLabel}.
+                      Fully paid. {created.isToday ? 'Check the guest in from Reservations (one click).' : `Check the guest in from Reservations when they arrive on ${created.stayLabel}.`}
                     </div>
                   ) : (
-                    <>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12, marginBottom: 12 }}>
+                    <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT }}><i className="ti ti-cash" aria-hidden="true" /> Paid at the desk</div>
+                      <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 10px' }}>Cash, or the guest scanned the resort's own GCash / QR Ph code.</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
                         <div>
                           <label style={label}>Paid with</label>
                           <select value={payment.method} onChange={e => setPayment(p => ({ ...p, method: e.target.value }))} style={inp}>
@@ -938,7 +942,22 @@ export default function WalkIn() {
                         style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 13, fontSize: 14, fontWeight: 700, cursor: payment.busy ? 'wait' : 'pointer', fontFamily: 'inherit', marginBottom: 10 }}>
                         {payment.busy ? 'Saving…' : `Record ₱${Number(payment.amount || 0).toLocaleString()} payment`}
                       </button>
-                    </>
+                    </div>
+                    <OnlinePaymentQr
+                      reservationId={created.id}
+                      amount={owedNow}
+                      colors={{ CARD2, BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+                      onPaid={result => {
+                        const paidNow = Number(result.amountPaid || 0);
+                        setCreated(c => ({
+                          ...c,
+                          paid: Math.round((Number(c.paid || 0) + paidNow) * 100) / 100,
+                          notes: [...c.notes, `Paid ₱${paidNow.toLocaleString()} online.${result.receipt?.sent ? ' Receipt emailed.' : ''}`],
+                        }));
+                        setPayment(p => ({ ...p, amount: '' }));
+                      }}
+                    />
+                    </div>
                   )}
                   <button type="button" onClick={finishWalkIn}
                     style={{ ...inp, cursor: 'pointer', textAlign: 'center', fontWeight: 600, color: owedNow > 0 ? MUTED : TEXT }}>

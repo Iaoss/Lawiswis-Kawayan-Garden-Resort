@@ -12,6 +12,7 @@ import { getVatBreakdown } from '../../lib/bookingPricing';
 import { getScheduledCheckOutMs, formatManilaTime } from '../../lib/reservationStatus';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import QRCode from 'qrcode';
+import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
@@ -516,6 +517,15 @@ export default function Billing() {
                         {servicePrice?.error || `${selectedService?.summary || ''} ${service.serviceId === 'photoshoot' ? '(hours, people)' : '(hours)'}`}
                       </div>
                     </div>
+                    <SeniorPwdDiscountForm
+                      reservation={selected}
+                      colors={{ TEXT, SUBTEXT, MUTED, BORDER, RED }}
+                      inp={inp}
+                      btn={btn}
+                      onApplied={result => {
+                        setSuccess(`${result.label}: −${formatCurrency(result.discount)}.`);
+                      }}
+                    />
                   </div>
                 </div>
 
