@@ -36,7 +36,7 @@ import { shouldAutoConfirm } from '../lib/recordPayMongoPayment';
 import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
-import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, getCottageFee, getReservationDayVisitors, getTourCutoffError, isLateArrivalTime, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, getCottageFee, formatResortClock, getReservationDayVisitors, getRoomMaximumGuests, getWalkInTourCutoffError, isLateArrivalTime, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getCottageAvailabilityFor } from '../lib/cottageStock';
 import { cottageAvailabilityError } from '../src/lib/cottages';
 import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
@@ -45,7 +45,10 @@ import { canAutoCheckIn, manilaDateKey } from '../src/lib/reservationStatus';
 import { isRoomGuest, priceService } from '../src/lib/services';
 import { holdsRoom } from '../src/lib/unpaidBookings';
 import { readSeasonPeriods } from '../lib/seasonStore';
+import { fillBalancesInOrder, getAdditionalRoomsError } from '../src/lib/groupBooking';
 import { CHECK_METHODS, DISCOUNT_KINDS, calculateSeniorPwdDiscount, getDiscountIdError, normalizeIdNumber } from '../src/lib/seniorPwdDiscount';
+import { createCorporateReservation } from './create-corporate-reservation';
+import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -122,6 +125,8 @@ async function recordPayment({ staff, reservationId, amount, method, officialRec
       } : {}),
     });
     if (autoCheckedIn && roomSnap?.exists) transaction.update(roomRef, { status: 'occupied' });
+    // A paid-up corporate group checks in with its assigned rooms.
+    if (autoCheckedIn) syncCorporateRoomBlocks(transaction, reservation, 'checked-in');
     transaction.set(paymentRef, {
       reservationId,
       guestName: reservation.guestName || '',
@@ -152,6 +157,113 @@ async function recordPayment({ staff, reservationId, amount, method, officialRec
     receiptError = error.message || 'Receipt email failed to send.';
   }
   return { ...result, paymentId: paymentRef.id, receipt, receiptError };
+}
+
+// Rooms for a corporate / group booking. Staff pick the rooms; each gets a
+// 0-peso room block on the group's dates so no one else can book it.
+// Sending the full list replaces the previous one.
+async function assignCorporateRooms({ staff, reservationId, roomIds }) {
+  if (!Array.isArray(roomIds) || roomIds.length > 60 || roomIds.some(id => typeof id !== 'string' || !id)) {
+    throw new BillingError(400, 'Choose up to 60 rooms.');
+  }
+  const wanted = [...new Set(roomIds)];
+  return adminDb.runTransaction(async transaction => {
+    const { ref, reservation } = await getReservation(transaction, reservationId);
+    if (reservation.type !== 'corporate') throw new BillingError(409, 'Rooms can only be assigned to a corporate or group booking.');
+    if (!['pending', 'confirmed', 'checked-in'].includes(reservation.status)) throw new BillingError(409, 'This booking is no longer active.');
+    const checkIn = String(reservation.checkIn || '').slice(0, 10);
+    const checkOut = String(reservation.checkOut || reservation.checkIn || '').slice(0, 10);
+    const current = Array.isArray(reservation.assignedRooms) ? reservation.assignedRooms : [];
+    const keep = current.filter(item => wanted.includes(item.roomId));
+    const remove = current.filter(item => !wanted.includes(item.roomId));
+    const addIds = wanted.filter(id => !current.some(item => item.roomId === id));
+    // Reads first.
+    const added = [];
+    for (const roomId of addIds) {
+      const roomSnap = await transaction.get(adminDb.collection('rooms').doc(roomId));
+      if (!roomSnap.exists) throw new BillingError(404, 'One of the rooms could not be found.');
+      const room = roomSnap.data();
+      if (await roomIsTaken(transaction, { roomId, roomNumber: room.roomNumber, checkIn, checkOut })) {
+        throw new BillingError(409, `Room ${room.roomNumber} is already booked on these dates.`);
+      }
+      added.push({ roomId, room, ref: adminDb.collection('reservations').doc() });
+    }
+    remove.forEach(item => { if (item.blockId) transaction.delete(adminDb.collection('reservations').doc(item.blockId)); });
+    const groupName = reservation.companyName || reservation.guestName || 'Group';
+    added.forEach(({ roomId, room, ref: blockRef }) => {
+      transaction.set(blockRef, {
+        type: ROOM_BLOCK_TYPE,
+        corporateId: ref.id,
+        groupId: ref.id,
+        roomId,
+        roomNumber: room.roomNumber || '',
+        roomType: room.type || '',
+        guestName: `${groupName} (group)`,
+        companyName: reservation.companyName || '',
+        checkIn,
+        checkOut,
+        checkInTime: reservation.checkInTime || '',
+        checkOutTime: reservation.checkOutTime || '',
+        bookingType: reservation.bookingType || 'corporate',
+        status: reservation.status,
+        totalAmount: 0,
+        amountPaid: 0,
+        extraCharges: 0,
+        paymentStatus: 'paid',
+        paymentMethod: 'corporate',
+        notes: `Room for the ${groupName} group (booking #${ref.id.slice(0, 8).toUpperCase()}).`,
+        createdBy: staff.uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+    const assignedRooms = [
+      ...keep,
+      ...added.map(({ roomId, room, ref: blockRef }) => ({
+        roomId, roomNumber: room.roomNumber || '', roomType: room.type || '',
+        maxGuests: getRoomMaximumGuests(room) || null, blockId: blockRef.id,
+      })),
+    ];
+    transaction.update(ref, { assignedRooms, assignedRoomCount: assignedRooms.length, roomsAssignedBy: staff.name || staff.email || staff.uid });
+    return { assignedRooms, added: added.length, removed: remove.length, companyName: groupName };
+  });
+}
+
+// Corporate group booked at the desk (no 7-day notice needed).
+async function createCorporateWalkIn({ staff, booking }) {
+  const { code, json } = await createCorporateReservation(booking || {}, staff);
+  if (code !== 200) throw new BillingError(code, json.error || 'Could not create the group booking.');
+  return json;
+}
+
+// One desk payment for rooms booked together: fills each room's balance in
+// order (first room first), recorded as one payment per room.
+async function recordGroupPayment({ staff, reservationId, amount, method, officialReceiptNo }) {
+  const paid = money(amount);
+  if (!Number.isFinite(paid) || paid <= 0) throw new BillingError(400, 'Enter a payment amount greater than zero.');
+  const mainSnap = await adminDb.collection('reservations').doc(reservationId).get();
+  if (!mainSnap.exists) throw new BillingError(404, 'This reservation could not be found.');
+  const ids = Array.isArray(mainSnap.data().groupReservationIds) && mainSnap.data().groupReservationIds.length
+    ? mainSnap.data().groupReservationIds : [reservationId];
+  const snaps = await Promise.all(ids.map(id => adminDb.collection('reservations').doc(id).get()));
+  const rooms = snaps.filter(snap => snap.exists && snap.data().status !== 'cancelled');
+  const balances = rooms.map(snap => owed(snap.data()));
+  const totalOwed = money(balances.reduce((a, b) => a + b, 0));
+  if (paid - totalOwed > 0.001) throw new BillingError(400, `The group only owes ₱${totalOwed.toLocaleString()}.`);
+  const shares = fillBalancesInOrder(paid, balances);
+  const results = [];
+  for (let i = 0; i < rooms.length; i += 1) {
+    if (shares[i] <= 0) continue;
+    results.push({ reservationId: rooms[i].id, ...(await recordPayment({ staff, reservationId: rooms[i].id, amount: shares[i], method, officialReceiptNo })) });
+  }
+  const after = await Promise.all(rooms.map(snap => snap.ref.get()));
+  return {
+    amountPaid: money(after.reduce((sum, snap) => sum + Number(snap.data().amountPaid || 0), 0)),
+    balance: money(after.reduce((sum, snap) => sum + owed(snap.data()), 0)),
+    autoCheckedIn: results.some(item => item.autoCheckedIn),
+    receipt: results.some(item => item.receipt) ? { sent: true } : null,
+    receiptError: results.map(item => item.receiptError).filter(Boolean).join(' '),
+    rooms: results.map(item => ({ reservationId: item.reservationId, autoCheckedIn: item.autoCheckedIn })),
+  };
 }
 
 async function addCharge({ staff, reservationId, amount, description }) {
@@ -420,7 +532,7 @@ async function createCottageWalkIn({ staff, booking }) {
   const date = typeof booking.checkIn === 'string' ? booking.checkIn : '';
   const today = manilaDateKey();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < today) throw new BillingError(400, 'Choose today or a later date.');
-  const cutoff = getTourCutoffError(date, tourPeriod);
+  const cutoff = getWalkInTourCutoffError(date, tourPeriod);
   if (cutoff) throw new BillingError(400, cutoff);
   let pricing;
   try {
@@ -488,6 +600,10 @@ async function createWalkIn({ staff, booking = {} }) {
   }
   const { roomId } = booking;
   if (typeof roomId !== 'string' || !roomId) throw new BillingError(400, 'Choose a room.');
+  // More rooms for the same group: linked bookings, paid together.
+  const roomsError = getAdditionalRoomsError(roomId, booking.additionalRooms);
+  if (roomsError) throw new BillingError(400, roomsError);
+  const additionalRooms = Array.isArray(booking.additionalRooms) ? booking.additionalRooms : [];
   if (!isPreferredContactMethod(booking.preferredContactMethod)) throw new BillingError(400, 'Choose a preferred contact method.');
   const paymentMethod = COUNTER_PAYMENT_METHODS.includes(booking.paymentMethod) ? booking.paymentMethod : '';
   const paymentStatus = WALK_IN_PAYMENT_STATUSES.includes(booking.paymentStatus) ? booking.paymentStatus : '';
@@ -515,11 +631,28 @@ async function createWalkIn({ staff, booking = {} }) {
     const room = roomSnap.data();
     // Same rules as online bookings: tours are single-day, nothing starts
     // after today's check-in time, and the room's guest limit applies.
-    const details = detailsFromForm(booking, { room });
+    const details = detailsFromForm(booking, { room, walkIn: true });
     if (blockedRoomStatus(room.status, details.checkIn, today)) throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
     if (await roomIsTaken(transaction, { roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut })) {
       throw new BillingError(409, `Room ${room.roomNumber} was just booked for those dates. Please choose another room.`);
     }
+    // Extra rooms: all reads happen before any write.
+    const extras = [];
+    for (const item of additionalRooms) {
+      const extraRoomRef = adminDb.collection('rooms').doc(item.roomId);
+      const extraSnap = await transaction.get(extraRoomRef);
+      if (!extraSnap.exists) throw new BillingError(404, 'One of the extra rooms could not be found.');
+      const extraRoom = extraSnap.data();
+      const extraDetails = detailsFromForm({ ...booking, adults: item.adults, children: item.children }, { room: extraRoom, walkIn: true });
+      if (blockedRoomStatus(extraRoom.status, extraDetails.checkIn, today)) throw new BillingError(409, `Room ${extraRoom.roomNumber} isn’t available right now.`);
+      if (await roomIsTaken(transaction, { roomId: item.roomId, roomNumber: extraRoom.roomNumber, checkIn: extraDetails.checkIn, checkOut: extraDetails.checkOut })) {
+        throw new BillingError(409, `Room ${extraRoom.roomNumber} was just booked for those dates. Please choose another room.`);
+      }
+      extras.push({ id: item.roomId, roomRef: extraRoomRef, room: extraRoom, details: extraDetails, ref: adminDb.collection('reservations').doc() });
+    }
+    const groupFields = extras.length
+      ? { groupId: reservationRef.id, groupReservationIds: [reservationRef.id, ...extras.map(item => item.ref.id)], groupRoomCount: extras.length + 1 }
+      : {};
 
     // Priced exactly like an online booking (room rate + extra guests).
     let pricing;
@@ -562,6 +695,8 @@ async function createWalkIn({ staff, booking = {} }) {
       paymentMethod,
       paymentStatus,
       type: 'walk-in',
+      ...groupFields,
+      ...(arrivesToday ? { arrivalTime: formatResortClock() } : {}),
       // Paid in full and arriving today: the guest goes straight in.
       status: checkedInNow ? 'checked-in' : 'confirmed',
       ...(checkedInNow ? { checkedInAt: FieldValue.serverTimestamp() } : {}),
@@ -581,7 +716,53 @@ async function createWalkIn({ staff, booking = {} }) {
     }
     // The room is occupied once the guest is checked in (paid, arriving today).
     if (checkedInNow) transaction.update(roomRef, { status: 'occupied' });
-    return { totalAmount, amountPaid, roomNumber: room.roomNumber || '', arrivesToday, checkedIn: checkedInNow };
+    const seasonPeriods = extras.length ? await readSeasonPeriods() : [];
+    const linked = extras.map(extra => {
+      let extraPricing;
+      try {
+        extraPricing = priceBookingDetails(extra.room, extra.details, { cottageId: '', cottageFee: 0, seasonPeriods });
+      } catch (error) {
+        throw new BillingError(409, error.message || `Room ${extra.room.roomNumber} has no valid rate.`);
+      }
+      const extraTotal = money(extraPricing.subtotalAmount);
+      transaction.set(extra.ref, {
+        firstName, lastName, guestName,
+        email: cleanText(booking.email, 120),
+        phone: cleanText(booking.phone, 20),
+        address: cleanText(booking.address, 300),
+        preferredContactMethod: booking.preferredContactMethod,
+        notes: `Booked together with Room ${room.roomNumber || ''} (booking #${reservationRef.id.slice(0, 8).toUpperCase()}).`,
+        roomId: extra.id,
+        roomNumber: extra.room.roomNumber || '',
+        roomType: extra.room.type || '',
+        ...extra.details,
+        baseRate: extraPricing.baseRate,
+        baseCapacity: extraPricing.baseCapacity,
+        extraGuestCharge: extraPricing.extraGuestCharge,
+        lateArrival: isLateArrivalTime(extra.details.checkInTime) && extra.details.bookingType === 'overnight',
+        lateArrivalSurcharge: extraPricing.lateArrivalSurcharge || 0,
+        seasonalSurcharge: extraPricing.seasonalSurcharge || 0,
+        seasonalLabel: extraPricing.seasonalLabel || '',
+        cottageId: '',
+        cottageFee: 0,
+        subtotalAmount: extraTotal,
+        totalAmount: extraTotal,
+        amountPaid: 0,
+        paymentMethod,
+        paymentStatus: 'pending',
+        type: 'walk-in',
+        ...groupFields,
+        status: 'confirmed',
+        createdBy: staff.uid,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      return { reservationId: extra.ref.id, roomNumber: extra.room.roomNumber || '', totalAmount: extraTotal };
+    });
+    return {
+      totalAmount, amountPaid, roomNumber: room.roomNumber || '', arrivesToday, checkedIn: checkedInNow,
+      rooms: [{ reservationId: reservationRef.id, roomNumber: room.roomNumber || '', totalAmount }, ...linked],
+      groupTotal: money(totalAmount + linked.reduce((sum, item) => sum + item.totalAmount, 0)),
+    };
   });
 
   let receipt = null;
@@ -720,6 +901,9 @@ export default async function handler(req, res) {
     let result;
     if (body.action === 'record-payment') result = await recordPayment({ ...body, staff });
     else if (body.action === 'add-charge') result = await addCharge({ ...body, staff });
+    else if (body.action === 'record-group-payment') result = await recordGroupPayment({ ...body, staff });
+    else if (body.action === 'assign-corporate-rooms') result = await assignCorporateRooms({ ...body, staff });
+    else if (body.action === 'create-corporate-walk-in') result = await createCorporateWalkIn({ staff, booking: body.booking });
     else if (body.action === 'add-service') result = await addService({ ...body, staff });
     else if (body.action === 'apply-discount') result = await applyDiscount({ ...body, staff });
     else if (body.action === 'cancel-with-policy') result = await cancelWithPolicy({ ...body, staff });

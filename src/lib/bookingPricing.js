@@ -88,6 +88,26 @@ export function getTourCutoffError(date, tourPeriod = 'day', now = new Date()) {
     : `Today's day tour started at ${DAYTOUR_TIME_SLOT.checkIn}, so it can no longer be booked. Please choose another date or the night swimming tour.`;
 }
 
+// Walk-ins: a guest who arrives after the day tour has started (say 9 AM)
+// can still book it until the tour ends at 5 PM. Check-out stays at 5 PM.
+// The night tour keeps its normal rule.
+export function getWalkInTourCutoffError(date, tourPeriod = 'day', now = new Date()) {
+  if (tourPeriod === 'night') return getTourCutoffError(date, 'night', now);
+  const resortNow = getResortNow(now);
+  if (date === resortNow.dateKey && resortNow.minutes >= 17 * 60) {
+    return "Today's day tour has ended (check-out is 5:00 PM). Choose the night tour or another date.";
+  }
+  return '';
+}
+export const isWalkInTourClosed = (date, tourPeriod, now = new Date()) => Boolean(getWalkInTourCutoffError(date, tourPeriod, now));
+
+// "9:12 AM" in resort time, for recording when a walk-in actually arrived.
+export function formatResortClock(now = new Date()) {
+  const { minutes } = getResortNow(now);
+  const h = Math.floor(minutes / 60);
+  return `${h % 12 || 12}:${String(minutes % 60).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
 // ── Cottages ───────────────────────────────────────────────────────────
 // The cottage list is set by an admin (Settings → Resort Status → Cottages)
 // and saved in settings/cottageTypes as

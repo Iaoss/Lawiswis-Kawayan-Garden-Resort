@@ -75,7 +75,7 @@ export default function Billing() {
   const fetchReservations = async () => {
     const snap = await getDocs(collection(db, 'reservations'));
     setReservations(snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(r => r.status !== 'cancelled' && r.status !== 'checked-out'));
+      .filter(r => r.status !== 'cancelled' && r.status !== 'checked-out' && r.type !== 'corporate-room'));
   };
 
   useEffect(() => { fetchReservations(); }, []);

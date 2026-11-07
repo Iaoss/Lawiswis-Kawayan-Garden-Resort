@@ -185,7 +185,7 @@ export default function AdminDashboard() {
       const resSnap   = await getDocs(collection(db, 'reservations'));
       const paySnap   = await getDocs(collection(db, 'payments'));
       const rooms        = roomsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room');
       const paymentRows  = paySnap.docs.map(d => d.data());
       setPayments(paymentRows);
       setRoomList(rooms);

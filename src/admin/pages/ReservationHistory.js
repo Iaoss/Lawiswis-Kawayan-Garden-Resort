@@ -48,7 +48,8 @@ export default function ReservationHistory() {
   useEffect(() => {
     const fetch = async () => {
       const snap = await getDocs(collection(db, 'reservations'));
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Group room blocks (0-peso) are shown under their group booking instead.
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room');
       data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setReservations(data);
     };

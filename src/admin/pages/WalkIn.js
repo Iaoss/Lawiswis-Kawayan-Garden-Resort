@@ -7,7 +7,7 @@ import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
 import {
-  MAX_STAY_NIGHTS, OVERNIGHT_TIME_SLOTS, getRoomBaseRate, getRoomMaximumGuests, isCheckInPassed, isCoupleRoom, isTourStartPassed, stayRangesOverlap,
+  MAX_STAY_NIGHTS, OVERNIGHT_TIME_SLOTS, getRoomBaseRate, getRoomMaximumGuests, isCheckInPassed, isCoupleRoom, isTourStartPassed, isWalkInTourClosed, stayRangesOverlap,
 } from '../../lib/bookingPricing';
 import { BOOKING_OPTIONS, normalizeBookingDetails, priceBookingDetails } from '../../lib/bookingDetails';
 import { COTTAGE_OPTIONS, calculateCottageTourPrice, cottageName, getCottageFee } from '../../lib/bookingPricing';
@@ -16,6 +16,9 @@ import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { staffApi } from '../lib/staffApi';
 import OnlinePaymentQr from '../components/OnlinePaymentQr';
+import CorporateWalkInForm from '../components/CorporateWalkInForm';
+import AssignRoomsDialog from '../components/AssignRoomsDialog';
+import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
 import { appAlert } from '../../components/ui/app-dialog';
 import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
@@ -142,7 +145,12 @@ export default function WalkIn() {
 
   const today = getLocalToday();
   const guestName = joinGuestName(form.firstName, form.lastName);
-  const coupleGuestLimit = isCoupleRoom(selectedRoom) ? getRoomMaximumGuests(selectedRoom) : null;
+  // More rooms for the same group (the group is split across them).
+  const [extraRoomIds, setExtraRoomIds] = useState([]);
+  // Walk-in kind: a guest / family, or a corporate group.
+  const [mode, setMode] = useState('guest');
+  const [assignFor, setAssignFor] = useState(null);
+  const coupleGuestLimit = !extraRoomIds.length && isCoupleRoom(selectedRoom) ? getRoomMaximumGuests(selectedRoom) : null;
 
   // Live data: new online bookings show up here immediately, so availability stays current.
   useEffect(() => {
@@ -170,7 +178,7 @@ export default function WalkIn() {
       checkOut: isTour ? form.checkIn : form.checkOut,
       adults: Number(form.adults) || 1,
       children: Number(form.children) || 0,
-    })
+    }, { walkIn: true })
     : null;
   const stayError = detailsCheck?.error || '';
   const details = detailsCheck?.details || null;
@@ -220,10 +228,35 @@ export default function WalkIn() {
     if (!selectedRoom || !details) return 0;
     try { return priceBookingDetails(selectedRoom, details, { cottageId: form.cottageId, cottageFee: getCottageFee(form.cottageId) || 0, seasonPeriods }).subtotalAmount; } catch { return 0; }
   })();
+  const extraRooms = extraRoomIds.map(id => rooms.find(r => r.id === id)).filter(Boolean);
+  const roomSplit = selectedRoom && selectedRoom.id !== 'cottage-only' && extraRooms.length && details
+    ? splitGuestsAcrossRooms([selectedRoom, ...extraRooms], Number(form.adults) || 0, Number(form.children) || 0, {
+      fits: (room, a, c) => (getRoomMaximumGuests(room) || 99) >= a + c && !normalizeBookingDetails({ ...details, adults: a, children: c }, { room, walkIn: true }).error,
+      priceOf: (room, a, c) => { try { return priceBookingDetails(room, { ...details, adults: a, children: c }, { seasonPeriods }).subtotalAmount; } catch { return 1e9; } },
+    })
+    : null;
+  const priceFor = (room, a, c, withCottage) => {
+    try {
+      return priceBookingDetails(room, { ...details, adults: a, children: c }, withCottage
+        ? { cottageId: form.cottageId, cottageFee: getCottageFee(form.cottageId) || 0, seasonPeriods }
+        : { seasonPeriods }).subtotalAmount;
+    } catch { return 0; }
+  };
+  const groupLines = roomSplit
+    ? roomSplit.map((item, i) => {
+      const room = i === 0 ? selectedRoom : extraRooms[i - 1];
+      return { ...item, roomNumber: room.roomNumber, price: priceFor(room, item.adults, item.children, i === 0) };
+    })
+    : [];
+  const groupTotal = groupLines.reduce((sum, item) => sum + item.price, 0);
+  const estimatedTotal = extraRooms.length ? groupTotal : totalAmount;
+  const toggleExtraRoom = room => setExtraRoomIds(current => (current.includes(room.id)
+    ? current.filter(id => id !== room.id)
+    : current.length >= MAX_ROOMS_PER_BOOKING - 1 ? current : [...current, room.id]));
   // Today's times that have passed: move to the next open one.
   useEffect(() => {
     if (!form.checkIn) return;
-    if (form.bookingOption === 'day' && isTourStartPassed(form.checkIn, 'day') && !isTourStartPassed(form.checkIn, 'night')) {
+    if (form.bookingOption === 'day' && isWalkInTourClosed(form.checkIn, 'day') && !isTourStartPassed(form.checkIn, 'night')) {
       setForm(p => ({ ...p, bookingOption: 'night' }));
     }
     if (form.bookingOption === 'overnight') {
@@ -244,6 +277,13 @@ export default function WalkIn() {
     const free = bookable.filter(r => !isBooked(reservations, r, form.checkIn, stayCheckOut));
     return { availableRooms: free, bookedCount: bookable.length - free.length };
   }, [rooms, reservations, datesReady, form.checkIn, stayCheckOut, today]);
+
+  // Extra rooms that are no longer free (dates changed) are dropped.
+  useEffect(() => {
+    if (!extraRoomIds.length) return;
+    const stillFree = extraRoomIds.filter(id => id !== selectedRoom?.id && availableRooms.some(r => r.id === id));
+    if (stillFree.length !== extraRoomIds.length) setExtraRoomIds(stillFree);
+  }, [availableRooms, extraRoomIds, selectedRoom]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Smart suggestion: best-fitting free rooms and cottage for the group ──
   const guestTotal = (Number(form.adults) || 0) + (Number(form.children) || 0);
@@ -275,6 +315,7 @@ export default function WalkIn() {
   }, [availableRooms, selectedRoom, datesReady]);
 
   const handleSelectRoom = (room) => {
+    setExtraRoomIds(current => current.filter(id => id !== room.id));
     setSelectedRoom(room);
     setForm(f => ({ ...f, roomId: room.id }));
   };
@@ -308,6 +349,7 @@ export default function WalkIn() {
       setUpsellOpen(true);
       return;
     }
+    if (extraRooms.length && !roomSplit) return appAlert(`These rooms don't fit all ${guestTotal} guests. Add or swap a room.`, { title: 'Rooms too small', tone: 'warning' });
     const errors = {
       firstName: NAME_PATTERN.test(form.firstName.trim()) ? '' : 'Enter 2-35 valid letters.',
       lastName: NAME_PATTERN.test(form.lastName.trim()) ? '' : 'Enter 2-35 valid letters.',
@@ -326,7 +368,14 @@ export default function WalkIn() {
           action: 'create-walk-in',
           booking: cottageOnly
             ? { ...form, cottageOnly: true, roomId: '', paymentMethod: 'cash', paymentStatus: 'pending', checkOut: form.checkIn }
-            : { ...form, cottageOnly: false, paymentMethod: 'cash', paymentStatus: 'pending', checkOut: stayCheckOut, category: categoryOf(selectedRoom)?.category || '' },
+            : {
+              ...form, cottageOnly: false, paymentMethod: 'cash', paymentStatus: 'pending', checkOut: stayCheckOut, category: categoryOf(selectedRoom)?.category || '',
+              ...(roomSplit ? {
+                adults: roomSplit[0].adults,
+                children: roomSplit[0].children,
+                additionalRooms: roomSplit.slice(1).map(item => ({ roomId: item.roomId, adults: item.adults, children: item.children })),
+              } : {}),
+            },
         });
       } catch (createError) {
         if (/just booked/.test(createError.message)) {
@@ -352,15 +401,17 @@ export default function WalkIn() {
       setCreated({
         id: created.reservationId,
         guestName,
-        roomNumber: selectedRoom.roomNumber,
-        total: Number(created.totalAmount || 0),
+        roomNumber: created.rooms?.length > 1 ? created.rooms.map(item => item.roomNumber).join(', ') : selectedRoom.roomNumber,
+        total: Number(created.groupTotal ?? created.totalAmount ?? 0),
+        isGroup: (created.rooms?.length || 1) > 1,
         paid: 0,
         stayLabel: isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`,
         isToday: arrivesToday,
         notes: [confirmationMessage.trim()].filter(Boolean),
         checkedIn: false,
       });
-      setPayment({ method: 'cash', amount: String(Number(created.totalAmount || 0)), busy: false, error: '' });
+      setPayment({ method: 'cash', amount: String(Number(created.groupTotal ?? created.totalAmount ?? 0)), busy: false, error: '' });
+      setExtraRoomIds([]);
       setSuccess('');
       setStep(3);
     } catch (submitError) {
@@ -380,7 +431,7 @@ export default function WalkIn() {
     if (amount - owedNow > 0.001) { setPayment(p => ({ ...p, error: `The guest only owes ₱${owedNow.toLocaleString()}.` })); return; }
     setPayment(p => ({ ...p, busy: true, error: '' }));
     try {
-      const result = await staffApi('staff-billing', { action: 'record-payment', reservationId: created.id, amount, method: payment.method });
+      const result = await staffApi('staff-billing', { action: created.isGroup ? 'record-group-payment' : 'record-payment', reservationId: created.id, amount, method: payment.method });
       const receipt = result.receiptError ? `Receipt email failed: ${result.receiptError}` : result.receipt ? 'Receipt emailed.' : '';
       setCreated(c => ({
         ...c,
@@ -396,7 +447,9 @@ export default function WalkIn() {
   };
 
   const finishWalkIn = () => {
-    if (created) {
+    if (created?.isCorporate) {
+      setSuccess(`Group booking created for ${created.guestName} (${created.roomNumber}, ${created.stayLabel}).${owedNow > 0 ? ` ₱${owedNow.toLocaleString()} is still due; collect it in Billing.` : ' Fully paid.'} ${created.notes.join(' ')}`.trim());
+    } else if (created) {
       const state = created.checkedIn
         ? `Fully paid: ${created.guestName} is checked in and Room ${created.roomNumber} is occupied.`
         : owedNow > 0
@@ -407,6 +460,7 @@ export default function WalkIn() {
     setCreated(null);
     setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', cottageId:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'pending', notes:'' });
     setNameErrors({});
+    setExtraRoomIds([]);
     setSelectedRoom(null);
     setCatFilter('all');
     setStep(1);
@@ -471,9 +525,63 @@ export default function WalkIn() {
           )}
         </AnimatePresence>
 
-        <Breadcrumb />
+        {step !== 3 && (
+          <div role="tablist" aria-label="Walk-in type" style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+            {[['guest', 'Guest / family'], ['corporate', 'Corporate / group']].map(([id, text]) => (
+              <button key={id} type="button" role="tab" aria-selected={mode === id} onClick={() => setMode(id)}
+                style={{ border: `1px solid ${mode === id ? ACCENT : BORDER2}`, background: mode === id ? ACCENT : CARD, color: mode === id ? ACCENT_TEXT : TEXT, borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                {text}
+              </button>
+            ))}
+          </div>
+        )}
 
-        <AnimatePresence mode="wait">
+        {mode === 'corporate' && step !== 3 && (
+          <CorporateWalkInForm
+            colors={{ CARD, CARD2, BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+            inp={inp}
+            label={label}
+            today={today}
+            onCreated={result => {
+              const f = result.form;
+              setCreated({
+                id: result.reservationId,
+                guestName: f.companyName,
+                roomNumber: result.packageName,
+                total: Number(result.totalAmount || 0),
+                paid: 0,
+                stayLabel: f.bookingType === 'daytour' ? `Day event on ${formatDate(f.checkIn)}` : `${formatDate(f.checkIn)} – ${formatDate(f.checkOut)}`,
+                isToday: f.checkIn === today,
+                notes: [],
+                checkedIn: false,
+                isCorporate: true,
+                corporate: {
+                  id: result.reservationId, type: 'corporate', companyName: f.companyName, guestName: `${f.firstName} ${f.lastName}`,
+                  packageName: result.packageName, packageId: result.packageId, totalGuests: f.totalGuests,
+                  checkIn: f.checkIn, checkOut: f.checkOut, nights: result.nights, assignedRooms: [],
+                },
+              });
+              setPayment({ method: 'cash', amount: String(Number(result.totalAmount || 0)), busy: false, error: '' });
+              setStep(3);
+            }}
+          />
+        )}
+
+        {assignFor && (
+          <AssignRoomsDialog
+            reservation={assignFor}
+            colors={{ CARD, CARD2, BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+            onClose={() => setAssignFor(null)}
+            onSaved={result => {
+              setAssignFor(null);
+              setCreated(c => (c ? { ...c, corporate: { ...c.corporate, assignedRooms: result.assignedRooms }, notes: [...c.notes.filter(n => !n.startsWith('Rooms:')), `Rooms: ${result.assignedRooms.map(item => item.roomNumber).join(', ') || 'none'}.`] } : c));
+            }}
+          />
+        )}
+
+        {(mode === 'guest' || step === 3) && <Breadcrumb />}
+
+        {(mode === 'guest' || step === 3) && <AnimatePresence mode="wait">
           <motion.div key={step} variants={stepVariants} initial="enter" animate="center" exit="exit">
 
             {/* ═════════ STEP 1 — Dates, then available rooms ═════════ */}
@@ -498,7 +606,7 @@ export default function WalkIn() {
                     {/* Same-day bookings: a day or night tour checks in and out on one date. */}
                     <div role="radiogroup" aria-label="Booking type" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 8 }}>
                       {BOOKING_OPTIONS.map(option => {
-                        const closed = option.bookingType === 'daytour' && isTourStartPassed(form.checkIn, option.tourPeriod);
+                        const closed = option.bookingType === 'daytour' && isWalkInTourClosed(form.checkIn, option.tourPeriod);
                         const active = form.bookingOption === option.id;
                         const sameDay = option.bookingType === 'daytour';
                         return (
@@ -703,6 +811,13 @@ export default function WalkIn() {
                                     </div>
                                     <span style={{ background: AVAIL_BG, color: AVAIL_TEXT, borderRadius: 20, padding: '2px 8px', fontSize: 9, fontWeight: 700 }}>Free</span>
                                   </div>
+                                  {selectedRoom && selectedRoom.id !== 'cottage-only' && !picked && (
+                                    <button type="button" onClick={event => { event.stopPropagation(); toggleExtraRoom(room); }}
+                                      disabled={!extraRoomIds.includes(room.id) && extraRoomIds.length >= MAX_ROOMS_PER_BOOKING - 1}
+                                      style={{ marginTop: 8, width: '100%', background: extraRoomIds.includes(room.id) ? ACCENT : 'transparent', color: extraRoomIds.includes(room.id) ? ACCENT_TEXT : TEXT, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '5px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                                      {extraRoomIds.includes(room.id) ? '✓ Added to group' : '+ Add room'}
+                                    </button>
+                                  )}
                                 </div>
                               </motion.div>
                             );
@@ -735,11 +850,26 @@ export default function WalkIn() {
                       </div>
                       <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12, marginBottom: 12, fontSize: 12, color: MUTED }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{isTour ? bookingOption.label : 'Stay'}</span><span>{isTour ? formatDate(form.checkIn) : `${formatDate(form.checkIn)} → ${formatDate(form.checkOut)}`}</span></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} {stayUnit}{nights !== 1 ? 's' : ''} · est.</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{totalAmount.toLocaleString()}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} {stayUnit}{nights !== 1 ? 's' : ''} · est.</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{estimatedTotal.toLocaleString()}</span></div>
                       </div>
-                      <button type="button" onClick={() => setStep(2)}
+                      {extraRooms.length > 0 && (
+                        <div style={{ background: CARD2, borderRadius: 10, padding: 10, marginBottom: 12, fontSize: 11.5, color: TEXT }}>
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>{extraRooms.length + 1} rooms for {guestTotal} guests</div>
+                          {roomSplit ? groupLines.map(item => (
+                            <div key={item.roomId} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Room {item.roomNumber}: {item.adults} adult{item.adults === 1 ? '' : 's'}{item.children ? `, ${item.children} child${item.children === 1 ? '' : 'ren'}` : ''}</span>
+                              <span>₱{item.price.toLocaleString()}</span>
+                            </div>
+                          )) : <div style={{ color: '#b45309' }}>These rooms don't fit all {guestTotal} guests. Add or swap a room.</div>}
+                          <div style={{ color: MUTED, marginTop: 4 }}>The group is split between the rooms automatically. Tap a room's "✓ Added" to remove it.</div>
+                        </div>
+                      )}
+                      {!extraRooms.length && roomSuggestions.length === 0 && guestTotal > 1 && (
+                        <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>Group too big for one room? Press “+ Add room” on more rooms to split them.</div>
+                      )}
+                      <button type="button" onClick={() => setStep(2)} disabled={extraRooms.length > 0 && !roomSplit}
                         style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 13, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                        Continue · ₱{rateOf(selectedRoom).toLocaleString()} / {stayUnit}
+                        {extraRooms.length ? `Continue with ${extraRooms.length + 1} rooms` : `Continue · ₱${rateOf(selectedRoom).toLocaleString()} / ${stayUnit}`}
                       </button>
                     </>
                   )}
@@ -894,7 +1024,7 @@ export default function WalkIn() {
                 <div style={{ ...card, flex: '1 1 420px', minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Collect payment</div>
                   <div style={{ fontSize: 12, color: MUTED, marginBottom: 16 }}>
-                    Booking #{created.id.slice(0, 8).toUpperCase()} · {created.guestName} · Room {created.roomNumber} · {created.stayLabel}
+                    Booking #{created.id.slice(0, 8).toUpperCase()} · {created.guestName} · {created.isCorporate ? created.roomNumber : `Room ${created.roomNumber}`} · {created.stayLabel}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 16 }}>
                     {[['Total', created.total], ['Paid', created.paid], ['Still due', owedNow]].map(([lbl, value]) => (
@@ -946,6 +1076,7 @@ export default function WalkIn() {
                     <OnlinePaymentQr
                       reservationId={created.id}
                       amount={owedNow}
+                      paymentType={created.isGroup ? 'group' : 'billing'}
                       colors={{ CARD2, BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
                       onPaid={result => {
                         const paidNow = Number(result.amountPaid || 0);
@@ -959,6 +1090,18 @@ export default function WalkIn() {
                     />
                     </div>
                   )}
+                  {created.isCorporate && (
+                    <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 12, marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 12, color: TEXT }}>
+                        <strong>Rooms for the group</strong>
+                        <div style={{ color: MUTED }}>{created.corporate.assignedRooms.length ? created.corporate.assignedRooms.map(item => `Room ${item.roomNumber}`).join(', ') : 'None yet. You can also do this later in Reservations.'}</div>
+                      </div>
+                      <button type="button" onClick={() => setAssignFor(created.corporate)}
+                        style={{ border: `1px solid ${ACCENT}`, background: 'transparent', color: TEXT, borderRadius: 9, padding: '8px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                        {created.corporate.assignedRooms.length ? 'Change rooms' : 'Assign rooms'}
+                      </button>
+                    </div>
+                  )}
                   <button type="button" onClick={finishWalkIn}
                     style={{ ...inp, cursor: 'pointer', textAlign: 'center', fontWeight: 600, color: owedNow > 0 ? MUTED : TEXT }}>
                     {owedNow > 0 ? 'Collect later (guest not checked in yet)' : 'Done — start a new walk-in'}
@@ -967,7 +1110,7 @@ export default function WalkIn() {
               </div>
             )}
           </motion.div>
-        </AnimatePresence>
+        </AnimatePresence>}
       </div>
 
       {upsellOpen && (

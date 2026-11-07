@@ -72,3 +72,13 @@ export function splitGuestsAcrossRooms(rooms, adults, children, { fits, priceOf 
   walk(0, totalAdults, totalChildren, []);
   return best;
 }
+
+// Pays rooms one after another: the first room's balance first, then the next.
+export function fillBalancesInOrder(amount, balances) {
+  let left = cents(amount);
+  return balances.map(balance => {
+    const take = Math.min(left, Math.max(0, cents(balance)));
+    left -= take;
+    return take / 100;
+  });
+}

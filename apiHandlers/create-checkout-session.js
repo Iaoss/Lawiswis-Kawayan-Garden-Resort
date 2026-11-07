@@ -30,7 +30,8 @@ export default async function handler(req, res) {
   }
 
   const checkoutType = paymentType || 'billing';
-  if (!['booking', 'billing'].includes(checkoutType)) {
+  // "group": staff link for the balance of several rooms booked together.
+  if (!['booking', 'billing', 'group'].includes(checkoutType)) {
     return res.status(400).json({ error: 'Invalid payment type' });
   }
 
@@ -41,7 +42,7 @@ export default async function handler(req, res) {
   // Balance-payment links ("billing") take an amount typed by staff, so only
   // signed-in staff may create them. Guest checkouts ("booking") never take
   // an amount from the browser: it comes from the saved reservation.
-  if (checkoutType === 'billing' && !(await verifyStaff(req))) {
+  if (['billing', 'group'].includes(checkoutType) && !(await verifyStaff(req))) {
     return res.status(401).json({ error: 'Only resort staff can create balance payment links.' });
   }
 
@@ -98,6 +99,19 @@ export default async function handler(req, res) {
         description = `${active.length + 1} rooms (${[reservation.roomNumber, ...active.map(snap => snap.data().roomNumber)].filter(Boolean).map(n => `Room ${n}`).join(', ')}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`;
       }
       checkoutAmount = getOnlinePaymentAmount(bookingTotal, paymentChoice);
+    } else if (checkoutType === 'group') {
+      const ids = Array.isArray(reservation.groupReservationIds) && reservation.groupReservationIds.length ? reservation.groupReservationIds : [reservationId];
+      const linked = await Promise.all(ids.map(id => adminDb.collection('reservations').doc(id).get()));
+      const active = linked.filter(snap => snap.exists && !['cancelled', 'checked-out'].includes(String(snap.data().status || '').toLowerCase()));
+      const groupBalance = active.reduce((sum, snap) => {
+        const r = snap.data();
+        return sum + Math.max(0, Number(r.totalAmount || 0) + Number(r.extraCharges || 0) - Number(r.amountPaid || 0));
+      }, 0);
+      checkoutAmount = Number(amount);
+      if (!Number.isFinite(checkoutAmount) || checkoutAmount <= 0 || checkoutAmount - groupBalance > 0.001) {
+        return res.status(400).json({ error: 'Enter a positive amount no greater than what the rooms still owe' });
+      }
+      description = `${active.length} rooms (${active.map(snap => `Room ${snap.data().roomNumber || ''}`).join(', ')}) — ${guestName}`;
     } else {
       if (modificationRequestId) {
         const modification = reservation.modificationRequest;

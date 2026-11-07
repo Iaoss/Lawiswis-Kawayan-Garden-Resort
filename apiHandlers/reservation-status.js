@@ -46,6 +46,7 @@ import {
   hasOutstandingBalance,
 } from '../src/lib/reservationStatus';
 import { normalizeIdCheck } from '../src/lib/checkInId';
+import { syncCorporateRoomBlocks } from '../lib/corporateRooms';
 
 // Room status to set after a reservation changes (unchanged from the old
 // browser-side behaviour).
@@ -134,6 +135,8 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
     }
   }
   transaction.update(reservationRef, updates);
+  // A corporate group's assigned rooms follow its status.
+  syncCorporateRoomBlocks(transaction, reservation, status);
   // Closing out a no-show (never checked in) leaves a vacant room as it is.
   const noShowClose = status === 'checked-out' && current !== 'checked-in' && roomSnap?.data()?.status !== 'occupied';
   if (roomSnap?.exists && ROOM_STATUS_AFTER[status] && !noShowClose) {

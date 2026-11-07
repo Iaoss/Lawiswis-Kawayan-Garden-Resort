@@ -66,7 +66,7 @@ export default function CancellationPolicy({ embedded = false }) {
   const fetchReservations = async () => {
     const resSnap = await getDocs(collection(db, 'reservations'));
     const data = resSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(r => r.status !== 'cancelled' && r.status !== 'checked-out');
+      .filter(r => r.status !== 'cancelled' && r.status !== 'checked-out' && r.type !== 'corporate-room');
     data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
     setReservations(data);
   };

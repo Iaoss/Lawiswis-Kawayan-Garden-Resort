@@ -119,7 +119,7 @@ export default function ReceptionistDashboard() {
       const roomsSnap = await getDocs(collection(db, 'rooms'));
       const resSnap = await getDocs(collection(db, 'reservations'));
       const rooms = roomsSnap.docs.map(d => d.data());
-      const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room');
       const today = manilaDateKey(); // Philippine date (toISOString would give the UTC date)
       const todayArrivals = reservations.filter(r => r.checkIn === today);
       const todayDepartures = reservations.filter(r => r.checkOut === today);

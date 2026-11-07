@@ -6,7 +6,8 @@ import { money } from '../lib/money';
 // "Pay online" box for staff screens: makes a PayMongo link for the amount,
 // shows it as a QR the guest scans with their phone, and notices by itself
 // when the guest has paid (checks every 8 seconds).
-export default function OnlinePaymentQr({ reservationId, amount, onPaid, colors }) {
+// paymentType 'group': one payment for every room booked together.
+export default function OnlinePaymentQr({ reservationId, amount, onPaid, colors, paymentType = 'billing' }) {
   const { CARD2, BORDER, TEXT, MUTED, SUBTEXT = MUTED, ACCENT = '#9cb56f', ACCENT_TEXT = '#0a1a0a' } = colors || {};
   const [link, setLink] = useState('');
   const [sessionId, setSessionId] = useState('');
@@ -21,7 +22,7 @@ export default function OnlinePaymentQr({ reservationId, amount, onPaid, colors 
     setBusy(true);
     setState({ error: '', status: '', copied: false });
     try {
-      const result = await createPayMongoCheckout({ reservationId, amount: Number(amount) });
+      const result = await createPayMongoCheckout({ reservationId, amount: Number(amount), paymentType });
       setLink(result.checkoutUrl);
       setSessionId(result.checkoutSessionId || '');
     } catch (error) {

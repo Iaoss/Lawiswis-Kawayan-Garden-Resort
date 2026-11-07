@@ -12,6 +12,7 @@ import {
   calculateBookingPrice,
   isLateArrivalTime,
   getGuestCountViolation,
+  getWalkInTourCutoffError,
   getOvernightCutoffError,
   getStayDurationError,
   getStayUnits,
@@ -43,7 +44,8 @@ function isRealDate(value) {
 // `room` (optional) enforces the room's guest limits. `keepStartDate` is an
 // existing booking's check-in: keeping it (e.g. extending a checked-in
 // guest's stay) skips the past-date and check-in-time checks.
-export function normalizeBookingDetails(input = {}, { room = null, now = new Date(), maxDate = '', keepStartDate = '' } = {}) {
+// walkIn: a same-day day tour can still be booked after 8 AM (until 5 PM).
+export function normalizeBookingDetails(input = {}, { room = null, now = new Date(), maxDate = '', keepStartDate = '', walkIn = false } = {}) {
   const bookingType = input.bookingType === 'daytour' ? 'daytour' : input.bookingType === 'overnight' ? 'overnight' : '';
   if (!bookingType) return { error: 'Choose overnight stay, day tour or night tour.' };
   const isTour = bookingType === 'daytour';
@@ -66,7 +68,7 @@ export function normalizeBookingDetails(input = {}, { room = null, now = new Dat
   let slot;
   if (isTour) {
     slot = tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT : DAYTOUR_TIME_SLOT;
-    const cutoff = keepsStart ? '' : getTourCutoffError(checkIn, tourPeriod, now);
+    const cutoff = keepsStart ? '' : walkIn ? getWalkInTourCutoffError(checkIn, tourPeriod, now) : getTourCutoffError(checkIn, tourPeriod, now);
     if (cutoff) return { error: cutoff };
   } else {
     slot = OVERNIGHT_TIME_SLOTS.find(item => item.id === input.overnightTimeSlot)

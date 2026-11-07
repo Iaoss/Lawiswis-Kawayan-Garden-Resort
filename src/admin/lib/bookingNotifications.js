@@ -47,6 +47,7 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
   const items = [];
 
   reservations.forEach(r => {
+    if (r.type === 'corporate-room') return; // group room blocks have no alerts of their own
     const guest = r.guestName || r.contactPerson || r.companyName || 'Guest';
     const status = lower(r.status);
 

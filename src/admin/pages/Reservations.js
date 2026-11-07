@@ -8,6 +8,7 @@ import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
 import StatusStepper from '../components/StatusStepper';
 import EditBookingDialog from '../components/EditBookingDialog';
+import AssignRoomsDialog from '../components/AssignRoomsDialog';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import {
   DEFAULT_CHECKOUT_TIME,
@@ -593,6 +594,7 @@ export default function Reservations() {
   const [extendDialog, setExtendDialog] = useState(null);
   const [lateFeeBusy, setLateFeeBusy] = useState(false);
   const [editTarget, setEditTarget] = useState(null); // reservation being edited
+  const [assignTarget, setAssignTarget] = useState(null); // corporate booking getting rooms
   const [cancelReason, setCancelReason] = useState('');
   const [cancelBusy, setCancelBusy] = useState(false);
   const [decisionBusy, setDecisionBusy] = useState('');
@@ -1079,6 +1081,7 @@ export default function Reservations() {
   // "Checked-out" or "Cancelled" in the status filter to see them here.
   const isFinished = r => r.status === 'checked-out' || r.status === 'cancelled';
   const filtered = sortRecords(reservations.filter(r => {
+    if (r.type === 'corporate-room') return false; // shown on the group booking
     const matchFilter = filter === 'all' ? !isFinished(r) : r.status === filter;
     const matchQuick = !quickView || matchesQuickView(r, quickView, now);
     // Guest, room, phone, email, status or booking reference (with or without #).
@@ -1138,6 +1141,15 @@ export default function Reservations() {
           <i className={`ti ${label.type === 'in' ? 'ti-login' : 'ti-logout'}`} aria-hidden="true" />{label.text}
         </div>
       ))}
+      {r.type === 'corporate' && ['pending', 'confirmed', 'checked-in'].includes(r.status) && (
+        <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+          <span style={{ color: MUTED }}>{r.assignedRooms?.length ? `Rooms: ${r.assignedRooms.map(item => item.roomNumber).join(', ')}` : 'No rooms yet'}</span>
+          <button type="button" onClick={() => setAssignTarget(r)}
+            style={{ border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '3px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer', background: 'transparent', color: TEXT, fontFamily: 'inherit' }}>
+            {r.assignedRooms?.length ? 'Change rooms' : 'Assign rooms'}
+          </button>
+        </div>
+      )}
       {/* Check-in date passed and the guest never came. */}
       {canCancel && canMarkNoShowNow(r, now) && (
         <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -1200,6 +1212,20 @@ export default function Reservations() {
             style={{ position: 'fixed', top: '18px', right: '18px', zIndex: 1000, maxWidth: '360px', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', background: toast.type === 'error' ? '#fee2e2' : '#dcfce7', color: toast.type === 'error' ? '#991b1b' : '#166534', border: `1px solid ${toast.type === 'error' ? '#fecaca' : '#bbf7d0'}`, boxShadow: '0 4px 14px rgba(0,0,0,0.12)', fontSize: '12px' }}>
             {toast.text}
           </div>
+        )}
+
+        {assignTarget && (
+          <AssignRoomsDialog
+            reservation={assignTarget}
+            colors={{ CARD, CARD2, BORDER: BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+            onClose={() => setAssignTarget(null)}
+            onSaved={result => {
+              setAssignTarget(null);
+              setToast({ type: 'success', text: result.assignedRooms.length
+                ? `Rooms for ${result.companyName}: ${result.assignedRooms.map(item => item.roomNumber).join(', ')}.`
+                : `No rooms assigned to ${result.companyName}.` });
+            }}
+          />
         )}
 
         {editTarget && (
@@ -1442,6 +1468,12 @@ export default function Reservations() {
                   {s.status === 'checked-in' && (
                     <button type="button" onClick={() => setExtendDialog({ reservation: s, hours: 1, amount: '', note: '', busy: false })}
                       style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Give more time</button>
+                  )}
+                  {s.type === 'corporate' && ['pending', 'confirmed', 'checked-in'].includes(s.status) && (
+                    <button type="button" onClick={() => setAssignTarget(s)}
+                      style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>
+                      {s.assignedRooms?.length ? `Rooms (${s.assignedRooms.length})` : 'Assign rooms'}
+                    </button>
                   )}
                   {canEditBooking(s) && (
                     <button type="button" onClick={() => setEditTarget(s)}

@@ -93,7 +93,7 @@ export default function Reports() {
     const fetch = async () => {
       const resSnap = await getDocs(collection(db, 'reservations'));
       const roomSnap = await getDocs(collection(db, 'rooms'));
-      setReservations(resSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setReservations(resSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room'));
       setRooms(roomSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     };
     fetch();
