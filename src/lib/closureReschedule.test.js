@@ -1,4 +1,4 @@
-import { canClosureReschedule, getClosureMoveError, getSamePriceSuggestions, sameLengthCheckOut } from './closureReschedule';
+import { canClosureReschedule, isAffectedByClosure, getClosureMoveError, getSamePriceSuggestions, sameLengthCheckOut } from './closureReschedule';
 
 const booking = { status: 'confirmed', bookingType: 'overnight', checkIn: '2026-11-10', checkOut: '2026-11-12', closureNotice: { closedFrom: '2026-11-09', closedTo: '2026-11-11' } };
 
@@ -30,4 +30,11 @@ describe('closure rescheduling', () => {
     // No suggestion includes the holiday night (it would change the price).
     expect(suggestions.some(s => s.checkIn <= '2026-11-21' && '2026-11-21' < s.checkOut)).toBe(false);
   });
+});
+
+test('isAffectedByClosure finds bookings on the closed days', () => {
+  expect(isAffectedByClosure({ checkIn: '2026-11-08', checkOut: '2026-11-08' }, '2026-11-08', '2026-11-08')).toBe(true);
+  expect(isAffectedByClosure({ checkIn: '2026-11-07', checkOut: '2026-11-09' }, '2026-11-08', '2026-11-08')).toBe(true);
+  expect(isAffectedByClosure({ checkIn: '2026-11-09', checkOut: '2026-11-10' }, '2026-11-07', '2026-11-08')).toBe(false);
+  expect(isAffectedByClosure({ checkIn: '2026-11-05', checkOut: '2026-11-06' }, '2026-11-07', '2026-11-08')).toBe(false);
 });

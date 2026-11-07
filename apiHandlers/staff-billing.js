@@ -36,6 +36,7 @@ import { shouldAutoConfirm } from '../lib/recordPayMongoPayment';
 import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, getCottageFee, formatResortClock, getReservationDayVisitors, getRoomMaximumGuests, getWalkInTourCutoffError, isLateArrivalTime, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getCottageAvailabilityFor } from '../lib/cottageStock';
 import { cottageAvailabilityError } from '../src/lib/cottages';
@@ -524,6 +525,13 @@ function detailsFromForm(form, options) {
 }
 
 // Walk-in day or night tour with just a cottage (no room).
+// The resort is closed on planned closed dates (Settings → Closed dates).
+async function assertResortOpen(checkIn, checkOut) {
+  const settings = await adminDb.doc('siteSettings/resortAvailability').get();
+  const closedPeriod = settings.exists ? findClosedPeriod(settings.data().closedDates, checkIn, checkOut || checkIn) : null;
+  if (closedPeriod) throw new BillingError(409, closedPeriodMessage(closedPeriod));
+}
+
 async function createCottageWalkIn({ staff, booking }) {
   const firstName = cleanText(booking.firstName, 35);
   const lastName = cleanText(booking.lastName, 35);
@@ -534,6 +542,7 @@ async function createCottageWalkIn({ staff, booking }) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < today) throw new BillingError(400, 'Choose today or a later date.');
   const cutoff = getWalkInTourCutoffError(date, tourPeriod);
   if (cutoff) throw new BillingError(400, cutoff);
+  await assertResortOpen(date, date);
   let pricing;
   try {
     pricing = calculateCottageTourPrice({ adults: Number(booking.adults), children: Number(booking.children || 0), tourPeriod, cottageId: booking.cottageId });
@@ -619,6 +628,7 @@ async function createWalkIn({ staff, booking = {} }) {
     if (fullError) throw new BillingError(409, fullError);
   }
   const today = manilaDateKey();
+  await assertResortOpen(String(booking.checkIn || '').slice(0, 10), String(booking.checkOut || booking.checkIn || '').slice(0, 10));
 
   const roomRef = adminDb.collection('rooms').doc(roomId);
   const reservationRef = adminDb.collection('reservations').doc();

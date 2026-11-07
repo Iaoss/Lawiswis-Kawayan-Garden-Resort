@@ -14,6 +14,7 @@ import {
 } from '../../lib/bookingPricing';
 import { MIN_GROUP_GUESTS } from '../../lib/corporatePackages';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
+import { closedPeriodMessage, findClosedPeriod, formatClosedRange } from '../../lib/closedDates';
 import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
 
 // Step-by-step start of a booking: 1 Type (personal or group), 2 When (stay
@@ -47,7 +48,7 @@ export default function BookingWizard() {
   const navigate = useNavigate();
   const location = useLocation();
   const [params, setParams] = useSearchParams();
-  const { available: resortOpen, loading: resortLoading } = useResortAvailability();
+  const { available: resortOpen, loading: resortLoading, closedDates = [] } = useResortAvailability();
   const today = getResortNow().dateKey;
   // Phones get a more compact layout (see src/client/mobile.css).
   const isPhone = useIsPhone();
@@ -128,6 +129,8 @@ export default function BookingWizard() {
       const duration = getStayDurationError(checkIn, checkOut);
       if (duration) return duration;
     }
+    const closedPeriod = findClosedPeriod(closedDates, checkIn, isTour ? checkIn : checkOut);
+    if (closedPeriod) return closedPeriodMessage(closedPeriod);
     if (!(Number(adults) >= 1)) return 'At least one adult is needed.';
     if (guests > MAX_PERSONAL_GUESTS) return `For ${MIN_GROUP_GUESTS} or more guests, please use a group booking.`;
     return '';
@@ -142,6 +145,9 @@ export default function BookingWizard() {
   // Which rooms are free on the chosen dates.
   useEffect(() => {
     if (step !== 2 || !checkIn || !stayEnd) return undefined;
+    // Closed dates (e.g. opened from an old link): no rooms to show.
+    const closedPeriod = findClosedPeriod(closedDates, checkIn, stayEnd);
+    if (closedPeriod) { setAvailableIds([]); setAvailabilityError(closedPeriodMessage(closedPeriod)); return undefined; }
     let active = true;
     setAvailableIds(null);
     setAvailabilityError('');
@@ -154,7 +160,7 @@ export default function BookingWizard() {
       })
       .catch(error => { if (active) { setAvailableIds([]); setAvailabilityError(error.message || 'Availability could not be checked.'); } });
     return () => { active = false; };
-  }, [step, checkIn, stayEnd]);
+  }, [step, checkIn, stayEnd, closedDates]);
 
   const nights = isTour ? 1 : getStayUnits(checkIn, checkOut);
   const priceFor = room => {
@@ -355,6 +361,11 @@ export default function BookingWizard() {
             </div>
             {!isTour && checkIn && checkOut && !getStayDurationError(checkIn, checkOut) && (
               <p style={{ color: FOREST, font: `600 13px ${SANS}`, margin: '16px 0 0' }}>{nights} night{nights === 1 ? '' : 's'} · {longDate(checkIn)} → {longDate(checkOut)}</p>
+            )}
+            {closedDates.length > 0 && (
+              <p style={{ color: '#92400e', font: `13px/1.5 ${SANS}`, margin: '14px 0 0' }}>
+                Closed (can’t be booked): {closedDates.map(item => `${formatClosedRange(item)}${item.reason ? ` (${item.reason})` : ''}`).join('; ')}
+              </p>
             )}
             {whenError && <p role="alert" style={{ color: '#b42318', font: `13px ${SANS}`, margin: '14px 0 0' }}>{whenError}</p>}
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>

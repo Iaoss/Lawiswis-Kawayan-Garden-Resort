@@ -20,6 +20,14 @@ function overlapsClosure(checkIn, checkOut, closure) {
   return stayRangesOverlap(checkIn, checkOut, closure.closedFrom, shiftDate(closure.closedTo || closure.closedFrom, 1));
 }
 
+// Does this booking fall on the closed dates (from..to, both days closed)?
+export function isAffectedByClosure(reservation = {}, closedFrom, closedTo) {
+  if (typeof reservation.checkIn !== 'string') return false;
+  const checkIn = reservation.checkIn.slice(0, 10);
+  const checkOut = String(reservation.checkOut || reservation.checkIn).slice(0, 10);
+  return overlapsClosure(checkIn, checkOut, { closedFrom, closedTo });
+}
+
 // Can this booking be moved online because of a closure?
 export function canClosureReschedule(reservation = {}) {
   const closure = reservation.closureNotice || {};

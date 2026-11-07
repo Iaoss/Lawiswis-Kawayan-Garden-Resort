@@ -90,7 +90,7 @@ export default function ResortAvailabilityNotice() {
       {closedDates.slice(0, 3).map(item => (
         <div key={item.id || item.from}>Closed <strong>{formatClosedRange(item)}</strong>{item.reason ? ` · ${item.reason}` : ''}</div>
       ))}
-      <div style={{ marginTop: 2 }}>{closedDates.length ? 'You can still book other dates.' : 'Bookings are still open.'}</div>
+      <div style={{ marginTop: 2 }}>{closedDates.length ? 'These dates can’t be booked. You can still book other dates.' : 'Bookings are still open.'}</div>
     </FloatingNote>
   );
 }

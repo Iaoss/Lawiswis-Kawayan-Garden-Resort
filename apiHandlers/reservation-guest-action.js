@@ -11,6 +11,7 @@ import { manilaDateKey } from '../src/lib/reservationStatus';
 import { holdsRoom } from '../src/lib/unpaidBookings';
 import { canClosureReschedule, getClosureMoveError, getSamePriceSuggestions, sameLengthCheckOut } from '../src/lib/closureReschedule';
 import { readSeasonPeriods } from '../lib/seasonStore';
+import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 const ACTIVE_REFUND_STATUSES = ['eligible', 'needs_review', 'approved', 'processing', 'awaiting_confirmation'];
@@ -269,6 +270,10 @@ async function requestClosureMove(reservation, body, maxDateKey) {
   const moveError = getClosureMoveError(data, checkIn, { today, maxDate: maxDateKey });
   if (moveError) return { error: moveError };
   const checkOut = sameLengthCheckOut(data, checkIn);
+  // The new dates can't fall on any other planned closure either.
+  const settings = await adminDb.doc('siteSettings/resortAvailability').get();
+  const closedPeriod = settings.exists ? findClosedPeriod(settings.data().closedDates, checkIn, checkOut) : null;
+  if (closedPeriod) return { error: closedPeriodMessage(closedPeriod) };
 
   if (data.roomId) {
     const roomBookings = await adminDb.collection('reservations').where('roomId', '==', data.roomId).get();

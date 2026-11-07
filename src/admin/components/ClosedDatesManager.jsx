@@ -36,7 +36,12 @@ export default function ClosedDatesManager({ t }) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Could not save the closed dates.');
       setList(data.closedDates || []);
-      setMessage({ type: 'ok', text: 'Closed dates saved. The website shows them now.' });
+      const n = data.notices || {};
+      const parts = ['Closed dates saved. The website shows them now.'];
+      if (n.notified) parts.push(`Emailed ${n.notified} affected guest${n.notified === 1 ? '' : 's'} their options: new dates or a full refund.`);
+      if (n.noEmail) parts.push(`${n.noEmail} booking${n.noEmail === 1 ? ' has' : 's have'} no email: call them (see Cancellation policy → Resort closure).`);
+      if (n.failed) parts.push('Some emails could not be sent: resend them from Cancellation policy → Resort closure.');
+      setMessage({ type: n.failed ? 'error' : 'ok', text: parts.join(' ') });
       return true;
     } catch (error) {
       setMessage({ type: 'error', text: error.message });
@@ -61,7 +66,7 @@ export default function ClosedDatesManager({ t }) {
     <div style={{ borderTop: `1px solid ${t.BORDER}`, padding: '16px 0' }}>
       <div style={{ fontSize: 13, fontWeight: 700, color: t.TEXT }}>Closed dates</div>
       <div style={{ fontSize: 12, color: t.SUBTEXT, margin: '3px 0 12px', lineHeight: 1.6 }}>
-        For maintenance or a private event. The resort is closed on these days (both dates included), but guests can still book any other dates. The website shows a notice.
+        For maintenance, a typhoon or a private event. The resort is closed on these days (both dates included) and they can’t be booked. Guests already booked on them are emailed right away: they can pick new dates (same booking, no fee) or cancel for a full refund.
       </div>
       {loading ? (
         <div style={{ fontSize: 12, color: t.MUTED }}>Loading…</div>
