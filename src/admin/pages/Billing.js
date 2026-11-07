@@ -12,6 +12,7 @@ import { getVatBreakdown } from '../../lib/bookingPricing';
 import { getScheduledCheckOutMs, formatManilaTime } from '../../lib/reservationStatus';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import QRCode from 'qrcode';
+import PhoneDisplayToggle from '../components/PhoneDisplayToggle';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 
 export default function Billing() {
@@ -595,6 +596,8 @@ export default function Billing() {
                           {statusResult === 'expired' && <div style={{ fontSize: 11, color: RED }}>This link has expired. Make a new one.</div>}
                         </div>
                       )}
+                      <PhoneDisplayToggle url={payLink} amount={Number(paymentAmount) || 0} guestName={selected?.guestName || ''} sessionId={checkoutSessionId}
+                        colors={{ TEXT, MUTED: SUBTEXT, BORDER }} />
                       {payLinkError && <div style={{ marginTop: 8, fontSize: 11.5, color: RED }}>{payLinkError}</div>}
                       <div style={{ fontSize: 10.5, color: MUTED, marginTop: 8 }}>Online payments appear here by themselves. If the guest says they paid, press "Has the guest paid?".</div>
                     </div>

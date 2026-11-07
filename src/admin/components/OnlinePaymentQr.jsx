@@ -2,12 +2,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { checkPayMongoCheckoutStatus, createPayMongoCheckout } from '../../lib/paymongo';
 import { money } from '../lib/money';
+import PhoneDisplayToggle from './PhoneDisplayToggle';
 
 // "Pay online" box for staff screens: makes a PayMongo link for the amount,
 // shows it as a QR the guest scans with their phone, and notices by itself
 // when the guest has paid (checks every 8 seconds).
 // paymentType 'group': one payment for every room booked together.
-export default function OnlinePaymentQr({ reservationId, amount, onPaid, colors, paymentType = 'billing' }) {
+export default function OnlinePaymentQr({ reservationId, amount, onPaid, colors, paymentType = 'billing', guestName = '' }) {
   const { CARD2, BORDER, TEXT, MUTED, SUBTEXT = MUTED, ACCENT = '#9cb56f', ACCENT_TEXT = '#0a1a0a' } = colors || {};
   const [link, setLink] = useState('');
   const [sessionId, setSessionId] = useState('');
@@ -96,6 +97,7 @@ export default function OnlinePaymentQr({ reservationId, amount, onPaid, colors,
         </div>
       )}
       {state.error && <div role="alert" style={{ marginTop: 8, fontSize: 11.5, color: '#dc2626' }}>{state.error}</div>}
+      <PhoneDisplayToggle url={link} amount={Number(amount) || 0} guestName={guestName} sessionId={sessionId} colors={{ TEXT, MUTED, BORDER }} />
     </div>
   );
 }

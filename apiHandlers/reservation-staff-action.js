@@ -13,6 +13,7 @@ import { getDateChangeBlock } from '../src/lib/cancellationPolicy';
 import { isUnpaidOnlineBooking } from '../src/lib/unpaidBookings';
 import { holdsRoom } from '../src/lib/unpaidBookings';
 import { getSamePriceSuggestions } from '../src/lib/closureReschedule';
+import { getRoomChangeError } from '../src/lib/roomChange';
 import { readSeasonPeriods } from '../lib/seasonStore';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
@@ -372,13 +373,26 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: requestedCheckIn });
     if (dateBlock) throw new Error(`${dateBlock} Reject this request, or (admins) waive the rule with a reason.`);
     const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
+    // Closure move whose room is taken on the new dates: staff may move it to
+    // another free room of the same size or bigger (same price, no fee).
+    const newRoomId = closureMove && typeof body.newRoomId === 'string' && body.newRoomId && body.newRoomId !== reservation.roomId ? body.newRoomId : '';
+    let movedRoom = null;
     let change;
     if (roomRef) {
-      const [roomSnapshot, conflicts] = await Promise.all([
+      const targetRoomId = newRoomId || reservation.roomId;
+      const [roomSnapshot, conflicts, newRoomSnapshot] = await Promise.all([
         transaction.get(roomRef),
-        transaction.get(adminDb.collection('reservations').where('roomId', '==', reservation.roomId)),
+        transaction.get(adminDb.collection('reservations').where('roomId', '==', targetRoomId)),
+        newRoomId ? transaction.get(adminDb.collection('rooms').doc(newRoomId)) : Promise.resolve(null),
       ]);
       if (!roomSnapshot.exists) throw new Error('The booked room could not be found.');
+      if (newRoomId) {
+        if (!newRoomSnapshot?.exists) throw new Error('The new room could not be found.');
+        const changeError = getRoomChangeError(roomSnapshot.data(), newRoomSnapshot.data());
+        if (changeError) throw new Error(changeError);
+        const data = newRoomSnapshot.data();
+        movedRoom = { roomId: newRoomId, roomNumber: data.roomNumber || '', roomType: data.type || '' };
+      }
       const conflict = conflicts.docs.some(doc => {
         if (doc.id === reservationId) return false;
         const other = doc.data();
@@ -386,7 +400,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
           && typeof other.checkIn === 'string' && typeof other.checkOut === 'string'
           && stayRangesOverlap(requestedCheckIn, requestedCheckOut, other.checkIn.slice(0, 10), other.checkOut.slice(0, 10));
       });
-      if (conflict) throw new Error('The requested dates are no longer available.');
+      if (conflict) throw new Error(newRoomId ? `Room ${movedRoom.roomNumber} is booked on those dates too. Choose another room.` : 'The requested dates are no longer available.');
       const policySnapshot = await transaction.get(adminDb.doc('settings/cancellationPolicy'));
       change = closureMove ? {
         outcome: 'eligible', reason: 'Moved because the resort was closed: same price, no fee.',
@@ -444,6 +458,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     } else {
       transaction.update(reservationRef, {
         ...getRequestedBookingFields(request),
+        ...(movedRoom || {}),
         checkIn: requestedCheckIn,
         checkOut: requestedCheckOut,
         totalAmount: change.updatedTotal,
@@ -458,6 +473,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
       requestedCheckOut,
       updatedTotal: change.updatedTotal,
       paymentDue: change.paymentDue || 0,
+      ...(movedRoom ? { fromRoomNumber: reservation.roomNumber || '', toRoomNumber: movedRoom.roomNumber } : {}),
       createdAt: FieldValue.serverTimestamp(),
     });
     return { reservation, change: updatedRequest, nextStatus };

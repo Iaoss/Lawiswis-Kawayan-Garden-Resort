@@ -13,6 +13,7 @@ const AdminDashboard = lazy(() => import('./admin/pages/Dashboard'));
 const RoomManagement = lazy(() => import('./admin/pages/RoomManagement'));
 const WalkIn = lazy(() => import('./admin/pages/WalkIn'));
 const Reservations = lazy(() => import('./admin/pages/Reservations'));
+const PhoneDisplay = lazy(() => import('./admin/pages/PhoneDisplay'));
 const Billing = lazy(() => import('./admin/pages/Billing'));
 const PaymentTransactions = lazy(() => import('./admin/pages/PaymentTransactions'));
 const CustomerManagement = lazy(() => import('./admin/pages/CustomerManagement'));
@@ -109,6 +110,7 @@ function App() {
           <Route path="promos" element={<RequireStaffRoute allowedRoles={['admin']}><PromoCodes /></RequireStaffRoute>} />
           <Route path="walkin" element={<WalkIn />} />
           <Route path="reservations" element={<Reservations />} />
+          <Route path="phone-display" element={<PhoneDisplay />} />
           <Route path="billing" element={<Billing />} />
           <Route path="payments" element={<PaymentTransactions />} />
           <Route path="customers" element={<CustomerManagement />} />
@@ -130,6 +132,7 @@ function App() {
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<ReceptionistDashboard />} />
           <Route path="reservations" element={<Reservations />} />
+          <Route path="phone-display" element={<PhoneDisplay />} />
           <Route path="walkin" element={<WalkIn />} />
           <Route path="rooms" element={<RoomManagement />} />
           <Route path="billing" element={<Billing />} />

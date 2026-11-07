@@ -9,6 +9,7 @@ import { Pagination, usePagination } from '../../components/ui/pagination';
 import StatusStepper from '../components/StatusStepper';
 import EditBookingDialog from '../components/EditBookingDialog';
 import AssignRoomsDialog from '../components/AssignRoomsDialog';
+import ChangeRequestCheck, { changeRequestBlocked } from '../components/ChangeRequestCheck';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import {
   DEFAULT_CHECKOUT_TIME,
@@ -594,6 +595,7 @@ export default function Reservations() {
   const [extendDialog, setExtendDialog] = useState(null);
   const [lateFeeBusy, setLateFeeBusy] = useState(false);
   const [editTarget, setEditTarget] = useState(null); // reservation being edited
+  const [moveRooms, setMoveRooms] = useState({}); // change request id -> other room to approve in
   const [assignTarget, setAssignTarget] = useState(null); // corporate booking getting rooms
   const [cancelReason, setCancelReason] = useState('');
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -1231,14 +1233,20 @@ export default function Reservations() {
         {editTarget && (
           <EditBookingDialog
             reservation={editTarget}
+            reservations={reservations}
             isAdmin={isAdmin}
+            onRoomAdded={result => {
+              setEditTarget(null);
+              setToast({ type: 'success', text: `Room ${result.roomNumber} added to the booking (${money(Number(result.totalAmount))}). Collect it in Billing.` });
+              fetchReservations();
+            }}
             colors={{ CARD, CARD2, BORDER, BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
             onClose={() => setEditTarget(null)}
             onSaved={result => {
               setEditTarget(null);
               setToast({
                 type: 'success',
-                text: `Booking updated. New total ${money(Number(result.totalAmount))}.${result.overpaid > 0 ? ` The guest overpaid ${money(Number(result.overpaid))}; arrange a refund.` : ''}`,
+                text: `Booking updated${result.roomChanged ? `: now in Room ${result.roomNumber}` : ''}. New total ${money(Number(result.totalAmount))}.${result.overpaid > 0 ? ` The guest overpaid ${money(Number(result.overpaid))}; arrange a refund.` : ''}`,
               });
               fetchReservations();
             }}
@@ -1703,6 +1711,10 @@ export default function Reservations() {
                         {request.originalCheckIn} – {request.originalCheckOut} → {request.requestedCheckIn} – {request.requestedCheckOut}
                       </p>
                       <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '12px' }}>{request.reason}</p>
+                      <ChangeRequestCheck reservation={r} request={request} reservations={reservations}
+                        colors={{ TEXT, MUTED, CARD, CARD2, BORDER2 }}
+                        newRoomId={moveRooms[r.id] || ''}
+                        onPickRoom={roomId => setMoveRooms(current => ({ ...current, [r.id]: roomId }))} />
                       {requiresManualPrice && (
                         <label style={{ display: 'inline-grid', gap: 4, margin: '0 10px 10px 0', color: MUTED, fontSize: 11 }}>
                           Staff-verified updated total (₱)
@@ -1714,10 +1726,18 @@ export default function Reservations() {
                       {request.paymentDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>50% deposit due on extension: {money(Number(request.paymentDue))}</p>}
                       {request.refundDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>Calculated refund after reduction: {money(Number(request.refundDue))}</p>}
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        <button disabled={decisionBusy === r.id} onClick={() => decideRequest(
-                          'approve-modification', r,
-                          requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {},
-                        )} style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Approve</button>
+                        {(() => {
+                          const roomTaken = changeRequestBlocked({ reservation: r, request, reservations, newRoomId: moveRooms[r.id] });
+                          return (
+                            <button disabled={decisionBusy === r.id || roomTaken} onClick={() => decideRequest(
+                              'approve-modification', r,
+                              { ...(requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {}), ...(moveRooms[r.id] ? { newRoomId: moveRooms[r.id] } : {}) },
+                            )} title={roomTaken ? 'The room is booked on the new dates. Pick another room or reject.' : undefined}
+                              style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: roomTaken ? 'not-allowed' : 'pointer', opacity: roomTaken ? 0.5 : 1 }}>
+                              {moveRooms[r.id] ? 'Approve in the new room' : 'Approve'}
+                            </button>
+                          );
+                        })()}
                         {isAdmin && !request.closureMove && (getDaysBeforeArrival(r.checkIn) ?? 99) < DATE_CHANGE_NOTICE_DAYS && (
                           <button disabled={decisionBusy === r.id} onClick={() => decideRequest(
                             'approve-modification', r,

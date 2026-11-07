@@ -21,7 +21,8 @@
 //   { action: 'create-walk-in', booking: {...} }
 //     Creates a walk-in overnight stay, day tour or night tour, priced here
 //     with the same rules as online bookings and checked for double bookings.
-//   { action: 'edit-booking', reservationId, changes, preview? }
+//   { action: 'edit-booking', reservationId, changes (roomId moves rooms), preview? }
+//   { action: 'add-room-to-booking', reservationId, roomId, adults, children, preview? }
 //     Changes a booking's type, dates or guests and reprices it. With
 //     preview: true it only returns the new price.
 
@@ -46,7 +47,8 @@ import { canAutoCheckIn, manilaDateKey } from '../src/lib/reservationStatus';
 import { isRoomGuest, priceService } from '../src/lib/services';
 import { holdsRoom } from '../src/lib/unpaidBookings';
 import { readSeasonPeriods } from '../lib/seasonStore';
-import { fillBalancesInOrder, getAdditionalRoomsError } from '../src/lib/groupBooking';
+import { MAX_ROOMS_PER_BOOKING, fillBalancesInOrder, getAdditionalRoomsError } from '../src/lib/groupBooking';
+import { getRoomChangeError } from '../src/lib/roomChange';
 import { CHECK_METHODS, DISCOUNT_KINDS, calculateSeniorPwdDiscount, getDiscountIdError, normalizeIdNumber } from '../src/lib/seniorPwdDiscount';
 import { createCorporateReservation } from './create-corporate-reservation';
 import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms';
@@ -809,10 +811,24 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
     if (ACTIVE_CHANGE_REQUESTS.includes(String(reservation.modificationRequest?.status || ''))) {
       throw new BillingError(409, 'This booking has a change request from the guest. Approve or reject it first.');
     }
-    const roomRef = adminDb.collection('rooms').doc(reservation.roomId);
-    const roomSnap = await transaction.get(roomRef);
-    if (!roomSnap.exists) throw new BillingError(404, 'The booked room could not be found.');
-    const room = roomSnap.data();
+    const oldRoomRef = adminDb.collection('rooms').doc(reservation.roomId);
+    const oldRoomSnap = await transaction.get(oldRoomRef);
+    if (!oldRoomSnap.exists) throw new BillingError(404, 'The booked room could not be found.');
+    // Moving to another room: same size or bigger, never smaller.
+    const newRoomId = typeof changes.roomId === 'string' && changes.roomId && changes.roomId !== reservation.roomId ? changes.roomId : '';
+    let roomRef = oldRoomRef;
+    let room = oldRoomSnap.data();
+    if (newRoomId) {
+      roomRef = adminDb.collection('rooms').doc(newRoomId);
+      const newRoomSnap = await transaction.get(roomRef);
+      if (!newRoomSnap.exists) throw new BillingError(404, 'The new room could not be found.');
+      const changeError = getRoomChangeError(oldRoomSnap.data(), newRoomSnap.data());
+      if (changeError) throw new BillingError(409, changeError);
+      room = newRoomSnap.data();
+      if (blockedRoomStatus(room.status, String(changes.checkIn ?? reservation.checkIn), manilaDateKey())) {
+        throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
+      }
+    }
 
     const details = detailsFromForm({
       bookingOption: changes.bookingOption || getBookingOptionId(reservation),
@@ -829,7 +845,7 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
     const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: details.checkIn });
     if (dateBlock) throw new BillingError(409, dateBlock);
     if (await roomIsTaken(transaction, {
-      roomId: reservation.roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut, ignoreId: reservationId,
+      roomId: newRoomId || reservation.roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut, ignoreId: reservationId,
     })) {
       throw new BillingError(409, `Room ${room.roomNumber} is already booked for those dates.`);
     }
@@ -864,12 +880,22 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
       difference: money(totalAmount - Number(reservation.totalAmount || 0)),
       balance: Math.max(0, balance),
       overpaid: Math.max(0, -balance),
+      roomNumber: room.roomNumber || '',
+      oldRoomNumber: reservation.roomNumber || '',
+      roomChanged: Boolean(newRoomId),
     };
     if (preview) return { preview: true, ...quote };
+
+    if (newRoomId && reservation.status === 'checked-in') {
+      // Guest already inside: the old room needs cleaning, the new one is in use.
+      transaction.update(oldRoomRef, { status: 'cleaning' });
+      transaction.update(roomRef, { status: 'occupied' });
+    }
 
     transaction.update(ref, {
       ...(waiving ? { policyWaived: true, policyWaivedReason: cleanText(waiveReason, 300), policyWaivedBy: staff.name || staff.email || '' } : {}),
       ...details,
+      ...(newRoomId ? { roomId: newRoomId, roomNumber: room.roomNumber || '', roomType: room.type || '' } : {}),
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
@@ -888,12 +914,120 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
           bookingType: reservation.bookingType || '', tourPeriod: reservation.tourPeriod || '',
           checkIn: reservation.checkIn || '', checkOut: reservation.checkOut || '',
           adults: Number(reservation.adults || 0), children: Number(reservation.children || 0),
-          totalAmount: Number(reservation.totalAmount || 0),
+          totalAmount: Number(reservation.totalAmount || 0), roomNumber: reservation.roomNumber || '',
         },
-        to: { ...details, totalAmount },
+        to: { ...details, totalAmount, roomNumber: room.roomNumber || '' },
       }),
     });
     return { saved: true, ...quote };
+  });
+}
+
+// Phone QR display: the laptop sends the current payment QR to the same
+// staff account's phone (open at /admin/phone-display or
+// /receptionist/phone-display), which shows it big for the guest.
+async function setPhoneDisplay({ staff, url = '', amount = 0, guestName = '', sessionId = '' }) {
+  const link = String(url || '');
+  if (link && !/^https:\/\/[^\s]{8,1500}$/.test(link)) throw new BillingError(400, 'That payment link is not valid.');
+  const display = link
+    ? { url: link, amount: money(Number(amount) || 0), guestName: cleanText(guestName, 80), sessionId: cleanText(sessionId, 120), shownAt: Date.now() }
+    : { url: '', amount: 0, guestName: '', sessionId: '', shownAt: Date.now() };
+  await adminDb.collection('staffDisplays').doc(staff.uid).set(display);
+  return { ok: true, showing: Boolean(link) };
+}
+
+async function getPhoneDisplay({ staff }) {
+  const snap = await adminDb.collection('staffDisplays').doc(staff.uid).get();
+  const data = snap.exists ? snap.data() : {};
+  // A QR left showing for over 30 minutes is treated as finished.
+  const fresh = data.url && Date.now() - Number(data.shownAt || 0) < 30 * 60 * 1000;
+  return fresh ? { url: data.url, amount: data.amount, guestName: data.guestName, sessionId: data.sessionId, shownAt: data.shownAt } : { url: '' };
+}
+
+// Staff add another room to an existing booking (more guests coming).
+// The new room is a linked booking on the same dates, with its own price
+// and balance; Billing can take one payment for all the rooms.
+async function addRoomToBooking({ staff, reservationId, roomId, adults, children = 0, preview = false }) {
+  if (typeof roomId !== 'string' || !roomId) throw new BillingError(400, 'Choose the room to add.');
+  return adminDb.runTransaction(async transaction => {
+    const { ref, reservation } = await getReservation(transaction, reservationId);
+    if (!['pending', 'confirmed', 'checked-in'].includes(reservation.status)) {
+      throw new BillingError(409, 'Rooms can only be added to pending, confirmed or checked-in bookings.');
+    }
+    if (reservation.type === 'corporate' || reservation.type === ROOM_BLOCK_TYPE || !reservation.roomId) {
+      throw new BillingError(409, 'Use “Assign rooms” for corporate and group bookings.');
+    }
+    const groupIds = Array.isArray(reservation.groupReservationIds) && reservation.groupReservationIds.length
+      ? reservation.groupReservationIds : [reservationId];
+    if (groupIds.length >= MAX_ROOMS_PER_BOOKING) throw new BillingError(409, `A booking can have up to ${MAX_ROOMS_PER_BOOKING} rooms.`);
+    const groupSnaps = await Promise.all(groupIds.filter(id => id !== reservationId).map(id => transaction.get(adminDb.collection('reservations').doc(id))));
+    if (reservation.roomId === roomId || groupSnaps.some(snap => snap.exists && snap.data().roomId === roomId)) {
+      throw new BillingError(409, 'This room is already part of the booking.');
+    }
+    const roomRef = adminDb.collection('rooms').doc(roomId);
+    const roomSnap = await transaction.get(roomRef);
+    if (!roomSnap.exists) throw new BillingError(404, 'This room could not be found.');
+    const room = roomSnap.data();
+    const details = detailsFromForm({
+      bookingOption: getBookingOptionId(reservation),
+      checkInTime: reservation.checkInTime,
+      checkIn: reservation.checkIn,
+      checkOut: reservation.checkOut,
+      adults, children,
+    }, { room, keepStartDate: reservation.checkIn });
+    if (blockedRoomStatus(room.status, details.checkIn, manilaDateKey())) throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
+    if (await roomIsTaken(transaction, { roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut })) {
+      throw new BillingError(409, `Room ${room.roomNumber} is already booked for those dates.`);
+    }
+    let pricing;
+    try {
+      pricing = priceBookingDetails(room, details, { seasonPeriods: await readSeasonPeriods() });
+    } catch (error) {
+      throw new BillingError(409, error.message || `Room ${room.roomNumber} has no valid rate.`);
+    }
+    const totalAmount = money(pricing.subtotalAmount);
+    if (preview) return { preview: true, totalAmount, roomNumber: room.roomNumber || '' };
+
+    const newRef = adminDb.collection('reservations').doc();
+    const groupId = reservation.groupId || reservationId;
+    const allIds = [...groupIds, newRef.id];
+    const groupFields = { groupId, groupReservationIds: allIds, groupRoomCount: allIds.length };
+    const insideNow = reservation.status === 'checked-in';
+    transaction.update(ref, groupFields);
+    groupSnaps.forEach(snap => { if (snap.exists) transaction.update(snap.ref, groupFields); });
+    if (insideNow) transaction.update(roomRef, { status: 'occupied' });
+    const copied = {};
+    ['firstName', 'lastName', 'guestName', 'email', 'phone', 'address', 'preferredContactMethod', 'contactLink', 'userId', 'source']
+      .forEach(key => { if (reservation[key] !== undefined) copied[key] = reservation[key]; });
+    transaction.set(newRef, {
+      ...copied,
+      notes: `Room added by staff to booking #${reservationId.slice(0, 8).toUpperCase()} (Room ${reservation.roomNumber || ''}).`,
+      roomId,
+      roomNumber: room.roomNumber || '',
+      roomType: room.type || '',
+      ...details,
+      baseRate: pricing.baseRate,
+      baseCapacity: pricing.baseCapacity,
+      extraGuestCharge: pricing.extraGuestCharge,
+      lateArrival: isLateArrivalTime(details.checkInTime) && details.bookingType === 'overnight',
+      lateArrivalSurcharge: pricing.lateArrivalSurcharge || 0,
+      seasonalSurcharge: pricing.seasonalSurcharge || 0,
+      seasonalLabel: pricing.seasonalLabel || '',
+      cottageId: '',
+      cottageFee: 0,
+      subtotalAmount: totalAmount,
+      totalAmount,
+      amountPaid: 0,
+      paymentMethod: reservation.paymentMethod || 'cash',
+      paymentStatus: 'pending',
+      type: reservation.type || 'walk-in',
+      ...groupFields,
+      status: insideNow ? 'checked-in' : 'confirmed',
+      ...(insideNow ? { checkedInAt: FieldValue.serverTimestamp() } : {}),
+      createdBy: staff.uid,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return { added: true, reservationId: newRef.id, totalAmount, roomNumber: room.roomNumber || '', mainRoomNumber: reservation.roomNumber || '' };
   });
 }
 
@@ -919,6 +1053,9 @@ export default async function handler(req, res) {
     else if (body.action === 'cancel-with-policy') result = await cancelWithPolicy({ ...body, staff });
     else if (body.action === 'create-walk-in') result = await createWalkIn({ staff, booking: body.booking });
     else if (body.action === 'edit-booking') result = await editBooking({ ...body, staff });
+    else if (body.action === 'add-room-to-booking') result = await addRoomToBooking({ ...body, staff });
+    else if (body.action === 'phone-display-set') result = await setPhoneDisplay({ ...body, staff });
+    else if (body.action === 'phone-display-get') result = await getPhoneDisplay({ staff });
     else if (body.action === 'closure-notice') result = await sendClosureNotices({ ...body, staff });
     else if (body.action === 'update-guest') result = await updateGuest({ ...body, staff });
     else return res.status(400).json({ error: 'Choose a valid billing action.' });

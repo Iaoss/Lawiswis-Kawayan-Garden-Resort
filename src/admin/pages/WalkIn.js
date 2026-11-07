@@ -1076,6 +1076,7 @@ export default function WalkIn() {
                     <OnlinePaymentQr
                       reservationId={created.id}
                       amount={owedNow}
+                      guestName={created.guestName || ''}
                       paymentType={created.isGroup ? 'group' : 'billing'}
                       colors={{ CARD2, BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
                       onPaid={result => {

@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer';
 import { adminDb } from '../lib/firebaseAdmin';
 import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { safeHttpUrl } from '../src/lib/safeUrl';
+import { button, paragraph, renderEmail } from '../lib/emailLayout';
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -48,7 +49,17 @@ export default async function handler(req, res) {
     const from = `Lawiswis Kawayan Resort <${process.env.GMAIL_USER}>`;
     const subject = `${article.category || 'Resort News'}: ${article.title}`;
     const text = `${article.title}\n\n${article.excerpt || article.content || ''}${article.externalLink ? `\n\nRead more: ${article.externalLink}` : ''}`;
-    const html = `<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;color:#222"><p style="color:#7c8a5e;text-transform:uppercase">${escapeHtml(article.category || 'Resort News')}</p><h1>${escapeHtml(article.title)}</h1>${article.imageUrl ? `<img src="${escapeHtml(article.imageUrl)}" alt="" style="width:100%;height:auto">` : ''}<p style="white-space:pre-wrap">${escapeHtml(article.excerpt || article.content || '')}</p>${article.externalLink ? `<p><a href="${escapeHtml(article.externalLink)}">Read more</a></p>` : ''}<p style="font-size:12px;color:#666">You received this because you subscribed to Lawiswis Kawayan Resort updates.</p></div>`;
+    const html = renderEmail({
+      title: article.title || 'Resort News',
+      preheader: String(article.excerpt || '').slice(0, 120),
+      body: [
+        `<p style="margin:0 0 12px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#7c8a5e;">${escapeHtml(article.category || 'Resort News')}</p>`,
+        article.imageUrl ? `<img src="${escapeHtml(article.imageUrl)}" alt="" style="width:100%;height:auto;border-radius:8px;margin:0 0 16px;">` : '',
+        paragraph(`<span style="white-space:pre-wrap;">${escapeHtml(article.excerpt || article.content || '')}</span>`),
+        article.externalLink ? `<p style="margin:0 0 16px;">${button(article.externalLink, 'Read more')}</p>` : '',
+      ].join(''),
+      footerNote: 'You received this email because you subscribed to Lawiswis Kawayan Garden Resort updates.',
+    });
 
     let sent = 0;
     for (let offset = 0; offset < emails.length; offset += 40) {
