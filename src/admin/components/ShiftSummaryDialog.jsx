@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Timestamp, collection, getDocs, query, where } from 'firebase/firestore';
+import { Timestamp, collection, doc, getDocs, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
+import { HANDOVER_DOC } from './ShiftHandoverBanner';
 import { auth, db } from '../../firebase/firebase';
 import { getOutstandingBalance, getOverstay } from '../../lib/reservationStatus';
 import { getShiftStart, signOutTo } from '../lib/staffSession';
@@ -60,6 +61,18 @@ export default function ShiftSummaryDialog({ open, onClose, staffName = '', dark
     setBusy(true);
     try {
       if (data) await logStaffActivity('shift_handover', summaryText.slice(0, 300));
+      // The next person at the desk sees this on their dashboard.
+      if (data) {
+        await setDoc(doc(db, ...HANDOVER_DOC), {
+          type: 'shift-handover',
+          staffUid: uid,
+          staffName: staffName || auth.currentUser?.email || 'Staff',
+          note: note.trim().slice(0, 1000),
+          summary: `Collected ${peso(data.collected)} · ${data.owing.length} still owing · ${data.requests} open request(s) · ${data.overstays.length} overstay(s) · ${data.inHouse} guests in house`,
+          createdAt: serverTimestamp(),
+          createdAtMs: Date.now(),
+        }).catch(() => {});
+      }
     } finally {
       await signOutTo(`/admin/login`);
     }

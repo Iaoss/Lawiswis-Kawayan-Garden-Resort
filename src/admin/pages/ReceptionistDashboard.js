@@ -6,6 +6,7 @@ import {
   doc, Timestamp, query, orderBy,
 } from 'firebase/firestore';
 import ReceptionistLayout from '../components/ReceptionistLayout';
+import ShiftHandoverBanner from '../components/ShiftHandoverBanner';
 import { useSettings } from '../components/SettingsContext';
 import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
 import { getOverstay, getOverstayStats, getPeriodRange, getReservationAverages, isReadyToCheckIn, manilaDateKey } from '../../lib/reservationStatus';
@@ -269,6 +270,7 @@ export default function ReceptionistDashboard() {
   return (
     <ReceptionistLayout>
       <div style={{ fontFamily: "'Poppins', sans-serif" }}>
+        <ShiftHandoverBanner dark={dark} />
         {/* Date */}
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '13px', color: MUTED }}>

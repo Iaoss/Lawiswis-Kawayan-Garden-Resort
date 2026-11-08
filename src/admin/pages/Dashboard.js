@@ -7,6 +7,7 @@ import {
   doc, Timestamp, query, orderBy,
 } from 'firebase/firestore';
 import Layout from '../components/Layout';
+import ShiftHandoverBanner from '../components/ShiftHandoverBanner';
 import { useSettings } from '../components/SettingsContext';
 import {
   PLATFORM_RANGES, RESERVATION_CHART_RANGES, REVENUE_CHART_RANGES,
@@ -396,6 +397,7 @@ export default function AdminDashboard() {
   return (
     <Layout>
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh' }}>
+        <ShiftHandoverBanner dark={dark} />
 
         {/* ── Analytics period ── */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
