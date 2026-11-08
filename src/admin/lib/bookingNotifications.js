@@ -9,6 +9,7 @@
 
 import { GUEST_REPLY_LABELS, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
 import { formatManilaTime, getCheckoutDue, getOutstandingBalance, getOverstay } from '../../lib/reservationStatus';
+import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive } from '../../lib/guestArrivals';
 
 export const NEW_BOOKING_DAYS = 7;
 export const ACTIVE_MODIFICATION_STATUSES = ['requested', 'needs_review', 'awaiting_payment', 'awaiting_refund'];
@@ -84,6 +85,21 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
           : `Overstayed ${overstay.label}${owes > 0 ? ` · owes ${peso(owes)}` : ''} · check out or give more time`,
         // Keeps these near the top while they matter.
         timeMs: now,
+        bookingId: r.id,
+        path,
+      });
+    }
+
+    // Checked in, but part of the group is still coming.
+    const waiting = guestsStillToArrive(r);
+    if (waiting > 0) {
+      items.push({
+        id: `guests-arriving_${r.id}_${arrivedGuestCount(r)}`,
+        icon: 'ti-users',
+        badge: 'Guests Still to Arrive',
+        message: `${guest} · ${r.roomNumber ? `Room ${r.roomNumber}` : ref(r.id)}`,
+        details: `${arrivedGuestCount(r)} of ${bookedGuestCount(r)} here · ${waiting} still to come. Open the booking and choose Guests arrived when they come.`,
+        timeMs: toMs(r.checkedInAt) || createdMs,
         bookingId: r.id,
         path,
       });

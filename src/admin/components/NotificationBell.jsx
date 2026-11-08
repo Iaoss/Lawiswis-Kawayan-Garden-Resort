@@ -103,7 +103,8 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   const [emails, setEmails] = useState([]);
   const [feedback, setFeedback] = useState([]);
 
-  // Unhappy guests (1–2★) from the last week, so staff can follow up quickly.
+  // Guest feedback from the last week that staff haven't read yet. Low
+  // ratings (1–2★) show as "Unhappy Guest" so staff can follow up quickly.
   useEffect(() => {
     const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
     return onSnapshot(query(collection(db, 'feedback'), where('createdAt', '>=', since)),
@@ -151,11 +152,11 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
         path: `${prefix}/email`,
       }));
     const feedbackItems = feedback
-      .filter(item => Number(item.rating) > 0 && Number(item.rating) <= 2 && !item.read)
+      .filter(item => Number(item.rating) > 0 && !item.read)
       .map(item => ({
-        id: `negative-feedback_${item.id}`,
-        icon: 'ti-mood-sad',
-        badge: `Unhappy Guest · ${Number(item.rating)}★`,
+        id: Number(item.rating) <= 2 ? `negative-feedback_${item.id}` : `feedback_${item.id}`,
+        icon: Number(item.rating) <= 2 ? 'ti-mood-sad' : 'ti-message-star',
+        badge: Number(item.rating) <= 2 ? `Unhappy Guest · ${Number(item.rating)}★` : `New Feedback · ${Number(item.rating)}★`,
         message: `${item.isAnonymous ? 'Anonymous guest' : (item.guestName || 'A guest')}${item.roomName ? ` · ${item.roomName}` : ''}`,
         details: String(item.comment || 'No comment left.').slice(0, 110),
         timeMs: toMillis(item.createdAt),

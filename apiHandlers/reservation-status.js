@@ -15,6 +15,9 @@
 //     getStatusTransitionError.
 //   { action: 'close-expired', reservationId }
 //     Closes a past pending/confirmed booking the guest never arrived for.
+//   { action: 'set-arrived-guests', reservationId, arrivedGuests }
+//     Updates how many of a checked-in booking's guests have arrived (the
+//     rest of a group coming later). Check-in itself can send arrivedGuests.
 //   { action: 'flag-overstay', reservationId, note? }
 //     Marks a checked-in guest who is past check-out as overstayed.
 //   { action: 'add-late-fee', reservationId, amount, note? }
@@ -46,6 +49,7 @@ import {
   hasOutstandingBalance,
 } from '../src/lib/reservationStatus';
 import { normalizeIdCheck } from '../src/lib/checkInId';
+import { arrivedGuestCount, bookedGuestCount, normalizeArrivedGuests } from '../src/lib/guestArrivals';
 import { syncCorporateRoomBlocks } from '../lib/corporateRooms';
 
 // Room status to set after a reservation changes (unchanged from the old
@@ -72,7 +76,7 @@ function paymentStatusFor(total, paid) {
   return paid > 0 ? 'partial' : 'pending';
 }
 
-async function setStatus({ transaction, reservationRef, reservation, staff, status, reason, force = false, closingNoShow = false, idCheck = null }) {
+async function setStatus({ transaction, reservationRef, reservation, staff, status, reason, force = false, closingNoShow = false, idCheck = null, arrivedGuests = null }) {
   if (!RESERVATION_STATUSES.includes(status)) throw new StatusError(400, 'Choose a valid reservation status.');
   const current = String(reservation.status || 'pending');
   if (staff.role === 'receptionist' && current === 'cancelled') {
@@ -123,6 +127,14 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   // The ID the guest showed (type and last 4 characters only).
   const id = status === 'checked-in' ? normalizeIdCheck(idCheck) : null;
   if (id) updates.checkInId = { ...id, checkedBy: staff.name || staff.email || '', checkedByUid: staff.uid };
+  // How many guests arrived at check-in (the rest can be recorded later).
+  const arrived = status === 'checked-in' ? normalizeArrivedGuests(arrivedGuests, bookedGuestCount(reservation)) : null;
+  if (arrived) {
+    updates.arrivedGuests = arrived;
+    updates.guestArrivals = FieldValue.arrayUnion({
+      id: crypto.randomUUID(), added: arrived, total: arrived, at: new Date().toISOString(), byName: staff.name || staff.email || '',
+    });
+  }
   if (status === 'checked-out') {
     updates.checkedOutAt = FieldValue.serverTimestamp();
     if (closingNoShow) updates.closedAsNoShow = true;
@@ -143,6 +155,22 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
     transaction.update(roomRef, { status: ROOM_STATUS_AFTER[status] });
   }
   return { status, previousStatus: current, overstayMinutes: overstay?.minutes || 0 };
+}
+
+function setArrivedGuests({ transaction, reservationRef, reservation, staff, arrivedGuests }) {
+  if (reservation.status !== 'checked-in') throw new StatusError(409, 'Only a checked-in booking can record arriving guests.');
+  const booked = bookedGuestCount(reservation);
+  const total = normalizeArrivedGuests(arrivedGuests, booked);
+  if (!total) throw new StatusError(400, `Enter how many guests have arrived (1 to ${booked || 'the booked number'}).`);
+  const previous = arrivedGuestCount(reservation);
+  if (total === previous && Number.isInteger(reservation.arrivedGuests)) return { arrivedGuests: total, booked, unchanged: true };
+  transaction.update(reservationRef, {
+    arrivedGuests: total,
+    guestArrivals: FieldValue.arrayUnion({
+      id: crypto.randomUUID(), added: total - previous, total, at: new Date().toISOString(), byName: staff.name || staff.email || '',
+    }),
+  });
+  return { arrivedGuests: total, previous, booked };
 }
 
 function flagOverstay({ transaction, reservationRef, reservation, staff, note }) {
@@ -262,7 +290,8 @@ export default async function handler(req, res) {
       checkOutDate = reservation.checkOut || '';
       guestName = reservation.guestName || '';
       const context = { transaction, reservationRef, reservation, staff };
-      if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500), force: req.body?.force === true, idCheck: req.body?.idCheck });
+      if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500), force: req.body?.force === true, idCheck: req.body?.idCheck, arrivedGuests: req.body?.arrivedGuests });
+      if (action === 'set-arrived-guests') return setArrivedGuests({ ...context, arrivedGuests: req.body?.arrivedGuests });
       // Closes a past booking the guest never arrived for (pending/confirmed,
       // check-out date already passed, nothing owed). This is the only move
       // allowed to go straight to checked-out.
@@ -287,7 +316,9 @@ export default async function handler(req, res) {
     }
     if (!result.unchanged) {
       const ref = `#${reservationId.slice(0, 8).toUpperCase()}`;
-      const entry = action === 'extend-checkout'
+      const entry = action === 'set-arrived-guests'
+        ? { action: 'guests_arrived', summary: `Recorded ${result.arrivedGuests} of ${result.booked} guests arrived on booking ${ref}` }
+        : action === 'extend-checkout'
         ? { action: 'late_checkout_given', summary: `Gave booking ${ref} ${result.hours} more hour${result.hours === 1 ? '' : 's'} (check-out ${result.untilLabel})${result.fee ? `, ₱${Number(result.fee).toLocaleString()} fee` : ''}` }
         : action === 'add-late-fee'
         ? { action: 'late_fee_added', summary: `Added ₱${Number(result.lateFeeAdded || 0).toLocaleString()} late check-out charge on booking ${ref}` }

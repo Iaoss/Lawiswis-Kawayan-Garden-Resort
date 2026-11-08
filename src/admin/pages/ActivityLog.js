@@ -13,7 +13,7 @@ const MAX_ENTRIES = 500;
 
 export const ACTION_GROUPS = [
   { id: 'payments', label: 'Payments & charges', actions: ['payment_recorded', 'charge_added', 'service_added', 'late_fee_added'] },
-  { id: 'bookings', label: 'Bookings', actions: ['walk_in_created', 'booking_edited', 'status_changed', 'no_show_closed', 'overstay_flagged', 'guest_info_updated'] },
+  { id: 'bookings', label: 'Bookings', actions: ['walk_in_created', 'booking_edited', 'status_changed', 'no_show_closed', 'overstay_flagged', 'guest_info_updated', 'guests_arrived'] },
   { id: 'cancellations', label: 'Cancellations & refunds', actions: ['reservation_cancelled', 'reservation_no_show', 'closure_notice_sent', 'approve_refund', 'reject_refund', 'review_refund'] },
   { id: 'changes', label: 'Date-change requests', actions: ['approve_modification', 'reject_modification'] },
   { id: 'rooms', label: 'Rooms', actions: ['room_created', 'room_updated', 'room_deleted', 'room_status_changed', 'season_rate_saved', 'season_rate_removed', 'cottages_updated', 'cottage_inventory_changed'] },

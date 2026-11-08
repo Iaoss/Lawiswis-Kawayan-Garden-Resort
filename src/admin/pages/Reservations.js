@@ -41,6 +41,7 @@ import { printDailySheet } from '../lib/printDailySheet';
 import { askCheckInId } from '../components/CheckInIdDialog';
 import { money } from '../lib/money';
 import { serverNow } from '../../lib/serverClock';
+import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive } from '../../lib/guestArrivals';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -595,6 +596,8 @@ export default function Reservations() {
   // "Give more time" (late check-out): { reservation, hours, amount, note, busy }
   const [extendDialog, setExtendDialog] = useState(null);
   const [lateFeeBusy, setLateFeeBusy] = useState(false);
+  // Recording the rest of a group arriving after check-in.
+  const [arrivalDialog, setArrivalDialog] = useState(null);
   const [editTarget, setEditTarget] = useState(null); // reservation being edited
   const [moveRooms, setMoveRooms] = useState({}); // change request id -> other room to approve in
   const [assignTarget, setAssignTarget] = useState(null); // corporate booking getting rooms
@@ -771,14 +774,16 @@ export default function Reservations() {
     }
     // Checking in: record which ID the guest showed (staff can skip).
     let idCheck;
+    let arrivedGuests;
     if (status === 'checked-in') {
-      const answer = await askCheckInId(reservation.guestName);
+      const answer = await askCheckInId(reservation.guestName, { bookedGuests: bookedGuestCount(reservation) });
       if (!answer) return;
       if (!answer.skipped) idCheck = { type: answer.type, last4: answer.last4 };
+      arrivedGuests = answer.arrivedGuests;
     }
     setStatusBusyId(id);
     try {
-      const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason: statusReason, force, idCheck });
+      const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason: statusReason, force, idCheck, arrivedGuests });
       // Show the change right away; the live listener will confirm it.
       // The check-in / check-out time shows straight away too.
       const stamp = new Date(serverNow()).toISOString();
@@ -786,6 +791,7 @@ export default function Reservations() {
         ...r,
         status,
         ...(status === 'checked-in' && !r.checkedInAt ? { checkedInAt: stamp } : {}),
+        ...(status === 'checked-in' && arrivedGuests ? { arrivedGuests } : {}),
         ...(status === 'checked-out' && !r.checkedOutAt ? { checkedOutAt: stamp } : {}),
       } : r)));
       if (status === 'cancelled') return;
@@ -1079,6 +1085,23 @@ export default function Reservations() {
     }
   };
 
+  const submitArrivals = async () => {
+    if (!arrivalDialog || arrivalDialog.busy) return;
+    const { reservation, count } = arrivalDialog;
+    setArrivalDialog(d => ({ ...d, busy: true }));
+    try {
+      const result = await callReservationStatusApi({ action: 'set-arrived-guests', reservationId: reservation.id, arrivedGuests: Number(count) });
+      setArrivalDialog(null);
+      setReservations(list => list.map(r => (r.id === reservation.id ? { ...r, arrivedGuests: result.arrivedGuests } : r)));
+      const left = Math.max(0, result.booked - result.arrivedGuests);
+      setToast({ type: 'success', text: left ? `${result.arrivedGuests} of ${result.booked} guests have arrived. ${left} still to come.` : `All ${result.booked} guests have arrived.` });
+    } catch (error) {
+      setArrivalDialog(d => (d ? { ...d, busy: false } : d));
+      setToast({ type: 'error', text: error.message || 'The guest count could not be saved.' });
+    }
+  };
+  const stillArriving = reservations.filter(r => guestsStillToArrive(r) > 0);
+
   // Checked-out and cancelled bookings leave the list and the calendar right
   // away; they stay in Customers and Reservation History. Choose
   // "Checked-out" or "Cancelled" in the status filter to see them here.
@@ -1286,6 +1309,41 @@ export default function Reservations() {
           </div>
         )}
 
+        {arrivalDialog && (() => {
+          const booked = bookedGuestCount(arrivalDialog.reservation);
+          const already = arrivedGuestCount(arrivalDialog.reservation);
+          return (
+            <div role="presentation" onClick={event => { if (event.target === event.currentTarget && !arrivalDialog.busy) setArrivalDialog(null); }}
+              style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: '16px' }}>
+              <form role="dialog" aria-modal="true" aria-labelledby="arrivals-title"
+                onSubmit={event => { event.preventDefault(); submitArrivals(); }}
+                style={{ width: '100%', maxWidth: '400px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '20px', display: 'grid', gap: '12px' }}>
+                <div id="arrivals-title" style={{ fontWeight: 700, fontSize: '15px', color: TEXT }}>Guests arrived</div>
+                <div style={{ fontSize: '12px', color: MUTED }}>
+                  {arrivalDialog.reservation.guestName || 'Guest'} · Room {arrivalDialog.reservation.roomNumber || '—'} · {already} of {booked} guests here now.
+                  Choose the total number of guests who are now at the resort.
+                </div>
+                <label style={{ display: 'grid', gap: '4px', fontSize: '12px', color: MUTED }}>Guests at the resort now
+                  <select value={arrivalDialog.count} disabled={arrivalDialog.busy} onChange={event => { const count = Number(event.target.value); setArrivalDialog(d => ({ ...d, count })); }}
+                    style={{ border: `1px solid ${BORDER2}`, borderRadius: '9px', padding: '9px 10px', color: TEXT, background: CARD2, font: 'inherit', fontSize: '13px' }}>
+                    {Array.from({ length: booked }, (_, i) => booked - i).map(n => (
+                      <option key={n} value={n}>{n === booked ? `All ${booked} guests` : `${n} of ${booked} (${booked - n} still to come)`}</option>
+                    ))}
+                  </select>
+                </label>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '9px' }}>
+                  <button type="button" disabled={arrivalDialog.busy} onClick={() => setArrivalDialog(null)}
+                    style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 14px', background: CARD2, color: TEXT, cursor: 'pointer' }}>Cancel</button>
+                  <button type="submit" disabled={arrivalDialog.busy}
+                    style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: ACCENT, color: ACCENT_TEXT, fontWeight: 700, cursor: arrivalDialog.busy ? 'wait' : 'pointer' }}>
+                    {arrivalDialog.busy ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          );
+        })()}
+
         {extendDialog && (
           <div role="presentation" onClick={event => { if (event.target === event.currentTarget && !extendDialog.busy) setExtendDialog(null); }}
             style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: '16px' }}>
@@ -1416,6 +1474,9 @@ export default function Reservations() {
             ['Check-in', [s.checkIn, s.checkInTime].filter(Boolean).join(' · ') || '—'],
             ['Check-out', [s.checkOut, s.checkOutTime].filter(Boolean).join(' · ') || '—'],
             ...(s.checkedInAt ? [['Checked in at', formatStayDateTime(s.checkedInAt)]] : []),
+            ...(['checked-in', 'checked-out'].includes(s.status) && bookedGuestCount(s) > 0 ? [['Guests Arrived', guestsStillToArrive(s) > 0
+              ? <span style={{ color: '#d97706', fontWeight: 600 }}>{arrivedGuestCount(s)} of {bookedGuestCount(s)} · {guestsStillToArrive(s)} still to come</span>
+              : `All ${bookedGuestCount(s)} guest${bookedGuestCount(s) === 1 ? '' : 's'}`]] : []),
             ...(s.checkInId ? [['ID shown', `${s.checkInId.type} ending ${s.checkInId.last4}${s.checkInId.checkedBy ? ` · checked by ${s.checkInId.checkedBy}` : ''}`]] : []),
             ...(s.checkedOutAt ? [['Checked out at', formatStayDateTime(s.checkedOutAt)]] : []),
             ['Duration', nights(s)],
@@ -1474,6 +1535,10 @@ export default function Reservations() {
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
                   <button type="button" onClick={() => navigate(billingPath(s.id))}
                     style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Open in Billing</button>
+                  {s.status === 'checked-in' && bookedGuestCount(s) > 1 && (
+                    <button type="button" onClick={() => setArrivalDialog({ reservation: s, count: bookedGuestCount(s), busy: false })}
+                      style={{ border: `1px solid ${guestsStillToArrive(s) > 0 ? '#d97706' : BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Guests arrived</button>
+                  )}
                   {s.status === 'checked-in' && (
                     <button type="button" onClick={() => setExtendDialog({ reservation: s, hours: 1, amount: '', note: '', busy: false })}
                       style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Give more time</button>
@@ -1504,7 +1569,7 @@ export default function Reservations() {
               line to open the details and actions. Empty types are hidden. */}
           <section aria-label="Notifications" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '12px 14px', display: 'grid', gap: '8px', alignContent: 'start', minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Notifications</div>
-            {dueToCheckOut.length + lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length === 0 && (
+            {stillArriving.length + dueToCheckOut.length + lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length === 0 && (
               <div style={{ fontSize: '12px', color: MUTED }}>All clear — nothing needs action right now.</div>
             )}
 
@@ -1578,6 +1643,21 @@ export default function Reservations() {
                     </div>
                   );
                 })}
+              </NotificationGroup>
+            )}
+
+            {stillArriving.length > 0 && (
+              <NotificationGroup title="Guests still to arrive" detail="Checked in, but part of the group is coming later" count={stillArriving.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {stillArriving.map(r => (
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: `1px solid ${BORDER}` }}>
+                    <div style={{ fontSize: '12px', color: TEXT }}>
+                      <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'}
+                      <div style={{ fontSize: '10px', color: MUTED }}>{arrivedGuestCount(r)} of {bookedGuestCount(r)} here · {guestsStillToArrive(r)} still to come{r.phone ? ` · ${r.phone}` : ''}</div>
+                    </div>
+                    <button type="button" onClick={() => setArrivalDialog({ reservation: r, count: bookedGuestCount(r), busy: false })}
+                      style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Guests arrived</button>
+                  </div>
+                ))}
               </NotificationGroup>
             )}
 

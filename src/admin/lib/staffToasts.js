@@ -67,6 +67,8 @@ export function pushToast({ id, variant = 'info', title, description = '', path 
 export function variantForNotification(id = '') {
   if (id.startsWith('checkout-late') || id.startsWith('hold-conflict') || id.startsWith('negative-feedback') || id.startsWith('room-not-ready')) return 'error';
   if (/^(checkout-due|cancellation-requested|refund-requested|date-change)/.test(id)) return 'warning';
+  if (id.startsWith('guests-arriving')) return 'warning';
+  if (id.startsWith('feedback_')) return 'success';
   if (id.startsWith('new-booking') || id.startsWith('guest-reply')) return 'info';
   return 'info';
 }

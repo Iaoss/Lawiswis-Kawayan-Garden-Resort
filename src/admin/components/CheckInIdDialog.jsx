@@ -1,19 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { ID_TYPES } from '../../lib/checkInId';
 
-// Asked when staff check a guest in: which ID the guest showed, and its last
-// 4 characters (never the full number or a photo, for privacy). Staff can
-// skip it. <CheckInIdHost /> is mounted in both staff layouts.
+// Asked when staff check a guest in: how many of the booked guests arrived
+// (the rest can come later), which ID the guest showed, and its last 4
+// characters (never the full number or a photo, for privacy). Staff can skip
+// the ID. <CheckInIdHost /> is mounted in both staff layouts.
 //
-//   const answer = await askCheckInId('Juan dela Cruz');
-//   // { type, last4 }  |  { skipped: true }  |  null (cancelled)
+//   const answer = await askCheckInId('Juan dela Cruz', { bookedGuests: 4 });
+//   // { type, last4, arrivedGuests }  |  { skipped: true, arrivedGuests }  |  null (cancelled)
 
 let pushRequest = null;
 
-export function askCheckInId(guestName = '') {
+export function askCheckInId(guestName = '', { bookedGuests = 0 } = {}) {
   return new Promise(resolve => {
     if (!pushRequest) { resolve({ skipped: true }); return; }
-    pushRequest({ guestName, resolve });
+    pushRequest({ guestName, bookedGuests: Number(bookedGuests) || 0, resolve });
   });
 }
 
@@ -22,14 +23,17 @@ export function CheckInIdHost({ dark, accent }) {
   const [type, setType] = useState(ID_TYPES[0]);
   const [last4, setLast4] = useState('');
   const [error, setError] = useState('');
+  const [arrived, setArrived] = useState(0);
 
   useEffect(() => {
-    pushRequest = next => { setRequest(next); setType(ID_TYPES[0]); setLast4(''); setError(''); };
+    pushRequest = next => { setRequest(next); setType(ID_TYPES[0]); setLast4(''); setError(''); setArrived(next.bookedGuests); };
     return () => { pushRequest = null; };
   }, []);
 
   if (!request) return null;
-  const finish = answer => { request.resolve(answer); setRequest(null); };
+  const booked = request.bookedGuests;
+  const withCount = answer => (answer && booked > 0 ? { ...answer, arrivedGuests: arrived } : answer);
+  const finish = answer => { request.resolve(withCount(answer)); setRequest(null); };
   const submit = event => {
     event.preventDefault();
     const clean = last4.trim().toUpperCase();
@@ -49,6 +53,18 @@ export function CheckInIdHost({ dark, accent }) {
           <h3 style={{ margin: 0, fontSize: 16 }}>Check in {request.guestName || 'the guest'}</h3>
           <p style={{ margin: '4px 0 0', fontSize: 12, color: c.muted }}>Ask for a valid ID and record which one was shown. Only the last 4 characters are saved.</p>
         </div>
+        {booked > 0 && (
+          <label style={{ display: 'grid', gap: 4, fontSize: 12, color: c.muted }}>How many guests arrived?
+            <select value={arrived} onChange={e => setArrived(Number(e.target.value))} style={input}>
+              {Array.from({ length: booked }, (_, i) => booked - i).map(n => (
+                <option key={n} value={n}>{n === booked ? `All ${booked} guest${booked === 1 ? '' : 's'}` : `${n} of ${booked} (${booked - n} coming later)`}</option>
+              ))}
+            </select>
+            {arrived < booked && (
+              <span style={{ fontSize: 11, color: '#d97706' }}>{booked - arrived} guest{booked - arrived === 1 ? '' : 's'} still to arrive. Record them later from the booking (Guests arrived).</span>
+            )}
+          </label>
+        )}
         <label style={{ display: 'grid', gap: 4, fontSize: 12, color: c.muted }}>ID shown
           <select value={type} onChange={e => setType(e.target.value)} style={input}>
             {ID_TYPES.map(item => <option key={item} value={item}>{item}</option>)}
