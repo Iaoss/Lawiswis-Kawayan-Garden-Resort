@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import { OVERNIGHT_TIME_SLOTS, isCheckInPassed, isTourStartPassed } from '../../lib/bookingPricing';
-import { DATE_CHANGE_NOTICE_DAYS, getDaysBeforeArrival } from '../../lib/cancellationPolicy';
+import { getDaysBeforeArrival } from '../../lib/cancellationPolicy';
+import { useCancellationPolicy } from '../lib/useCancellationPolicy';
 import { staffApi } from '../lib/staffApi';
 import { money } from '../lib/money';
 import { getRoomMaximumGuests } from '../../lib/bookingPricing';
@@ -42,9 +43,10 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
   const [quoting, setQuoting] = useState(false);
   const [saving, setSaving] = useState(false);
   const isTour = form.bookingOption !== 'overnight';
-  // Policy: the arrival date can only move 30+ days ahead of it.
+  // Policy: the arrival date can only move the set number of days ahead of it.
+  const noticeDays = useCancellationPolicy().dateChangeDays;
   const daysToArrival = getDaysBeforeArrival(reservation.checkIn);
-  const ruleApplies = daysToArrival !== null && daysToArrival < DATE_CHANGE_NOTICE_DAYS;
+  const ruleApplies = daysToArrival !== null && daysToArrival < noticeDays;
   // Admins can waive the rule with a reason (typhoon, resort closure, emergency).
   const [waive, setWaive] = useState(false);
   const [waiveReason, setWaiveReason] = useState('');
@@ -94,6 +96,8 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
     background: c.CARD2, border: `1px solid ${c.BORDER2}`, borderRadius: 10, padding: '9px 12px',
     fontSize: 12, fontFamily: 'inherit', color: c.TEXT, outline: 'none',
   };
+  // Fills its column without pushing past the dialog's edge.
+  const fit = { ...input, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' };
   // Rooms in this booking, and which other rooms are free on the chosen dates.
   const groupIds = Array.isArray(reservation.groupReservationIds) && reservation.groupReservationIds.length ? reservation.groupReservationIds : [reservation.id];
   const groupRooms = groupIds.map(id => (id === reservation.id ? reservation : reservations.find(r => r.id === id))).filter(Boolean);
@@ -209,7 +213,7 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
           <div style={{ display: 'grid', gap: 6, border: `1px solid ${c.BORDER2}`, borderRadius: 10, padding: 10 }}>
             <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: c.TEXT, cursor: 'pointer' }}>
               <input type="checkbox" checked={waive} onChange={e => setWaive(e.target.checked)} style={{ marginTop: 2 }} />
-              <span><strong>Waive the 30-day rule</strong> and move the dates anyway (typhoon, resort closure, emergency). Saved in the Activity Log.</span>
+              <span><strong>Waive the {noticeDays}-day rule</strong> and move the dates anyway (typhoon, resort closure, emergency). Saved in the Activity Log.</span>
             </label>
             {waive && (
               <input value={waiveReason} maxLength={300} onChange={e => setWaiveReason(e.target.value)} placeholder="Reason (required), e.g. Typhoon Kristine, resort closed" style={input} />
@@ -246,16 +250,22 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
         </div>
 
         {canAddRoom && (
-          <div style={{ display: 'grid', gap: 8, border: `1px solid ${c.BORDER2}`, borderRadius: 10, padding: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', minWidth: 0, gap: 8, border: `1px solid ${c.BORDER2}`, borderRadius: 10, padding: 10 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: c.TEXT }}>Add a room for more guests</div>
             <div style={{ fontSize: 11, color: c.MUTED, lineHeight: 1.5 }}>Same dates as this booking. It gets its own price and balance (one payment for all rooms in Billing).</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 8 }}>
-              <select value={extra.roomId} onChange={e => setExtra(x => ({ ...x, roomId: e.target.value }))} style={input} aria-label="Room to add">
-                <option value="">{addChoices.length ? 'Choose a free room…' : 'No free rooms on these dates'}</option>
-                {addChoices.map(room => <option key={room.id} value={room.id}>{roomLabel(room)}</option>)}
-              </select>
-              <input type="number" min="1" max="60" value={extra.adults} onChange={e => setExtra(x => ({ ...x, adults: e.target.value }))} style={input} aria-label="Adults in the added room" title="Adults" />
-              <input type="number" min="0" max="60" value={extra.children} onChange={e => setExtra(x => ({ ...x, children: e.target.value }))} style={input} aria-label="Children in the added room" title="Children" />
+            <select value={extra.roomId} onChange={e => setExtra(x => ({ ...x, roomId: e.target.value }))} style={fit} aria-label="Room to add">
+              <option value="">{addChoices.length ? 'Choose a free room…' : 'No free rooms on these dates'}</option>
+              {addChoices.map(room => <option key={room.id} value={room.id}>{roomLabel(room)}</option>)}
+            </select>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
+              <label style={{ display: 'grid', gap: 4, minWidth: 0, fontSize: 11, color: c.MUTED }}>
+                Adults
+                <input type="number" min="1" max="60" value={extra.adults} onChange={e => setExtra(x => ({ ...x, adults: e.target.value }))} style={fit} aria-label="Adults in the added room" />
+              </label>
+              <label style={{ display: 'grid', gap: 4, minWidth: 0, fontSize: 11, color: c.MUTED }}>
+                Children
+                <input type="number" min="0" max="60" value={extra.children} onChange={e => setExtra(x => ({ ...x, children: e.target.value }))} style={fit} aria-label="Children in the added room" />
+              </label>
             </div>
             {extra.error && <div style={{ fontSize: 11, color: '#dc2626' }}>{extra.error}</div>}
             {extra.roomId && (

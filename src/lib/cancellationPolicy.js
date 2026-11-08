@@ -1,31 +1,36 @@
-// Lawiswis Kawayan cancellation and change policy.
+// Lawiswis Kawayan cancellation and rebooking policy (resort, 2026):
 //
-//   - Cancelled 30 days or more before arrival: no penalty.
-//   - Cancelled LESS than 30 days before arrival: 50% of the total
-//     accommodation charge.
-//   - Cancelled LESS than 7 days before arrival, on the arrival date, or
-//     after it (no-show): the FULL charge.
-//   - Date changes are only allowed 30 days or more before arrival. Less than
-//     30 days before, on arrival or during the stay, the booking can't be
-//     moved: the guest cancels (penalty above) and makes a new booking.
+//   "Cancellation fee applies to those bookings that guests choose not to
+//   rebook at least 7 days before the date of booking. Based on total package
+//   price, a 20% charge applies for cancellations more than 7 days, 50% for
+//   cancellations within 4-7 days, 100% 3 days before or the day of booking."
+//
+//   - More than 7 days before arrival: 20% of the total.
+//   - 4 to 7 days before: 50%.
+//   - 3 days or less before, or on the day (no-show): 100%.
+//   - Rebooking (moving the dates) is free when done at least 7 days before
+//     arrival; after that the booking can only be cancelled under the fees.
 //   - Reducing rooms, changing room type or shortening a stay is not
 //     refunded: the full room charge stays.
 //
-// The percentages can be adjusted by admins (settings/cancellationPolicy);
-// the day thresholds are fixed by the policy.
-
-export const DATE_CHANGE_NOTICE_DAYS = 30;
-export const LATE_NOTICE_DAYS = 7;
+// Admins can change both the percentages and the day limits
+// (settings/cancellationPolicy, Cancellation Policy page).
 
 export const DEFAULT_CANCELLATION_POLICY = Object.freeze({
-  atLeast30Days: 0,
-  lessThan30Days: 50,
-  lessThan7Days: 100,
+  version: 2,
+  moreThanDays: 7, // "more than 7 days" before arrival → earlyRate
+  earlyRate: 20,
+  midFromDays: 4, // 4 to 7 days → midRate
+  midRate: 50,
+  lateRate: 100, // 3 days or less, the day itself, or no-show
+  dateChangeDays: 7, // free rebooking at least this many days before
 });
 
-function validRate(value) {
-  return Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100;
-}
+// For screens that can't load the saved policy: the default rebooking notice.
+export const DATE_CHANGE_NOTICE_DAYS = DEFAULT_CANCELLATION_POLICY.dateChangeDays;
+
+const validRate = value => Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 100;
+const validDays = (value, min = 0) => Number.isInteger(Number(value)) && Number(value) >= min && Number(value) <= 365;
 
 function parseCalendarDate(value) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(value)) return null;
@@ -45,46 +50,62 @@ export function getDaysBeforeArrival(checkIn, now = new Date()) {
   return Math.round((arrival.getTime() - todayUtc) / 86400000);
 }
 
-// Saved settings from before this policy used other keys; those fall back to
-// the official percentages.
+// The saved policy, cleaned. Settings saved before the day limits could be
+// edited (older keys) fall back to the current official policy. Returns
+// null when the saved values are invalid.
 export function normalizeCancellationPolicy(value) {
-  if (!value || typeof value !== 'object' || value.lessThan30Days === undefined) {
+  if (!value || typeof value !== 'object' || Number(value.version) !== 2) {
     return { ...DEFAULT_CANCELLATION_POLICY };
   }
   const policy = {
-    atLeast30Days: Number(value.atLeast30Days ?? 0),
-    lessThan30Days: Number(value.lessThan30Days),
-    lessThan7Days: Number(value.lessThan7Days),
+    version: 2,
+    moreThanDays: Number(value.moreThanDays),
+    earlyRate: Number(value.earlyRate),
+    midFromDays: Number(value.midFromDays),
+    midRate: Number(value.midRate),
+    lateRate: Number(value.lateRate),
+    dateChangeDays: Number(value.dateChangeDays),
   };
-  return Object.values(policy).every(validRate) ? policy : null;
+  const ok = [policy.earlyRate, policy.midRate, policy.lateRate].every(validRate)
+    && validDays(policy.moreThanDays, 1)
+    && validDays(policy.midFromDays, 1) && policy.midFromDays <= policy.moreThanDays
+    && validDays(policy.dateChangeDays, 0);
+  return ok ? policy : null;
+}
+
+// Plain-language tiers, for the policy page, chat and staff screens.
+export function describePolicyTiers(policy = DEFAULT_CANCELLATION_POLICY) {
+  const p = normalizeCancellationPolicy(policy) || DEFAULT_CANCELLATION_POLICY;
+  const lateUpTo = p.midFromDays - 1;
+  return [
+    { key: 'early', label: `More than ${p.moreThanDays} days before arrival`, rate: p.earlyRate },
+    { key: 'mid', label: p.midFromDays === p.moreThanDays ? `${p.moreThanDays} days before arrival` : `${p.midFromDays} to ${p.moreThanDays} days before arrival`, rate: p.midRate },
+    { key: 'late', label: lateUpTo >= 1 ? `${lateUpTo} day${lateUpTo === 1 ? '' : 's'} or less before, or on the day (no-show)` : 'On the day of arrival (no-show)', rate: p.lateRate },
+  ];
 }
 
 // The penalty tier for cancelling with `daysBeforeArrival` days to go.
 export function getPolicyTier(daysBeforeArrival, policy = DEFAULT_CANCELLATION_POLICY) {
-  const rates = normalizeCancellationPolicy(policy) || DEFAULT_CANCELLATION_POLICY;
-  if (daysBeforeArrival >= DATE_CHANGE_NOTICE_DAYS) {
-    return { rate: rates.atLeast30Days, tier: '30 days or more before arrival', noShow: false };
-  }
-  if (daysBeforeArrival >= LATE_NOTICE_DAYS) {
-    return { rate: rates.lessThan30Days, tier: 'Less than 30 days before arrival', noShow: false };
-  }
-  if (daysBeforeArrival > 0) {
-    return { rate: rates.lessThan7Days, tier: 'Less than 7 days before arrival', noShow: false };
-  }
-  return { rate: rates.lessThan7Days, tier: 'On or after the arrival date (no-show)', noShow: true };
+  const p = normalizeCancellationPolicy(policy) || DEFAULT_CANCELLATION_POLICY;
+  const [early, mid, late] = describePolicyTiers(p);
+  if (daysBeforeArrival > p.moreThanDays) return { rate: p.earlyRate, tier: early.label, noShow: false };
+  if (daysBeforeArrival >= p.midFromDays) return { rate: p.midRate, tier: mid.label, noShow: false };
+  if (daysBeforeArrival > 0) return { rate: p.lateRate, tier: late.label.replace(', or on the day (no-show)', ''), noShow: false };
+  return { rate: p.lateRate, tier: 'On or after the arrival date (no-show)', noShow: true };
 }
 
 // Why the booking's dates can't be moved to `newCheckIn`, or '' if they can.
 // Changing only the check-out (extending or shortening) isn't a date move.
-export function getDateChangeBlock({ originalCheckIn, newCheckIn, now = new Date() }) {
+export function getDateChangeBlock({ originalCheckIn, newCheckIn, now = new Date(), policy = DEFAULT_CANCELLATION_POLICY }) {
   if (!newCheckIn || newCheckIn === originalCheckIn) return '';
+  const notice = (normalizeCancellationPolicy(policy) || DEFAULT_CANCELLATION_POLICY).dateChangeDays;
   const days = getDaysBeforeArrival(originalCheckIn, now);
   if (days === null) return 'The booking’s arrival date is invalid, so it can’t be moved.';
   if (days <= 0) {
     return 'Dates can’t be changed on or after the arrival date. Under the resort policy the amount paid is non-refundable and non-convertible, so the new dates need a new booking.';
   }
-  if (days < DATE_CHANGE_NOTICE_DAYS) {
-    return `Dates can only be changed ${DATE_CHANGE_NOTICE_DAYS} days or more before arrival (this booking is ${days} day${days === 1 ? '' : 's'} away). To change the dates, cancel the booking under the cancellation policy and make a new booking.`;
+  if (days < notice) {
+    return `Dates can only be changed ${notice} days or more before arrival (this booking is ${days} day${days === 1 ? '' : 's'} away). To change the dates, cancel the booking under the cancellation policy and make a new booking.`;
   }
   return '';
 }

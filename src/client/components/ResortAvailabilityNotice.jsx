@@ -55,7 +55,7 @@ export default function ResortAvailabilityNotice() {
 
   if (error) {
     return (
-      <FloatingNote tone="red" icon="⚠" title="Booking is temporarily unavailable">
+      <FloatingNote tone="red" icon={<i className="ti ti-alert-triangle" aria-hidden="true" />} title="Booking is temporarily unavailable">
         Resort availability could not be checked. Please try again later.
       </FloatingNote>
     );
@@ -65,7 +65,7 @@ export default function ResortAvailabilityNotice() {
     const dismiss = () => { writeSession(DISMISSED_KEY, 'true'); setModalDismissed(true); };
     return (
       <>
-        <FloatingNote tone="red" icon="⛔" title="Reservations temporarily closed">
+        <FloatingNote tone="red" icon={<i className="ti ti-ban" aria-hidden="true" />} title="Reservations temporarily closed">
           {reason || 'You can continue browsing the resort website.'}
         </FloatingNote>
         {!modalDismissed && (

@@ -23,6 +23,7 @@ import { appAlert } from '../../components/ui/app-dialog';
 import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
+import { PH_MOBILE } from '../../lib/phoneNumber';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'This room is full for that many guests. Couple rooms take 2 guests; a Couple Room with Extra Bed takes a third adult. For bigger groups, choose a Family Room or Family Suite.';
 
@@ -355,6 +356,7 @@ export default function WalkIn() {
     const errors = {
       firstName: NAME_PATTERN.test(form.firstName.trim()) ? '' : 'Enter 2-35 valid letters.',
       lastName: NAME_PATTERN.test(form.lastName.trim()) ? '' : 'Enter 2-35 valid letters.',
+      phone: PH_MOBILE.test(form.phone) ? '' : 'Enter a valid 11-digit mobile number starting with 09 (e.g. 09171234567).',
     };
     setNameErrors(errors);
     if (Object.values(errors).some(Boolean)) return;
@@ -592,11 +594,11 @@ export default function WalkIn() {
                 <div style={{ flex: '1 1 480px', minWidth: 0 }}>
                   {/* Dates */}
                   <div style={{ ...card, marginBottom: 16 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Find a room 🏡</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 14 }}><i className="ti ti-home-search" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Find a room</div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 8 }}>How many guests?</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 14 }}>
                       <div>
-                        <label style={label}>Adults *</label>
+                        <label style={label}>Adults</label>
                         <input type="number" min="1" value={form.adults} onChange={e => changeGuests('adults', e.target.value)} style={inp} />
                       </div>
                       <div>
@@ -644,7 +646,7 @@ export default function WalkIn() {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, alignItems: 'end' }}>
                       <div>
                         <label style={{ ...label, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>{isTour ? 'Date *' : 'Check-in *'}</span>
+                          <span>{isTour ? 'Date' : 'Check-in'}</span>
                           {form.checkIn !== today && (
                             <button type="button" onClick={() => setForm(p => ({ ...p, checkIn: today, checkOut: p.checkOut && p.checkOut <= today ? '' : p.checkOut }))}
                               style={{ border: 0, background: 'transparent', color: ACCENT, fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0, textTransform: 'none', letterSpacing: 0 }}>Today</button>
@@ -659,14 +661,14 @@ export default function WalkIn() {
                       {!isTour && (
                         <>
                           <div>
-                            <label style={label}>Check-out *</label>
+                            <label style={label}>Check-out</label>
                             <input type="date" disabled={!form.checkIn}
                               min={form.checkIn ? addDays(form.checkIn, 1) : today} max={maxCheckOut}
                               value={form.checkOut} style={{ ...inp, opacity: form.checkIn ? 1 : 0.6 }}
                               onChange={e => setForm(p => ({ ...p, checkOut: e.target.value }))} />
                           </div>
                           <div>
-                            <label style={label}>Check-in time *</label>
+                            <label style={label}>Check-in time</label>
                             <select value={form.overnightTimeSlot} style={inp}
                               onChange={e => setForm(p => ({ ...p, overnightTimeSlot: e.target.value }))}>
                               {OVERNIGHT_TIME_SLOTS.map(slot => {
@@ -709,7 +711,7 @@ export default function WalkIn() {
                       {cottageOnly && (
                         <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
                           <div>
-                            <label style={label}>Cottage *</label>
+                            <label style={label}>Cottage</label>
                             <select value={form.cottageId} onChange={e => setForm(p => ({ ...p, cottageId: e.target.value }))} style={inp}>
                               <option value="">Choose a cottage</option>
                               {COTTAGE_OPTIONS.filter(option => option.id).map(option => (
@@ -737,7 +739,7 @@ export default function WalkIn() {
                   {/* Smart suggestion */}
                   {!cottageOnly && datesReady && guestTotal > 0 && (
                     <div style={{ ...card, marginBottom: 16, border: `1px solid ${ACCENT}` }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 4 }}>✨ Suggested for {guestTotal} guest{guestTotal === 1 ? '' : 's'}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 4 }}><i className="ti ti-sparkles" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Suggested for {guestTotal} guest{guestTotal === 1 ? '' : 's'}</div>
                       <div style={{ fontSize: 11, color: MUTED, marginBottom: 12 }}>Free rooms that fit the whole group, cheapest first for this {isTour ? bookingOption.label.toLowerCase() : 'stay'} (estimate).</div>
                       {roomSuggestions.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#b45309' }}>{groupTooLargeNote(availableRooms, details)}</div>
@@ -921,19 +923,20 @@ export default function WalkIn() {
 
                   <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div style={card}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>👤 Guest Details</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}><i className="ti ti-user" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Guest Details</div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                         {[
-                          { lbl: 'First Name *', key: 'firstName', ph: 'Juan', req: true },
-                          { lbl: 'Last Name *',  key: 'lastName',  ph: 'dela Cruz', req: true },
-                          { lbl: 'Phone *',      key: 'phone',     ph: '09XX XXX XXXX', req: true },
+                          { lbl: 'First Name', key: 'firstName', ph: 'Juan', req: true },
+                          { lbl: 'Last Name',  key: 'lastName',  ph: 'dela Cruz', req: true },
+                          { lbl: 'Mobile Number', key: 'phone', ph: '09XXXXXXXXX', req: true },
                           { lbl: 'Email',        key: 'email',     ph: 'juan@email.com', type: 'email' },
                           { lbl: 'Address',      key: 'address',   ph: 'City, Province' },
                         ].map(f => (
                           <div key={f.key}>
                             <label style={label}>{f.lbl}</label>
                             <input required={f.req} type={f.type || 'text'} value={form[f.key]}
-                              maxLength={['firstName', 'lastName'].includes(f.key) ? 35 : undefined}
+                              inputMode={f.key === 'phone' ? 'numeric' : undefined}
+                              maxLength={['firstName', 'lastName'].includes(f.key) ? 35 : f.key === 'phone' ? 11 : undefined}
                               onChange={e => {
                                 if (['firstName', 'lastName'].includes(f.key)) {
                                   const raw = e.target.value;
@@ -943,11 +946,21 @@ export default function WalkIn() {
                                     ...previous,
                                     [f.key]: !NAME_ALLOWED_CHARACTERS.test(raw) ? 'Numbers and special symbols are not allowed' : '',
                                   }));
+                                } else if (f.key === 'phone') {
+                                  // Philippine mobile number: digits only, 09XXXXXXXXX.
+                                  const digits = e.target.value.replace(/\D/g, '').slice(0, 11);
+                                  setForm(previous => ({ ...previous, phone: digits }));
+                                  setNameErrors(previous => ({ ...previous, phone: '' }));
                                 } else {
                                   setForm(previous => ({ ...previous, [f.key]: e.target.value }));
                                 }
                               }}
                               placeholder={f.ph} style={inp} />
+                            {f.key === 'phone' && (
+                              <div role={nameErrors.phone ? 'alert' : undefined} style={{ color: nameErrors.phone ? '#b91c1c' : MUTED, fontSize: 10, marginTop: 4 }}>
+                                {nameErrors.phone || '11-digit Philippine mobile number starting with 09.'}
+                              </div>
+                            )}
                             {['firstName', 'lastName'].includes(f.key) && (
                               <div role={nameErrors[f.key] ? 'alert' : undefined} style={{ color: nameErrors[f.key] ? '#b91c1c' : MUTED, fontSize: 10, marginTop: 4 }}>
                                 {nameErrors[f.key] || 'Use 2-35 letters, spaces, hyphens, or apostrophes.'}
@@ -956,7 +969,7 @@ export default function WalkIn() {
                           </div>
                         ))}
                         <div>
-                          <label style={label}>Preferred Contact Method *</label>
+                          <label style={label}>Preferred Contact Method</label>
                           <select required value={form.preferredContactMethod}
                             onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))} style={inp}>
                             <option value="">Select contact method</option>
@@ -967,7 +980,7 @@ export default function WalkIn() {
                     </div>
 
                     <div style={card}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>👥 Guests</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}><i className="ti ti-users" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Guests</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                           <label style={label}>Adults</label>
@@ -1016,7 +1029,7 @@ export default function WalkIn() {
 
                 {/* Booking summary */}
                 <aside style={{ ...card, flex: '0 0 300px', maxWidth: '100%', position: 'sticky', top: 20 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>📋 Booking Summary</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}><i className="ti ti-clipboard-list" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Booking Summary</div>
                   {roomPhoto(selectedRoom, 120)}
                   <div style={{ background: CARD2, borderRadius: 10, padding: 12, margin: '14px 0' }}>
                     <div style={{ fontWeight: 700, fontSize: 15, color: TEXT }}>{selectedRoom.roomNumber}</div>

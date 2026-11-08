@@ -36,7 +36,8 @@ import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx
 import { getReservationRemarks } from '../../lib/reservationRemarks';
 import { staffApi } from '../lib/staffApi';
 import { getLiveStayLabels, formatStayDateTime } from '../../lib/stayTimes';
-import { DATE_CHANGE_NOTICE_DAYS, getDaysBeforeArrival } from '../../lib/cancellationPolicy';
+import { getDaysBeforeArrival } from '../../lib/cancellationPolicy';
+import { useCancellationPolicy } from '../lib/useCancellationPolicy';
 import { printDailySheet } from '../lib/printDailySheet';
 import { askCheckInId } from '../components/CheckInIdDialog';
 import { money } from '../lib/money';
@@ -649,6 +650,8 @@ export default function Reservations() {
   const [toast, setToast] = useState(null);
   const [cancelDialog, setCancelDialog] = useState(null);
   const [statusBusyId, setStatusBusyId] = useState('');
+  // Days before arrival that guests can still rebook for free (saved policy).
+  const noticeDays = useCancellationPolicy().dateChangeDays;
   const [lateFeeDialog, setLateFeeDialog] = useState(null); // { reservation, amount, note }
   // "Give more time" (late check-out): { reservation, hours, amount, note, busy }
   const [extendDialog, setExtendDialog] = useState(null);
@@ -986,10 +989,10 @@ export default function Reservations() {
       if (answer === null) return;
       reason = answer;
     }
-    // Admins approving inside the 30-day window waive the rule, with a reason.
+    // Admins approving inside the rebooking window waive the rule, with a reason.
     if (action === 'approve-modification' && extra.waivePolicy) {
       const answer = await appPrompt('Saved in the Activity Log and shared with the guest.', {
-        title: 'Waive the 30-day date-change rule?',
+        title: `Waive the ${noticeDays}-day date-change rule?`,
         tone: 'info',
         required: true,
         confirmLabel: 'Waive and approve',
@@ -1937,13 +1940,13 @@ export default function Reservations() {
                             </button>
                           );
                         })()}
-                        {isAdmin && !request.closureMove && (getDaysBeforeArrival(r.checkIn) ?? 99) < DATE_CHANGE_NOTICE_DAYS && (
+                        {isAdmin && !request.closureMove && (getDaysBeforeArrival(r.checkIn) ?? 99) < noticeDays && (
                           <button disabled={decisionBusy === r.id} onClick={() => decideRequest(
                             'approve-modification', r,
                             { ...(requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {}), waivePolicy: true },
-                          )} title="Arrival is less than 30 days away. Approve anyway (typhoon, closure, emergency)."
+                          )} title={`Arrival is less than ${noticeDays} days away. Approve anyway (typhoon, closure, emergency).`}
                             style={{ background: 'transparent', color: dark ? '#86efac' : '#166534', border: `1px solid ${dark ? '#86efac' : '#166534'}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>
-                            Approve (waive 30-day rule)
+                            Approve (waive {noticeDays}-day rule)
                           </button>
                         )}
                         <button disabled={decisionBusy === r.id} onClick={() => decideRequest('reject-modification', r)}

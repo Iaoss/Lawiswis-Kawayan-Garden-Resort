@@ -50,7 +50,7 @@ describe('booking details rules (all portals)', () => {
 });
 
 describe('repricing a change of tour type or guests', () => {
-  const policy = { atLeast30Days: 0, lessThan30Days: 50, lessThan7Days: 100 };
+  const policy = { version: 2, moreThanDays: 7, earlyRate: 20, midFromDays: 4, midRate: 50, lateRate: 100, dateChangeDays: 7 };
   test('a cheaper change (overnight to day tour) keeps the full original charge', () => {
     const reservation = {
       roomId: 'r1', bookingType: 'overnight', checkIn: '2026-12-01', checkOut: '2026-12-02', nights: 1,

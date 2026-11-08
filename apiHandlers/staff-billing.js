@@ -53,6 +53,7 @@ import { CHECK_METHODS, DISCOUNT_KINDS, calculateSeniorPwdDiscount, getDiscountI
 import { createCorporateReservation } from './create-corporate-reservation';
 import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms';
 import { bookedGuestCount, splitArrivedGuests } from '../src/lib/guestArrivals';
+import { normalizePhMobile } from '../src/lib/phoneNumber';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -427,7 +428,8 @@ async function updateGuest({ staff, reservationIds, firstName, lastName, phone, 
   const first = cleanText(firstName, 35);
   const last = cleanText(lastName, 35);
   if (!NAME_PATTERN.test(first) || !NAME_PATTERN.test(last)) throw new BillingError(400, 'Enter a valid first and last name (2–35 letters each).');
-  const cleanPhone = cleanText(phone, 20).replace(/\D/g, '');
+  const cleanPhone = normalizePhMobile(phone);
+  if (!cleanPhone) throw new BillingError(400, 'Enter a valid 11-digit mobile number starting with 09.');
   if (cleanPhone && !/^09\d{9}$/.test(cleanPhone)) throw new BillingError(400, 'Enter an 11-digit mobile number starting with 09, or leave it empty.');
   const cleanEmail = cleanText(email, 120).toLowerCase();
   if (cleanEmail && !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(cleanEmail)) throw new BillingError(400, 'Enter a valid email address, or leave it empty.');
@@ -561,6 +563,7 @@ async function assertResortOpen(checkIn, checkOut) {
 }
 
 async function createCottageWalkIn({ staff, booking }) {
+  if (!normalizePhMobile(booking.phone)) throw new BillingError(400, 'Enter a valid 11-digit mobile number starting with 09.');
   const firstName = cleanText(booking.firstName, 35);
   const lastName = cleanText(booking.lastName, 35);
   const tourPeriod = booking.bookingOption === 'night' ? 'night' : booking.bookingOption === 'day' ? 'day' : '';
@@ -592,7 +595,7 @@ async function createCottageWalkIn({ staff, booking }) {
     lastName,
     guestName,
     email: cleanText(booking.email, 120),
-    phone: cleanText(booking.phone, 20),
+    phone: normalizePhMobile(booking.phone),
     address: cleanText(booking.address, 300),
     preferredContactMethod: booking.preferredContactMethod,
     notes: cleanText(booking.notes, 1000),
@@ -631,6 +634,7 @@ async function createCottageWalkIn({ staff, booking }) {
 }
 
 async function createWalkIn({ staff, booking = {} }) {
+  if (!normalizePhMobile(booking.phone)) throw new BillingError(400, 'Enter a valid 11-digit mobile number starting with 09.');
   const firstName = cleanText(booking.firstName, 35);
   const lastName = cleanText(booking.lastName, 35);
   if (!NAME_PATTERN.test(firstName) || !NAME_PATTERN.test(lastName)) {
@@ -719,7 +723,7 @@ async function createWalkIn({ staff, booking = {} }) {
       lastName,
       guestName,
       email: cleanText(booking.email, 120),
-      phone: cleanText(booking.phone, 20),
+      phone: normalizePhMobile(booking.phone),
       address: cleanText(booking.address, 300),
       preferredContactMethod: booking.preferredContactMethod,
       notes: cleanText(booking.notes, 1000),
@@ -777,7 +781,7 @@ async function createWalkIn({ staff, booking = {} }) {
       transaction.set(extra.ref, {
         firstName, lastName, guestName,
         email: cleanText(booking.email, 120),
-        phone: cleanText(booking.phone, 20),
+        phone: normalizePhMobile(booking.phone),
         address: cleanText(booking.address, 300),
         preferredContactMethod: booking.preferredContactMethod,
         notes: `Booked together with Room ${room.roomNumber || ''} (booking #${reservationRef.id.slice(0, 8).toUpperCase()}).`,
@@ -834,7 +838,7 @@ const ACTIVE_CHANGE_REQUESTS = ['requested', 'needs_review', 'awaiting_payment',
 // same rules as a new booking. With `preview: true` it only returns the new
 // price, so staff can see it before saving.
 async function editBooking({ staff, reservationId, changes = {}, preview = false, waivePolicy = false, waiveReason = '' }) {
-  // Admins may move dates inside the 30-day window (e.g. typhoon closure).
+  // Admins may move dates inside the rebooking window (e.g. typhoon closure).
   const waiving = waivePolicy === true;
   if (waiving && staff.role !== 'admin') throw new BillingError(403, 'Only an admin can waive the date-change rule.');
   if (waiving && !preview && cleanText(waiveReason, 300).length < 5) throw new BillingError(400, 'Write why the date-change rule is waived.');
@@ -877,10 +881,11 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
       adults: changes.adults ?? reservation.adults,
       children: changes.children ?? reservation.children ?? 0,
     }, { room, keepStartDate: reservation.checkIn });
-    // Policy: dates can't move less than 30 days before arrival or once the
+    // Policy: dates can't move inside the rebooking window or once the
     // stay has started (cancel and rebook instead). Extending or shortening
     // the check-out isn't a date move.
-    const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: details.checkIn });
+    const savedPolicy = (await adminDb.doc('settings/cancellationPolicy').get()).data();
+    const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: details.checkIn, policy: savedPolicy });
     if (dateBlock) throw new BillingError(409, dateBlock);
     if (await roomIsTaken(transaction, {
       roomId: newRoomId || reservation.roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut, ignoreId: reservationId,

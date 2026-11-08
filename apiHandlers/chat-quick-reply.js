@@ -38,6 +38,15 @@ async function loadStaffReplies() {
       && typeof item.answer === 'string' && item.answer.trim());
 }
 
+async function loadPolicy() {
+  try {
+    const snap = await adminDb.doc('settings/cancellationPolicy').get();
+    return snap.exists ? snap.data() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function loadRooms() {
   const snapshot = await adminDb.collection('rooms').get();
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -48,7 +57,8 @@ async function answerFor(replyId) {
   if (isAutoTopic(replyId)) {
     const topic = AUTO_TOPICS.find(item => item.id === replyId);
     const rooms = replyId === 'auto-room-rates' ? await loadRooms() : [];
-    return { question: topic.question, answer: buildAutoAnswer(replyId, { rooms }) };
+    const policy = replyId === 'auto-cancellation' ? await loadPolicy() : undefined;
+    return { question: topic.question, answer: buildAutoAnswer(replyId, { rooms, policy }) };
   }
   const reply = (await loadStaffReplies()).find(item => item.id === replyId);
   return reply ? { question: reply.question.trim(), answer: reply.answer.trim() } : null;
@@ -106,7 +116,8 @@ export default async function handler(req, res) {
       if (Number(data.autoReplyCount || 0) >= MAX_AUTO_REPLIES_PER_CHAT) return res.status(200).json({ answered: false });
       const topicId = detectTopic(text);
       const rooms = topicId === 'auto-room-rates' ? await loadRooms() : [];
-      const answer = topicId ? buildAutoAnswer(topicId, { rooms }) : '';
+      const policy = topicId === 'auto-cancellation' ? await loadPolicy() : undefined;
+      const answer = topicId ? buildAutoAnswer(topicId, { rooms, policy }) : '';
       const lastHandoff = data.lastHandoffAt?.toMillis ? data.lastHandoffAt.toMillis() : 0;
       if (!answer && Date.now() - lastHandoff < HANDOFF_EVERY_MS) return res.status(200).json({ answered: false });
       const reply = answer || HANDOFF_MESSAGE;

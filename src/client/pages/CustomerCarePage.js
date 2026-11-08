@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { DEFAULT_CANCELLATION_POLICY, describePolicyTiers, normalizeCancellationPolicy } from '../../lib/cancellationPolicy';
 import { Link, useLocation } from 'react-router-dom';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../../components/ui/accordion';
 import { BRASS, CREAM, FOREST, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
@@ -112,15 +113,14 @@ const pages = {
     lastUpdated: 'October 25, 2026',
     intro: 'Please review the following terms for cancellations, changes and refunds before booking.',
     items: [
-      ['1. 30-day notice', 'A cancellation penalty equivalent to 50% of the total accommodation charge will be imposed for booking cancellations made LESS than thirty (30) days prior to guest’s arrival.'],
-      ['2. 7-day notice', 'A cancellation penalty equivalent to FULL charge will be imposed for booking cancellations made LESS than seven (7) days prior to guest’s arrival or will be considered as NO SHOW.'],
+      ['POLICY_TIERS', ''],
       ['3. Cancellation on arrival date', 'Should cancellation be made upon arrival date; it will be considered as NO SHOW.'],
       ['4. Non-refundable payments', 'The amount paid is non-refundable or convertible in case of changes in booking upon arrival or during the stay.'],
       ['5. Force majeure', 'In cases of cancellation due to “force majeure”, the Hotel shall not be responsible for the cancellations or failures if such cancellations arise out of causes beyond its control. Such causes may include, but are not restricted to, acts of God or of public enemy, fires, floods, epidemics, quarantine restrictions, strikes, earthquakes, computer or communication failures, and severe weather.'],
       ['6. Changes to reservation', 'No refund will be made in reducing the number of rooms initially reserved, and on change of room type. For shortening of stay, a full room charge shall be observed.'],
       ['7. No show', 'No show is nonrefundable and non-re-bookable. We will keep you posted once there are additional changes.'],
-      ['8. Cancellations made 30 days or more before arrival', 'Cancellations made thirty (30) days or more before arrival carry no cancellation penalty. The amount paid is refunded in full.'],
-      ['9. Date changes', <>Booking dates can be changed only thirty (30) days or more before arrival, subject to availability, by contacting the resort by phone, email or chat. If the new booking costs more, the difference must be paid. Less than thirty (30) days before arrival, dates can no longer be moved: please contact us to cancel under this policy and make a new booking.</>],
+      ['8. Refund after the fee', 'Whatever you paid beyond the cancellation fee is refunded.'],
+      ['POLICY_REBOOK', ''],
       ['10. How to request a refund', <>To cancel or ask for a refund, <Link to="/contact-us" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>contact us</Link> by phone, email or chat with your booking reference. The resort reviews each request and confirms the refundable amount under this policy.</>],
       ['11. How refunds are paid', 'Approved refunds of online payments are returned to the original payment method (card or e-wallet) through our payment provider, PayMongo. The time it takes to appear in your account depends on your bank or e-wallet provider. Refunds of payments made at the resort are arranged directly with our front desk.'],
       ['12. Contact', 'Lawiswis Kawayan Garden Resort, 402 Brgy. Buguion, Calumpit, Bulacan, Philippines · Mobile: 0917 811 2332 · Email: lawiswiskawayan123@gmail.com'],
@@ -169,12 +169,45 @@ const pages = {
   },
 };
 
+// The saved cancellation policy (days and percentages), so this page always
+// matches what the system charges.
+function usePublicCancellationPolicy(active) {
+  const [policy, setPolicy] = useState(DEFAULT_CANCELLATION_POLICY);
+  useEffect(() => {
+    if (!active) return undefined;
+    let alive = true;
+    fetch('/api/cancellation-policy')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => { if (alive && data?.policy) setPolicy(normalizeCancellationPolicy(data.policy) || DEFAULT_CANCELLATION_POLICY); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [active]);
+  return policy;
+}
+
+function withPolicy(items, policy) {
+  const tiers = describePolicyTiers(policy);
+  return items.flatMap(([title, content]) => {
+    if (title === 'POLICY_TIERS') {
+      return [
+        ['1. Cancellation fees', `A cancellation fee applies to bookings that guests choose not to rebook at least ${policy.dateChangeDays} days before the date of booking, for any personal reason. Based on the total package price: ${tiers.map(t => `${t.rate}% for cancellations ${t.label.charAt(0).toLowerCase()}${t.label.slice(1)}`).join('; ')}.`],
+        ['2. No show', `Cancelling on the day of arrival, or not arriving, is a NO SHOW and carries the ${policy.lateRate}% charge.`],
+      ];
+    }
+    if (title === 'POLICY_REBOOK') {
+      return [['9. Rebooking (date changes)', `You can move your booking to new dates for free at least ${policy.dateChangeDays} days before arrival, subject to availability, by contacting the resort by phone, email or chat. If the new booking costs more, the difference must be paid. Less than ${policy.dateChangeDays} days before arrival, dates can no longer be moved: the booking can only be cancelled under the fees above.`]];
+    }
+    return [[title, content]];
+  });
+}
+
 export default function CustomerCarePage({ pageKey }) {
   const page = pages[pageKey];
   const location = useLocation();
+  const policy = usePublicCancellationPolicy(pageKey === 'cancellation-policy');
   if (!page) return null;
   const isFaqPage = pageKey === 'faqs';
-  const items = page.items;
+  const items = pageKey === 'cancellation-policy' ? withPolicy(page.items, policy) : page.items;
 
   return (
     <div style={{ background: PAPER, minHeight: '100vh' }}>

@@ -367,7 +367,7 @@ export default function NewsManagement() {
             <motion.div variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden' }}>
               <div style={{ background: CARD, borderRadius: 18, padding: '20px 22px', border: `1px solid ${BORDER}`, marginBottom: 16, boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : '0 2px 12px rgba(0,0,0,0.04)' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 16 }}>
-                  {editArticle ? '✏️ Edit Article' : '➕ Add New Article'}
+                  {editArticle ? <><i className="ti ti-pencil" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit Article</> : <><i className="ti ti-plus" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Add New Article</>}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div style={{ gridColumn: '1 / -1' }}>
@@ -618,7 +618,7 @@ export default function NewsManagement() {
                           </span>
                         </div>
                         <div style={{ fontSize: 10, color: CATEGORY_COLORS[article.category] || MUTED, fontWeight: 600, marginBottom: 4 }}>
-                          🏷 {article.category || '—'}
+                          <i className="ti ti-tag" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />{article.category || '—'}
                         </div>
                         <div style={{ fontSize: 11, color: MUTED, marginBottom: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical' }}>
                           {article.excerpt || ''}
@@ -667,7 +667,7 @@ export default function NewsManagement() {
                       {badgeLabel(activeArticle.status)}
                     </span>
                     <span style={{ fontSize: 11, color: CATEGORY_COLORS[activeArticle.category] || MUTED, fontWeight: 600 }}>
-                      🏷 {activeArticle.category}
+                      <i className="ti ti-tag" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />{activeArticle.category}
                     </span>
                   </div>
                 </div>
@@ -716,7 +716,7 @@ export default function NewsManagement() {
                     fontWeight: 600,
                   }}
                 >
-                  🗑 Delete Article
+                  <i className="ti ti-trash" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Delete Article
                 </motion.button>
               </motion.div>
             )}

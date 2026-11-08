@@ -363,14 +363,15 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     }
     const requestedCheckIn = request.requestedCheckIn;
     const requestedCheckOut = request.requestedCheckOut;
-    // Re-checked at approval time: the 30-day window may have passed since
-    // the guest asked.
-    // Admins can waive the 30-day rule (e.g. typhoon closure), with a reason.
+    // Re-checked at approval time: the rebooking window may have passed
+    // since the guest asked. Admins can waive the date-change rule (e.g.
+    // typhoon closure), with a reason.
     const closureMove = request.closureMove === true;
     const waiving = closureMove || (body.waivePolicy === true && staff.role === 'admin');
     if (!closureMove && body.waivePolicy === true && staff.role !== 'admin') throw new Error('Only an admin can waive the date-change rule.');
     if (waiving && !closureMove && String(reason || '').trim().length < 5) throw new Error('Write why the date-change rule is waived.');
-    const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: requestedCheckIn });
+    const savedPolicy = (await adminDb.doc('settings/cancellationPolicy').get()).data();
+    const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: requestedCheckIn, policy: savedPolicy });
     if (dateBlock) throw new Error(`${dateBlock} Reject this request, or (admins) waive the rule with a reason.`);
     const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
     // Closure move whose room is taken on the new dates: staff may move it to

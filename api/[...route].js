@@ -114,6 +114,18 @@ export default async function handler(req, res) {
     .split('/')
     .filter(Boolean)
     .pop();
+  // The cancellation policy (days and percentages) for the public pages.
+  if (endpoint === 'cancellation-policy') {
+    const { adminDb } = await import('../lib/firebaseAdmin');
+    const { DEFAULT_CANCELLATION_POLICY, normalizeCancellationPolicy } = await import('../src/lib/cancellationPolicy');
+    let policy = DEFAULT_CANCELLATION_POLICY;
+    try {
+      const snap = adminDb ? await adminDb.doc('settings/cancellationPolicy').get() : null;
+      policy = normalizeCancellationPolicy(snap?.exists ? snap.data() : null) || DEFAULT_CANCELLATION_POLICY;
+    } catch { /* fall back to the official policy */ }
+    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+    return res.status(200).json({ policy });
+  }
   // The server's clock, for the staff portal's floating clock.
   if (endpoint === 'server-time') {
     res.setHeader('Cache-Control', 'no-store');

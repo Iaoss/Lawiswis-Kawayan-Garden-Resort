@@ -78,7 +78,7 @@ export default function ResortClosurePanel({ reservations = [], colors, onChange
       </h3>
       <p style={{ margin: '6px 0 14px', fontSize: 12.5, color: c.SUBTEXT, lineHeight: 1.6 }}>
         Find every booking on the closed dates, email the guests their options (new dates or a full refund, with no fee), then refund or move each booking.
-        The cancellation fee and the 30-day date-change rule are waived only for these, and every step is saved in the Activity Log.
+        The cancellation fee and the date-change rule are waived only for these, and every step is saved in the Activity Log.
       </p>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <label style={{ display: 'grid', gap: 4, fontSize: 11, color: c.SUBTEXT, fontWeight: 600 }}>Closed from
@@ -135,7 +135,7 @@ export default function ResortClosurePanel({ reservations = [], colors, onChange
             </div>
           )}
           <p style={{ fontSize: 11, color: c.SUBTEXT, margin: '10px 0 0' }}>
-            "Move dates" opens the booking: choose Edit, then tick "Waive the 30-day rule". Refunds for online payments are given back as usual after cancelling.
+            "Move dates" opens the booking: choose Edit, then tick "Waive the date-change rule". Refunds for online payments are given back as usual after cancelling.
           </p>
         </div>
       )}

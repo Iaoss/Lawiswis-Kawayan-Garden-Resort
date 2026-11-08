@@ -273,7 +273,7 @@ export default function Email() {
         <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: '16px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {!selected ? (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: MUTED }}>
-              <div style={{ fontSize: '48px', marginBottom: '14px' }}>✉️</div>
+              <div style={{ fontSize: '48px', marginBottom: '14px' }}><i className="ti ti-mail" aria-hidden="true" /></div>
               <div style={{ fontSize: '14px', fontWeight: '600', color: C.text, marginBottom: '6px' }}>Select an email</div>
               <div style={{ fontSize: '12px' }}>Pick a message from the list to read it</div>
             </div>

@@ -7,7 +7,7 @@ import {
   getRoomBaseRate, getRoomCapacityPolicy, getSwimmingRate,
 } from './bookingPricing';
 import { RESERVATION_DEPOSIT_PERCENTAGE } from './paymentPolicy';
-import { DEFAULT_CANCELLATION_POLICY } from './cancellationPolicy';
+import { DEFAULT_CANCELLATION_POLICY, describePolicyTiers, normalizeCancellationPolicy } from './cancellationPolicy';
 
 const SITE = 'https://lawiswis-kawayan-garden-resort.vercel.app';
 const peso = value => `₱${Number(value || 0).toLocaleString('en-PH')}`;
@@ -74,7 +74,7 @@ function roomRateLines(rooms = []) {
 }
 
 // The answer text for a topic. `rooms` is the live room list (for rates).
-export function buildAutoAnswer(topicId, { rooms = [] } = {}) {
+export function buildAutoAnswer(topicId, { rooms = [], policy = DEFAULT_CANCELLATION_POLICY } = {}) {
   const day = getSwimmingRate('day');
   const night = getSwimmingRate('night');
   switch (topicId) {
@@ -117,13 +117,11 @@ export function buildAutoAnswer(topicId, { rooms = [] } = {}) {
         `To check a booking later, use your booking reference at ${SITE}/my-bookings.`,
       ].join('\n');
     case 'auto-cancellation': {
-      const rates = DEFAULT_CANCELLATION_POLICY;
+      const saved = normalizeCancellationPolicy(policy) || DEFAULT_CANCELLATION_POLICY;
       return [
-        'Cancellation policy:',
-        `• 30 days or more before arrival: ${rates.atLeast30Days}% fee (full refund of what you paid)`,
-        `• Less than 30 days before: ${rates.lessThan30Days}% of the total`,
-        `• Less than 7 days before, on arrival or no-show: ${rates.lessThan7Days}% of the total`,
-        `Date changes are allowed only 30 days or more before arrival. To cancel or ask for a refund, look up your booking at ${SITE}/my-bookings.`,
+        'Cancellation policy (based on the total package price):',
+        ...describePolicyTiers(saved).map(tier => `• ${tier.label}: ${tier.rate}% fee`),
+        `You can rebook (move your dates) for free at least ${saved.dateChangeDays} days before arrival. To cancel or rebook, contact us here or look up your booking at ${SITE}/my-bookings.`,
       ].join('\n');
     }
     case 'auto-location':

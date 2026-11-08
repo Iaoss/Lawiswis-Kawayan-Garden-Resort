@@ -358,9 +358,9 @@ export default function RoomManagement() {
                 <div onClick={e => e.stopPropagation()}
                   style={{ position: 'absolute', top: 32, right: 0, minWidth: 120, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 10, boxShadow: '0 10px 28px rgba(0,0,0,0.25)', padding: 4, zIndex: 5 }}>
                   <button type="button" onClick={() => { setMenuId(null); handleEdit(room); }}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '8px 10px', fontSize: 12, color: TEXT, cursor: 'pointer', fontFamily: 'inherit', borderRadius: 6 }}>✏️ Edit</button>
+                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '8px 10px', fontSize: 12, color: TEXT, cursor: 'pointer', fontFamily: 'inherit', borderRadius: 6 }}><i className="ti ti-pencil" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit</button>
                   <button type="button" onClick={() => { setMenuId(null); requestDelete(room.id); }}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '8px 10px', fontSize: 12, color: '#f87171', cursor: 'pointer', fontFamily: 'inherit', borderRadius: 6 }}>🗑 Delete</button>
+                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '8px 10px', fontSize: 12, color: '#f87171', cursor: 'pointer', fontFamily: 'inherit', borderRadius: 6 }}><i className="ti ti-trash" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Delete</button>
                 </div>
               )}
             </div>
@@ -438,7 +438,7 @@ export default function RoomManagement() {
           </div>
           <div style={{ padding: '0 16px 10px' }}>
           <div style={{ padding: '14px 4px 4px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ fontSize: 11, color: dark ? '#89D7B7' : '#428475', fontWeight: 500 }}>📂 {TYPE_CATEGORY_MAP[room.type] || '—'}</div>
+            <div style={{ fontSize: 11, color: dark ? '#89D7B7' : '#428475', fontWeight: 500 }}><i className="ti ti-folder" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />{TYPE_CATEGORY_MAP[room.type] || '—'}</div>
             <p style={{ fontSize: 11, color: SUBTEXT, lineHeight: 1.7, margin: 0 }}>{room.description || m.defaultDesc || 'No description yet.'}</p>
 
             {m.features?.length > 0 && (
@@ -489,7 +489,7 @@ export default function RoomManagement() {
                   </button>
                   <button type="button" onClick={() => requestDelete(room.id)}
                     style={{ padding: '7px 14px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: '#f87171' }}>
-                    🗑 Delete
+                    <i className="ti ti-trash" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Delete
                   </button>
                 </>
               )}
@@ -524,7 +524,7 @@ export default function RoomManagement() {
             <motion.div variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden' }}>
               <div style={{ background: CARD, borderRadius: 18, padding: '20px 22px', border: `1px solid ${BORDER}`, marginBottom: 16, boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : '0 2px 12px rgba(0,0,0,0.04)' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 16 }}>
-                  {editRoom ? '✏️ Edit Room' : '➕ Add New Room'}
+                  {editRoom ? <><i className="ti ti-pencil" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit Room</> : <><i className="ti ti-plus" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Add New Room</>}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   {[
@@ -642,7 +642,7 @@ export default function RoomManagement() {
             <motion.div variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden' }}>
               <div style={{ background: CARD, borderRadius: 18, padding: '20px 24px', border: `1px solid ${BORDER}`, marginBottom: 16 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>📥 Import Rooms from Excel</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}><i className="ti ti-file-import" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Import Rooms from Excel</div>
                   <button onClick={() => setShowImport(false)}
                     style={{ background: HOVER, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '5px 12px', fontSize: 11, color: SUBTEXT, cursor: 'pointer', fontFamily: 'inherit' }}>
                     ✕ Close

@@ -93,11 +93,11 @@ export default function SeniorPwdDiscountForm({ reservation, colors, inp, btn, o
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {form.kind === 'pwd' && (
                 <button type="button" onClick={() => openLookup(PWD_VERIFY_URL, formatPwdId(form.idNumber))} style={{ ...btn(), flex: '1 1 160px' }}>
-                  🔎 Search DOH PWD registry
+                  <i className="ti ti-search" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Search DOH PWD registry
                 </button>
               )}
               <button type="button" onClick={() => openLookup(PHILSYS_VERIFY_URL, '')} style={{ ...btn(), flex: '1 1 160px' }}>
-                🔎 Check national ID (PhilSys)
+                <i className="ti ti-id" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Check national ID (PhilSys)
               </button>
             </div>
             <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.5 }}>

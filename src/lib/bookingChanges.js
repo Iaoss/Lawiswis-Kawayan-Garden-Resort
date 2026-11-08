@@ -37,7 +37,7 @@ export function getBookingChanges(reservation = {}) {
       at: toMs(entry.editedAt),
       title: 'Edited by staff',
       by: entry.editedByName || '',
-      text: `${diff(entry.from, entry.to)}${entry.waiveReason ? ` · 30-day rule waived: ${entry.waiveReason}` : ''}`,
+      text: `${diff(entry.from, entry.to)}${entry.waiveReason ? ` · date-change rule waived: ${entry.waiveReason}` : ''}`,
     });
   });
   const request = r.modificationRequest;

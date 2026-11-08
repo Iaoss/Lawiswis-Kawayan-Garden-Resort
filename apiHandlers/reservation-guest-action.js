@@ -386,9 +386,9 @@ async function requestScheduleChange(reservation, body) {
     if (noticeError) return { error: noticeError };
   }
 
-  // Policy: dates can't move less than 30 days before arrival (cancel and
-  // rebook instead), and never on or after the arrival date.
-  const dateBlock = getDateChangeBlock({ originalCheckIn: data.checkIn, newCheckIn: checkIn });
+  // Policy: dates can only move the set number of days before arrival
+  // (cancel instead after that), and never on or after the arrival date.
+  const dateBlock = getDateChangeBlock({ originalCheckIn: data.checkIn, newCheckIn: checkIn, policy: await readCancellationPolicy() });
   if (dateBlock) return { error: dateBlock };
 
   // Tell the guest straight away if the room is already taken.
