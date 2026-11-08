@@ -129,7 +129,7 @@ export function buildAutoAnswer(topicId, { rooms = [] } = {}) {
       return [
         'We are at 402 Brgy. Buguion, Calumpit, Bulacan.',
         'From Manila: NLEX → Pulilan Exit → follow the signs to Calumpit.',
-        'Call or text 0917 811 2332 (daily, 7:00 AM – 10:00 PM) or email lawiswiskawayyyan123@gmail.com.',
+        'Call or text 0917 811 2332 (daily, 7:00 AM – 10:00 PM) or email lawiswiskawayan123@gmail.com.',
       ].join('\n');
     default:
       return '';

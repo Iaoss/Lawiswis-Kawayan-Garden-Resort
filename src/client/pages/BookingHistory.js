@@ -8,7 +8,7 @@ const ACCENT = '#4a7c59';
 
 // Guests can't cancel or move a booking online; they contact the resort.
 const RESORT_PHONE = '0917 811 2332';
-const RESORT_EMAIL = 'lawiswiskawayyyan123@gmail.com';
+const RESORT_EMAIL = 'lawiswiskawayan123@gmail.com';
 
 const formatMDY = value => {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));

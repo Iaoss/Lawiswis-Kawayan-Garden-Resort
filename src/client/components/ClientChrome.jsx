@@ -170,7 +170,7 @@ export default function ClientChrome({ children }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '18px' }}>
           <span><i className="ti ti-map-pin" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />402 Brgy. Buguion, Calumpit, Bulacan, PH</span>
           <span><i className="ti ti-phone" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />0917 811 2332</span>
-          <span><i className="ti ti-mail" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />lawiswiskawayyyan123@gmail.com</span>
+          <span><i className="ti ti-mail" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />lawiswiskawayan123@gmail.com</span>
         </div>
         <div style={{ display: 'flex', gap: '14px', fontSize: '13px', alignItems: 'center' }}>
           <a href="https://www.facebook.com/search/top?q=lawiswis%20kawayan%20garden%20resort" target="_blank" rel="noopener noreferrer" aria-label="Facebook" style={{ color: 'inherit' }}><i className="ti ti-brand-facebook" /></a>
