@@ -79,4 +79,12 @@ describe('check-in reminders', () => {
     expect(getUpcomingCheckIns([{ ...booking, status: 'checked-in' }], at('2026-11-04T05:58:00Z'))).toEqual([]);
     expect(getUpcomingCheckIns([{ ...booking, status: 'cancelled' }], at('2026-11-04T05:58:00Z'))).toEqual([]);
   });
+
+  test('rooms booked together give one reminder', () => {
+    const main = { ...booking, groupId: 'abc', roomNumber: 'Tadhana' };
+    const second = { ...booking, id: 'def', groupId: 'abc', roomNumber: 'pagdurusa' };
+    const items = getUpcomingCheckIns([second, main], at('2026-11-04T05:58:00Z'));
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ id: 'abc', ids: ['def', 'abc'], place: '2 rooms (pagdurusa, Tadhana)' });
+  });
 });

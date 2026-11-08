@@ -52,6 +52,7 @@ import { getRoomChangeError } from '../src/lib/roomChange';
 import { CHECK_METHODS, DISCOUNT_KINDS, calculateSeniorPwdDiscount, getDiscountIdError, normalizeIdNumber } from '../src/lib/seniorPwdDiscount';
 import { createCorporateReservation } from './create-corporate-reservation';
 import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms';
+import { bookedGuestCount, splitArrivedGuests } from '../src/lib/guestArrivals';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -593,6 +594,11 @@ async function createCottageWalkIn({ staff, booking }) {
     paymentStatus: 'pending',
     type: 'walk-in',
     status: 'confirmed',
+    // Part of the group is coming later (counted once checked in).
+    ...(() => {
+      const [here] = date === today ? splitArrivedGuests(booking.guestsHereNow, [Number(booking.adults) + Number(booking.children || 0)]) : [null];
+      return here === null ? {} : { arrivedGuests: here };
+    })(),
     createdBy: staff.uid,
     createdAt: FieldValue.serverTimestamp(),
   });
@@ -677,6 +683,11 @@ async function createWalkIn({ staff, booking = {} }) {
     const amountPaid = paymentStatus === 'paid' ? totalAmount : 0;
     const arrivesToday = details.checkIn === today;
     const checkedInNow = arrivesToday && amountPaid > 0 && amountPaid >= totalAmount;
+    // Guests here now, shared across the rooms; the rest arrive later.
+    const arrivedSplit = arrivesToday
+      ? splitArrivedGuests(booking.guestsHereNow, [bookedGuestCount(details), ...extras.map(extra => bookedGuestCount(extra.details))])
+      : [];
+    const arrivedField = i => (arrivedSplit[i] === null || arrivedSplit[i] === undefined ? {} : { arrivedGuests: arrivedSplit[i] });
 
     transaction.set(reservationRef, {
       firstName,
@@ -708,6 +719,7 @@ async function createWalkIn({ staff, booking = {} }) {
       paymentStatus,
       type: 'walk-in',
       ...groupFields,
+      ...arrivedField(0),
       ...(arrivesToday ? { arrivalTime: formatResortClock() } : {}),
       // Paid in full and arriving today: the guest goes straight in.
       status: checkedInNow ? 'checked-in' : 'confirmed',
@@ -729,7 +741,7 @@ async function createWalkIn({ staff, booking = {} }) {
     // The room is occupied once the guest is checked in (paid, arriving today).
     if (checkedInNow) transaction.update(roomRef, { status: 'occupied' });
     const seasonPeriods = extras.length ? await readSeasonPeriods() : [];
-    const linked = extras.map(extra => {
+    const linked = extras.map((extra, extraIndex) => {
       let extraPricing;
       try {
         extraPricing = priceBookingDetails(extra.room, extra.details, { cottageId: '', cottageFee: 0, seasonPeriods });
@@ -748,6 +760,7 @@ async function createWalkIn({ staff, booking = {} }) {
         roomNumber: extra.room.roomNumber || '',
         roomType: extra.room.type || '',
         ...extra.details,
+        ...arrivedField(extraIndex + 1),
         baseRate: extraPricing.baseRate,
         baseCapacity: extraPricing.baseCapacity,
         extraGuestCharge: extraPricing.extraGuestCharge,

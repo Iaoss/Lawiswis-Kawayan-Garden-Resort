@@ -11,10 +11,12 @@ import { ID_TYPES } from '../../lib/checkInId';
 
 let pushRequest = null;
 
-export function askCheckInId(guestName = '', { bookedGuests = 0 } = {}) {
+export function askCheckInId(guestName = '', { bookedGuests = 0, arrivedGuests = null } = {}) {
   return new Promise(resolve => {
     if (!pushRequest) { resolve({ skipped: true }); return; }
-    pushRequest({ guestName, bookedGuests: Number(bookedGuests) || 0, resolve });
+    const booked = Number(bookedGuests) || 0;
+    const start = Number.isInteger(arrivedGuests) && arrivedGuests >= 1 ? Math.min(arrivedGuests, booked) : booked;
+    pushRequest({ guestName, bookedGuests: booked, startArrived: start, resolve });
   });
 }
 
@@ -26,7 +28,7 @@ export function CheckInIdHost({ dark, accent }) {
   const [arrived, setArrived] = useState(0);
 
   useEffect(() => {
-    pushRequest = next => { setRequest(next); setType(ID_TYPES[0]); setLast4(''); setError(''); setArrived(next.bookedGuests); };
+    pushRequest = next => { setRequest(next); setType(ID_TYPES[0]); setLast4(''); setError(''); setArrived(next.startArrived); };
     return () => { pushRequest = null; };
   }, []);
 

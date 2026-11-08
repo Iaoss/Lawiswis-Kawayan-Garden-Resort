@@ -72,7 +72,8 @@ export default function CheckInReminder({ prefix = '/admin', soundAlerts = true 
   useEffect(() => {
     due.forEach(item => {
       const booking = bookings.find(b => b.id === item.id);
-      const ready = isReadyToCheckIn(booking);
+      const rooms = (item.ids || [item.id]).map(id => bookings.find(b => b.id === id)).filter(Boolean);
+      const ready = rooms.length > 0 ? rooms.every(isReadyToCheckIn) : isReadyToCheckIn(booking);
       const key = pushToast({
         id: `checkin-soon_${item.key}`,
         variant: 'warning',
@@ -84,7 +85,7 @@ export default function CheckInReminder({ prefix = '/admin', soundAlerts = true 
         primary: ready ? {
           label: 'Check in',
           run: async () => {
-            const done = await checkInGuest(booking || { id: item.id, guestName: item.guest });
+            const done = await checkInGuest(booking || { id: item.id, guestName: item.guest }, rooms);
             if (!done) throw new Error('Check-in cancelled.');
             pushToast({ variant: 'success', title: `${item.guest} is checked in`, description: `${item.place} is now occupied.` });
           },

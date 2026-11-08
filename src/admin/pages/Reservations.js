@@ -776,7 +776,7 @@ export default function Reservations() {
     let idCheck;
     let arrivedGuests;
     if (status === 'checked-in') {
-      const answer = await askCheckInId(reservation.guestName, { bookedGuests: bookedGuestCount(reservation) });
+      const answer = await askCheckInId(reservation.guestName, { bookedGuests: bookedGuestCount(reservation), arrivedGuests: arrivedGuestCount(reservation) });
       if (!answer) return;
       if (!answer.skipped) idCheck = { type: answer.type, last4: answer.last4 };
       arrivedGuests = answer.arrivedGuests;

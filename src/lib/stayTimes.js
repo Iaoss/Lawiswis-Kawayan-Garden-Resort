@@ -142,13 +142,25 @@ export function getUpcomingCheckIns(reservations = [], now = Date.now()) {
       && nowMs >= at - CHECKIN_REMINDER_LEAD_MINUTES * 60000
       && nowMs <= at + CHECKIN_REMINDER_KEEP_MINUTES * 60000)
     .sort((a, b) => a.at - b.at)
-    .map(({ r, at }) => {
+    // Rooms booked together (same groupId and time) give one reminder.
+    .reduce((groups, entry) => {
+      const groupKey = entry.r.groupId ? `${entry.r.groupId}_${entry.at}` : `${entry.r.id}_${entry.at}`;
+      const found = groups.find(g => g.groupKey === groupKey);
+      if (found) found.rooms.push(entry.r);
+      else groups.push({ groupKey, at: entry.at, rooms: [entry.r] });
+      return groups;
+    }, [])
+    .map(({ rooms, at }) => {
+      const r = rooms.find(room => room.id === room.groupId) || rooms[0];
       const minutes = Math.round((at - nowMs) / 60000);
+      const roomLabel = room => room.roomName || (room.roomNumber ? `Room ${room.roomNumber}` : 'Room');
       return {
         key: `${r.id}_${at}`,
         id: r.id,
+        ids: rooms.map(room => room.id),
         guest: r.guestName || r.contactPerson || r.companyName || 'Guest',
-        place: r.cottageOnly ? 'Cottage only' : r.type === 'corporate' ? (r.packageName || 'Group') : (r.roomName || (r.roomNumber ? `Room ${r.roomNumber}` : 'Room')),
+        place: r.cottageOnly ? 'Cottage only' : r.type === 'corporate' ? (r.packageName || 'Group')
+          : rooms.length > 1 ? `${rooms.length} rooms (${rooms.map(room => room.roomNumber || roomLabel(room)).join(', ')})` : roomLabel(r),
         timeText: formatClock(at),
         whenText: minutes > 0 ? `in ${minutes} min` : minutes === 0 ? 'now' : `${-minutes} min ago`,
       };

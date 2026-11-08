@@ -140,6 +140,8 @@ export default function WalkIn() {
     roomId: '', checkIn: '', checkOut: '',
     bookingOption: 'overnight', overnightTimeSlot: 'morning', cottageId: '', cottageOnly: false,
     adults: 1, children: 0,
+    // How many of the group are here now ('' = everyone); the rest come later.
+    guestsHereNow: '',
     paymentMethod: 'cash', paymentStatus: 'pending', notes: '',
   });
 
@@ -326,7 +328,7 @@ export default function WalkIn() {
       setUpsellOpen(true);
       return;
     }
-    setForm(previous => ({ ...previous, [key]: value }));
+    setForm(previous => ({ ...previous, [key]: value, guestsHereNow: '' }));
   };
 
   const switchToFamilySuite = () => {
@@ -601,7 +603,23 @@ export default function WalkIn() {
                         <label style={label}>Children (under 10)</label>
                         <input type="number" min="0" value={form.children} onChange={e => changeGuests('children', e.target.value)} style={inp} />
                       </div>
+                      {guestTotal > 1 && (!form.checkIn || form.checkIn === today) && (
+                        <div>
+                          <label style={label}>Here now</label>
+                          <select value={form.guestsHereNow} onChange={e => setForm(p => ({ ...p, guestsHereNow: e.target.value }))} style={inp}>
+                            <option value="">All {guestTotal}</option>
+                            {Array.from({ length: guestTotal - 1 }, (_, i) => guestTotal - 1 - i).map(n => (
+                              <option key={n} value={n}>{n} ({guestTotal - n} coming later)</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
+                    {form.guestsHereNow !== '' && guestTotal > 1 && (
+                      <div style={{ fontSize: 11, color: '#d97706', margin: '-6px 0 12px' }}>
+                        {guestTotal - Number(form.guestsHereNow)} guest{guestTotal - Number(form.guestsHereNow) === 1 ? '' : 's'} will arrive later. Record them in Reservations (Guests arrived) when they come.
+                      </div>
+                    )}
                     <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 8 }}>Booking type</div>
                     {/* Same-day bookings: a day or night tour checks in and out on one date. */}
                     <div role="radiogroup" aria-label="Booking type" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 8 }}>
@@ -837,9 +855,19 @@ export default function WalkIn() {
                     </div>
                   ) : (
                     <>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>{selectedRoom.roomNumber}</div>
-                      <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 12px' }}>{selectedRoom.type}{categoryOf(selectedRoom) ? ` · ${categoryOf(selectedRoom).category}` : ''}</div>
-                      {roomPhoto(selectedRoom, 150)}
+                      <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>{[selectedRoom, ...extraRooms].map(room => room.roomNumber).join(' + ')}</div>
+                      <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 12px' }}>{selectedRoom.type}{categoryOf(selectedRoom) ? ` · ${categoryOf(selectedRoom).category}` : ''}{extraRooms.length ? ` · ${extraRooms.length + 1} rooms` : ''}</div>
+                      {extraRooms.length ? (
+                        // Several rooms: a picture of each one.
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                          {[selectedRoom, ...extraRooms].map(room => (
+                            <div key={room.id}>
+                              {roomPhoto(room, 90)}
+                              <div style={{ fontSize: 10.5, color: TEXT, fontWeight: 600, marginTop: 3 }}>{room.roomNumber}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : roomPhoto(selectedRoom, 150)}
                       <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, margin: '14px 0 6px' }}>Overview</div>
                       <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.6 }}>
                         {selectedRoom.description || 'A comfortable room at Lawiswis Kawayan Garden Resort.'}

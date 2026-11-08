@@ -15,6 +15,12 @@ import QRCode from 'qrcode';
 import PhoneDisplayToggle from '../components/PhoneDisplayToggle';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 
+// Rooms booked together (one reservation, several rooms) share one bill.
+const billKeyOf = r => (Array.isArray(r.groupReservationIds) && r.groupReservationIds.length > 1 ? (r.groupId || r.groupReservationIds[0]) : r.id);
+const roomsOfBill = (r, list) => (r ? list.filter(item => billKeyOf(item) === billKeyOf(r)).map(item => (item.id === r.id ? r : item)) : []);
+const owedOf = r => Number(r.totalAmount || 0) + Number(r.extraCharges || 0) - Number(r.amountPaid || 0);
+const billOwed = rooms => rooms.reduce((sum, r) => sum + owedOf(r), 0);
+
 export default function Billing() {
   const { settings, formatCurrency, formatDate } = useSettings();
   const dark = settings?.darkMode;
@@ -87,10 +93,12 @@ export default function Billing() {
     if (preselectDone || reservations.length === 0) return;
     const wanted = new URLSearchParams(window.location.search).get('booking');
     setPreselectDone(true);
-    const match = wanted && reservations.find(r => r.id === wanted);
+    const found = wanted && reservations.find(r => r.id === wanted);
+    // Open the bill on its first room, so linked rooms show as one bill.
+    const match = found && (reservations.find(r => r.id === billKeyOf(found)) || found);
     if (match) {
       setSelected(match);
-      const owed = Number(match.totalAmount || 0) + Number(match.extraCharges || 0) - Number(match.amountPaid || 0);
+      const owed = billOwed(roomsOfBill(match, reservations));
       if (owed > 0) setPaymentAmount(String(Math.round(owed * 100) / 100));
     }
   }, [reservations, preselectDone]);
@@ -109,8 +117,11 @@ export default function Billing() {
     return unsub;
   }, [selected?.id]);
 
-  const totalPaid = (r) => Number(r.amountPaid || 0);
-  const totalBalance = (r) => Number(r.totalAmount || 0) + Number(r.extraCharges || 0) - totalPaid(r);
+  // Totals cover every room on the bill.
+  const billRooms = roomsOfBill(selected, reservations);
+  const isGroupBill = billRooms.length > 1;
+  const totalPaid = (r) => roomsOfBill(r, reservations).reduce((sum, room) => sum + Number(room.amountPaid || 0), 0);
+  const totalBalance = (r) => billOwed(roomsOfBill(r, reservations));
 
   const selectReservation = (r) => {
     setSelected(r);
@@ -165,10 +176,10 @@ export default function Billing() {
     setBillingBusy(true);
     try {
       const result = await staffApi('staff-billing', {
-        action: 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: deskMethod,
+        action: isGroupBill ? 'record-group-payment' : 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: deskMethod,
         officialReceiptNo: paperReceiptNo.trim(),
       });
-      setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus, ...(result.autoCheckedIn ? { status: 'checked-in' } : result.autoConfirmed ? { status: 'confirmed' } : {}) }));
+      if (!isGroupBill) setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus, ...(result.autoCheckedIn ? { status: 'checked-in' } : result.autoConfirmed ? { status: 'confirmed' } : {}) }));
       fetchReservations();
       setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${result.autoCheckedIn ? ' Fully paid: the guest is now checked in.' : result.autoConfirmed ? ' The booking is now confirmed.' : ''}${receiptNotice(result)}`);
       setPaymentAmount('');
@@ -190,6 +201,7 @@ export default function Billing() {
       const { checkoutUrl, checkoutSessionId: sessionId } = await createPayMongoCheckout({
         reservationId: selected.id,
         amount: Number(paymentAmount),
+        ...(isGroupBill ? { paymentType: 'group' } : {}),
       });
       setPayLink(checkoutUrl);
       setCheckoutSessionId(sessionId || '');
@@ -272,15 +284,19 @@ export default function Billing() {
   const handleCheckout = async () => {
     if (totalBalance(selected) > 0) return appAlert('Collect the remaining balance before checking this guest out.', { title: 'Balance still due', tone: 'warning' });
     // The server re-checks the balance, records late check-outs, and sets the room to cleaning.
+    // Rooms booked together check out together.
     try {
       const token = await auth.currentUser.getIdToken();
-      const response = await fetch('/api/reservation-status', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ action: 'set-status', reservationId: selected.id, status: 'checked-out' }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'The guest could not be checked out.');
+      const leaving = isGroupBill ? billRooms.filter(room => room.status === 'checked-in') : [selected];
+      for (const room of leaving) {
+        const response = await fetch('/api/reservation-status', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ action: 'set-status', reservationId: room.id, status: 'checked-out' }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(`${isGroupBill ? `Room ${room.roomNumber || ''}: ` : ''}${result.error || 'The guest could not be checked out.'}`);
+      }
     } catch (checkoutError) {
       appAlert(checkoutError.message, { title: 'Couldn’t check out', tone: 'danger' });
       return;
@@ -295,10 +311,10 @@ export default function Billing() {
     } catch (thankYouError) {
       console.warn('Thank-you email skipped:', thankYouError.message);
     }
-    const roomLabel = selected.roomName || 'The room';
+    const roomLabel = isGroupBill ? `Rooms ${billRooms.map(room => room.roomNumber).filter(Boolean).join(', ')} are` : `${selected.roomName || 'The room'} is`;
     setSelected(null);
     fetchReservations();
-    setSuccess(`Guest has checked out. ${roomLabel} is now under cleaning/maintenance.`);
+    setSuccess(`Guest has checked out. ${roomLabel} now under cleaning/maintenance.`);
   };
 
   const inp = {
@@ -318,9 +334,20 @@ export default function Billing() {
 
   // Search by guest, room, phone, email or booking reference.
   const searchTerm = search.trim().toLowerCase().replace(/^#/, '');
-  const shownReservations = sortRecords(reservations.filter(r => !searchTerm || [
+  const matches = r => !searchTerm || [
     r.guestName, r.roomNumber && `room ${r.roomNumber}`, r.roomNumber, r.phone, r.email, r.id,
-  ].some(value => String(value || '').toLowerCase().includes(searchTerm))), sortBy, sortDir);
+  ].some(value => String(value || '').toLowerCase().includes(searchTerm));
+  // One entry per bill: the first room stands for the rooms booked with it.
+  const billMains = reservations.filter(r => {
+    const key = billKeyOf(r);
+    return (reservations.find(other => other.id === key) || reservations.find(other => billKeyOf(other) === key)) === r;
+  });
+  const shownReservations = sortRecords(billMains.filter(r => roomsOfBill(r, reservations).some(matches)), sortBy, sortDir);
+  const roomsText = r => {
+    const rooms = roomsOfBill(r, reservations);
+    if (r.cottageOnly) return 'Cottage';
+    return rooms.length > 1 ? `Rooms ${rooms.map(room => room.roomNumber || '—').join(', ')}` : `Room ${r.roomNumber || '—'}`;
+  };
 
   const selectedService = getService(service.serviceId);
   const servicePrice = selected ? priceService(service.serviceId, { ...service, roomGuest: isRoomGuest(selected) }) : null;
@@ -375,6 +402,7 @@ export default function Billing() {
   });
 
   const balance = selected ? totalBalance(selected) : 0;
+  const billTotal = billRooms.reduce((sum, room) => sum + Number(room.totalAmount || 0) + Number(room.extraCharges || 0), 0);
   const lineItems = selected && Array.isArray(selected.extraChargeItems) ? selected.extraChargeItems : [];
   const otherExtras = selected ? Math.max(0, Number(selected.extraCharges || 0) - lineItems.reduce((s, i) => s + Number(i.amount || 0), 0)) : 0;
 
@@ -422,7 +450,7 @@ export default function Billing() {
                       {statusPill(r.status)}
                     </div>
                     <div style={{ fontSize: 11, color: MUTED, margin: '3px 0 6px' }}>
-                      {r.cottageOnly ? 'Cottage' : `Room ${r.roomNumber || '—'}`} · {formatDate(r.checkIn)}{r.checkOut && r.checkOut !== r.checkIn ? ` → ${formatDate(r.checkOut)}` : ''}
+                      {roomsText(r)} · {formatDate(r.checkIn)}{r.checkOut && r.checkOut !== r.checkIn ? ` → ${formatDate(r.checkOut)}` : ''}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                       <span style={{ color: SUBTEXT }}>{owes > 0 ? 'Still owes' : 'Paid in full'}</span>
@@ -451,7 +479,7 @@ export default function Billing() {
                       {statusPill(selected.status)}
                     </div>
                     <div style={{ fontSize: 12.5, color: SUBTEXT, marginTop: 4 }}>
-                      {selected.cottageOnly ? 'Cottage-only tour' : `Room ${selected.roomNumber || '—'}${selected.roomType ? ` · ${selected.roomType}` : ''}`}
+                      {selected.cottageOnly ? 'Cottage-only tour' : isGroupBill ? `${billRooms.length} rooms booked together: ${billRooms.map(room => room.roomNumber || '—').join(', ')}` : `Room ${selected.roomNumber || '—'}${selected.roomType ? ` · ${selected.roomType}` : ''}`}
                       {' · '}{formatDate(selected.checkIn)}{selected.checkInTime ? ` ${selected.checkInTime}` : ''}
                       {selected.checkOut && selected.checkOut !== selected.checkIn ? ` → ${formatDate(selected.checkOut)}` : ''}{selected.checkOutTime ? ` (out ${selected.checkOutTime})` : ''}
                     </div>
@@ -468,18 +496,32 @@ export default function Billing() {
                   <div style={card}>
                     <div style={{ fontWeight: 700, fontSize: 14, color: TEXT, marginBottom: 12 }}><i className="ti ti-file-invoice" aria-hidden="true" /> Bill</div>
                     <div style={{ display: 'grid', gap: 8 }}>
-                      <Receipt label={selected.cottageOnly ? 'Entrance + cottage' : 'Booking (room, guests, cottage)'} value={formatCurrency(selected.totalAmount)} />
-                      {lineItems.map(item => <Receipt key={item.id || item.description} label={item.description} value={formatCurrency(item.amount)} />)}
-                      {otherExtras > 0.004 && <Receipt label="Other charges" value={formatCurrency(otherExtras)} />}
+                      {isGroupBill ? billRooms.map(room => {
+                        const items = Array.isArray(room.extraChargeItems) ? room.extraChargeItems : [];
+                        const other = Math.max(0, Number(room.extraCharges || 0) - items.reduce((sum, i) => sum + Number(i.amount || 0), 0));
+                        return (
+                          <React.Fragment key={room.id}>
+                            <Receipt label={`Room ${room.roomNumber || '—'}${room.id === selected.id ? ' (room, guests, cottage)' : ''}`} value={formatCurrency(room.totalAmount)} />
+                            {items.map(item => <Receipt key={item.id || item.description} label={`  ${item.description}`} value={formatCurrency(item.amount)} />)}
+                            {other > 0.004 && <Receipt label="  Other charges" value={formatCurrency(other)} />}
+                          </React.Fragment>
+                        );
+                      }) : (
+                        <>
+                          <Receipt label={selected.cottageOnly ? 'Entrance + cottage' : 'Booking (room, guests, cottage)'} value={formatCurrency(selected.totalAmount)} />
+                          {lineItems.map(item => <Receipt key={item.id || item.description} label={item.description} value={formatCurrency(item.amount)} />)}
+                          {otherExtras > 0.004 && <Receipt label="Other charges" value={formatCurrency(otherExtras)} />}
+                        </>
+                      )}
                       <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 8 }}>
-                        <Receipt label="Total" value={formatCurrency(Number(selected.totalAmount || 0) + Number(selected.extraCharges || 0))} strong />
+                        <Receipt label="Total" value={formatCurrency(billTotal)} strong />
                       </div>
                       <Receipt label="Paid so far" value={`− ${formatCurrency(totalPaid(selected))}`} />
                       <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 8 }}>
                         <Receipt label={balance > 0 ? 'Balance due' : 'Balance'} value={formatCurrency(Math.max(0, balance))} strong />
                       </div>
                       {(() => {
-                        const vat = getVatBreakdown(Number(selected.totalAmount || 0) + Number(selected.extraCharges || 0));
+                        const vat = getVatBreakdown(billTotal);
                         return <div style={{ fontSize: 11, color: MUTED }}>Prices include 12% VAT ({formatCurrency(vat.vat)}); net of VAT {formatCurrency(vat.net)}.</div>;
                       })()}
                     </div>
@@ -487,7 +529,7 @@ export default function Billing() {
 
                   {/* 1 · Add to the bill */}
                   <div style={card}>
-                    {stepTitle(1, 'Add to the bill', 'Anything the guest used during the stay.')}
+                    {stepTitle(1, 'Add to the bill', isGroupBill ? `Anything the guest used during the stay. Added to Room ${selected.roomNumber || ''}'s line.` : 'Anything the guest used during the stay.')}
                     <div style={{ display: 'grid', gap: 8 }}>
                       <label style={{ fontSize: 11, fontWeight: 600, color: SUBTEXT }}>Extra charge</label>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -607,7 +649,7 @@ export default function Billing() {
                 {/* 3 · Check out */}
                 <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                   <div>
-                    {stepTitle(3, 'Check out', selected.status === 'checked-in'
+                    {stepTitle(3, isGroupBill ? 'Check out all rooms' : 'Check out', selected.status === 'checked-in'
                       ? (balance > 0 ? 'Collect the balance first.' : `When the guest returns the key and leaves${selected.checkOutTime ? ` (check-out time ${selected.checkOutTime})` : ''}.`)
                       : 'Only for guests who are checked in.')}
                   </div>

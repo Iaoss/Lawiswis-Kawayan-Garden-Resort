@@ -1,4 +1,4 @@
-import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive, normalizeArrivedGuests } from './guestArrivals';
+import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive, normalizeArrivedGuests, splitArrivedGuests } from './guestArrivals';
 import { buildBookingNotifications } from '../admin/lib/bookingNotifications';
 
 describe('guest arrivals', () => {
@@ -25,8 +25,16 @@ describe('guest arrivals', () => {
     expect(normalizeArrivedGuests(2, 4)).toBe(2);
     expect(normalizeArrivedGuests(9, 4)).toBe(4);
     expect(normalizeArrivedGuests(0, 4)).toBeNull();
+    expect(normalizeArrivedGuests(0, 4, { allowZero: true })).toBe(0);
+    expect(normalizeArrivedGuests(undefined, 4, { allowZero: true })).toBeNull();
     expect(normalizeArrivedGuests('x', 4)).toBeNull();
     expect(normalizeArrivedGuests(1.5, 4)).toBeNull();
+  });
+
+  test('walk-in: guests here now fill the rooms in order', () => {
+    expect(splitArrivedGuests(3, [4, 2])).toEqual([3, 0]);
+    expect(splitArrivedGuests(5, [4, 2])).toEqual([4, 1]);
+    expect(splitArrivedGuests('', [4, 2])).toEqual([null, null]);
   });
 
   test('bell shows groups with guests still to arrive', () => {

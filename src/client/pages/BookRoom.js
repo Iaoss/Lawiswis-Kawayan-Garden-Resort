@@ -1573,6 +1573,19 @@ export default function BookRoom() {
 
               {form.paymentMethod === 'online' && (
                 <>
+                  {/* Senior / PWD discount is applied at the resort after staff see the ID,
+                      so these guests pay the deposit online and the rest on arrival. */}
+                  <div role="note" style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a', borderRadius: '10px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.6, marginBottom: '12px' }}>
+                    <i className="ti ti-discount" aria-hidden="true" style={{ fontSize: '17px', marginTop: '1px' }} />
+                    <span>
+                      <strong>Senior citizen or PWD?</strong> Choose the <strong>{depositPercentage}% deposit</strong> now and pay the rest at the resort.
+                      {' '}Show your Senior citizen or PWD ID at the front desk and the 20% discount is taken off your remaining balance.
+                      {paymentChoice !== 'deposit' && (
+                        <> <button type="button" onClick={() => setSelectedPaymentChoice('deposit')}
+                          style={{ border: 0, background: 'none', padding: 0, color: '#1d4ed8', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}>Pay the {depositPercentage}% deposit instead</button></>
+                      )}
+                    </span>
+                  </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', marginBottom: '12px' }}>
                     {[
                       { value: 'full', label: 'Pay in full', amount: grandTotal },
@@ -1767,6 +1780,19 @@ export default function BookRoom() {
         {/* Room Summary */}
         <aside>
           <div className="sticky-summary" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', position: 'sticky', top: '24px' }}>
+            {extraRoomDocs.length > 0 ? (
+              // Several rooms: a picture of each one, with its name.
+              <div style={{ height: '180px', display: 'grid', gridTemplateColumns: `repeat(${Math.min(extraRoomDocs.length + 1, 2)}, 1fr)`, gap: '2px', background: DARK }}>
+                {[room, ...extraRoomDocs].slice(0, 4).map((item, i, list) => (
+                  <div key={item.id || item.roomNumber} style={{ position: 'relative', overflow: 'hidden', gridColumn: list.length === 3 && i === 0 ? '1 / -1' : undefined }}>
+                    <img src={resolveRoomImage(item) || FALLBACK_ROOM_IMAGES[i % FALLBACK_ROOM_IMAGES.length]} alt={`Room ${item.roomNumber}`}
+                      onError={event => { event.currentTarget.src = FALLBACK_ROOM_IMAGES[i % FALLBACK_ROOM_IMAGES.length]; }}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    <span style={{ position: 'absolute', left: 6, bottom: 6, background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: '10px', fontWeight: 600, borderRadius: '6px', padding: '2px 7px' }}>Room {item.roomNumber}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
             <div style={{ height: '180px', background: `linear-gradient(135deg, ${DARK}, #2d5a2d)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <img
                 src={resolveRoomImage(room) || FALLBACK_ROOM_IMAGES[0]}
@@ -1779,9 +1805,12 @@ export default function BookRoom() {
               />
               <span style={{ display: 'none' }}><IconBed size={56} /></span>
             </div>
+            )}
             <div style={{ padding: '20px' }}>
               <div style={{ fontSize: '11px', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>{room.type}</div>
-              <div style={{ fontWeight: '700', fontSize: '18px', color: '#111', marginBottom: '8px' }}>Room {room.roomNumber}</div>
+              <div style={{ fontWeight: '700', fontSize: '18px', color: '#111', marginBottom: '8px' }}>
+                {extraRoomDocs.length ? [room, ...extraRoomDocs].map(item => `Room ${item.roomNumber}`).join(' + ') : `Room ${room.roomNumber}`}
+              </div>
               {(() => {
                 const details = decorateRoom(room, 0);
                 return (

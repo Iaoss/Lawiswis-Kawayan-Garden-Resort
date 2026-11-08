@@ -27,9 +27,25 @@ export function guestsStillToArrive(reservation = {}) {
   return Math.max(0, bookedGuestCount(reservation) - arrivedGuestCount(reservation));
 }
 
-// A valid arrived count (1 up to the booked number), or null.
-export function normalizeArrivedGuests(value, booked) {
+// Splits the guests who are here across rooms booked together, filling each
+// room's booked number in order. `here` empty/invalid means everyone is here
+// (returns nulls).
+export function splitArrivedGuests(here, bookedCounts = []) {
+  const total = Number(here);
+  if (here === '' || here === null || here === undefined || !Number.isInteger(total) || total < 0) return bookedCounts.map(() => null);
+  let left = total;
+  return bookedCounts.map(booked => {
+    const n = Math.max(0, Math.min(left, booked));
+    left -= n;
+    return n;
+  });
+}
+
+// A valid arrived count (up to the booked number), or null. 0 is allowed
+// only when `allowZero` (one room of a group whose guests are all coming later).
+export function normalizeArrivedGuests(value, booked, { allowZero = false } = {}) {
+  if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
-  if (!Number.isInteger(n) || n < 1) return null;
+  if (!Number.isInteger(n) || n < (allowZero ? 0 : 1)) return null;
   return booked > 0 ? Math.min(n, booked) : n;
 }

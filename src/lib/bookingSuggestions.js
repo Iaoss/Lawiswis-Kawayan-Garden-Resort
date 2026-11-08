@@ -3,28 +3,27 @@
 import { COTTAGE_OPTIONS, getGuestCountViolation, getRoomMaximumGuests, stayRangesOverlap } from './bookingPricing';
 import { priceBookingDetails } from './bookingDetails';
 
-// Rooms that can hold the whole group, cheapest first for this booking
-// (room rate plus any extra-guest charges), with a short reason each.
+// Rooms that can hold the whole group, picked the same way as the website's
+// "Recommended for your group" (see pickRecommendedRooms): up to 2 rooms made
+// for exactly this many guests (a couple room with an extra bed counts for
+// 3), then 1 room with a little more space. Each has an estimated total for
+// this booking and a short reason.
 export function suggestRooms(rooms, details, limit = 3) {
   if (!details || !Array.isArray(rooms)) return [];
   const guests = details.adults + details.children;
-  return rooms
+  const entries = rooms
     .filter(room => !getGuestCountViolation(room, details.adults, details.children))
     .map(room => {
       let total = null;
       try { total = priceBookingDetails(room, details).subtotalAmount; } catch { total = null; }
       const maxGuests = getRoomMaximumGuests(room);
-      const spare = maxGuests ? maxGuests - guests : null;
-      return {
-        room,
-        total,
-        maxGuests,
-        reason: spare === 0 ? `Exact fit for ${guests}` : spare ? `Fits ${guests}, room for ${spare} more` : `Fits ${guests}`,
-      };
+      return { room, total, price: total, maxGuests, spare: maxGuests ? maxGuests - guests : 99 };
     })
-    .filter(item => item.total !== null)
-    .sort((a, b) => a.total - b.total || (a.maxGuests || 99) - (b.maxGuests || 99))
-    .slice(0, limit);
+    .filter(item => item.total !== null);
+  return pickRecommendedRooms(entries).recommended.slice(0, limit).map(item => ({
+    ...item,
+    reason: item.spare === 0 ? `Exact fit for ${guests}` : item.spare < 99 ? `Fits ${guests}, room for +${item.spare} more` : `Fits ${guests}`,
+  }));
 }
 
 // The smallest, cheapest cottage that seats the group. Groups over 20 are
@@ -89,12 +88,13 @@ export function pickRecommendedRooms(entries = []) {
     .sort((a, b) => a.spare - b.spare || byPrice(a, b)).slice(0, 1)
     .map(entry => ({ ...entry, badge: `Room for +${entry.spare}` }));
   const picks = [...exact, ...roomier];
-  const chosen = new Set(picks.map(entry => entry.room?.id));
-  entries.filter(entry => !chosen.has(entry.room?.id)).sort(byPrice)
+  const keyOf = entry => entry.room?.id || entry.room?.roomNumber;
+  const chosen = new Set(picks.map(keyOf));
+  entries.filter(entry => !chosen.has(keyOf(entry))).sort(byPrice)
     .slice(0, Math.max(0, 3 - picks.length))
-    .forEach(entry => { picks.push({ ...entry, badge: 'Recommended' }); chosen.add(entry.room?.id); });
+    .forEach(entry => { picks.push({ ...entry, badge: 'Recommended' }); chosen.add(keyOf(entry)); });
   return {
     recommended: picks,
-    others: entries.filter(entry => !chosen.has(entry.room?.id)).sort(byPrice),
+    others: entries.filter(entry => !chosen.has(keyOf(entry))).sort(byPrice),
   };
 }

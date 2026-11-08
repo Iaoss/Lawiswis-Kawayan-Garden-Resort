@@ -128,8 +128,8 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   const id = status === 'checked-in' ? normalizeIdCheck(idCheck) : null;
   if (id) updates.checkInId = { ...id, checkedBy: staff.name || staff.email || '', checkedByUid: staff.uid };
   // How many guests arrived at check-in (the rest can be recorded later).
-  const arrived = status === 'checked-in' ? normalizeArrivedGuests(arrivedGuests, bookedGuestCount(reservation)) : null;
-  if (arrived) {
+  const arrived = status === 'checked-in' ? normalizeArrivedGuests(arrivedGuests, bookedGuestCount(reservation), { allowZero: true }) : null;
+  if (arrived !== null) {
     updates.arrivedGuests = arrived;
     updates.guestArrivals = FieldValue.arrayUnion({
       id: crypto.randomUUID(), added: arrived, total: arrived, at: new Date().toISOString(), byName: staff.name || staff.email || '',
