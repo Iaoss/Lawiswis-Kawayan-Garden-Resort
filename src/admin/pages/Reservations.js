@@ -159,6 +159,20 @@ const tone = (t, name) => {
   return map[name] || map.gray;
 };
 
+// Rooms booked together (same groupId) count as one booking.
+const bookingKey = r => r.groupId || r.id;
+function byBooking(list) {
+  const map = new Map();
+  list.forEach(r => {
+    const key = bookingKey(r);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(r);
+  });
+  return [...map.values()].map(rooms => ({ r: rooms.find(x => x.id === x.groupId) || rooms[0], rooms }));
+}
+const roomsLabel = rooms => (rooms.length > 1 ? `Rooms ${rooms.map(x => x.roomNumber || '—').join(', ')}` : `Room ${rooms[0]?.roomNumber || '—'}`);
+const countBookings = list => new Set(list.map(bookingKey)).size;
+
 function Tag({ t, c = 'gray', title, children }) {
   const [bg, color] = tone(t, c);
   return <span title={title} style={{ background: bg, color, borderRadius: 6, padding: '2px 8px', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap' }}>{children}</span>;
@@ -177,6 +191,8 @@ function ReservationBoard({
   const [type, setType] = useState('all');
   const [pay, setPay] = useState('all');
   const [room, setRoom] = useState('all');
+  // Box clicked under the calendar ('' = show everything on the day).
+  const [dayFilter, setDayFilter] = useState('');
 
   const types = useMemo(() => [...new Set(reservations.map(r => r.type).filter(Boolean))], [reservations]);
   const rooms = useMemo(() => [...new Set(reservations.map(r => r.roomNumber).filter(Boolean))].sort(), [reservations]);
@@ -207,10 +223,21 @@ function ReservationBoard({
   const filtersActive = type !== 'all' || pay !== 'all' || room !== 'all';
   const showNav = tab !== 'list' || scope === 'day';
 
-  const dayStats = {
-    arriving: items.filter(r => r.checkIn === selected && r.status !== 'cancelled').length,
-    departing: items.filter(r => r.checkOut === selected && r.status !== 'cancelled').length,
-    inHouse: items.filter(r => r.status === 'checked-in' && staysOn(r, selected)).length,
+  // The boxes under the calendar. Each is a filter for the selected day;
+  // counts are bookings (rooms booked together count once).
+  const active = r => r.status !== 'cancelled';
+  const DAY_FILTERS = [
+    { id: 'arriving', label: 'Arriving', c: 'green', test: r => r.checkIn === selected && active(r) },
+    { id: 'waiting', label: 'Waiting to check in', c: 'amber', test: r => r.checkIn === selected && ['pending', 'confirmed'].includes(r.status) },
+    { id: 'inHouse', label: 'In house', c: 'blue', test: r => r.status === 'checked-in' && staysOn(r, selected) },
+    { id: 'departing', label: 'Departing', c: 'amber', test: r => r.checkOut === selected && active(r) },
+    { id: 'balance', label: 'Balance due', c: 'red', test: r => staysOn(r, selected) && active(r) && r.status !== 'checked-out' && owes(r) },
+    { id: 'cancelled', label: 'Cancelled', c: 'gray', test: r => staysOn(r, selected) && r.status === 'cancelled' },
+  ];
+  const activeDayFilter = DAY_FILTERS.find(f => f.id === dayFilter);
+  const chooseDayFilter = id => {
+    setDayFilter(current => (current === id ? '' : id));
+    setTab('day');
   };
 
   const ctl = {
@@ -286,11 +313,22 @@ function ReservationBoard({
         {selected === todayIso ? 'Today' : formatDate(selected)}
       </div>
       <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
-        {[['Arriving', dayStats.arriving, 'green'], ['Departing', dayStats.departing, 'amber'], ['In house', dayStats.inHouse, 'blue']].map(([label, n, c]) => (
-          <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: t.CARD2, borderRadius: 9, padding: '8px 10px', fontSize: 12, color: t.TEXT }}>
-            {label}<Tag t={t} c={c}>{n}</Tag>
-          </div>
-        ))}
+        {DAY_FILTERS.map(f => {
+          const n = countBookings(items.filter(f.test));
+          const on = dayFilter === f.id;
+          if (f.id === 'cancelled' && !n && !on) return null;
+          return (
+            <button key={f.id} type="button" onClick={() => chooseDayFilter(f.id)} aria-pressed={on}
+              title={on ? 'Show everything on this day' : `Show only: ${f.label.toLowerCase()}`}
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: on ? t.ACCENT : t.CARD2, border: `1px solid ${on ? t.ACCENT : 'transparent'}`, borderRadius: 9, padding: '8px 10px', fontSize: 12, color: on ? t.ACCENT_TEXT : t.TEXT, fontWeight: on ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+              {f.label}<Tag t={t} c={f.c}>{n}</Tag>
+            </button>
+          );
+        })}
+        {dayFilter && (
+          <button type="button" onClick={() => setDayFilter('')}
+            style={{ border: 0, background: 'none', color: t.ACCENT, fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: '2px 0', textAlign: 'left', fontFamily: 'inherit' }}>Show everything on this day</button>
+        )}
       </div>
     </aside>
   );
@@ -372,6 +410,19 @@ function ReservationBoard({
 
   // ── Day view: arriving / departing / staying ──
   const dayView = (() => {
+    if (activeDayFilter) {
+      const list = items.filter(activeDayFilter.test);
+      return (
+        <section>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: t.TEXT }}>{activeDayFilter.label} <span style={{ color: t.MUTED, fontWeight: 500 }}>({countBookings(list)})</span></div>
+            <button type="button" onClick={() => setDayFilter('')}
+              style={{ border: `1px solid ${t.BORDER2}`, background: t.CARD2, color: t.TEXT, borderRadius: 8, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Show all</button>
+          </div>
+          {list.length ? <div style={{ display: 'grid', gap: 10 }}>{list.map(row)}</div> : empty(`Nothing for "${activeDayFilter.label.toLowerCase()}" on this day.`)}
+        </section>
+      );
+    }
     const live = dayItems.filter(r => r.status !== 'cancelled');
     const groups = [
       ['Arriving', live.filter(r => r.checkIn === selected)],
@@ -1647,14 +1698,16 @@ export default function Reservations() {
             )}
 
             {stillArriving.length > 0 && (
-              <NotificationGroup title="Guests still to arrive" detail="Checked in, but part of the group is coming later" count={stillArriving.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
-                {stillArriving.map(r => (
+              <NotificationGroup title="Guests still to arrive" detail="Checked in, but part of the group is coming later" count={byBooking(stillArriving).length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {byBooking(stillArriving).map(({ r, rooms }) => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: `1px solid ${BORDER}` }}>
                     <div style={{ fontSize: '12px', color: TEXT }}>
-                      <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'}
-                      <div style={{ fontSize: '10px', color: MUTED }}>{arrivedGuestCount(r)} of {bookedGuestCount(r)} here · {guestsStillToArrive(r)} still to come{r.phone ? ` · ${r.phone}` : ''}</div>
+                      <strong>{r.guestName || 'Guest'}</strong> — {roomsLabel(rooms)}
+                      <div style={{ fontSize: '10px', color: MUTED }}>
+                        {rooms.reduce((n, x) => n + arrivedGuestCount(x), 0)} of {rooms.reduce((n, x) => n + bookedGuestCount(x), 0)} here · {rooms.reduce((n, x) => n + guestsStillToArrive(x), 0)} still to come{rooms.length > 1 ? ` (${rooms.filter(x => guestsStillToArrive(x) > 0).map(x => x.roomNumber).join(', ')})` : ''}{r.phone ? ` · ${r.phone}` : ''}
+                      </div>
                     </div>
-                    <button type="button" onClick={() => setArrivalDialog({ reservation: r, count: bookedGuestCount(r), busy: false })}
+                    <button type="button" onClick={() => { const waiting = rooms.find(x => guestsStillToArrive(x) > 0) || r; setArrivalDialog({ reservation: waiting, count: bookedGuestCount(waiting), busy: false }); }}
                       style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Guests arrived</button>
                   </div>
                 ))}
@@ -1662,11 +1715,11 @@ export default function Reservations() {
             )}
 
             {lateArrivals.length > 0 && (
-              <NotificationGroup title="Late arrivals" detail="Confirmed guests past their check-in time" count={lateArrivals.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
-                {lateArrivals.map(r => (
+              <NotificationGroup title="Late arrivals" detail="Confirmed guests past their check-in time" count={byBooking(lateArrivals).length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {byBooking(lateArrivals).map(({ r, rooms }) => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: `1px solid ${BORDER}` }}>
                     <div style={{ fontSize: '12px', color: TEXT }}>
-                      <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'}
+                      <strong>{r.guestName || 'Guest'}</strong> — {roomsLabel(rooms)}
                       <div style={{ fontSize: '10px', color: MUTED }}>Expected {formatDate(r.checkIn)} {r.checkInTime || ''}{r.phone ? ` · ${r.phone}` : ''}</div>
                     </div>
                     <button onClick={() => setSelectedId(r.id)}

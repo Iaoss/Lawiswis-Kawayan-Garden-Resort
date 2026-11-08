@@ -53,7 +53,10 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
     const status = lower(r.status);
 
     const createdMs = toMs(r.createdAt);
-    if (isGuestBooking(r) && createdMs >= since && status !== 'cancelled') {
+    // Extra rooms of a multi-room booking: the first room carries the alerts.
+    const extraRoom = Boolean(r.groupId && r.groupId !== r.id);
+    const roomCount = Number(r.groupRoomCount) > 1 ? Number(r.groupRoomCount) : 1;
+    if (isGuestBooking(r) && !extraRoom && createdMs >= since && status !== 'cancelled') {
       const group = lower(r.type) === 'corporate';
       const unpaid = isUnpaidOnlineBooking(r);
       const paid = lower(r.paymentStatus) === 'paid' ? 'Paid' : lower(r.paymentStatus) === 'partial' ? 'Part paid' : 'Not paid yet';
@@ -62,7 +65,7 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
         icon: group ? 'ti-users-group' : unpaid ? 'ti-alert-triangle' : 'ti-calendar-plus',
         badge: group ? 'New Group Booking' : unpaid ? 'New Booking · Unpaid' : 'New Booking',
         message: `${guest} · ${ref(r.id)}`,
-        details: `${r.checkIn || '—'}${r.checkOut && r.checkOut !== r.checkIn ? ` → ${r.checkOut}` : ''} · ${peso(r.totalAmount)} · ${paid}${status ? ` · ${status}` : ''}`,
+        details: `${r.checkIn || '—'}${r.checkOut && r.checkOut !== r.checkIn ? ` → ${r.checkOut}` : ''}${roomCount > 1 ? ` · ${roomCount} rooms` : ''} · ${peso(r.totalAmount)}${roomCount > 1 ? ' (first room)' : ''} · ${paid}${status ? ` · ${status}` : ''}`,
         timeMs: createdMs,
         bookingId: r.id,
         path,
