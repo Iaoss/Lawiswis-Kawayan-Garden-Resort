@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { Timestamp, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { Timestamp, collection, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { AlertToast } from '../../components/ui/alert-toast.tsx';
 import { dismissToast, pushToast, setToastsEnabled, subscribeToasts } from '../lib/staffToasts';
@@ -56,14 +56,22 @@ function useChatAlerts(prefix, active) {
         const at = c.lastMessageAt?.toMillis ? c.lastMessageAt.toMillis() : 0;
         // Already looking at the chats: no pop-up needed.
         if (!at || window.location.pathname.endsWith('/messages')) return;
-        pushToast({
-          id: `chat_${change.doc.id}_${at}`,
-          variant: 'info',
-          title: `New message from ${c.guestName || 'a guest'}`,
-          description: String(c.lastMessage || '').slice(0, 120) || 'Open Messages to reply.',
-          path: `${prefix}/messages`,
-          actionLabel: 'Reply',
-        });
+        // Only the guest's own messages pop up, not the automatic reply or a
+        // staff reply (they also update the chat's last message).
+        getDocs(query(collection(db, 'conversations', change.doc.id, 'messages'), orderBy('timestamp', 'desc'), limit(1)))
+          .then(latest => {
+            const last = latest.docs[0]?.data();
+            if (last && last.sender !== 'guest') return;
+            pushToast({
+              id: `chat_${change.doc.id}_${at}`,
+              variant: 'info',
+              title: `New message from ${c.guestName || 'a guest'}`,
+              description: String(c.lastMessage || '').slice(0, 120) || 'Open Messages to reply.',
+              path: `${prefix}/messages`,
+              actionLabel: 'Reply',
+            });
+          })
+          .catch(() => {});
       });
     }, () => {});
   }, [prefix, active]);

@@ -15,6 +15,8 @@ const SYNC_EVERY_MS = 60000;
 const FOLDERS = [
   { key: 'inbox', label: 'Inbox', icon: 'ti-inbox' },
   { key: 'sent',  label: 'Sent',  icon: 'ti-send' },
+  // Emails Gmail marked as spam. Guest replies sometimes land here.
+  { key: 'spam',  label: 'Spam',  icon: 'ti-alert-octagon' },
 ];
 
 const EMPTY_COMPOSE = { open: false, to: '', cc: '', subject: '', body: '', inReplyTo: '', references: [] };
@@ -117,6 +119,22 @@ export default function Email() {
     () => emails.filter((e) => e.folder === 'inbox' && !e.read).length,
     [emails]
   );
+  const spamCount = useMemo(() => emails.filter((e) => e.folder === 'spam').length, [emails]);
+
+  // Moves a Spam email to the Inbox (in Gmail too, so it learns).
+  const [moving, setMoving] = useState(false);
+  const notSpam = async (m) => {
+    setMoving(true);
+    try {
+      await callApi('/api/email-sync', { action: 'not-spam', emailId: m.id });
+      setSelectedId(null);
+      setNotice({ type: 'ok', text: 'Moved to the Inbox. Gmail won\'t mark emails like this as spam again.' });
+    } catch (e) {
+      setNotice({ type: 'error', text: e.message });
+    } finally {
+      setMoving(false);
+    }
+  };
 
   const visible = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -189,6 +207,9 @@ export default function Email() {
                 <span style={{ flex: 1 }}>{f.label}</span>
                 {f.key === 'inbox' && unreadCount > 0 && (
                   <span style={{ background: '#ef4444', color: '#fff', borderRadius: '10px', fontSize: '10px', fontWeight: '700', padding: '1px 7px' }}>{unreadCount}</span>
+                )}
+                {f.key === 'spam' && spamCount > 0 && (
+                  <span style={{ background: '#f59e0b', color: '#fff', borderRadius: '10px', fontSize: '10px', fontWeight: '700', padding: '1px 7px' }}>{spamCount}</span>
                 )}
               </button>
             );
@@ -280,7 +301,18 @@ export default function Email() {
                     style={{ padding: '7px 14px', background: C.soft, color: C.green, border: `1px solid ${C.softBorder}`, borderRadius: '8px', fontSize: '12px', fontWeight: '600', cursor: 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <i className="ti ti-arrow-forward-up" style={{ fontSize: '14px' }} /> Forward
                   </button>
+                  {selected.folder === 'spam' && (
+                    <button onClick={() => notSpam(selected)} disabled={moving}
+                      style={{ padding: '7px 14px', background: '#f59e0b', color: '#1f1300', border: 'none', borderRadius: '8px', fontSize: '12px', fontWeight: '700', cursor: moving ? 'wait' : 'pointer', fontFamily: FONT, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <i className="ti ti-mail-check" style={{ fontSize: '14px' }} /> {moving ? 'Moving…' : 'Not spam'}
+                    </button>
+                  )}
                 </div>
+                {selected.folder === 'spam' && (
+                  <div style={{ marginTop: '10px', fontSize: '11.5px', color: '#b45309', background: dark ? 'rgba(245,158,11,.12)' : '#fffbeb', border: '1px solid #fcd34d', borderRadius: '8px', padding: '8px 10px' }}>
+                    Gmail marked this as spam. If it's from a guest, press Not spam to move it to the Inbox. Don't open links in emails you don't recognise.
+                  </div>
+                )}
                 {selected.attachments?.length > 0 && (
                   <div style={{ marginTop: '10px', fontSize: '11px', color: C.sub, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     {selected.attachments.map((a, i) => (
