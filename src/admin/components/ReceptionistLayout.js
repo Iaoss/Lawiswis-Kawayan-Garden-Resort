@@ -9,6 +9,7 @@ import './portal-sidebar.css';
 import logo from './logo-mark.png';
 import NotificationBell from './NotificationBell';
 import CheckInReminder from './CheckInReminder';
+import FloatingClock from './FloatingClock';
 import StaffToaster from './StaffToaster';
 import {
   AnimatedSidebarInset,
@@ -238,6 +239,7 @@ export default function ReceptionistLayout({ children }) {
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
       <CheckInIdHost dark={dark} accent={ACCENT} />
       <ShiftSummaryDialog open={shiftOpen} onClose={() => setShiftOpen(false)} staffName={staffName} dark={dark} accent={ACCENT} />
+      <FloatingClock dark={dark} />
       <CheckInReminder soundAlerts={settings?.soundAlerts !== false} prefix="/receptionist" />
       <StaffToaster prefix="/receptionist" enabled={settings?.notifications !== false} />
     </AnimatedSidebarProvider>

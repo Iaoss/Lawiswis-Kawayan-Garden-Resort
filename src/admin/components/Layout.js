@@ -9,6 +9,7 @@ import logo from './logo-mark.png';
 import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
 import NotificationBell from './NotificationBell';
 import CheckInReminder from './CheckInReminder';
+import FloatingClock from './FloatingClock';
 import StaffToaster from './StaffToaster';
 import { AccountMenu, TopbarIconButton, topbarButtonStyle } from './TopbarControls';
 import {
@@ -239,6 +240,7 @@ export default function Layout({ children }) {
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
       <CheckInIdHost dark={dark} accent={ACCENT} />
       <ShiftSummaryDialog open={shiftOpen} onClose={() => setShiftOpen(false)} staffName={adminName} dark={dark} accent={ACCENT} />
+      <FloatingClock dark={dark} />
       <CheckInReminder soundAlerts={settings?.soundAlerts !== false} prefix="/admin" />
       <StaffToaster prefix="/admin" enabled={settings?.notifications !== false} />
     </AnimatedSidebarProvider>

@@ -40,6 +40,7 @@ import { DATE_CHANGE_NOTICE_DAYS, getDaysBeforeArrival } from '../../lib/cancell
 import { printDailySheet } from '../lib/printDailySheet';
 import { askCheckInId } from '../components/CheckInIdDialog';
 import { money } from '../lib/money';
+import { serverNow } from '../../lib/serverClock';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -780,7 +781,7 @@ export default function Reservations() {
       const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason: statusReason, force, idCheck });
       // Show the change right away; the live listener will confirm it.
       // The check-in / check-out time shows straight away too.
-      const stamp = new Date().toISOString();
+      const stamp = new Date(serverNow()).toISOString();
       setReservations(list => list.map(r => (r.id === id ? {
         ...r,
         status,

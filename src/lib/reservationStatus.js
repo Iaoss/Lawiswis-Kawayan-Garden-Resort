@@ -1,3 +1,5 @@
+import { serverNow } from './serverClock';
+
 // Shared reservation status, overstay and analytics helpers.
 // Used by the staff pages and by the server (apiHandlers/reservation-status.js),
 // so both sides agree on what counts as an overstay.
@@ -167,7 +169,7 @@ export function hasOutstandingBalance(reservation) {
 // ── Analytics ──────────────────────────────────────────────────────────────
 
 // Today's date in Philippine time, as YYYY-MM-DD.
-export function manilaDateKey(now = new Date()) {
+export function manilaDateKey(now = new Date(serverNow())) {
   return new Date(now.getTime() + MANILA_OFFSET_HOURS * 3600000).toISOString().slice(0, 10);
 }
 

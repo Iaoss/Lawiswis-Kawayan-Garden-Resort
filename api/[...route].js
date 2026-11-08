@@ -112,6 +112,11 @@ export default async function handler(req, res) {
     .split('/')
     .filter(Boolean)
     .pop();
+  // The server's clock, for the staff portal's floating clock.
+  if (endpoint === 'server-time') {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json({ now: Date.now() });
+  }
   const endpointHandler = handlers[endpoint];
 
   if (!endpointHandler) {

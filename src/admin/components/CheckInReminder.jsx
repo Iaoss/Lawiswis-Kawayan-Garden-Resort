@@ -6,6 +6,7 @@ import { getUpcomingCheckIns } from '../../lib/stayTimes';
 import { pushToast } from '../lib/staffToasts';
 import { isReadyToCheckIn } from '../../lib/reservationStatus';
 import { checkInGuest } from '../lib/checkInGuest';
+import { serverNow } from '../../lib/serverClock';
 
 // Reminder for admins and receptionists: a guest's check-in time is 3
 // minutes away (offered until 15 minutes after the time). Shown once per
@@ -43,13 +44,13 @@ function chime() {
 export default function CheckInReminder({ prefix = '/admin', soundAlerts = true }) {
   const [today, setToday] = useState(() => getResortNow().dateKey);
   const [bookings, setBookings] = useState([]);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => serverNow());
   const [seen, setSeen] = useState(loadSeen);
 
   // Check every 10 seconds; also roll over to the next day at midnight.
   useEffect(() => {
     const timer = setInterval(() => {
-      setNow(Date.now());
+      setNow(serverNow());
       setToday(getResortNow().dateKey);
     }, 10000);
     return () => clearInterval(timer);

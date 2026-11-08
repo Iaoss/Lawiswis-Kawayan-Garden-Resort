@@ -15,6 +15,7 @@ import { printDailySheet } from '../lib/printDailySheet';
 import { checkInGuest as checkInWithId } from '../lib/checkInGuest';
 import { getReceptionistSections } from '../../lib/receptionistDashboard';
 import { money } from '../lib/money';
+import { serverNow } from '../../lib/serverClock';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -84,7 +85,7 @@ export default function ReceptionistDashboard() {
     try {
       const done = await checkInWithId(reservation);
       if (!done) return;
-      setArrivals(list => list.map(r => (r.id === reservation.id ? { ...r, status: 'checked-in', checkedInAt: new Date().toISOString() } : r)));
+      setArrivals(list => list.map(r => (r.id === reservation.id ? { ...r, status: 'checked-in', checkedInAt: new Date(serverNow()).toISOString() } : r)));
     } catch (error) {
       appAlert(error.message || 'The guest could not be checked in.', { title: 'Check-in failed', tone: 'warning' });
     } finally {
