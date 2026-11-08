@@ -41,7 +41,7 @@ import { printDailySheet } from '../lib/printDailySheet';
 import { askCheckInId } from '../components/CheckInIdDialog';
 import { money } from '../lib/money';
 import { serverNow } from '../../lib/serverClock';
-import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive } from '../../lib/guestArrivals';
+import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive, splitArrivedGuests } from '../../lib/guestArrivals';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -195,11 +195,11 @@ function ReservationBoard({
   const [dayFilter, setDayFilter] = useState('');
 
   const types = useMemo(() => [...new Set(reservations.map(r => r.type).filter(Boolean))], [reservations]);
-  const rooms = useMemo(() => [...new Set(reservations.map(r => r.roomNumber).filter(Boolean))].sort(), [reservations]);
+  const rooms = useMemo(() => [...new Set(reservations.flatMap(r => (r.groupRooms || [r]).map(x => x.roomNumber)).filter(Boolean))].sort(), [reservations]);
 
   const items = useMemo(() => reservations.filter(r =>
     (type === 'all' || r.type === type) &&
-    (room === 'all' || r.roomNumber === room) &&
+    (room === 'all' || (r.groupRooms || [r]).some(x => x.roomNumber === room)) &&
     (pay === 'all' || (pay === 'unpaid' ? owes(r) : !owes(r)))
   ), [reservations, type, room, pay, owes]);
 
@@ -337,7 +337,8 @@ function ReservationBoard({
   const row = (r) => {
     const color = STATUS_COLOR[r.status] || '#9ca3af';
     const overstay = overstayOf(r, now);
-    const unpaid = owes(r);
+    const roomsOnCard = r.groupRooms || [r];
+    const unpaid = roomsOnCard.some(owes);
     return (
       <div key={r.id} role="button" tabIndex={0} onClick={() => onSelect(r.id)}
         onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelect(r.id); } }}
@@ -352,13 +353,18 @@ function ReservationBoard({
             {r.guestName || 'Guest'} <span style={{ fontSize: 10, color: t.MUTED, fontWeight: 500 }}>#{r.id.slice(0, 8).toUpperCase()}</span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
-            <Tag t={t} c="green">Room {r.roomNumber || '—'}{r.roomType ? ` · ${r.roomType}` : ''}</Tag>
+            <Tag t={t} c="green">{roomsOnCard.length > 1 ? `${roomsOnCard.length} rooms: ${roomsOnCard.map(x => x.roomNumber || '—').join(', ')}` : `Room ${r.roomNumber || '—'}`}{r.roomType ? ` · ${r.roomType}` : ''}</Tag>
             {r.type && <Tag t={t} c="violet"><span style={{ textTransform: 'capitalize' }}>{r.type}</span></Tag>}
             <Tag t={t}>{r.checkOut && r.checkOut !== r.checkIn ? `${formatDate(r.checkIn)} – ${formatDate(r.checkOut)}` : formatDate(r.checkIn)}</Tag>
             <Tag t={t}>{nights(r)}</Tag>
             <Tag t={t} c={unpaid ? 'amber' : 'green'}>{unpaid ? 'Unpaid' : 'Paid'}</Tag>
             {r.cancellationRequested && <Tag t={t} c="red">Cancellation requested</Tag>}
             {isDelayedArrival(r) && <Tag t={t} c="amber" title="Guest has not checked in yet">Delayed arrival</Tag>}
+            {roomsOnCard.some(x => x.status !== r.status) && (
+              <Tag t={t} c="amber" title="The rooms in this booking are at different steps">
+                {roomsOnCard.map(x => `${x.roomNumber}: ${String(x.status).replace('-', ' ')}`).join(' · ')}
+              </Tag>
+            )}
             {overstay && <Tag t={t} c="red" title="Still checked in past check-out time">Overstayed {overstay.label}</Tag>}
           </div>
           {getReservationRemarks(r).filter(item => item.type !== 'cancelled' || r.cancellationReason).map(item => (
@@ -796,10 +802,15 @@ export default function Reservations() {
       if (status === 'cancelled') throw new Error(transitionError);
       return;
     }
+    // Rooms booked together at the same step move with it (not cancellations,
+    // which stay per room).
+    const linkedRooms = status === 'cancelled' || !reservation.groupId ? [] : reservations.filter(r => r.id !== id
+      && r.groupId === reservation.groupId && r.status === reservation.status);
+    const allRooms = [reservation, ...linkedRooms];
     let force = false;
     let statusReason = reason;
-    if (status === 'checked-out' && hasOutstandingBalance(reservation)) {
-      const owedText = `${money(outstandingAmount(reservation))}`;
+    if (status === 'checked-out' && allRooms.some(hasOutstandingBalance)) {
+      const owedText = `${money(allRooms.reduce((sum, r) => sum + Math.max(0, outstandingAmount(r)), 0))}`;
       if (!canOverrideCheckout) {
         setToast({ type: 'error', text: `This guest still owes ${owedText}. Collect payment in Billing before checking out.` });
         return;
@@ -827,29 +838,48 @@ export default function Reservations() {
     let idCheck;
     let arrivedGuests;
     if (status === 'checked-in') {
-      const answer = await askCheckInId(reservation.guestName, { bookedGuests: bookedGuestCount(reservation), arrivedGuests: arrivedGuestCount(reservation) });
+      const answer = await askCheckInId(reservation.guestName, {
+        bookedGuests: allRooms.reduce((sum, r) => sum + bookedGuestCount(r), 0),
+        arrivedGuests: allRooms.reduce((sum, r) => sum + arrivedGuestCount(r), 0),
+      });
       if (!answer) return;
       if (!answer.skipped) idCheck = { type: answer.type, last4: answer.last4 };
       arrivedGuests = answer.arrivedGuests;
     }
+    // The arrived guests fill each room's booked number in order.
+    const arrivedSplit = arrivedGuests ? splitArrivedGuests(arrivedGuests, allRooms.map(bookedGuestCount)) : allRooms.map(() => null);
     setStatusBusyId(id);
     try {
-      const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason: statusReason, force, idCheck, arrivedGuests });
+      const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason: statusReason, force, idCheck, ...(arrivedSplit[0] !== null ? { arrivedGuests: arrivedSplit[0] } : {}) });
+      const linkedErrors = [];
+      for (let i = 0; i < linkedRooms.length; i += 1) {
+        try {
+          await callReservationStatusApi({ action: 'set-status', reservationId: linkedRooms[i].id, status, reason: statusReason, force, idCheck, ...(arrivedSplit[i + 1] !== null ? { arrivedGuests: arrivedSplit[i + 1] } : {}) });
+        } catch (linkedError) {
+          linkedErrors.push(`Room ${linkedRooms[i].roomNumber || ''}: ${linkedError.message}`);
+        }
+      }
+      if (linkedErrors.length) setToast({ type: 'error', text: linkedErrors.join(' ') });
       // Show the change right away; the live listener will confirm it.
       // The check-in / check-out time shows straight away too.
       const stamp = new Date(serverNow()).toISOString();
-      setReservations(list => list.map(r => (r.id === id ? {
-        ...r,
-        status,
-        ...(status === 'checked-in' && !r.checkedInAt ? { checkedInAt: stamp } : {}),
-        ...(status === 'checked-in' && arrivedGuests ? { arrivedGuests } : {}),
-        ...(status === 'checked-out' && !r.checkedOutAt ? { checkedOutAt: stamp } : {}),
-      } : r)));
+      const changedIds = allRooms.map(r => r.id);
+      setReservations(list => list.map(r => {
+        const index = changedIds.indexOf(r.id);
+        if (index < 0) return r;
+        return {
+          ...r,
+          status,
+          ...(status === 'checked-in' && !r.checkedInAt ? { checkedInAt: stamp } : {}),
+          ...(status === 'checked-in' && arrivedSplit[index] !== null ? { arrivedGuests: arrivedSplit[index] } : {}),
+          ...(status === 'checked-out' && !r.checkedOutAt ? { checkedOutAt: stamp } : {}),
+        };
+      }));
       if (status === 'cancelled') return;
       if (status === 'checked-out') {
         setToast({
           type: 'success',
-          text: `Guest has checked out${result.overstayMinutes ? ' (late check-out recorded)' : ''}. ${reservation.roomName || 'The room'} is now under cleaning/maintenance.`,
+          text: `Guest has checked out${result.overstayMinutes ? ' (late check-out recorded)' : ''}. ${linkedRooms.length ? `Rooms ${allRooms.map(r => r.roomNumber).join(', ')} are` : `${reservation.roomName || 'The room'} is`} now under cleaning/maintenance.`,
         });
       }
       if (status === 'checked-out' && reservation.status !== 'checked-out') {
@@ -1109,6 +1139,9 @@ export default function Reservations() {
   };
 
   const selectedReservation = selectedId ? reservations.find(r => r.id === selectedId) : null;
+  // Rooms of a selected multi-room booking (for the details window).
+  const selectedGroupRooms = selectedReservation?.groupId
+    ? reservations.filter(r => r.groupId === selectedReservation.groupId) : [];
   const lateArrivals = reservations.filter(isDelayedArrival);
   // Checked-in guests whose check-out time is within the next 2 hours.
   const dueToCheckOut = reservations
@@ -1167,6 +1200,23 @@ export default function Reservations() {
       .some(value => String(value || '').toLowerCase().includes(term));
     return matchFilter && matchQuick && matchSearch;
   }), sortBy, sortDir);
+
+  // One card per booking: rooms booked together show on the first room's
+  // card (status changes there apply to every room).
+  const boardReservations = (() => {
+    const seen = new Set();
+    const out = [];
+    filtered.forEach(r => {
+      if (!r.groupId) { out.push(r); return; }
+      if (seen.has(r.groupId)) return;
+      seen.add(r.groupId);
+      const rooms = reservations.filter(x => x.groupId === r.groupId && x.type !== 'corporate-room'
+        && (x.status !== 'cancelled' || r.status === 'cancelled'));
+      const lead = rooms.find(x => x.id === r.groupId) || rooms[0] || r;
+      out.push(rooms.length > 1 ? { ...lead, groupRooms: rooms } : r);
+    });
+    return out;
+  })();
 
   const clearQuickView = () => {
     setQuickView('');
@@ -1516,6 +1566,15 @@ export default function Reservations() {
             ['Preferred Contact Method', s.preferredContactMethod || 'Not provided'],
             ...(s.contactLink ? [['Facebook Profile', <a href={/^https?:\/\//i.test(s.contactLink) ? s.contactLink : `https://${s.contactLink}`} target="_blank" rel="noopener noreferrer" style={{ color: ACCENT }}>{s.contactLink}</a>]] : []),
             ['Room', [s.roomNumber, s.roomType].filter(Boolean).join(' · ') || '—'],
+            ...(selectedGroupRooms.length > 1 ? [['Rooms in this booking', selectedGroupRooms.map(x => (
+              <div key={x.id}>
+                <button type="button" onClick={() => setSelectedId(x.id)} disabled={x.id === s.id}
+                  style={{ border: 0, background: 'none', padding: 0, font: 'inherit', color: x.id === s.id ? TEXT : ACCENT, fontWeight: x.id === s.id ? 700 : 600, cursor: x.id === s.id ? 'default' : 'pointer', textDecoration: x.id === s.id ? 'none' : 'underline' }}>
+                  Room {x.roomNumber || '—'}
+                </button>
+                {' '}· {x.status} · {money(x.totalAmount)}{hasOutstandingBalance(x) ? ` · owes ${money(outstandingAmount(x))}` : ''}
+              </div>
+            ))]] : []),
             ['Booking Type', BOOKING_OPTIONS.find(option => option.id === getBookingOptionId(s))?.label || '—'],
             ['Guests', `${Number(s.adults || 0)} adult(s), ${Number(s.children || 0)} child(ren)`],
             ...(Number(s.dayVisitorAdults || 0) + Number(s.dayVisitorChildren || 0) > 0 ? [[
@@ -1931,7 +1990,7 @@ export default function Reservations() {
 
         {/* List / Day / Week / Month board */}
         <ReservationBoard
-          reservations={filtered}
+          reservations={boardReservations}
           t={{ dark, CARD, CARD2, BORDER, BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
           formatDate={formatDate}
           now={now}

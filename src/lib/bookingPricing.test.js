@@ -99,7 +99,7 @@ describe('couple room occupancy', () => {
     expect(getRoomMaximumGuests({ name: 'Family Suite for 6' })).toBe(6);
     expect(getRoomMaximumGuests({ name: 'Family Suite', maxGuests: 6 })).toBe(6);
     expect(getRoomCapacityPolicy({ name: 'Couple Room with Extra Bed' })).toMatchObject({
-      maxAdults: 3, maxChildren: 1, maxGuests: 4,
+      maxAdults: 3, maxChildren: 1, maxGuests: 3,
     });
     expect(getGuestCountViolation({ type: 'FamilyRoom', baseCapacity: 4 }, 4, 1)).toContain('maximum of 4 guests');
     expect(getGuestCountViolation({ type: 'MainVilla', maxGuests: 25 }, 20, 6)).toContain('maximum of 25 guests');

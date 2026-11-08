@@ -51,3 +51,14 @@ describe('standard couple rooms', () => {
     expect(getGuestCountViolation(standard, 2, 1)).not.toBeNull();
   });
 });
+
+describe('couple rooms with an extra bed hold 3 guests', () => {
+  const panaginip = { type: 'Deluxe', roomNumber: 'Panaginip', description: 'Ample space and relaxing atmosphere(Option to add bed)' };
+  it('allows 3 guests, never 4', () => {
+    expect(getRoomCapacityPolicy(panaginip)).toMatchObject({ maxGuests: 3, label: 'Couple Room with Extra Bed' });
+    expect(getGuestCountViolation(panaginip, 3, 0)).toBeNull();
+    expect(getGuestCountViolation(panaginip, 2, 1)).toBeNull();
+    expect(getGuestCountViolation(panaginip, 3, 1)).not.toBeNull();
+    expect(getGuestCountViolation(panaginip, 4, 0)).not.toBeNull();
+  });
+});

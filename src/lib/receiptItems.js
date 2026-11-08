@@ -110,3 +110,21 @@ export function getReceiptLineItems(reservation = {}) {
     vat: getVatBreakdown(money(total + extrasTotal)),
   };
 }
+
+// One receipt for rooms booked together: each room's booking lines, then
+// every room's add-ons (named by room), with combined totals.
+export function getGroupReceiptLineItems(reservations = []) {
+  const parts = reservations.map(r => ({ r, items: getReceiptLineItems(r) }));
+  const booking = parts.flatMap(({ items }) => items.booking);
+  const extras = parts.flatMap(({ r, items }) => items.extras.map(item => ({ ...item, label: `Room ${r.roomNumber || ''}: ${item.label}` })));
+  const bookingTotal = money(parts.reduce((sum, p) => sum + p.items.bookingTotal, 0));
+  const extrasTotal = money(extras.reduce((sum, item) => sum + item.amount, 0));
+  return {
+    booking,
+    extras,
+    bookingTotal,
+    extrasTotal,
+    grandTotal: money(bookingTotal + extrasTotal),
+    vat: getVatBreakdown(money(bookingTotal + extrasTotal)),
+  };
+}

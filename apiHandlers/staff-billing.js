@@ -84,7 +84,9 @@ async function getReservation(transaction, reservationId) {
   return { ref, reservation: snapshot.data() };
 }
 
-async function recordPayment({ staff, reservationId, amount, method, officialReceiptNo }) {
+// `group` ({ key, lead, total, groupId }) marks one share of a payment for
+// rooms booked together; `skipEmails` leaves the emails to the caller.
+async function recordPayment({ staff, reservationId, amount, method, officialReceiptNo, group = null, skipEmails = false }) {
   const paperReceiptNo = cleanText(officialReceiptNo, 40);
   const paid = money(amount);
   if (!Number.isFinite(paid) || paid <= 0) throw new BillingError(400, 'Enter a payment amount greater than zero.');
@@ -138,12 +140,14 @@ async function recordPayment({ staff, reservationId, amount, method, officialRec
       amount: paid,
       method,
       ...(paperReceiptNo ? { officialReceiptNo: paperReceiptNo } : {}),
+      ...(group ? { groupId: group.groupId, groupPaymentKey: group.key, groupLead: group.lead, groupPaymentTotal: group.total } : {}),
       recordedBy: staff.uid,
       recordedByName: staff.name || staff.email || '',
       createdAt: FieldValue.serverTimestamp(),
     });
     return { amountPaid, paymentStatus, balance: money(total - amountPaid), autoConfirmed, autoCheckedIn };
   });
+  if (skipEmails) return { ...result, paymentId: paymentRef.id, receipt: null, receiptError: '' };
 
   if (result.autoConfirmed) {
     try {
@@ -254,18 +258,39 @@ async function recordGroupPayment({ staff, reservationId, amount, method, offici
   const totalOwed = money(balances.reduce((a, b) => a + b, 0));
   if (paid - totalOwed > 0.001) throw new BillingError(400, `The group only owes ₱${totalOwed.toLocaleString()}.`);
   const shares = fillBalancesInOrder(paid, balances);
+  const paying = rooms.filter((_, i) => shares[i] > 0);
+  // One payment for the whole booking: one receipt, one pop-up, one email.
+  const groupMeta = paying.length > 1
+    ? { key: crypto.randomUUID(), total: paid, groupId: mainSnap.data().groupId || reservationId }
+    : null;
   const results = [];
   for (let i = 0; i < rooms.length; i += 1) {
     if (shares[i] <= 0) continue;
-    results.push({ reservationId: rooms[i].id, ...(await recordPayment({ staff, reservationId: rooms[i].id, amount: shares[i], method, officialReceiptNo })) });
+    const group = groupMeta ? { ...groupMeta, lead: rooms[i].id === paying[0].id } : null;
+    results.push({ reservationId: rooms[i].id, ...(await recordPayment({ staff, reservationId: rooms[i].id, amount: shares[i], method, officialReceiptNo, group, skipEmails: Boolean(group) })) });
+  }
+  let receipt = results.some(item => item.receipt) ? { sent: true } : null;
+  let receiptError = results.map(item => item.receiptError).filter(Boolean).join(' ');
+  if (groupMeta) {
+    const confirmed = results.find(item => item.autoConfirmed);
+    if (confirmed) {
+      const lead = mainSnap.data().groupId || reservationId;
+      try { await sendConfirmationEmailOnce(adminDb, FieldValue, lead); } catch (error) { console.error('Group confirmation email failed:', error); }
+    }
+    try {
+      receipt = await sendPaymentReceipt(adminDb, FieldValue, results[0].paymentId);
+      for (const item of results.slice(1)) await sendPaymentReceipt(adminDb, FieldValue, item.paymentId);
+    } catch (error) {
+      receiptError = error.message || 'Receipt email failed to send.';
+    }
   }
   const after = await Promise.all(rooms.map(snap => snap.ref.get()));
   return {
     amountPaid: money(after.reduce((sum, snap) => sum + Number(snap.data().amountPaid || 0), 0)),
     balance: money(after.reduce((sum, snap) => sum + owed(snap.data()), 0)),
     autoCheckedIn: results.some(item => item.autoCheckedIn),
-    receipt: results.some(item => item.receipt) ? { sent: true } : null,
-    receiptError: results.map(item => item.receiptError).filter(Boolean).join(' '),
+    receipt,
+    receiptError,
     rooms: results.map(item => ({ reservationId: item.reservationId, autoCheckedIn: item.autoCheckedIn })),
   };
 }

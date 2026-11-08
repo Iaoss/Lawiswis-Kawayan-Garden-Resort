@@ -26,11 +26,14 @@ function usePaymentAlerts(prefix, active) {
         // Wait for the server time to be filled in.
         if (!p.createdAt) return;
         const online = p.provider === 'paymongo';
+        // Rooms booked together and paid at once: one pop-up, on the lead share.
+        if (p.groupPaymentKey && p.groupLead === false) return;
+        const amount = p.groupPaymentKey ? p.groupPaymentTotal : p.amount;
         pushToast({
-          id: `payment_${change.doc.id}`,
+          id: `payment_${p.groupPaymentKey || change.doc.id}`,
           variant: 'success',
           title: online ? 'Online payment received' : 'Payment recorded',
-          description: `${peso(p.amount)} ${METHODS[String(p.method || '').toLowerCase()] || p.method || ''} from ${p.guestName || 'a guest'} · booking ${ref(p.reservationId)}`.replace(/\s+/g, ' '),
+          description: `${peso(amount)} ${METHODS[String(p.method || '').toLowerCase()] || p.method || ''} from ${p.guestName || 'a guest'} · booking ${ref(p.groupId || p.reservationId)}${p.groupPaymentKey ? ' · all rooms' : ''}`.replace(/\s+/g, ' '),
           path: `${prefix}/reservations?booking=${encodeURIComponent(p.reservationId || '')}`,
           actionLabel: 'Open booking',
         });

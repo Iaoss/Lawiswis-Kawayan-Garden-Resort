@@ -20,7 +20,7 @@ export const GROUPS = [
   {
     title: 'Couple Rooms with Extra Bed',
     price: 3000,
-    capacity: 'Couple + optional extra bed',
+    capacity: 'Up to 3 guests',
     intro: 'Room for a small family. Choose the option to add an extra bed. Available in both our new and old buildings.',
   },
   {

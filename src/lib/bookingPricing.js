@@ -314,10 +314,10 @@ export function getRoomCapacityPolicy(room) {
   let defaults;
 
   // Couple rooms that can take an extra bed (e.g. "Option to add bed"):
-  // a third adult on the extra bed, plus one child.
+  // up to 3 guests in all (the third on the extra bed, adult or child).
   const extraBed = text.includes('extrabed') || text.includes('addbed') || text.includes('addabed');
   if (extraBed && (text.includes('couple') || isCoupleRoom(room))) {
-    defaults = { maxAdults: 3, maxChildren: 1, maxGuests: 4, label: 'Couple Room with Extra Bed' };
+    defaults = { maxAdults: 3, maxChildren: 1, maxGuests: 3, label: 'Couple Room with Extra Bed' };
   } else if (isCoupleRoom(room)) {
     defaults = { maxAdults: 2, maxChildren: 1, maxGuests: 3, label: 'Couple Room' };
   } else if (text.includes('mainvilla')) {
