@@ -153,6 +153,45 @@ export default function Billing() {
     }
   };
 
+  // Extra guests at the desk: the booking is repriced with the room's own
+  // extra-guest rates and limit (same rules as Edit booking).
+  const [guestEdit, setGuestEdit] = useState({ roomId: '', adults: '', children: '' });
+  const handleExtraGuests = async () => {
+    if (billingBusy || !selected) return;
+    const room = roomsOfBill(selected, reservations).find(r => r.id === guestEdit.roomId) || selected;
+    const adults = guestEdit.adults === '' ? Number(room.adults || 0) : Number(guestEdit.adults);
+    const children = guestEdit.children === '' ? Number(room.children || 0) : Number(guestEdit.children);
+    if (!Number.isInteger(adults) || adults < 1 || !Number.isInteger(children) || children < 0) {
+      appAlert('Enter at least 1 adult, and 0 or more children.', { title: 'Check the guest count', tone: 'warning' });
+      return;
+    }
+    if (adults === Number(room.adults || 0) && children === Number(room.children || 0)) {
+      appAlert('Change the number of adults or children first.', { title: 'No change', tone: 'info' });
+      return;
+    }
+    setBillingBusy(true);
+    try {
+      const body = { action: 'edit-booking', reservationId: room.id, changes: { adults, children } };
+      const quote = await staffApi('staff-billing', { ...body, preview: true });
+      const ok = await appConfirm(
+        `Room ${room.roomNumber || ''}: ${adults} adult${adults === 1 ? '' : 's'}${children ? `, ${children} child${children === 1 ? '' : 'ren'}` : ''} (was ${Number(room.adults || 0)}${Number(room.children || 0) ? ` + ${Number(room.children)}` : ''}). `
+        + (quote.difference > 0
+          ? `Extra guest charge: ${formatCurrency(quote.difference)}. It's added to the booking total.`
+          : 'No extra charge. Fewer guests are not refunded under the resort policy.'),
+        { title: 'Update the guests?', tone: 'info', confirmLabel: quote.difference > 0 ? `Add ${formatCurrency(quote.difference)}` : 'Save' },
+      );
+      if (!ok) return;
+      const saved = await staffApi('staff-billing', body);
+      setGuestEdit({ roomId: '', adults: '', children: '' });
+      fetchReservations();
+      setSuccess(`Guests updated for Room ${room.roomNumber || ''}.${saved.difference > 0 ? ` Extra guest charge ${formatCurrency(saved.difference)} added.` : ''}`);
+    } catch (error) {
+      appAlert(error.message, { title: 'Couldn’t update the guests', tone: 'danger' });
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
   const handleAddService = async () => {
     if (billingBusy) return;
     setBillingBusy(true);
@@ -560,6 +599,31 @@ export default function Billing() {
                         {servicePrice?.error || `${selectedService?.summary || ''} ${service.serviceId === 'photoshoot' ? '(hours, people)' : '(hours)'}`}
                       </div>
                     </div>
+                    {!selected.cottageOnly && selected.type !== 'corporate' && ['pending', 'confirmed', 'checked-in'].includes(selected.status) && (() => {
+                      const room = billRooms.find(r => r.id === guestEdit.roomId) || selected;
+                      return (
+                        <div style={{ display: 'grid', gap: 8, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${BORDER}` }}>
+                          <label style={{ fontSize: 11, fontWeight: 600, color: SUBTEXT }}>Extra guests</label>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                            {isGroupBill && (
+                              <select value={room.id} aria-label="Room" onChange={e => setGuestEdit({ roomId: e.target.value, adults: '', children: '' })} style={{ ...inp, flex: '1 1 120px' }}>
+                                {billRooms.map(r => <option key={r.id} value={r.id}>Room {r.roomNumber}</option>)}
+                              </select>
+                            )}
+                            <input type="number" min="1" aria-label="Adults" title="Adults"
+                              value={guestEdit.adults === '' ? Number(room.adults || 0) : guestEdit.adults}
+                              onChange={e => setGuestEdit(g => ({ ...g, roomId: room.id, adults: e.target.value }))} style={{ ...inp, width: 70 }} />
+                            <span style={{ fontSize: 11, color: MUTED }}>adults</span>
+                            <input type="number" min="0" aria-label="Children" title="Children (under 10)"
+                              value={guestEdit.children === '' ? Number(room.children || 0) : guestEdit.children}
+                              onChange={e => setGuestEdit(g => ({ ...g, roomId: room.id, children: e.target.value }))} style={{ ...inp, width: 70 }} />
+                            <span style={{ fontSize: 11, color: MUTED }}>children</span>
+                            <button type="button" onClick={handleExtraGuests} disabled={billingBusy} style={btn()}>Update</button>
+                          </div>
+                          <div style={{ fontSize: 11, color: MUTED }}>Uses the room's extra-guest rate per {room.bookingType === 'daytour' ? 'day' : 'night'} and its guest limit. You'll see the charge before it's added.</div>
+                        </div>
+                      );
+                    })()}
                     <SeniorPwdDiscountForm
                       reservation={selected}
                       colors={{ TEXT, SUBTEXT, MUTED, BORDER, RED }}

@@ -62,3 +62,12 @@ describe('couple rooms with an extra bed hold 3 guests', () => {
     expect(getGuestCountViolation(panaginip, 4, 0)).not.toBeNull();
   });
 });
+
+describe('extra-bed rooms are known by name', () => {
+  it('treats Giliw as a couple room with an extra bed even without the note', () => {
+    const giliw = { type: 'Deluxe', roomNumber: 'Giliw', description: 'A family-friendly space in our old building.' };
+    expect(getRoomCapacityPolicy(giliw)).toMatchObject({ maxGuests: 3, label: 'Couple Room with Extra Bed' });
+    expect(getGuestCountViolation(giliw, 3, 0)).toBeNull();
+    expect(getGuestCountViolation(giliw, 4, 0)).not.toBeNull();
+  });
+});

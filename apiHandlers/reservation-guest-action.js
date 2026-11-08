@@ -12,6 +12,8 @@ import { holdsRoom } from '../src/lib/unpaidBookings';
 import { canClosureReschedule, getClosureMoveError, getSamePriceSuggestions, sameLengthCheckOut } from '../src/lib/closureReschedule';
 import { readSeasonPeriods } from '../lib/seasonStore';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
+import { clientIp, lockMinutes, recordFailure } from '../lib/attemptLimiter';
+import { LOOKUP_LIMIT } from '../src/lib/loginLock';
 
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 const ACTIVE_REFUND_STATUSES = ['eligible', 'needs_review', 'approved', 'processing', 'awaiting_confirmation'];
@@ -515,6 +517,8 @@ async function requestScheduleChange(reservation, body) {
 // Online cancel, refund and date-change requests are turned off.
 const GUEST_REQUESTS_DISABLED = true;
 
+const LOOKUP_ATTEMPTS = 'lookupAttempts';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
@@ -530,8 +534,15 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Too many wrong lookups from one device pause lookups for a while.
+    const ip = clientIp(req);
+    const paused = await lockMinutes(LOOKUP_ATTEMPTS, ip);
+    if (paused) return res.status(429).json({ error: `Too many tries. Please wait ${paused} minute${paused === 1 ? '' : 's'}, or contact the resort for help with your booking.` });
     const reservation = await findReservation(normalizedReference, normalizedContact);
-    if (!reservation) return res.status(404).json({ error: 'No reservation matched that reference and contact detail.' });
+    if (!reservation) {
+      await recordFailure(LOOKUP_ATTEMPTS, ip, LOOKUP_LIMIT).catch(() => {});
+      return res.status(404).json({ error: 'No reservation matched that reference and contact detail.' });
+    }
 
     if (action === 'lookup') {
       return res.status(200).json({ reservation: publicReservation(reservation) });

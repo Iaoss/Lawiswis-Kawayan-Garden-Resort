@@ -29,7 +29,7 @@ describe('automatic chat answers', () => {
   test('every topic has an answer with real prices', () => {
     AUTO_TOPICS.forEach(topic => expect(buildAutoAnswer(topic.id, { rooms: [] }).length).toBeGreaterThan(20));
     expect(buildAutoAnswer('auto-cottage-rates')).toMatch(/Umbrella Hut.*₱500/);
-    expect(buildAutoAnswer('auto-tour-rates')).toMatch(/₱375 adult/);
+    expect(buildAutoAnswer('auto-tour-rates')).toMatch(/₱375 per person/);
     expect(buildAutoAnswer('auto-booking')).toMatch(/50% deposit/);
     expect(buildAutoAnswer('nope')).toBe('');
   });

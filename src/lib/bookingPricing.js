@@ -7,9 +7,9 @@ export const LATE_ARRIVAL_SLOT_ID = 'late';
 export const LATE_ARRIVAL_SURCHARGE_RATE = 0.10;
 export const OVERNIGHT_TIME_SLOTS = [
   // startMinutes: when check-in opens; cutoffMinutes: last time it can be booked for today.
-  { id: 'morning', label: '10:00 AM / 11:00 AM check-in → 8:00 AM check-out', checkIn: '10:00 AM / 11:00 AM', checkOut: '8:00 AM', startMinutes: 10 * 60, cutoffMinutes: 14 * 60 },
-  { id: 'afternoon', label: '2:00 PM / 3:00 PM check-in → 12:00 PM check-out', checkIn: '2:00 PM / 3:00 PM', checkOut: '12:00 PM', startMinutes: 14 * 60, cutoffMinutes: 18 * 60 },
-  { id: 'evening', label: '6:00 PM / 7:00 PM check-in → 4:00 PM check-out', checkIn: '6:00 PM / 7:00 PM', checkOut: '4:00 PM', startMinutes: 18 * 60, cutoffMinutes: 21 * 60 },
+  { id: 'morning', label: '11:00 AM check-in → 8:00 AM check-out', checkIn: '11:00 AM', checkOut: '8:00 AM', startMinutes: 11 * 60, cutoffMinutes: 14 * 60 },
+  { id: 'afternoon', label: '3:00 PM check-in → 12:00 PM check-out', checkIn: '3:00 PM', checkOut: '12:00 PM', startMinutes: 15 * 60, cutoffMinutes: 18 * 60 },
+  { id: 'evening', label: '7:00 PM check-in → 4:00 PM check-out', checkIn: '7:00 PM', checkOut: '4:00 PM', startMinutes: 19 * 60, cutoffMinutes: 21 * 60 },
   { id: LATE_ARRIVAL_SLOT_ID, label: 'Late arrival after 9:00 PM → 12:00 PM check-out (+10% room rate)', checkIn: 'After 9:00 PM', checkOut: '12:00 PM', startMinutes: 21 * 60, cutoffMinutes: 24 * 60, lateArrival: true },
 ];
 
@@ -210,13 +210,23 @@ const ROOM_RATES = {
   couple: { baseCapacity: 2, daytour: 2000, overnight: 3000 },
   familyRoom4: { baseCapacity: 4, daytour: 3600, overnight: 4600 },
   familyRoom6: { baseCapacity: 6, daytour: 5200, overnight: 6200 },
-  familySuite4: { baseCapacity: 4, daytour: 4100, overnight: 5600 },
-  familySuite6: { baseCapacity: 6, daytour: 5700, overnight: 7200 },
+  familySuite4: { baseCapacity: 4, daytour: 4600, overnight: 5600 },
+  familySuite6: { baseCapacity: 6, daytour: 6200, overnight: 7200 },
   hiwagaSuite4: { baseCapacity: 4, daytour: 6500, overnight: 8000 },
-  paraisoSuite8: { baseCapacity: 8, daytour: 10000, overnight: 12000 },
+  // Paraiso: "Presidential Suite for 12" on the resort website.
+  paraisoSuite8: { baseCapacity: 12, daytour: 10000, overnight: 12000 },
   halimuyakSuite8: { baseCapacity: 8, daytour: 10000, overnight: 12000 },
-  mainVilla20: { baseCapacity: 20, daytour: 18500, overnight: 24500 },
+  // "Main Villa for 25 with Kitchen", ₱22,000 on the resort website.
+  mainVilla20: { baseCapacity: 25, daytour: 16500, overnight: 22000 },
 };
+
+// What every room rate includes (from the resort's rate list). Overnight
+// stays also include plated breakfast; an extra person is ₱800 with breakfast.
+export const ROOM_RATE_INCLUDES = {
+  overnight: 'Entrance, pool access, overnight stay and plated breakfast included',
+  daytour: 'Entrance and pool access included',
+};
+export const EXTRA_PERSON_NOTE = 'Extra person ₱800 per night, with breakfast';
 
 const normalizeText = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -301,6 +311,11 @@ const getDescribedCapacity = room => {
     .find(capacity => Number.isInteger(capacity) && capacity > 0) ?? null;
 };
 
+// The resort's "Couple Rooms with Extra Bed" (see the website room list):
+// 2 guests plus 1 on the extra bed, even if the saved description doesn't
+// mention the extra bed.
+const EXTRA_BED_ROOMS = ['panaginip', 'aruga', 'giliw', 'lambingan', 'irog'];
+
 export function getRoomCapacityPolicy(room) {
   if (!room) return null;
 
@@ -315,13 +330,16 @@ export function getRoomCapacityPolicy(room) {
 
   // Couple rooms that can take an extra bed (e.g. "Option to add bed"):
   // up to 3 guests in all (the third on the extra bed, adult or child).
-  const extraBed = text.includes('extrabed') || text.includes('addbed') || text.includes('addabed');
+  const extraBed = text.includes('extrabed') || text.includes('addbed') || text.includes('addabed')
+    || EXTRA_BED_ROOMS.includes(normalizeText(room.roomNumber)) || EXTRA_BED_ROOMS.includes(normalizeText(room.name));
   if (extraBed && (text.includes('couple') || isCoupleRoom(room))) {
     defaults = { maxAdults: 3, maxChildren: 1, maxGuests: 3, label: 'Couple Room with Extra Bed' };
   } else if (isCoupleRoom(room)) {
     defaults = { maxAdults: 2, maxChildren: 1, maxGuests: 3, label: 'Couple Room' };
   } else if (text.includes('mainvilla')) {
-    defaults = { maxAdults: 20, maxChildren: 20, maxGuests: describedCapacity || 20, label: 'Main Villa' };
+    defaults = { maxAdults: 25, maxChildren: 25, maxGuests: describedCapacity || 25, label: 'Main Villa' };
+  } else if (text.includes('paraiso')) {
+    defaults = { maxAdults: 12, maxChildren: 12, maxGuests: 12, label: 'Presidential Suite' };
   } else if (text.includes('presidential')) {
     defaults = { maxAdults: describedCapacity || 8, maxChildren: describedCapacity || 8, maxGuests: describedCapacity || 8, label: 'Presidential Suite' };
   } else if (text.includes('familysuite')) {
@@ -424,7 +442,8 @@ export function getRoomBaseRate(room, bookingType) {
 
 // Swimming rate per person for a day tour or night tour.
 export function getSwimmingRate(tourPeriod = 'day') {
-  return tourPeriod === 'night' ? { adult: 475, child: 375 } : { adult: 375, child: 275 };
+  // Per person; children pay the same as adults.
+  return tourPeriod === 'night' ? { adult: 475, child: 475 } : { adult: 375, child: 375 };
 }
 
 // Day visitors: people who join an overnight booking for a day tour or night
@@ -484,8 +503,9 @@ export function calculateBookingPrice({
   const childrenWithinCapacity = Math.min(children, Math.max(0, baseCapacity - adultsWithinCapacity));
   const extraAdults = adults - adultsWithinCapacity;
   const extraChildren = children - childrenWithinCapacity;
+  // Children pay the same as adults (the resort charges per person).
   const extraRate = bookingType === 'overnight'
-    ? { adult: 800, child: 400 }
+    ? { adult: 800, child: 800 }
     : getSwimmingRate(tourPeriod);
   const extraGuestCharge = (extraAdults * extraRate.adult + extraChildren * extraRate.child) * nights;
   const fee = Number(cottageFee);

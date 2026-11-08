@@ -1161,6 +1161,10 @@ export default function Reservations() {
         amount: extendDialog.amount === '' ? 0 : Number(extendDialog.amount),
         note: extendDialog.note,
       });
+      // Rooms booked together get the same extra time; the fee stays on the first room.
+      for (const room of (extendDialog.rooms || []).filter(x => x.id !== extendDialog.reservation.id && x.status === 'checked-in')) {
+        await callReservationStatusApi({ action: 'extend-checkout', reservationId: room.id, hours: Number(extendDialog.hours), amount: 0, note: extendDialog.note });
+      }
       setExtendDialog(null);
       setToast({ type: 'success', text: `${extendDialog.reservation.guestName || 'Guest'} can stay until ${result.untilLabel}.${result.fee ? ` ${money(Number(result.fee))} late check-out fee added to the bill.` : ''}` });
     } catch (error) {
@@ -1650,7 +1654,7 @@ export default function Reservations() {
                       style={{ border: `1px solid ${guestsStillToArrive(s) > 0 ? '#d97706' : BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Guests arrived</button>
                   )}
                   {s.status === 'checked-in' && (
-                    <button type="button" onClick={() => setExtendDialog({ reservation: s, hours: 1, amount: '', note: '', busy: false })}
+                    <button type="button" onClick={() => setExtendDialog({ reservation: s, rooms: selectedGroupRooms, hours: 1, amount: '', note: '', busy: false })}
                       style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Give more time</button>
                   )}
                   {s.type === 'corporate' && ['pending', 'confirmed', 'checked-in'].includes(s.status) && (
@@ -1684,23 +1688,25 @@ export default function Reservations() {
             )}
 
             {dueToCheckOut.length > 0 && (
-              <NotificationGroup title="Due to check out" detail="Checked-in guests leaving within 2 hours" count={dueToCheckOut.length} color="#2563eb" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
-                {dueToCheckOut.map(({ r, due }) => {
-                  const owes = hasOutstandingBalance(r);
+              <NotificationGroup title="Due to check out" detail="Checked-in guests leaving within 2 hours" count={byBooking(dueToCheckOut.map(x => x.r)).length} color="#2563eb" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {byBooking(dueToCheckOut.map(x => x.r)).map(({ r, rooms }) => {
+                  const due = dueToCheckOut.find(x => x.r.id === r.id)?.due || dueToCheckOut.find(x => rooms.includes(x.r)).due;
+                  const owedTotal = rooms.reduce((sum, x) => sum + Math.max(0, outstandingAmount(x)), 0);
+                  const owes = owedTotal > 0;
                   const btn = { background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' };
                   return (
                     <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: `1px solid ${BORDER}` }}>
                       <div style={{ fontSize: '12px', color: TEXT }}>
-                        <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'}
+                        <strong>{r.guestName || 'Guest'}</strong> — {roomsLabel(rooms)}
                         <div style={{ fontSize: '11px', color: due.minutesLeft <= 30 ? '#d97706' : MUTED, fontWeight: due.minutesLeft <= 30 ? 700 : 400 }}>
                           Check-out at {formatManilaTime(due.dueMs)} · in {due.minutesLeft >= 60 ? `${Math.floor(due.minutesLeft / 60)}h ${due.minutesLeft % 60}m` : `${due.minutesLeft} min`}
-                          {owes ? ` · owes ${money(outstandingAmount(r))}` : ' · fully paid'}
+                          {owes ? ` · owes ${money(owedTotal)}` : ' · fully paid'}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <button onClick={() => setSelectedId(r.id)} style={btn}>View</button>
-                        {owes && <button onClick={() => navigate(billingPath(r.id))} style={{ ...btn, color: '#d97706' }}>Collect {money(outstandingAmount(r))}</button>}
-                        <button onClick={() => setExtendDialog({ reservation: r, hours: 1, amount: '', note: '', busy: false })} style={btn}>Give more time</button>
+                        {owes && <button onClick={() => navigate(billingPath(r.id))} style={{ ...btn, color: '#d97706' }}>Collect {money(owedTotal)}</button>}
+                        <button onClick={() => setExtendDialog({ reservation: r, rooms, hours: 1, amount: '', note: '', busy: false })} style={btn}>Give more time</button>
                         <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
                           style={{ ...btn, background: ACCENT, color: ACCENT_TEXT, border: 'none', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
                       </div>

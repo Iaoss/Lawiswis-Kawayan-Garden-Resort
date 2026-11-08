@@ -13,6 +13,7 @@ import sendPaymentReceipt from '../apiHandlers/send-payment-receipt';
 import sendReservationConfirmation from '../apiHandlers/send-reservation-confirmation';
 import validatePromoCode from '../apiHandlers/validate-promo-code';
 import contactInquiry from '../apiHandlers/contact-inquiry';
+import loginGuard from '../apiHandlers/login-guard';
 import newsletterSubscribe from '../apiHandlers/newsletter-subscribe';
 import newsletterBroadcast from '../apiHandlers/newsletter-broadcast';
 import resortAvailability from '../apiHandlers/resort-availability';
@@ -64,6 +65,7 @@ const handlers = {
   'reservation-status': reservationStatus,
   'staff-billing': staffBilling,
   'staff-users': staffUsers,
+  'login-guard': loginGuard,
   'image-upload': imageUpload,
   'seasonal-rates': seasonalRates,
   'cottage-types': cottageTypes,

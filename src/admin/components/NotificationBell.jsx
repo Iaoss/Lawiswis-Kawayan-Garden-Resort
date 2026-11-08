@@ -102,6 +102,15 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   const [inquiries, setInquiries] = useState([]);
   const [emails, setEmails] = useState([]);
   const [feedback, setFeedback] = useState([]);
+  const [locks, setLocks] = useState([]);
+
+  // Staff accounts locked after too many wrong passwords (admins only).
+  useEffect(() => {
+    if (prefix !== '/admin') { setLocks([]); return undefined; }
+    return onSnapshot(query(collection(db, 'notifications'), where('type', '==', 'login-locked')),
+      snapshot => setLocks(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setLocks([]));
+  }, [prefix]);
 
   // Guest feedback from the last week that staff haven't read yet. Low
   // ratings (1–2★) show as "Unhappy Guest" so staff can follow up quickly.
@@ -162,8 +171,19 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
         timeMs: toMillis(item.createdAt),
         path: feedbackPath || `${prefix}/feedback`,
       }));
-    return [...inquiryItems, ...emailItems, ...feedbackItems];
-  }, [inquiries, emails, feedback, prefix, feedbackPath]);
+    const lockItems = locks
+      .filter(item => toMillis(item.createdAt) >= weekAgo && !item.resolved)
+      .map(item => ({
+        id: `login-locked_${item.id}`,
+        icon: 'ti-lock',
+        badge: 'Account Locked',
+        message: `${item.name || item.email || 'A staff account'} · 5 wrong passwords`,
+        details: `${item.email || ''} · locked for 15 minutes. If it wasn't them, reset the password in Users.`,
+        timeMs: toMillis(item.createdAt),
+        path: `${prefix}/users`,
+      }));
+    return [...inquiryItems, ...emailItems, ...feedbackItems, ...lockItems];
+  }, [inquiries, emails, feedback, locks, prefix, feedbackPath]);
 }
 
 const QUICK_LINKS = {

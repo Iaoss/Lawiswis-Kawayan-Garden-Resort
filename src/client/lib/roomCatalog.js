@@ -56,7 +56,7 @@ export const GROUPS = [
   {
     title: 'Presidential Suites',
     price: 12000,
-    capacity: 'Up to 8–12 guests',
+    capacity: 'Up to 8 or 12 guests',
     intro: 'Our largest suites, with open living areas for groups, families and small meetings.',
   },
   {

@@ -25,6 +25,7 @@ import {
   isSingleDayStay,
   describeRoomCapacity,
 } from '../../lib/bookingPricing';
+import { EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES } from '../../lib/bookingPricing';
 import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
@@ -1239,7 +1240,7 @@ export default function BookRoom() {
                 )}
                 {[
                   { key: 'adults', label: 'Adults', min: 1, rate: 800 },
-                  { key: 'children', label: 'Children (under 10)', min: 0, rate: 400 },
+                  { key: 'children', label: 'Children (under 10)', min: 0, rate: 800 },
                 ].map(guestType => {
                   const count = Number(form[guestType.key]);
                   return (
@@ -1892,6 +1893,9 @@ export default function BookRoom() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today ({depositPercentage}% deposit)</span><span>₱{depositAmount.toLocaleString()}</span></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '7px' }}><span>Balance due on arrival</span><span>₱{balanceAmount.toLocaleString()}</span></div>
+                <div style={{ fontSize: '11px', color: ACCENT, marginTop: '10px', lineHeight: 1.5 }}>
+                  ✓ {form.bookingType === 'daytour' ? ROOM_RATE_INCLUDES.daytour : ROOM_RATE_INCLUDES.overnight}.{form.bookingType === 'daytour' ? '' : ` ${EXTRA_PERSON_NOTE}.`}
+                </div>
               </div>
 
               {nights > 0 && (

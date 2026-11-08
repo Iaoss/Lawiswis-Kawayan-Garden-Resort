@@ -10,8 +10,8 @@ describe('day visitors on an overnight stay', () => {
       room: coupleRoom, bookingType: 'overnight', nights: 1, adults: 2, children: 0,
       dayVisitors: { adults: 1, children: 1, tourPeriod: 'day' },
     });
-    expect(price.dayVisitorCharge).toBe(375 + 275);
-    expect(price.subtotalAmount).toBe(3000 + 650);
+    expect(price.dayVisitorCharge).toBe(375 + 375);
+    expect(price.subtotalAmount).toBe(3000 + 750);
     // Visitors don't use the room's guest count.
     expect(price.extraGuestCharge).toBe(0);
   });

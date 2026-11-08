@@ -10,7 +10,7 @@ import {
   MAX_STAY_NIGHTS, OVERNIGHT_TIME_SLOTS, getRoomBaseRate, getRoomMaximumGuests, isCheckInPassed, isCoupleRoom, isTourStartPassed, isWalkInTourClosed, stayRangesOverlap,
 } from '../../lib/bookingPricing';
 import { BOOKING_OPTIONS, normalizeBookingDetails, priceBookingDetails } from '../../lib/bookingDetails';
-import { COTTAGE_OPTIONS, calculateCottageTourPrice, cottageName, getCottageFee } from '../../lib/bookingPricing';
+import { COTTAGE_OPTIONS, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES, calculateCottageTourPrice, cottageName, getCottageFee } from '../../lib/bookingPricing';
 import { groupTooLargeNote, suggestCottage, suggestRooms } from '../../lib/bookingSuggestions';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
@@ -879,6 +879,7 @@ export default function WalkIn() {
                       <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12, marginBottom: 12, fontSize: 12, color: MUTED }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{isTour ? bookingOption.label : 'Stay'}</span><span>{isTour ? formatDate(form.checkIn) : `${formatDate(form.checkIn)} → ${formatDate(form.checkOut)}`}</span></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} {stayUnit}{nights !== 1 ? 's' : ''} · est.</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{estimatedTotal.toLocaleString()}</span></div>
+                        <div style={{ fontSize: 10.5, color: ACCENT, marginTop: 6 }}>✓ {isTour ? ROOM_RATE_INCLUDES.daytour : `${ROOM_RATE_INCLUDES.overnight}. ${EXTRA_PERSON_NOTE}`}.</div>
                       </div>
                       {extraRooms.length > 0 && (
                         <div style={{ background: CARD2, borderRadius: 10, padding: 10, marginBottom: 12, fontSize: 11.5, color: TEXT }}>

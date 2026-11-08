@@ -35,6 +35,24 @@ export default function Login() {
     e.preventDefault();
     setError('');
     setLoading(true);
+    // Wrong passwords are counted on the server; too many lock the account.
+    try {
+      const response = await fetch('/api/login-guard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'sign-in', email, password }),
+      });
+      const result = await response.json().catch(() => ({}));
+      // A refusal (wrong password, locked, disabled) stops here. If the check
+      // itself is down, sign-in still works through Firebase's own limits.
+      if ([400, 401, 403, 423, 429].includes(response.status)) {
+        setError(result.error || 'Invalid email or password.');
+        setLoading(false);
+        return;
+      }
+    } catch {
+      // Network problem reaching the check: fall through to the normal sign-in.
+    }
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const uid = userCredential.user.uid;
@@ -63,8 +81,10 @@ export default function Login() {
         setError('User not found in system.');
       }
     } catch (err) {
-      console.error('Login error:', err); // ← now you can see real errors
-      setError('Invalid email or password.');
+      console.error('Login error:', err);
+      setError(err?.code === 'auth/too-many-requests'
+        ? 'Too many sign-in attempts. Please wait a few minutes, or use Forgot password.'
+        : 'Invalid email or password.');
     }
     setLoading(false);
   };

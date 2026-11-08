@@ -942,6 +942,12 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
       subtotalAmount: pricing.subtotalAmount,
       totalAmount,
       paymentStatus: paymentStatusFor(totalAmount + extraCharges, amountPaid),
+      // Guests added to a checked-in stay are here already.
+      ...(() => {
+        const added = (Number(details.adults || 0) + Number(details.children || 0)) - (Number(reservation.adults || 0) + Number(reservation.children || 0));
+        return reservation.status === 'checked-in' && added > 0 && Number.isInteger(reservation.arrivedGuests)
+          ? { arrivedGuests: reservation.arrivedGuests + added } : {};
+      })(),
       editHistory: FieldValue.arrayUnion({
         id: crypto.randomUUID(),
         editedBy: staff.uid,

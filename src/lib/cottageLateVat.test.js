@@ -52,8 +52,8 @@ describe('late arrival after 9 PM', () => {
 describe('cottage-only day and night tours', () => {
   it('charges the entrance per person plus the cottage', () => {
     const price = calculateCottageTourPrice({ adults: 4, children: 2, tourPeriod: 'day', cottageId: 'umbrella-hut' });
-    expect(price.entranceFee).toBe(4 * 375 + 2 * 275);
-    expect(price.subtotalAmount).toBe(2050 + 500);
+    expect(price.entranceFee).toBe(6 * 375);
+    expect(price.subtotalAmount).toBe(2250 + 500);
     expect(calculateCottageTourPrice({ adults: 2, children: 0, tourPeriod: 'night', cottageId: 'poolside-cabana' }).subtotalAmount).toBe(950 + 1500);
   });
 

@@ -84,7 +84,8 @@ export function buildAutoAnswer(topicId, { rooms = [] } = {}) {
       return [
         'Here are our room rates (VAT included):',
         ...lines,
-        'Extra guests and larger groups may add a per-person fee. Pick your dates at ' + `${SITE}/book` + ' to see the exact price for your group.',
+        'All overnight room rates include entrance fees, pool access, overnight accommodation and plated breakfast. An extra person is ₱800 per night, with breakfast.',
+        'Pick your dates at ' + `${SITE}/book` + ' to see the exact price for your group.',
       ].join('\n');
     }
     case 'auto-cottage-rates':
@@ -97,8 +98,8 @@ export function buildAutoAnswer(topicId, { rooms = [] } = {}) {
     case 'auto-tour-rates':
       return [
         'Swimming entrance per person:',
-        `• Day tour (${DAYTOUR_TIME_SLOT.checkIn}–${DAYTOUR_TIME_SLOT.checkOut}): ${peso(day.adult)} adult, ${peso(day.child)} child (under 10)`,
-        `• Night tour (${NIGHTTOUR_TIME_SLOT.checkIn}–${NIGHTTOUR_TIME_SLOT.checkOut}): ${peso(night.adult)} adult, ${peso(night.child)} child (under 10)`,
+        `• Day tour (${DAYTOUR_TIME_SLOT.checkIn}–${DAYTOUR_TIME_SLOT.checkOut}): ${peso(day.adult)} per person (adults and children)`,
+        `• Night tour (${NIGHTTOUR_TIME_SLOT.checkIn}–${NIGHTTOUR_TIME_SLOT.checkOut}): ${peso(night.adult)} per person (adults and children)`,
         'For a tour you can book a room or just a cottage. Tap "Cottage rates" for cottage prices.',
       ].join('\n');
     case 'auto-times':

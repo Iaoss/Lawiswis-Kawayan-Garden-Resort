@@ -20,7 +20,7 @@ describe('booking details rules (all portals)', () => {
   test('overnight stays need a later check-out and an open check-in time', () => {
     expect(normalizeBookingDetails({ bookingType: 'overnight', checkIn: '2026-10-25', checkOut: '2026-10-25', adults: 2 }, { now }).error).toBeTruthy();
     const afterTwo = new Date('2026-10-24T06:35:00Z'); // 2:35 PM: the 10 AM slot closed at 2 PM
-    expect(normalizeBookingDetails({ bookingType: 'overnight', overnightTimeSlot: 'morning', checkIn: '2026-10-24', checkOut: '2026-10-25', adults: 2 }, { now: afterTwo }).error).toMatch(/10:00 AM/);
+    expect(normalizeBookingDetails({ bookingType: 'overnight', overnightTimeSlot: 'morning', checkIn: '2026-10-24', checkOut: '2026-10-25', adults: 2 }, { now: afterTwo }).error).toMatch(/11:00 AM/);
     expect(normalizeBookingDetails({ bookingType: 'overnight', overnightTimeSlot: 'afternoon', checkIn: '2026-10-24', checkOut: '2026-10-26', adults: 2 }, { now }).details.nights).toBe(2);
   });
 
@@ -33,11 +33,11 @@ describe('booking details rules (all portals)', () => {
   test('enforces room guest limits and prices tours as room + per person', () => {
     expect(normalizeBookingDetails({ bookingType: 'daytour', tourPeriod: 'day', checkIn: '2026-10-25', adults: 4 }, { now, room: couple }).error).toBeTruthy();
     const { details } = normalizeBookingDetails({ bookingType: 'daytour', tourPeriod: 'day', checkIn: '2026-10-25', adults: 2, children: 1 }, { now, room: couple });
-    // Couple room day rate ₱2,000 for 2, plus 1 child at ₱275.
-    expect(priceBookingDetails(couple, details).subtotalAmount).toBe(2275);
-    // Night tour: same room rate, child at the night rate of ₱375.
+    // Couple room day rate ₱2,000 for 2, plus 1 child at ₱375 (same as adults).
+    expect(priceBookingDetails(couple, details).subtotalAmount).toBe(2375);
+    // Night tour: same room rate, child at the night rate of ₱475.
     const night = normalizeBookingDetails({ bookingType: 'daytour', tourPeriod: 'night', checkIn: '2026-10-25', adults: 2, children: 1 }, { now, room: couple }).details;
-    expect(priceBookingDetails(couple, night).subtotalAmount).toBe(2375);
+    expect(priceBookingDetails(couple, night).subtotalAmount).toBe(2475);
   });
 
   test('maps between booking options and saved fields', () => {

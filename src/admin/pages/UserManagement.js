@@ -312,6 +312,17 @@ export default function UserManagement() {
     }
   };
 
+  // Ends a lock from too many wrong passwords.
+  const unlockAccount = async user => {
+    setNotice(null);
+    try {
+      await staffApi('login-guard', { action: 'unlock', uid: user.id });
+      say('success', `${user.name || user.email} can sign in again.`);
+    } catch (error) {
+      say('error', error.message || 'Could not unlock the account.');
+    }
+  };
+
   const toggleStatus = async user => {
     const deactivate = isActive(user);
     if (deactivate) {
@@ -536,6 +547,11 @@ export default function UserManagement() {
                       <span style={{ ...pill, ...(u.role === 'admin' ? tone('purple') : tone('blue')) }}>{roleLabel(u)}</span>
                       {u.customRoleName && <span style={{ ...pill, background: c.card2, color: c.muted }}>Receptionist + role access</span>}
                       <span style={{ ...pill, ...(active ? tone('green') : tone('red')) }}>{active ? 'Active' : 'Deactivated'}</span>
+                      {Number(u.loginLockedUntil || 0) > now && (
+                        <span style={{ ...pill, ...tone('red') }} title="Locked after 5 wrong passwords">
+                          <i className="ti ti-lock" aria-hidden="true" /> Locked until {new Date(Number(u.loginLockedUntil)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                        </span>
+                      )}
                     </div>
 
                     {u.role === 'receptionist' && (
@@ -563,6 +579,11 @@ export default function UserManagement() {
                       {u.role === 'receptionist' && active && (
                         <button type="button" style={{ ...btn, ...tone('amber'), border: 'none' }} onClick={() => openAccess(u)}>
                           <i className="ti ti-key" aria-hidden="true" /> Access
+                        </button>
+                      )}
+                      {Number(u.loginLockedUntil || 0) > now && (
+                        <button type="button" style={{ ...btn, ...tone('green'), border: 'none' }} onClick={() => unlockAccount(u)} title="End the lock now">
+                          <i className="ti ti-lock-open" aria-hidden="true" /> Unlock
                         </button>
                       )}
                       {u.email && (

@@ -55,7 +55,7 @@ describe('same-day overnight cutoff (Philippine time)', () => {
   it('keeps a check-in time open until the next one starts (flexible check-in)', () => {
     const afterTwo = new Date('2026-10-24T06:35:00Z'); // 2:35 PM in Manila
     expect(getOvernightCutoffError('2026-10-24', 'morning', lunchtime)).toBe('');
-    expect(getOvernightCutoffError('2026-10-24', 'morning', afterTwo)).toMatch(/10:00 AM/);
+    expect(getOvernightCutoffError('2026-10-24', 'morning', afterTwo)).toMatch(/11:00 AM/);
     expect(getOvernightCutoffError('2026-10-24', 'afternoon', afterTwo)).toBe('');
     expect(getOvernightCutoffError('2026-10-25', 'morning', afterTwo)).toBe('');
   });
@@ -125,12 +125,12 @@ describe('booking pricing', () => {
   it.each([
     [{ type: 'FamilyRoom', baseCapacity: 4 }, 3600, 4600, 4],
     [{ type: 'FamilyRoom', baseCapacity: 6 }, 5200, 6200, 6],
-    [{ type: 'FamilySuite', baseCapacity: 4 }, 4100, 5600, 4],
-    [{ type: 'FamilySuite', baseCapacity: 6 }, 5700, 7200, 6],
+    [{ type: 'FamilySuite', baseCapacity: 4 }, 4600, 5600, 4],
+    [{ type: 'FamilySuite', baseCapacity: 6 }, 6200, 7200, 6],
     [{ type: 'JuniorSuite4' }, 6500, 8000, 4],
-    [{ name: 'Paraiso Suite for 8', type: 'PresidentialSuite' }, 10000, 12000, 8],
+    [{ name: 'Paraiso Suite for 12', type: 'PresidentialSuite' }, 10000, 12000, 12],
     [{ name: 'Halimuyak Suite for 8', type: 'PresidentialSuite' }, 10000, 12000, 8],
-    [{ name: 'Main Villa for 20', type: 'MainVilla' }, 18500, 24500, 20],
+    [{ name: 'Main Villa for 25', type: 'MainVilla' }, 16500, 22000, 25],
   ])('configures %o at both stay rates', (room, daytour, overnight, capacity) => {
     expect(getRoomBaseRate(room, 'daytour')).toEqual({ amount: daytour, baseCapacity: capacity });
     expect(getRoomBaseRate(room, 'overnight')).toEqual({ amount: overnight, baseCapacity: capacity });
@@ -153,10 +153,10 @@ describe('booking pricing', () => {
       extraAdults: 1,
       extraChildren: 1,
       extraAdultRate: 800,
-      extraChildRate: 400,
-      extraGuestCharge: 2400,
+      extraChildRate: 800,
+      extraGuestCharge: 3200,
       cottageFee: 500,
-      subtotalAmount: 12100,
+      subtotalAmount: 12900,
     });
   });
 
@@ -172,8 +172,8 @@ describe('booking pricing', () => {
       baseRate: 6500,
       baseCapacity: 4,
       extraGuests: 2,
-      extraGuestCharge: 750,
-      subtotalAmount: 7250,
+      extraGuestCharge: 950,
+      subtotalAmount: 7450,
     });
   });
 
@@ -189,9 +189,9 @@ describe('booking pricing', () => {
       extraAdults: 1,
       extraChildren: 1,
       extraAdultRate: 375,
-      extraChildRate: 275,
-      extraGuestCharge: 1300,
-      subtotalAmount: 5300,
+      extraChildRate: 375,
+      extraGuestCharge: 1500,
+      subtotalAmount: 5500,
     });
   });
 

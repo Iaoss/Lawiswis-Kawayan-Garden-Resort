@@ -144,7 +144,7 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
       style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'center', padding: 16 }}>
       <form role="dialog" aria-modal="true" aria-labelledby="edit-booking-title"
         onSubmit={event => { event.preventDefault(); save(); }}
-        style={{ width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', background: c.CARD, border: `1px solid ${c.BORDER}`, borderRadius: 14, padding: 20, display: 'grid', gap: 12, fontFamily: "'Poppins', sans-serif" }}>
+        style={{ width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', overflowX: 'hidden', boxSizing: 'border-box', gridTemplateColumns: 'minmax(0, 1fr)', background: c.CARD, border: `1px solid ${c.BORDER}`, borderRadius: 14, padding: 20, display: 'grid', gap: 12, fontFamily: "'Poppins', sans-serif" }}>
         <div>
           <div id="edit-booking-title" style={{ fontWeight: 700, fontSize: 15, color: c.TEXT }}>Edit booking</div>
           <div style={{ fontSize: 12, color: c.MUTED }}>{reservation.guestName || 'Guest'} · Room {groupRooms.map(item => item.roomNumber).join(', ') || reservation.roomNumber || '—'}</div>
