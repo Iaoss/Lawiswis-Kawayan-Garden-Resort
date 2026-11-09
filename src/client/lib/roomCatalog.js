@@ -123,10 +123,40 @@ const CATALOG = Object.fromEntries(
   ])
 );
 
-// Extra photos we know about (Tahimik has a 5-photo gallery on the resort site).
-const EXTRA_GALLERY = {
-  tahimik: [1, 2, 3, 4, 5].map(n => optimizeImage(`${UP}2024/10/Tahimik-0${n}.jpeg`, IMAGE_WIDTHS.large)),
+// Each room's photo gallery on lawiswiskawayanresort.com/rooms/<name>/,
+// so guests can see the other areas of the room (bathroom, beds, view).
+const GALLERY_PATHS = {
+  'aliwalas': ['2024/10/Aliwalas-01.jpeg', '2024/10/Aliwalas-02.jpeg', '2024/10/Aliwalas-03.jpeg', '2024/10/Aliwalas-04.jpeg', '2024/10/Aliwalas-05.jpeg'],
+  'aruga': ['2024/10/Aruga-01.jpeg', '2024/10/Aruga-02.jpeg', '2024/10/Aruga-03.jpeg', '2024/10/Aruga-04.jpeg', '2024/10/Aruga-05.jpeg'],
+  'bituin': ['2024/10/Bituin-01.jpeg', '2024/10/Bituin-02.jpeg', '2024/10/Bituin-03.jpeg', '2024/10/Bituin-04.jpeg', '2024/10/Bituin-05.jpeg'],
+  'dalisay': ['2024/10/Dalisay-01.jpeg', '2024/10/Dalisay-02.jpeg', '2024/10/Dalisay-03.jpeg', '2024/10/Dalisay-04.jpeg', '2024/10/Dalisay-05.jpeg', '2024/10/Dalisay-06.jpeg'],
+  'dilag': ['2024/10/Dilag-01.jpeg', '2024/10/Dilag-02.jpeg', '2024/10/Dilag-03.jpeg', '2024/10/Dilag-04.jpeg', '2024/10/Dilag-05.jpeg'],
+  'giliw': ['2024/10/Giliw-01.jpeg', '2024/10/Giliw-02.jpeg', '2024/10/Giliw-03.jpeg', '2024/10/Giliw-04.jpeg', '2024/10/Giliw-05.jpeg'],
+  'ginhawa': ['2024/10/Ginhawa-01.jpeg', '2024/10/Ginhawa-02.jpeg', '2024/10/Ginhawa-03.jpeg', '2024/10/Ginhawa-04.jpeg', '2024/10/Ginhawa-05.jpeg'],
+  'halimuyak': ['2024/10/Halimuyak-01.jpeg', '2024/10/Halimuyak-02.jpeg', '2024/10/Halimuyak-03.jpeg', '2024/10/Halimuyak-04.jpeg', '2024/10/Halimuyak-05.jpeg', '2024/10/Halimuyak-06.jpeg', '2024/10/Halimuyak-07.jpeg', '2024/10/Halimuyak-08.jpeg', '2024/10/Halimuyak-09.jpeg', '2024/10/Halimuyak-10.jpeg'],
+  'hapag': ['2024/10/Hapag-01.jpeg', '2024/10/Hapag-02.jpeg', '2024/10/Hapag-03.jpeg', '2024/10/Hapag-04.jpeg', '2024/10/Hapag-05.jpeg', '2024/10/Hapag-06.jpeg', '2024/10/Hapag-07.jpeg', '2024/10/Hapag-08.jpeg', '2024/10/Hapag-09.jpeg'],
+  'himbing': ['2024/10/Himbing-01.jpeg', '2024/10/Himbing-02.jpeg', '2024/10/Himbing-03.jpeg', '2024/10/Himbing-04.jpeg', '2024/10/Himbing-05.jpeg'],
+  'hirang': ['2020/04/Hirang-01.jpeg', '2020/04/Hirang-02.jpeg', '2020/04/Hirang-03.jpeg', '2020/04/Hirang-04.jpeg'],
+  'hiwaga': ['2024/10/Hiwaga-01.jpeg', '2024/10/Hiwaga-02.jpeg', '2024/10/Hiwaga-03.jpeg'],
+  'iglipan': ['2024/10/Iglipan-01.jpeg', '2024/10/Iglipan-02.jpeg', '2024/10/Iglipan-03.jpeg', '2024/10/Iglipan-04.jpeg', '2024/10/Iglipan-05.jpeg', '2024/10/Iglipan-06.jpeg'],
+  'irog': ['2024/10/Irog-02.jpeg'],
+  'kalinga': ['2024/10/Kalinga-01.jpeg', '2024/10/Kalinga-02.jpeg', '2024/10/Kalinga-03.jpeg', '2024/10/Kalinga-04.jpeg', '2024/10/Kalinga-05.jpeg'],
+  'lambingan': ['2024/10/Lambingan-01.jpeg', '2024/10/Lambingan-02.jpeg', '2024/10/Lambingan-03.jpeg', '2024/10/Lambingan-04.jpeg'],
+  'ligaya': ['2024/10/Ligaya-01.jpeg', '2024/10/Ligaya-02.jpeg', '2024/10/Ligaya-03.jpeg', '2024/10/Ligaya-04.jpeg', '2024/10/Ligaya-05.jpeg', '2024/10/Ligaya-06.jpeg'],
+  'main villa': ['2024/10/Main-Villa-01.jpeg', '2024/10/Main-Villa-02.jpeg', '2024/10/Main-Villa-03.jpeg', '2024/10/Main-Villa-04.jpeg', '2024/10/Main-Villa-05.jpeg', '2024/10/Main-Villa-06.jpeg', '2024/10/Main-Villa-07.jpeg', '2024/10/Main-Villa-08.jpeg'],
+  'minamahal': ['2024/10/MInamahal-01.jpeg', '2024/10/MInamahal-02.jpeg', '2024/10/MInamahal-03.jpeg', '2024/10/MInamahal-04.jpeg'],
+  'pag-ibig': ['2024/10/Pag-ibig-01.jpeg', '2024/10/Pag-ibig-02.jpeg', '2024/10/Pag-ibig-03.jpeg', '2024/10/Pag-ibig-04.jpeg', '2024/10/Pag-ibig-05.jpeg', '2024/10/Pag-ibig-06.jpeg'],
+  'panaginip': ['2024/10/Panaginip-01.jpeg', '2024/10/Panaginip-02.jpeg', '2024/10/Panaginip-03.jpeg', '2024/10/Panaginip-04.jpeg', '2024/10/Panaginip-05.jpeg'],
+  'panatag': ['2024/10/Panatag-01.jpeg', '2024/10/Panatag-02.jpeg', '2024/10/Panatag-03.jpeg', '2024/10/Panatag-04.jpeg', '2024/10/Panatag-05.jpeg'],
+  'paraiso': ['2024/10/Paraiso-01.jpeg', '2024/10/Paraiso-02.jpeg', '2024/10/Paraiso-03.jpeg', '2024/10/Paraiso-04.jpeg', '2024/10/Paraiso-05.jpeg', '2024/10/Paraiso-06.jpeg'],
+  'payapa': ['2024/10/Payapa-01.jpeg', '2024/10/Payapa-02.jpeg', '2024/10/Payapa-03.jpeg', '2024/10/Payapa-04.jpeg'],
+  'simoy': ['2024/10/Simoy-01.jpeg', '2024/10/Simoy-02.jpeg', '2024/10/Simoy-03.jpeg', '2024/10/Simoy-04.jpeg', '2024/10/Simoy-05.jpeg', '2024/10/Simoy-06.jpeg', '2024/10/Simoy-07.jpeg'],
+  'tadhana': ['2024/10/Tadhana-01.jpeg', '2024/10/Tadhana-02.jpeg', '2024/10/Tadhana-03.jpeg', '2024/10/Tadhana-04.jpeg'],
+  'tahimik': ['2024/10/Tahimik-01.jpeg', '2024/10/Tahimik-02.jpeg', '2024/10/Tahimik-03.jpeg', '2024/10/Tahimik-04.jpeg', '2024/10/Tahimik-05.jpeg'],
+  'ugoy': ['2024/10/Ugoy-01.jpeg', '2024/10/Ugoy-02.jpeg', '2024/10/Ugoy-03.jpeg', '2024/10/Ugoy-04.jpeg', '2024/10/Ugoy-05.jpeg', '2024/10/Ugoy-06.jpeg', '2024/10/Ugoy-07.jpeg'],
 };
+const EXTRA_GALLERY = Object.fromEntries(Object.entries(GALLERY_PATHS)
+  .map(([name, paths]) => [name, paths.map(path => optimizeImage(UP + path, IMAGE_WIDTHS.large))]));
 
 const DEFAULT_AMENITIES = 'Air conditioning, Wi-Fi, Hot shower';
 export const OTHER_GROUP = { title: 'Other Rooms', capacity: '', intro: '' };

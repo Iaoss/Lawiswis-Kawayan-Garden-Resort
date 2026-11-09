@@ -5,6 +5,7 @@ import Layout from '../components/PageLayout';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { useSettings } from '../components/SettingsContext';
 import { awaitsWebsiteDecision, canShowOnWebsite, isShownOnWebsite } from '../../lib/feedbackPublishing';
+import { FOREST_MEADOW } from '../lib/cardGradient';
 
 /* ---------------------------------- icons --------------------------------- */
 const Ico = ({ d, size = 16, ...p }) => (
@@ -50,12 +51,7 @@ export default function Feedback() {
   const MINT = '#86d6b4';
 
   // Dashboard-style gradient tiles
-  const GRADIENTS = {
-    total:    'linear-gradient(135deg, #a5a6f6 0%, #d9d6fb 100%)',
-    positive: 'linear-gradient(135deg, #7be0c8 0%, #b5f0e0 100%)',
-    neutral:  'linear-gradient(135deg, #d6a86c 0%, #f0cfa0 100%)',
-    negative: 'linear-gradient(135deg, #fb923c 0%, #fdba9b 100%)',
-  };
+  const GRADIENTS = { total: FOREST_MEADOW, positive: FOREST_MEADOW, neutral: FOREST_MEADOW, negative: FOREST_MEADOW };
   const DIST_COLORS = { 5: ACCENT, 4: MINT, 3: '#60a5fa', 2: '#fb923c', 1: '#f87171' };
 
   const [feedbacks, setFeedbacks] = useState([]);
@@ -334,7 +330,7 @@ export default function Feedback() {
           <div style={S.card} className="fb-card">
             <div style={{ ...S.title, textAlign: 'center', marginBottom: '14px' }}>Overall Rating</div>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '8px' }}>
-              <div style={{ width: '84px', height: '84px', borderRadius: '50%', background: 'linear-gradient(135deg, #7be0c8 0%, #9cb56f 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 700, boxShadow: '0 0 0 8px rgba(156,181,111,0.18)' }}>
+              <div style={{ width: '84px', height: '84px', borderRadius: '50%', background: FOREST_MEADOW, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', fontWeight: 700, boxShadow: '0 0 0 8px rgba(156,181,111,0.18)' }}>
                 {avgRating}
               </div>
             </div>

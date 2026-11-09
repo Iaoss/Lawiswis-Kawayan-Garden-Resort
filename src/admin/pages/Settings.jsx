@@ -10,14 +10,6 @@ import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { RECEPTIONIST_DASHBOARD_SECTIONS, getReceptionistSections } from '../../lib/receptionistDashboard';
 
-const ACCENT_COLORS = [
-  { label: 'Lime',   value: '#9cb56f' },
-  { label: 'Teal',   value: '#5eead4' },
-  { label: 'Blue',   value: '#60a5fa' },
-  { label: 'Purple', value: '#c084fc' },
-  { label: 'Orange', value: '#fb923c' },
-  { label: 'Pink',   value: '#f472b6' },
-];
 
 const TABS = [
   { id: 'appearance',    label: 'Appearance',    icon: 'ti-palette' },
@@ -299,33 +291,6 @@ export default function Settings() {
         {/* ── APPEARANCE ── */}
         {activeTab === 'appearance' && (
           <>
-            <Section title="Accent color" t={t}>
-              <div style={{ padding: '12px 0 16px' }}>
-                <div style={{ fontSize: 12, color: t.SUBTEXT, marginBottom: 12 }}>
-                  The highlight color used across the panel. Dark mode lives in the top bar.
-                </div>
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  {ACCENT_COLORS.map(c => {
-                    const active = settings.accentColor === c.value;
-                    return (
-                      <div key={c.value} onClick={() => setLive('accentColor', c.value)}
-                        style={{ textAlign: 'center', cursor: 'pointer' }}>
-                        <div style={{
-                          width: 40, height: 40, borderRadius: 10, background: c.value,
-                          border: active ? `3px solid ${t.TEXT}` : `2px solid ${t.BORDER}`,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          transition: 'all 0.15s',
-                        }}>
-                          {active && <i className="ti ti-check" style={{ fontSize: 16, color: t.ACCENT_TEXT }} />}
-                        </div>
-                        <div style={{ fontSize: 9, color: t.MUTED, marginTop: 4 }}>{c.label}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </Section>
-
             <Section title="Text size" t={t}>
               <div style={{ padding: '12px 0 16px' }}>
                 <div style={{ fontSize: 12, color: t.SUBTEXT, marginBottom: 12 }}>Base font size of the panel</div>

@@ -45,7 +45,8 @@ function load() {
         delete parsed[oldKey];
       }
     });
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    // The accent colour is fixed; an old saved choice (e.g. pink) is ignored.
+    return { ...DEFAULT_SETTINGS, ...parsed, accentColor: DEFAULT_SETTINGS.accentColor };
   } catch { return DEFAULT_SETTINGS; }
 }
 
@@ -61,13 +62,14 @@ export function SettingsProvider({ children }) {
   }, []);
 
   const updateSetting = (key, value) => {
+    if (key === 'accentColor') return;
     const next = { ...settings, [key]: value };
     setSettings(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };
 
   const saveAll = (newSettings) => {
-    const next = { ...DEFAULT_SETTINGS, ...newSettings };
+    const next = { ...DEFAULT_SETTINGS, ...newSettings, accentColor: DEFAULT_SETTINGS.accentColor };
     setSettings(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };

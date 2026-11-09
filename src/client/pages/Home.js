@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import HeroSlider from '../components/HeroSlider';
 import { ServiceCarousel } from '../../components/ui/services-card.tsx';
 import { AMENITY_GROUPS } from '../lib/amenities';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import OccupancyBadge from '../components/OccupancyBadge';
@@ -353,6 +353,8 @@ export default function Home() {
           .sort((a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''));
         setNewsArticles(articles);
         setNewsError('');
+        // "All news" on an article page comes back to this section.
+        if (window.location.hash === '#news') setTimeout(() => document.getElementById('news')?.scrollIntoView({ behavior: 'smooth' }), 400);
       } catch (err) {
         console.error('Failed to load news:', err);
         setNewsError('News is temporarily unavailable. Please check the Firestore news read rule.');
@@ -628,7 +630,7 @@ export default function Home() {
       </div>
 
       {/* NEWS */}
-      <div className="section-container" style={{ margin: '100px auto' }}>
+      <div id="news" className="section-container" style={{ margin: '100px auto', scrollMarginTop: '90px' }}>
         <Reveal>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '40px', flexWrap: 'wrap', gap: '16px' }}>
             <div>
@@ -648,7 +650,7 @@ export default function Home() {
         ) : (
           <div className="responsive-grid-3" style={{ gap: '24px' }}>
             {newsArticles.map((b, i) => (
-              <a key={b.id} href={safeHttpUrl(b.externalLink) || 'https://lawiswiskawayanresort.com/'} target="_blank" rel="noopener noreferrer"
+              <Link key={b.id} to={`/news/${b.id}`}
                 style={{ background: PAPER, borderRadius: '6px', overflow: 'hidden', border: `1px solid ${LINE}`, cursor: 'pointer', display: 'block', textDecoration: 'none', color: 'inherit' }}>
                 <div style={{ height: '170px', overflow: 'hidden' }}>
                   <img src={safeHttpUrl(b.imageUrl) ? optimizeImage(b.imageUrl, IMAGE_WIDTHS.card) : newsFallbackPhotos[i % newsFallbackPhotos.length]} alt={b.title} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -658,7 +660,7 @@ export default function Home() {
                   <div style={{ fontWeight: '500', fontSize: '14px', color: INK, lineHeight: 1.5, margin: '12px 0', fontFamily: SERIF }}>{b.title}</div>
                   <span style={{ fontSize: '11.5px', color: BRASS, fontWeight: '600', fontFamily: SANS }}>Read More →</span>
                 </div>
-              </a>
+              </Link>
             ))}
           </div>
         )}

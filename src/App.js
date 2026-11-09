@@ -40,6 +40,7 @@ const Amenities = lazy(() => import('./client/pages/Amenities'));
 const Certifications = lazy(() => import('./client/pages/Certifications'));
 const CustomerCarePage = lazy(() => import('./client/pages/CustomerCarePage'));
 const FeedbackForm = lazy(() => import('./client/pages/FeedbackForm'));
+const NewsArticle = lazy(() => import('./client/pages/NewsArticle'));
 const Settings = lazy(() => import('./admin/pages/Settings'));
 const NewsManagement = lazy(() => import('./admin/pages/NewsManagement.js'));
 const Email = lazy(() => import('./admin/pages/Email.js'));
@@ -169,6 +170,7 @@ function App() {
           <Route path="/amenities" element={<Amenities />} />
           <Route path="/about-us" element={<About />} />
           <Route path="/certifications" element={<Certifications />} />
+          <Route path="/news/:articleId" element={<NewsArticle />} />
           <Route path="/contact-us" element={<Contact />} />
           <Route path="/faqs" element={<CustomerCarePage pageKey="faqs" />} />
           <Route path="/safety-guidelines" element={<CustomerCarePage pageKey="safety-guidelines" />} />

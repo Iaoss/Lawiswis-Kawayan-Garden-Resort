@@ -6,6 +6,7 @@ import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
 import { money } from '../lib/money';
+import { FOREST_MEADOW } from '../lib/cardGradient';
 
 const paymentDateValue = payment => payment.paidAt || payment.paymentDate || payment.createdAt || payment.date;
 const paymentDateMillis = payment => {
@@ -247,7 +248,7 @@ export default function PaymentTransactions() {
         {/* Highlight cards + recent payments */}
         <section style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
           {/* Payments today */}
-          <div style={{ flex: '1 1 170px', minHeight: '210px', borderRadius: '24px', padding: '18px', color: '#fff', display: 'flex', flexDirection: 'column', background: 'linear-gradient(160deg, #a5b4fc 0%, #c4b5fd 100%)' }}>
+          <div style={{ flex: '1 1 170px', minHeight: '210px', borderRadius: '24px', padding: '18px', color: '#fff', display: 'flex', flexDirection: 'column', background: FOREST_MEADOW }}>
             <div style={{ fontSize: '30px', fontWeight: 600 }}>+{todayCount}</div>
             <div style={{ fontSize: '11px', opacity: 0.9 }}>Payments today</div>
             <div style={{ marginTop: 'auto', background: 'rgba(255,255,255,0.28)', borderRadius: '14px', padding: '12px 14px' }}>
@@ -257,7 +258,7 @@ export default function PaymentTransactions() {
           </div>
 
           {/* Method share */}
-          <div style={{ flex: '1 1 170px', minHeight: '210px', borderRadius: '24px', padding: '18px', color: '#fff', display: 'flex', flexDirection: 'column', background: 'linear-gradient(180deg, #a5b4fc 0%, #fdba74 100%)' }}>
+          <div style={{ flex: '1 1 170px', minHeight: '210px', borderRadius: '24px', padding: '18px', color: '#fff', display: 'flex', flexDirection: 'column', background: FOREST_MEADOW }}>
             <span style={glassLabel}>Top method</span>
             <div style={{ textAlign: 'center', marginTop: '18px' }}>
               <div style={{ fontSize: '34px', fontWeight: 500 }}>{methodShare.pct}%</div>
@@ -271,7 +272,7 @@ export default function PaymentTransactions() {
           </div>
 
           {/* Total revenue */}
-          <div style={{ flex: '2 1 280px', minHeight: '210px', borderRadius: '24px', padding: '18px', color: '#fff', display: 'flex', flexDirection: 'column', background: 'linear-gradient(135deg, #fdba74 0%, #fb7185 100%)' }}>
+          <div style={{ flex: '2 1 280px', minHeight: '210px', borderRadius: '24px', padding: '18px', color: '#fff', display: 'flex', flexDirection: 'column', background: FOREST_MEADOW }}>
             <span style={glassLabel}>Total revenue</span>
             <div style={{ textAlign: 'center', marginTop: '22px' }}>
               <div style={{ fontSize: '40px', fontWeight: 300, letterSpacing: '-1px' }}>{peso(total)}</div>

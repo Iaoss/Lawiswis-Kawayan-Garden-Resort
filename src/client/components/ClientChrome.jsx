@@ -5,6 +5,7 @@ import { useResortAvailability } from './ResortAvailabilityContext';
 import { BOOKING_TYPE_MODAL_EVENT } from '../lib/bookingTypeModal';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 import '../mobile.css';
+import '../liquidGlass.css';
 
 const logo = optimizeImage('https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png', IMAGE_WIDTHS.logo);
 // Floating pill navbar colours.
@@ -112,8 +113,12 @@ export default function ClientChrome({ children }) {
   useEffect(() => setMobileMenuOpen(false), [path]);
   const overHero = path === '/' || path === '/home';
   const [scrolled, setScrolled] = useState(false);
+  const [showTop, setShowTop] = useState(false);
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 24);
+    const onScroll = () => {
+      setScrolled(window.scrollY > 24);
+      setShowTop(window.scrollY > 700);
+    };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
@@ -194,7 +199,7 @@ export default function ClientChrome({ children }) {
       </div>
       {mobileMenuOpen && (
         <div className="client-mobile-menu-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMobileMenuOpen(false); }}>
-          <nav id="client-mobile-menu" className="client-mobile-nav" aria-label="Mobile navigation">
+          <nav id="client-mobile-menu" className="client-mobile-nav client-glass" aria-label="Mobile navigation">
             {renderNavigation(() => setMobileMenuOpen(false))}
             <button type="button" disabled={!canBook} onClick={() => { setMobileMenuOpen(false); openBookingModal(); }} className="client-mobile-book-button">
               {canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}
@@ -212,6 +217,10 @@ export default function ClientChrome({ children }) {
         </div>
         <div className="client-footer-bottom" style={{ maxWidth: '1100px', borderTop: `1px solid ${LINE}33`, margin: '30px auto 0', paddingTop: '18px', fontSize: '10px' }}>© 2026 Lawiswis Kawayan Garden Resort</div>
       </footer>
+      <button type="button" aria-label="Back to top" className={`lk-to-top client-glass${showTop ? ' is-shown' : ''}`} tabIndex={showTop ? 0 : -1}
+        onClick={() => window.scrollTo({ top: 0, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })}>
+        <i className="ti ti-arrow-up" aria-hidden="true" />
+      </button>
       <style>{`
         .client-header-wrap { position: sticky; top: 12px; z-index: 50; padding: 12px 16px 0; }
         .client-header-wrap.is-over-hero { height: 0; padding-top: 0; }

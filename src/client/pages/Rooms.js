@@ -50,7 +50,13 @@ export default function Rooms() {
   // Close the detail dialog with Escape.
   useEffect(() => {
     if (!selectedRoom) return undefined;
-    const onKey = event => { if (event.key === 'Escape') setSelectedRoom(null); };
+    const count = selectedRoom.gallery.length;
+    const onKey = event => {
+      if (event.key === 'Escape') setSelectedRoom(null);
+      // Arrow keys flip through the room's photos.
+      if (event.key === 'ArrowRight' && count > 1) setPhotoIndex(index => (index + 1) % count);
+      if (event.key === 'ArrowLeft' && count > 1) setPhotoIndex(index => (index - 1 + count) % count);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedRoom]);
@@ -272,8 +278,25 @@ export default function Rooms() {
               style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 2, width: '36px', height: '36px', borderRadius: '50%', border: 0, background: 'rgba(255,255,255,.92)', color: FOREST, font: `20px ${SANS}`, cursor: 'pointer' }}
             >×</button>
 
-            <div style={{ height: 'clamp(220px, 40vw, 380px)', background: '#000' }}>
+            <div style={{ position: 'relative', height: 'clamp(220px, 40vw, 380px)', background: '#000' }}>
               <img src={selectedRoom.gallery[photoIndex] || selectedRoom.cover} alt={`${selectedRoom.title} photo ${photoIndex + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              {selectedRoom.gallery.length > 1 && (() => {
+                const count = selectedRoom.gallery.length;
+                const arrow = side => ({ position: 'absolute', top: '50%', [side]: '12px', transform: 'translateY(-50%)', width: '40px', height: '40px', borderRadius: '50%', border: 0, background: 'rgba(255,255,255,.9)', color: FOREST, cursor: 'pointer', display: 'grid', placeItems: 'center', fontSize: '20px' });
+                return (
+                  <>
+                    <button type="button" aria-label="Previous photo" onClick={() => setPhotoIndex(index => (index - 1 + count) % count)} style={arrow('left')}>
+                      <i className="ti ti-chevron-left" aria-hidden="true" />
+                    </button>
+                    <button type="button" aria-label="Next photo" onClick={() => setPhotoIndex(index => (index + 1) % count)} style={arrow('right')}>
+                      <i className="ti ti-chevron-right" aria-hidden="true" />
+                    </button>
+                    <span style={{ position: 'absolute', bottom: '10px', right: '12px', background: 'rgba(0,0,0,.6)', color: '#fff', padding: '3px 10px', borderRadius: '999px', font: `600 11px ${SANS}` }}>
+                      {photoIndex + 1} / {count}
+                    </span>
+                  </>
+                );
+              })()}
             </div>
             {selectedRoom.gallery.length > 1 && (
               <div style={{ display: 'flex', gap: '8px', padding: '12px 28px 0', overflowX: 'auto' }}>

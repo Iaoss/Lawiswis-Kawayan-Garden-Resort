@@ -19,6 +19,7 @@ import {
 } from '../../components/ui/animated-sidebar.tsx';
 import PortalSidebar from './PortalSidebar';
 import './portal-sidebar.css';
+import './portal-glass.css';
 import ShiftSummaryDialog from './ShiftSummaryDialog';
 import { useIdleLogout } from '../lib/staffSession';
 import { CheckInIdHost } from './CheckInIdDialog';

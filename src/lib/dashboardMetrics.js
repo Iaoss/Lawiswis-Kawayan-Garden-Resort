@@ -64,11 +64,11 @@ export function getDailyReservations(reservations, now = new Date(), days = 7) {
 }
 
 export const REVENUE_SOURCES = [
-  { id: 'rooms', label: 'Rooms & packages', color: '#89D7B7' },
-  { id: 'cottages', label: 'Cottages', color: '#9cb56f' },
-  ...SERVICES.map((service, index) => ({ id: service.id, label: service.label, color: ['#60a5fa', '#f472b6', '#a78bfa'][index % 3] })),
-  { id: 'charges', label: 'Extra charges', color: '#fb923c' },
-  { id: 'lateFees', label: 'Late check-out fees', color: '#facc15' },
+  { id: 'rooms', label: 'Rooms & packages', color: '#2E7D7B' },
+  { id: 'cottages', label: 'Cottages', color: '#71B280' },
+  ...SERVICES.map((service, index) => ({ id: service.id, label: service.label, color: ['#134E5E', '#AD8A52', '#8FB9B4'][index % 3] })),
+  { id: 'charges', label: 'Extra charges', color: '#C9A86A' },
+  { id: 'lateFees', label: 'Late check-out fees', color: '#E6D3A3' },
   { id: 'cancellationFees', label: 'Cancellation fees', color: '#94a3b8' },
 ];
 

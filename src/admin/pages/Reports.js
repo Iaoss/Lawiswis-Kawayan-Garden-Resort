@@ -9,6 +9,7 @@ import { getStayTimingDetails } from '../../lib/stayTimes';
 import { money } from '../lib/money';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { formatManilaTime, getScheduledCheckOutMs } from '../../lib/reservationStatus';
+import { FOREST_MEADOW } from '../lib/cardGradient';
 
 const STATUS_OPTIONS = [
   ['pending', 'Pending'], ['confirmed', 'Confirmed'], ['checked-in', 'Checked In'],
@@ -58,13 +59,7 @@ export default function Reports() {
   const ACCENT  = settings?.accentColor || '#9cb56f';
 
   // Dashboard-style gradient stat tiles
-  const GRADIENTS = {
-    revenue:  'linear-gradient(135deg, #7be0c8 0%, #b5f0e0 100%)',
-    bookings: 'linear-gradient(135deg, #a5a6f6 0%, #d9d6fb 100%)',
-    checkout: 'linear-gradient(135deg, #fb923c 0%, #fdba9b 100%)',
-    cancel:   'linear-gradient(135deg, #f9a8a8 0%, #fcd5d5 100%)',
-    occupancy:'linear-gradient(135deg, #d6a86c 0%, #f0cfa0 100%)',
-  };
+  const GRADIENTS = { revenue: FOREST_MEADOW, bookings: FOREST_MEADOW, checkout: FOREST_MEADOW, cancel: FOREST_MEADOW, occupancy: FOREST_MEADOW };
 
   const [reservations, setReservations] = useState([]);
   const [rooms, setRooms] = useState([]);

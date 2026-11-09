@@ -17,27 +17,14 @@ import { checkInGuest as checkInWithId } from '../lib/checkInGuest';
 import { getReceptionistSections } from '../../lib/receptionistDashboard';
 import { money } from '../lib/money';
 import { serverNow } from '../../lib/serverClock';
+import { FOREST_MEADOW, FOREST_MEADOW_BLOBS } from '../lib/cardGradient';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-// Vivid gradients (same look as the Payments page and Admin dashboard).
-// 5 entries because the receptionist dashboard can show up to 5 stat cards.
-const STAT_CARD_GRADIENTS = [
-  'linear-gradient(135deg, #a5b4fc 0%, #c4b5fd 100%)', // periwinkle → lavender
-  'linear-gradient(180deg, #a5b4fc 0%, #fdba74 100%)', // blue → peach
-  'linear-gradient(135deg, #fdba74 0%, #fb7185 100%)', // orange → pink
-  'linear-gradient(135deg, #89D7B7 0%, #67e8f9 100%)', // mint → aqua
-  'linear-gradient(135deg, #67e8f9 0%, #a5b4fc 100%)', // aqua → periwinkle
-];
+// Every stat card uses the Forest Meadow gradient (up to 5 cards).
+const STAT_CARD_GRADIENTS = Array(5).fill(FOREST_MEADOW);
 
-// Soft white/pastel blobs drifting over each gradient
-const STAT_BLOB_COLORS = [
-  ['#ffffff', '#e0e7ff', '#ede9fe'],
-  ['#ffffff', '#dbeafe', '#ffedd5'],
-  ['#ffffff', '#ffedd5', '#ffe4e6'],
-  ['#ffffff', '#d1fae5', '#cffafe'],
-  ['#ffffff', '#cffafe', '#e0e7ff'],
-];
+const STAT_BLOB_COLORS = Array(5).fill(FOREST_MEADOW_BLOBS);
 
 // ── date helpers ──────────────────────────────────────────────
 function toJSDate(val) {
@@ -615,7 +602,7 @@ export default function ReceptionistDashboard() {
 
             <div style={{ display: 'flex', gap: '14px', marginBottom: '10px' }}>
               {[
-                { color: '#6ee7b7', label: 'Tasks' },
+                { color: '#71B280', label: 'Tasks' },
                 { color: ACCENT, label: 'Reservations' },
               ].map(l => (
                 <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -658,7 +645,7 @@ export default function ReceptionistDashboard() {
                     </div>
                     {ev && (
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '2px', marginTop: '3px' }}>
-                        {ev.tasks > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#6ee7b7' }} />}
+                        {ev.tasks > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#71B280' }} />}
                         {ev.reservations > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: ACCENT }} />}
                       </div>
                     )}
@@ -681,7 +668,7 @@ export default function ReceptionistDashboard() {
 
               {dayTasks.length > 0 && (
                 <div>
-                  <div style={{ fontSize: '10px', fontWeight: '700', color: '#6ee7b7', marginBottom: '6px' }}>TASKS</div>
+                  <div style={{ fontSize: '10px', fontWeight: '700', color: '#71B280', marginBottom: '6px' }}>TASKS</div>
                   {dayTasks.map(t => (
                     <div key={t.id} style={{ fontSize: '11px', color: TEXT, marginBottom: '4px', textDecoration: t.completed ? 'line-through' : 'none' }}>
                       • {t.title}

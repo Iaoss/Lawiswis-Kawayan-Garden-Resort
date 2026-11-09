@@ -6,6 +6,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
 import './portal-sidebar.css';
+import './portal-glass.css';
 import logo from './logo-mark.png';
 import NotificationBell from './NotificationBell';
 import CheckInReminder from './CheckInReminder';

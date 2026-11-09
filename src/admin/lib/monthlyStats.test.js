@@ -72,8 +72,8 @@ describe('dashboard card filters', () => {
       { type: 'online', createdAt: ts(2026, 9, 23), status: 'cancelled' },
     ];
     expect(bookingsByPlatform(list, now, 'month')).toEqual([
-      { name: 'Website (online)', color: '#89D7B7', count: 2, value: 67 },
-      { name: 'Walk-in', color: '#9cb56f', count: 1, value: 33 },
+      { name: 'Website (online)', color: '#2E7D7B', count: 2, value: 67 },
+      { name: 'Walk-in', color: '#71B280', count: 1, value: 33 },
     ]);
     expect(bookingsByPlatform(list, now, 'all').map(p => p.count)).toEqual([2, 1, 1]);
   });

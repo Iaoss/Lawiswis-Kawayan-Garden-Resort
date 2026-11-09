@@ -410,8 +410,8 @@ export default function NewsManagement() {
                       onChange={e => setForm({ ...form, excerpt: e.target.value })} />
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
-                    <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Content (optional, full body)</label>
-                    <textarea style={{ ...inputStyle, minHeight: 90, resize: 'vertical' }} value={form.content} placeholder="Full article text…"
+                    <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Content (full story shown when guests tap Read More)</label>
+                    <textarea style={{ ...inputStyle, minHeight: 90, resize: 'vertical' }} value={form.content} placeholder="Full article text. Leave a blank line between paragraphs."
                       onChange={e => setForm({ ...form, content: e.target.value })} />
                   </div>
 

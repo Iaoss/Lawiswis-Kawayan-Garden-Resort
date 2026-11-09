@@ -3,6 +3,7 @@ import { useLocation, useOutlet } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import ChatWidget from './ChatWidget';
 import ClientChrome from './ClientChrome';
+import ScrollReveal from './ScrollReveal';
 import ResortAvailabilityNotice from './ResortAvailabilityNotice';
 import { ResortAvailabilityProvider } from './ResortAvailabilityContext';
 import { loadCottageCatalogOnce } from '../../lib/useCottageCatalog';
@@ -24,6 +25,7 @@ export default function ClientLayout() {
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={location.pathname}
+              className="client-page"
               initial={reduceMotion ? false : { opacity: 0, y: 14 }}
               animate={{ opacity: 1, y: 0 }}
               exit={reduceMotion ? { opacity: 1 } : { opacity: 0, y: -8 }}
@@ -33,6 +35,7 @@ export default function ClientLayout() {
             </motion.div>
           </AnimatePresence>
         </Suspense>
+        <ScrollReveal />
         <ChatWidget />
       </ClientChrome>
     </ResortAvailabilityProvider>
