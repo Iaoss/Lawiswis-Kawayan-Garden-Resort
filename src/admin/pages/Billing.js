@@ -14,6 +14,8 @@ import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import QRCode from 'qrcode';
 import PhoneDisplayToggle from '../components/PhoneDisplayToggle';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
+import AgencyBillingCard from '../components/AgencyBillingCard';
+import { agencyStatusLabel, canStayOnAgencyCredit, isAgencyBilled } from '../../lib/agencyBilling';
 
 // Rooms booked together (one reservation, several rooms) share one bill.
 const billKeyOf = r => (Array.isArray(r.groupReservationIds) && r.groupReservationIds.length > 1 ? (r.groupId || r.groupReservationIds[0]) : r.id);
@@ -82,7 +84,9 @@ export default function Billing() {
   const fetchReservations = async () => {
     const snap = await getDocs(collection(db, 'reservations'));
     setReservations(snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(r => r.status !== 'cancelled' && r.status !== 'checked-out' && r.type !== 'corporate-room'));
+      .filter(r => r.status !== 'cancelled' && r.type !== 'corporate-room'
+        // Agency groups stay here after check-out until the agency pays.
+        && (r.status !== 'checked-out' || (isAgencyBilled(r) && owedOf(r) > 0.004))));
   };
 
   useEffect(() => { fetchReservations(); }, []);
@@ -393,7 +397,7 @@ export default function Billing() {
 
   // ── Check-out with a confirmation (it can't be undone) ─────
   const confirmAndCheckout = async () => {
-    if (totalBalance(selected) > 0) {
+    if (totalBalance(selected) > 0 && !onAgencyCredit) {
       appAlert('Collect the remaining balance before checking this guest out.', { title: 'Balance still due', tone: 'warning' });
       return;
     }
@@ -441,6 +445,9 @@ export default function Billing() {
   });
 
   const balance = selected ? totalBalance(selected) : 0;
+  // Agency groups with a PO leave with the bill open.
+  const onAgencyCredit = Boolean(selected) && billRooms.every(canStayOnAgencyCredit);
+  const checkoutBlocked = balance > 0 && !onAgencyCredit;
   const billTotal = billRooms.reduce((sum, room) => sum + Number(room.totalAmount || 0) + Number(room.extraCharges || 0), 0);
   const lineItems = selected && Array.isArray(selected.extraChargeItems) ? selected.extraChargeItems : [];
   const otherExtras = selected ? Math.max(0, Number(selected.extraCharges || 0) - lineItems.reduce((s, i) => s + Number(i.amount || 0), 0)) : 0;
@@ -492,7 +499,7 @@ export default function Billing() {
                       {roomsText(r)} · {formatDate(r.checkIn)}{r.checkOut && r.checkOut !== r.checkIn ? ` → ${formatDate(r.checkOut)}` : ''}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                      <span style={{ color: SUBTEXT }}>{owes > 0 ? 'Still owes' : 'Paid in full'}</span>
+                      <span style={{ color: SUBTEXT }}>{owes > 0 ? (isAgencyBilled(r) ? 'Due from agency' : 'Still owes') : 'Paid in full'}</span>
                       <span style={{ ...money, fontWeight: 700, color: owes > 0 ? RED : GREEN }}>{formatCurrency(Math.max(0, owes))}</span>
                     </div>
                   </button>
@@ -516,6 +523,11 @@ export default function Billing() {
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                       <h3 style={{ margin: 0, fontSize: 18, color: TEXT }}>{selected.guestName}</h3>
                       {statusPill(selected.status)}
+                      {isAgencyBilled(selected) && (
+                        <span style={{ background: dark ? '#312e81' : '#e0e7ff', color: dark ? '#c7d2fe' : '#3730a3', borderRadius: 999, padding: '2px 9px', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          <i className="ti ti-building-bank" aria-hidden="true" /> {agencyStatusLabel(selected)}
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: 12.5, color: SUBTEXT, marginTop: 4 }}>
                       {selected.cottageOnly ? 'Cottage-only tour' : isGroupBill ? `${billRooms.length} rooms booked together: ${billRooms.map(room => room.roomNumber || '—').join(', ')}` : `Room ${selected.roomNumber || '—'}${selected.roomType ? ` · ${selected.roomType}` : ''}`}
@@ -525,7 +537,7 @@ export default function Billing() {
                     <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>Booking #{selected.id.slice(0, 8).toUpperCase()}{selected.phone ? ` · ${selected.phone}` : ''}</div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 11, color: SUBTEXT, textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>{balance > 0 ? 'Balance due' : 'Paid in full'}</div>
+                    <div style={{ fontSize: 11, color: SUBTEXT, textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>{balance > 0 ? (isAgencyBilled(selected) ? 'Due from agency' : 'Balance due') : 'Paid in full'}</div>
                     <div style={{ ...money, fontSize: 28, fontWeight: 800, color: balance > 0 ? RED : GREEN }}>{formatCurrency(Math.max(0, balance))}</div>
                   </div>
                 </div>
@@ -565,6 +577,11 @@ export default function Billing() {
                       })()}
                     </div>
                   </div>
+
+                  {(selected.type === 'corporate' || isAgencyBilled(selected)) && (
+                    <AgencyBillingCard reservation={selected} onSaved={text => { setSuccess(text); fetchReservations(); }}
+                      t={{ card, inp, btn, TEXT, SUBTEXT, GREEN, RED, ACCENT_LINK: dark ? '#bef264' : '#2f6b3a' }} />
+                  )}
 
                   {/* 1 · Add to the bill */}
                   <div style={card}>
@@ -658,7 +675,6 @@ export default function Billing() {
                         <option value="cash">Cash</option>
                         <option value="gcash">GCash</option>
                         <option value="qrph">QR payment (QR Ph)</option>
-                        <option value="bank">Bank transfer</option>
                       </select>
                       <input value={paperReceiptNo} onChange={e => setPaperReceiptNo(e.target.value)} maxLength={40}
                         placeholder="Paper receipt no. (only if you wrote one)" aria-label="Paper receipt number"
@@ -666,7 +682,7 @@ export default function Billing() {
                         style={{ ...inp, width: '100%', marginBottom: 8 }} />
                       <button type="button" onClick={handlePayment} disabled={!paymentAmount || billingBusy}
                         style={{ ...btn('green'), width: '100%', opacity: paymentAmount ? 1 : 0.5 }}>
-                        {billingBusy ? 'Saving…' : `Record ${deskMethod === 'cash' ? 'cash' : deskMethod === 'gcash' ? 'GCash' : deskMethod === 'qrph' ? 'QR' : 'bank'} payment${paymentAmount ? ` of ${formatCurrency(paymentAmount)}` : ''}`}
+                        {billingBusy ? 'Saving…' : `Record ${deskMethod === 'cash' ? 'cash' : deskMethod === 'gcash' ? 'GCash' : 'QR'} payment${paymentAmount ? ` of ${formatCurrency(paymentAmount)}` : ''}`}
                       </button>
                     </div>
                     <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14 }}>
@@ -714,11 +730,11 @@ export default function Billing() {
                 <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                   <div>
                     {stepTitle(3, isGroupBill ? 'Check out all rooms' : 'Check out', selected.status === 'checked-in'
-                      ? (balance > 0 ? 'Collect the balance first.' : `When the guest returns the key and leaves${selected.checkOutTime ? ` (check-out time ${selected.checkOutTime})` : ''}.`)
+                      ? (checkoutBlocked ? 'Collect the balance first.' : onAgencyCredit && balance > 0 ? `The bill stays open as Due from agency (PO ${selected.agencyBilling.poNumber}).` : `When the guest returns the key and leaves${selected.checkOutTime ? ` (check-out time ${selected.checkOutTime})` : ''}.`)
                       : 'Only for guests who are checked in.')}
                   </div>
-                  <button type="button" onClick={confirmAndCheckout} disabled={selected.status !== 'checked-in' || balance > 0}
-                    style={{ ...btn('primary'), padding: '11px 20px', opacity: selected.status !== 'checked-in' || balance > 0 ? 0.5 : 1, cursor: selected.status !== 'checked-in' || balance > 0 ? 'not-allowed' : 'pointer' }}>
+                  <button type="button" onClick={confirmAndCheckout} disabled={selected.status !== 'checked-in' || checkoutBlocked}
+                    style={{ ...btn('primary'), padding: '11px 20px', opacity: selected.status !== 'checked-in' || checkoutBlocked ? 0.5 : 1, cursor: selected.status !== 'checked-in' || checkoutBlocked ? 'not-allowed' : 'pointer' }}>
                     <i className="ti ti-logout" aria-hidden="true" /> Check out guest
                   </button>
                 </div>

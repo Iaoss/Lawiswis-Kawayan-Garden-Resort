@@ -4,6 +4,8 @@ import { collection, addDoc, onSnapshot, doc, setDoc, serverTimestamp } from 'fi
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
 import { askForAutoAnswer, loadQuickQuestions, sendQuickQuestion, sortChatMessages } from '../lib/chatAutoAnswer';
+import ChatText from './ChatText';
+import ChatAvailability from './ChatAvailability';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -311,7 +313,7 @@ export default function ChatWidget() {
                     <div key={m.id} style={{ display: 'flex', justifyContent: m.sender === 'guest' ? 'flex-end' : 'flex-start' }}>
                       <div style={{ maxWidth: '78%', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         <div style={{ alignSelf: m.sender === 'guest' ? 'flex-end' : 'flex-start', background: m.sender === 'guest' ? DARK : '#fff', color: m.sender === 'guest' ? '#d4f550' : '#111', border: m.sender === 'guest' ? 'none' : '1px solid #e5e7eb', borderRadius: '18px', padding: '12px 14px', fontSize: '13px', lineHeight: 1.5, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>
-                          {m.text}
+                          <ChatText text={m.text} />
                         </div>
                         <div style={{ fontSize: '10px', color: '#9ca3af', textAlign: m.sender === 'guest' ? 'right' : 'left' }}>
                           {m.sender === 'bot' && 'Automatic reply · '}
@@ -322,6 +324,7 @@ export default function ChatWidget() {
                   ))}
                   <div ref={bottomRef} />
                 </div>
+                <ChatAvailability convId={convId} onError={setChatError} />
                 {quickReplies.length > 0 && (
                   <div style={{ padding: '8px 14px 0', background: '#fff', borderTop: '1px solid #e5e7eb' }}>
                     <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '6px' }}>Instant answers — tap a question, or just type it:</div>

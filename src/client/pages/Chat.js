@@ -6,6 +6,8 @@ import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } 
 import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { askForAutoAnswer, loadQuickQuestions, sendQuickQuestion, sortChatMessages } from '../lib/chatAutoAnswer';
+import ChatText from '../components/ChatText';
+import ChatAvailability from '../components/ChatAvailability';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -309,7 +311,7 @@ export default function GuestChat() {
                       borderRadius: m.sender === 'guest' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
                       padding: '10px 14px', fontSize: '13px', lineHeight: '1.5', whiteSpace: 'pre-line', overflowWrap: 'anywhere',
                     }}>
-                      {m.text}
+                      <ChatText text={m.text} />
                     </div>
                     <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', textAlign: m.sender === 'guest' ? 'right' : 'left' }}>
                       {m.sender === 'bot' && 'Automatic reply · '}
@@ -324,6 +326,7 @@ export default function GuestChat() {
               <div ref={bottomRef} />
             </div>
 
+            <ChatAvailability convId={convId} onError={setChatError} />
             {/* Quick replies: tap a question to get the resort's saved answer right away. */}
             {quickReplies.length > 0 && (
               <div style={{ padding: '8px 16px', borderTop: '1px solid #f3f4f6' }}>

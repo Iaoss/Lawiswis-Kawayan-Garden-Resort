@@ -51,13 +51,14 @@ import { MAX_ROOMS_PER_BOOKING, fillBalancesInOrder, getAdditionalRoomsError } f
 import { getRoomChangeError } from '../src/lib/roomChange';
 import { CHECK_METHODS, DISCOUNT_KINDS, calculateSeniorPwdDiscount, getDiscountIdError, normalizeIdNumber } from '../src/lib/seniorPwdDiscount';
 import { createCorporateReservation } from './create-corporate-reservation';
+import { normalizeAgencyDetails } from '../src/lib/agencyBilling';
 import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms';
 import { bookedGuestCount, splitArrivedGuests } from '../src/lib/guestArrivals';
 import { normalizePhMobile } from '../src/lib/phoneNumber';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
-export const COUNTER_PAYMENT_METHODS = ['cash', 'gcash', 'qrph', 'bank', 'online', 'card'];
+export const COUNTER_PAYMENT_METHODS = ['cash', 'gcash', 'qrph', 'online', 'card'];
 const WALK_IN_PAYMENT_STATUSES = ['paid', 'partial', 'pending'];
 const MAX_CHARGE = 100000;
 
@@ -1080,6 +1081,41 @@ async function addRoomToBooking({ staff, reservationId, roomId, adults, children
   });
 }
 
+// Government agency billing: the bill is paid by the agency after the
+// event. Saving the PO number lets the group check in and out with the bill
+// open, and confirms a pending booking.
+async function setAgencyBilling({ staff, reservationId, chargeToAgency, agency }) {
+  const on = chargeToAgency === true;
+  const details = on ? normalizeAgencyDetails(agency || {}) : { value: null };
+  if (details.error) throw new BillingError(400, details.error);
+  return adminDb.runTransaction(async transaction => {
+    const { ref, reservation } = await getReservation(transaction, reservationId);
+    if (['cancelled', 'checked-out'].includes(reservation.status) && !on) {
+      throw new BillingError(409, 'Agency billing can’t be turned off after check-out or cancellation.');
+    }
+    if (reservation.status === 'cancelled') throw new BillingError(409, 'This booking is cancelled.');
+    if (!on && reservation.status === 'checked-in' && owed(reservation) > 0 && reservation.chargeToAgency) {
+      throw new BillingError(409, 'The group is already at the resort on agency credit. Collect the balance first.');
+    }
+    const previous = reservation.agencyBilling || {};
+    const poNumber = on ? details.value.poNumber : '';
+    const poChanged = poNumber && poNumber !== previous.poNumber;
+    const confirm = on && poNumber && reservation.status === 'pending';
+    transaction.update(ref, on ? {
+      chargeToAgency: true,
+      clientType: 'government',
+      paymentMethod: 'agency',
+      agencyBilling: {
+        ...previous,
+        ...details.value,
+        ...(poChanged ? { poSavedAt: FieldValue.serverTimestamp(), poSavedBy: staff.uid, poSavedByName: staff.name || staff.email || '' } : {}),
+      },
+      ...(confirm ? { status: 'confirmed', statusUpdatedAt: FieldValue.serverTimestamp(), statusUpdatedBy: staff.uid } : {}),
+    } : { chargeToAgency: false });
+    return { chargeToAgency: on, poNumber, confirmed: Boolean(confirm), guestName: reservation.companyName || reservation.guestName || '' };
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
@@ -1107,6 +1143,7 @@ export default async function handler(req, res) {
     else if (body.action === 'phone-display-get') result = await getPhoneDisplay({ staff });
     else if (body.action === 'closure-notice') result = await sendClosureNotices({ ...body, staff });
     else if (body.action === 'update-guest') result = await updateGuest({ ...body, staff });
+    else if (body.action === 'set-agency-billing') result = await setAgencyBilling({ ...body, staff });
     else return res.status(400).json({ error: 'Choose a valid billing action.' });
     // Previews change nothing, so they aren't logged.
     const entry = result?.preview ? null : describeBillingAction(body, result || {});

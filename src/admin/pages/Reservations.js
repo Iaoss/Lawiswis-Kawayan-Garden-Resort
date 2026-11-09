@@ -21,6 +21,7 @@ import {
   getEarlyCheckInError,
   getCheckInPaymentError,
   hasOutstandingBalance,
+  mustPayBeforeCheckout,
   getCheckoutDue,
   formatManilaTime,
   getScheduledCheckOutMs,
@@ -28,6 +29,7 @@ import {
   isReadyToCheckIn,
   manilaDateKey,
 } from '../../lib/reservationStatus';
+import { agencyStatusLabel, hasAgencyPo, isAgencyBilled } from '../../lib/agencyBilling';
 import { appConfirm, appPrompt } from '../../components/ui/app-dialog';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { describeUnpaidFollowUp, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
@@ -812,7 +814,7 @@ export default function Reservations() {
     const allRooms = [reservation, ...linkedRooms];
     let force = false;
     let statusReason = reason;
-    if (status === 'checked-out' && allRooms.some(hasOutstandingBalance)) {
+    if (status === 'checked-out' && allRooms.some(mustPayBeforeCheckout)) {
       const owedText = `${money(allRooms.reduce((sum, r) => sum + Math.max(0, outstandingAmount(r)), 0))}`;
       if (!canOverrideCheckout) {
         setToast({ type: 'error', text: `This guest still owes ${owedText}. Collect payment in Billing before checking out.` });
@@ -820,7 +822,7 @@ export default function Reservations() {
       }
       const overrideReason = await appPrompt(
         `This guest still owes ${owedText}. You can check them out anyway; the reason and the unpaid amount are saved on the booking.`,
-        { title: 'Check out with an unpaid balance?', tone: 'warning', required: true, confirmLabel: 'Check out anyway', placeholder: 'e.g. Guest will settle by bank transfer tomorrow' },
+        { title: 'Check out with an unpaid balance?', tone: 'warning', required: true, confirmLabel: 'Check out anyway', placeholder: 'e.g. Guest will settle by GCash tomorrow' },
       );
       if (!overrideReason) return;
       force = true;
@@ -1246,7 +1248,7 @@ export default function Reservations() {
     const lockedReason = isReceptionist && r.status === 'cancelled'
       ? 'Cancelled bookings can only be changed by an admin.'
       : !canCancel && r.cancellationRequested ? 'Cancellation requested — waiting for an admin.' : '';
-    const owes = hasOutstandingBalance(r);
+    const owes = mustPayBeforeCheckout(r);
     return (
       <StatusStepper
         status={r.status}
@@ -1275,6 +1277,11 @@ export default function Reservations() {
           <i className={`ti ${label.type === 'in' ? 'ti-login' : 'ti-logout'}`} aria-hidden="true" />{label.text}
         </div>
       ))}
+      {isAgencyBilled(r) && (
+        <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: hasAgencyPo(r) ? (dark ? '#c7d2fe' : '#3730a3') : (dark ? '#fcd34d' : '#b45309'), display: 'flex', alignItems: 'center', gap: 5 }}>
+          <i className="ti ti-building-bank" aria-hidden="true" />{agencyStatusLabel(r)}
+        </div>
+      )}
       {r.type === 'corporate' && ['pending', 'confirmed', 'checked-in'].includes(r.status) && (
         <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
           <span style={{ color: MUTED }}>{r.assignedRooms?.length ? `Rooms: ${r.assignedRooms.map(item => item.roomNumber).join(', ')}` : 'No rooms yet'}</span>
@@ -1828,7 +1835,7 @@ export default function Reservations() {
                       <button onClick={() => setLateFeeDialog({ reservation: r, amount: '', note: `Overstayed ${info.label}` })}
                         style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Add late fee</button>
                       <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
-                        title={hasOutstandingBalance(r) ? 'Collect the balance before checking out' : undefined}
+                        title={mustPayBeforeCheckout(r) ? 'Collect the balance before checking out' : undefined}
                         style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
                     </div>
                   </div>

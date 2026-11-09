@@ -1097,7 +1097,6 @@ export default function WalkIn() {
                             <option value="cash">Cash</option>
                             <option value="gcash">GCash</option>
                             <option value="qrph">QR payment (QR Ph)</option>
-                            <option value="bank">Bank transfer</option>
                           </select>
                         </div>
                         <div>

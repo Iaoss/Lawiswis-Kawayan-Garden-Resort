@@ -46,7 +46,7 @@ import {
   formatDuration,
   getOutstandingBalance,
   getOverstay,
-  hasOutstandingBalance,
+  mustPayBeforeCheckout,
 } from '../src/lib/reservationStatus';
 import { normalizeIdCheck } from '../src/lib/checkInId';
 import { arrivedGuestCount, bookedGuestCount, normalizeArrivedGuests } from '../src/lib/guestArrivals';
@@ -100,12 +100,12 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   const overstay = getOverstay(reservation, now);
   // An admin can still check a guest out with money owed, but must give a
   // reason, and the unpaid amount is recorded on the booking.
-  const forcedWithBalance = status === 'checked-out' && hasOutstandingBalance(reservation)
+  const forcedWithBalance = status === 'checked-out' && mustPayBeforeCheckout(reservation)
     && force === true && staffCan(staff, 'checkoutOverride');
   if (forcedWithBalance && !reason) {
     throw new StatusError(400, 'Give a reason for checking out a guest who still owes money.');
   }
-  if (status === 'checked-out' && hasOutstandingBalance(reservation) && !forcedWithBalance) {
+  if (status === 'checked-out' && mustPayBeforeCheckout(reservation) && !forcedWithBalance) {
     throw new StatusError(409, overstay
       ? `Cannot check out: the guest overstayed by ${overstay.label} and still owes ₱${getOutstandingBalance(reservation).toLocaleString()}. Add any late check-out charge and collect payment first.`
       : 'The outstanding balance must be paid before checking out this guest.');

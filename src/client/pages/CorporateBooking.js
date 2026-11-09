@@ -10,6 +10,7 @@ import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError
 import { CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
+import { CLIENT_TYPES, normalizeAgencyDetails, perDiemFit } from '../../lib/agencyBilling';
 
 const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const addMonths = (date, months) => {
@@ -37,7 +38,16 @@ export default function CorporateBooking() {
     checkOut: '',
     accommodationInterest: false,
     notes: '',
+    clientType: 'private',
+    office: '',
+    tin: '',
+    poNumber: '',
+    perDiemRate: '',
   });
+  // Government agencies send a request (no online deposit) and pay after the
+  // event through their Purchase Order.
+  const isGovernment = form.clientType === 'government';
+  const [sentRequest, setSentRequest] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [savedReservationId, setSavedReservationId] = useState('');
@@ -55,6 +65,8 @@ export default function CorporateBooking() {
     : form.checkOut > form.checkIn && form.checkIn >= earliestDate && form.checkOut <= maxDate));
   const guestError = form.totalGuests === '' ? '' : getGroupGuestError(totalGuests);
   const noticeError = form.checkIn ? getGroupAdvanceNoticeError(form.checkIn) : '';
+
+  const fit = isGovernment && selectedPackage ? perDiemFit(selectedPackage.ratePerGuest, form.perDiemRate) : null;
 
   const packageFeatures = useMemo(() => selectedPackage
     ? CORPORATE_FEATURE_ROWS.filter(row => isCorporateFeatureIncluded(selectedPackage.id, nights, row.id))
@@ -108,6 +120,11 @@ export default function CorporateBooking() {
       setErrorMessage(contactLinkError);
       return;
     }
+    const agency = isGovernment ? normalizeAgencyDetails(form) : { value: null };
+    if (agency.error) {
+      setErrorMessage(agency.error);
+      return;
+    }
 
     setSubmitting(true);
     let reservationId = savedReservationId;
@@ -131,6 +148,8 @@ export default function CorporateBooking() {
             checkOut: form.bookingType === 'daytour' ? form.checkIn : form.checkOut,
             accommodationInterest: form.accommodationInterest,
             notes: form.notes.trim(),
+            clientType: form.clientType,
+            ...(isGovernment ? { agency: agency.value } : {}),
           }),
         });
         const result = await response.json().catch(() => ({}));
@@ -138,6 +157,11 @@ export default function CorporateBooking() {
         reservationId = result.reservationId;
         if (!reservationId) throw new Error('The group reservation was created without a reference. Please contact the resort.');
         setSavedReservationId(reservationId);
+        if (result.chargeToAgency) {
+          setSentRequest({ reference: reservationId.slice(0, 8).toUpperCase(), email: form.email.trim() });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
       }
       await startPayment(reservationId);
     } catch (error) {
@@ -236,11 +260,32 @@ export default function CorporateBooking() {
       </div>
 
       <div className="corporate-booking-layout" style={{ maxWidth: '1100px', margin: '0 auto', padding: '38px 24px', display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(280px, .75fr)', gap: '24px', alignItems: 'start' }}>
+        {sentRequest ? (
+          <section role="status" style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '28px' }}>
+            <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 10px' }}>Request sent: #{sentRequest.reference}</h2>
+            <p style={{ color: INK, font: `14px/1.7 ${SANS}`, margin: '0 0 10px' }}>Thank you. We emailed a copy to <strong>{sentRequest.email}</strong>.</p>
+            <ol style={{ color: '#4b4d42', font: `13px/1.8 ${SANS}`, paddingLeft: '20px', margin: 0 }}>
+              <li>Our team sends your agency a quotation.</li>
+              <li>Your agency issues the Purchase Order (PO) and sends it to us.</li>
+              <li>We confirm the booking once the PO is received.</li>
+              <li>After the event, we send the Statement of Account and your agency settles it with the resort.</li>
+            </ol>
+          </section>
+        ) : (
         <form onSubmit={submit} style={{ display: 'grid', gap: '22px' }}>
           <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px' }}>
             <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 18px' }}>Your group</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px' }}>
-              <label style={labelStyle}>Company / organization<input required maxLength={120} name="companyName" value={form.companyName} onChange={changeField} style={inputStyle} /></label>
+              <label style={labelStyle}>Who is booking?<select name="clientType" value={form.clientType} onChange={changeField} style={inputStyle}>{CLIENT_TYPES.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}</select></label>
+              <label style={labelStyle}>{isGovernment ? 'Agency name' : 'Company / organization'}<input required maxLength={120} name="companyName" value={form.companyName} onChange={changeField} placeholder={isGovernment ? 'e.g. Department of Education' : ''} style={inputStyle} /></label>
+              {isGovernment && (
+                <>
+                  <label style={labelStyle}>Office / unit (optional)<input maxLength={120} name="office" value={form.office} onChange={changeField} placeholder="e.g. Region III, HR Division" style={inputStyle} /></label>
+                  <label style={labelStyle}>Agency TIN (optional)<input maxLength={20} name="tin" value={form.tin} onChange={changeField} placeholder="123-456-789-000" style={inputStyle} /></label>
+                  <label style={labelStyle}>Per diem per person per day (optional)<input type="number" min="0" max="20000" name="perDiemRate" value={form.perDiemRate} onChange={changeField} placeholder="₱" style={inputStyle} /></label>
+                  <label style={labelStyle}>Purchase Order no. (if you have it)<input maxLength={40} name="poNumber" value={form.poNumber} onChange={changeField} placeholder="Can be sent later" style={inputStyle} /></label>
+                </>
+              )}
               <label style={labelStyle}>Number of guests ({MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS})<input required type="number" min={MIN_GROUP_GUESTS} max={MAX_GROUP_GUESTS} step="1" name="totalGuests" value={form.totalGuests} onChange={changeField} aria-invalid={Boolean(guestError)} style={inputStyle} />{guestError && <span role="alert" style={{ color: '#b42318', font: `500 11px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none' }}>{guestError}</span>}</label>
               <label style={labelStyle}>Contact first name<input required minLength="2" maxLength="35" name="firstName" value={form.firstName} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Contact last name<input required minLength="2" maxLength="35" name="lastName" value={form.lastName} onChange={changeField} style={inputStyle} /></label>
@@ -285,9 +330,10 @@ export default function CorporateBooking() {
 
           {errorMessage && <div role="alert" style={{ background: '#fff1f0', border: '1px solid #efc2bf', color: '#9b2c24', padding: '14px', font: `12px/1.6 ${SANS}` }}>{errorMessage}</div>}
           <button type="submit" disabled={submitting || availabilityLoading || !available || !selectedPackage} style={{ border: 0, background: FOREST, color: '#fff', padding: '16px 20px', cursor: submitting || !available ? 'not-allowed' : 'pointer', opacity: submitting || !available ? .65 : 1, font: `600 12px ${SANS}`, letterSpacing: '.06em' }}>
-            {submitting ? 'STARTING SECURE CHECKOUT…' : savedReservationId ? `RETRY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT PAYMENT` : `CONTINUE · PAY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT${selectedPackage ? ` (₱${depositAmount.toLocaleString()})` : ''}`}
+            {isGovernment ? (submitting ? 'SENDING REQUEST…' : 'SEND BOOKING REQUEST · NO PAYMENT NOW') : submitting ? 'STARTING SECURE CHECKOUT…' : savedReservationId ? `RETRY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT PAYMENT` : `CONTINUE · PAY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT${selectedPackage ? ` (₱${depositAmount.toLocaleString()})` : ''}`}
           </button>
         </form>
+        )}
 
         <aside className="corporate-booking-summary" style={{ position: 'sticky', top: '105px', background: FOREST_DEEP, color: '#fff', padding: '25px' }}>
           <div style={{ color: '#e4d4a7', font: `600 10px ${SANS}`, letterSpacing: '.14em', textTransform: 'uppercase' }}>Your package</div>
@@ -300,8 +346,18 @@ export default function CorporateBooking() {
                 {form.bookingType !== 'daytour' && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><span>× {nightLabel}{form.checkOut ? '' : ' (pick check-out)'}</span></div>}
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '14px', font: `600 15px ${SANS}` }}><span>Total</span><span>₱{selectedPackage.totalAmount.toLocaleString()}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#e4d4a7', font: `600 14px ${SANS}` }}><span>{RESERVATION_DEPOSIT_PERCENTAGE}% deposit</span><span>₱{depositAmount.toLocaleString()}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', color: 'rgba(255,255,255,.7)', font: `12px ${SANS}` }}><span>Remaining balance</span><span>₱{(selectedPackage.totalAmount - depositAmount).toLocaleString()}</span></div>
+              {isGovernment ? (
+                <div style={{ display: 'grid', gap: '8px', color: 'rgba(255,255,255,.82)', font: `12px/1.6 ${SANS}` }}>
+                  <div style={{ color: '#e4d4a7', fontWeight: 600 }}>Charge to agency: no payment now</div>
+                  {fit && <div style={{ color: fit.fits ? '#c8e6a0' : '#fcd9a8' }}>{fit.message}</div>}
+                  <div>We email a quotation. Your agency issues the PO, and pays after the event against our Statement of Account.</div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#e4d4a7', font: `600 14px ${SANS}` }}><span>{RESERVATION_DEPOSIT_PERCENTAGE}% deposit</span><span>₱{depositAmount.toLocaleString()}</span></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', color: 'rgba(255,255,255,.7)', font: `12px ${SANS}` }}><span>Remaining balance</span><span>₱{(selectedPackage.totalAmount - depositAmount).toLocaleString()}</span></div>
+                </>
+              )}
             </>
           ) : <p style={{ color: 'rgba(255,255,255,.78)', font: `13px/1.6 ${SANS}` }}>Corporate packages are available for groups of 15 guests or more.</p>}
           <p style={{ borderTop: '1px solid rgba(255,255,255,.2)', paddingTop: '16px', margin: '20px 0 0', color: 'rgba(255,255,255,.7)', font: `11px/1.7 ${SANS}` }}>Your request is subject to resort confirmation. Optional accommodation/meal packages and whole property rental require availability confirmation.</p>

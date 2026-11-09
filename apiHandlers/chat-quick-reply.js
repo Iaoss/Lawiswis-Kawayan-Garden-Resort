@@ -12,6 +12,8 @@
 //        The guest typed a message (already saved by the chat). If it asks
 //        about a known topic, the answer is added right away; otherwise a
 //        short "staff will reply" note is added (at most every 30 minutes).
+//   POST { conversationId, availability: { checkIn, checkOut, guests } }
+//        "Check availability": answers with the rooms free on those dates.
 // Answers are marked sender: 'bot' so staff can tell they were automatic.
 //
 // It runs on the server because guests can't read the staff quick-reply list
@@ -21,7 +23,9 @@ import { getAuth } from 'firebase-admin/auth';
 import { Timestamp } from 'firebase-admin/firestore';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { DEFAULT_QUICK_REPLIES, sortQuickReplies } from '../src/admin/components/quickReplyDefaults';
-import { AUTO_TOPICS, HANDOFF_MESSAGE, buildAutoAnswer, detectTopic, isAutoTopic } from '../src/lib/chatAutoReply';
+import { AUTO_TOPICS, buildAutoAnswer, detectTopic, handoffMessage, isAutoTopic } from '../src/lib/chatAutoReply';
+import { availabilityQuestion, buildAvailabilityAnswer, normalizeAvailabilityRequest } from '../src/lib/chatAvailability';
+import { readSeasonPeriods } from '../lib/seasonStore';
 
 const MAX_AUTO_REPLIES_PER_CHAT = 40;
 
@@ -64,6 +68,49 @@ async function answerFor(replyId) {
   return reply ? { question: reply.question.trim(), answer: reply.answer.trim() } : null;
 }
 
+async function answerAvailability(res, uid, conversationId, input) {
+  if (typeof conversationId !== 'string' || !/^[A-Za-z0-9]{10,40}$/.test(conversationId)) {
+    return res.status(400).json({ error: 'Please refresh the chat and try again.' });
+  }
+  const request = normalizeAvailabilityRequest(input);
+  if (request.error) return res.status(400).json({ error: request.error });
+  try {
+    const conversationRef = adminDb.collection('conversations').doc(conversationId);
+    const conversation = await conversationRef.get();
+    if (!conversation.exists || conversation.data().guestUid !== uid) {
+      return res.status(403).json({ error: 'This chat could not be found.' });
+    }
+    if (Number(conversation.data().autoReplyCount || 0) >= MAX_AUTO_REPLIES_PER_CHAT) {
+      return res.status(429).json({ error: 'Please type your question and our staff will reply.' });
+    }
+    // All bookings, like /api/room-availability (check-in dates are saved in
+    // more than one format, so they can't be filtered in the query).
+    const [rooms, reservationsSnap, seasonPeriods] = await Promise.all([
+      loadRooms(),
+      adminDb.collection('reservations').get(),
+      readSeasonPeriods().catch(() => []),
+    ]);
+    const reservations = reservationsSnap.docs.map(doc => doc.data());
+    const answer = buildAvailabilityAnswer({ rooms, reservations, seasonPeriods, ...request });
+
+    const now = Date.now();
+    const messages = conversationRef.collection('messages');
+    const batch = adminDb.batch();
+    batch.set(messages.doc(), { sender: 'guest', text: availabilityQuestion(request), timestamp: Timestamp.fromMillis(now), quickReplyId: 'auto-availability' });
+    batch.set(messages.doc(), { sender: 'bot', text: answer, timestamp: Timestamp.fromMillis(now + 1), quickReplyId: 'auto-availability' });
+    batch.update(conversationRef, {
+      lastMessage: answer.slice(0, 2000),
+      lastMessageAt: FieldValue.serverTimestamp(),
+      autoReplyCount: FieldValue.increment(1),
+    });
+    await batch.commit();
+    return res.status(200).json({ sent: true });
+  } catch (error) {
+    console.error('Chat availability failed:', error);
+    return res.status(500).json({ error: 'Availability could not be checked. Please type your question instead.' });
+  }
+}
+
 export default async function handler(req, res) {
   if (!adminDb) return res.status(503).json({ error: 'Chat is temporarily unavailable.' });
 
@@ -95,8 +142,11 @@ export default async function handler(req, res) {
   }
   if (!uid) return res.status(401).json({ error: 'Please refresh the chat and try again.' });
 
-  const { conversationId, replyId, text } = req.body || {};
+  const { conversationId, replyId, text, availability } = req.body || {};
   const typed = typeof text === 'string';
+  if (availability && typeof availability === 'object') {
+    return answerAvailability(res, uid, conversationId, availability);
+  }
   if (typeof conversationId !== 'string' || !/^[A-Za-z0-9]{10,40}$/.test(conversationId)
     || (!typed && (typeof replyId !== 'string' || replyId.length > 60))
     || (typed && (!text.trim() || text.length > 600))) {
@@ -120,7 +170,7 @@ export default async function handler(req, res) {
       const answer = topicId ? buildAutoAnswer(topicId, { rooms, policy }) : '';
       const lastHandoff = data.lastHandoffAt?.toMillis ? data.lastHandoffAt.toMillis() : 0;
       if (!answer && Date.now() - lastHandoff < HANDOFF_EVERY_MS) return res.status(200).json({ answered: false });
-      const reply = answer || HANDOFF_MESSAGE;
+      const reply = answer || handoffMessage();
       await conversationRef.collection('messages').add({
         sender: 'bot',
         text: reply,

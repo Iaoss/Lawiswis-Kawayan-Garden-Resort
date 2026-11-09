@@ -49,3 +49,7 @@ export async function loadQuickQuestions() {
     return [];
   }
 }
+
+// "Check availability": the bot answers with the rooms free on those dates.
+export const checkChatAvailability = (conversationId, { checkIn, checkOut, guests }) =>
+  post({ conversationId, availability: { checkIn, checkOut, guests } });

@@ -5,6 +5,7 @@ import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameVali
 import { getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
 import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
+import { normalizeAgencyDetails } from '../src/lib/agencyBilling';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -47,7 +48,13 @@ export async function createCorporateReservation(body, staff = null) {
       checkOut,
       accommodationInterest,
       notes,
+      clientType,
+      agency,
     } = body || {};
+    // Government agencies (per diem): no online deposit, billed to the agency.
+    const isGovernment = clientType === 'government';
+    const agencyDetails = isGovernment ? normalizeAgencyDetails(agency || {}) : { value: null };
+    if (agencyDetails.error) return reply(400, { error: agencyDetails.error });
 
     const availabilitySnap = await adminDb.doc('siteSettings/resortAvailability').get();
     if (availabilitySnap.exists && availabilitySnap.data().available === false) {
@@ -154,8 +161,17 @@ export async function createCorporateReservation(body, staff = null) {
       subtotalAmount: totalAmount,
       amountPaid: 0,
       extraCharges: 0,
-      paymentMethod: staff ? 'cash' : 'online',
+      paymentMethod: isGovernment ? 'agency' : staff ? 'cash' : 'online',
       paymentStatus: 'pending',
+      clientType: isGovernment ? 'government' : 'private',
+      ...(isGovernment ? {
+        chargeToAgency: true,
+        // A PO typed on the website is kept aside until staff check it in
+        // Billing; only a staff-saved PO lets the group stay on credit.
+        agencyBilling: staff
+          ? { ...agencyDetails.value, ...(agencyDetails.value.poNumber ? { poSavedAt: FieldValue.serverTimestamp(), poSavedBy: staff.uid } : {}) }
+          : { ...agencyDetails.value, poNumber: '', guestPoNumber: agencyDetails.value.poNumber },
+      } : {}),
       status: staff ? 'confirmed' : 'pending',
       ...(staff ? { source: 'walk-in', createdBy: staff.uid, createdByName: staff.name || staff.email || '' } : {}),
       accommodationInterest: Boolean(accommodationInterest),
@@ -174,13 +190,13 @@ export async function createCorporateReservation(body, staff = null) {
         checkOut,
         totalAmount,
         nights,
-        paymentMethod: staff ? 'cash' : 'online',
+        paymentMethod: isGovernment ? 'agency' : staff ? 'cash' : 'online',
       }, reservationRef.id.slice(0, 8).toUpperCase());
     } catch (emailError) {
       console.error('Failed to send corporate reservation-received email:', emailError);
     }
 
-    return reply(200, { reservationId: reservationRef.id, totalAmount, packageName: packageDetails.name });
+    return reply(200, { reservationId: reservationRef.id, totalAmount, packageName: packageDetails.name, chargeToAgency: isGovernment });
   } catch (error) {
     console.error('create-corporate-reservation error:', error);
     return reply(500, { error: 'Could not create the group reservation. Please try again.' });

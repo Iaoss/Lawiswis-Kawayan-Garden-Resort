@@ -1,4 +1,5 @@
 import { serverNow } from './serverClock';
+import { canStayOnAgencyCredit, isAgencyBilled } from './agencyBilling';
 
 // Shared reservation status, overstay and analytics helpers.
 // Used by the staff pages and by the server (apiHandlers/reservation-status.js),
@@ -35,6 +36,10 @@ export function getEarlyCheckInError(reservation, now = new Date()) {
 // Guests pay in full before they enter the resort, so check-in needs a zero
 // balance. Returns the reason check-in is blocked, or ''.
 export function getCheckInPaymentError(reservation) {
+  // Government groups billed to their agency pay after the event, once the
+  // Purchase Order is on file.
+  if (canStayOnAgencyCredit(reservation)) return '';
+  if (isAgencyBilled(reservation)) return 'This group is billed to its agency. Save the agency’s Purchase Order (PO) number in Billing first.';
   const owed = Math.round(getOutstandingBalance(reservation) * 100) / 100;
   if (owed <= 0) return '';
   return `The guest still owes ₱${owed.toLocaleString()}. Record the full payment in Billing first; the booking is checked in automatically once the balance is ₱0.`;
@@ -164,6 +169,12 @@ export function getOutstandingBalance(reservation) {
 
 export function hasOutstandingBalance(reservation) {
   return Math.round(getOutstandingBalance(reservation) * 100) > 0;
+}
+
+// Money the guest must settle before checking out. An agency group with a
+// PO leaves with the bill open ("Due from agency").
+export function mustPayBeforeCheckout(reservation) {
+  return hasOutstandingBalance(reservation) && !canStayOnAgencyCredit(reservation);
 }
 
 // ── Analytics ──────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
 // understand stay in the chat for staff to answer.
 import {
   COTTAGE_OPTIONS, DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, OVERNIGHT_TIME_SLOTS,
-  getRoomBaseRate, getRoomCapacityPolicy, getSwimmingRate,
+  getResortNow, getRoomBaseRate, getRoomCapacityPolicy, getSwimmingRate,
 } from './bookingPricing';
 import { RESERVATION_DEPOSIT_PERCENTAGE } from './paymentPolicy';
 import { DEFAULT_CANCELLATION_POLICY, describePolicyTiers, normalizeCancellationPolicy } from './cancellationPolicy';
@@ -28,6 +28,7 @@ export const isAutoTopic = id => AUTO_TOPICS.some(topic => topic.id === id);
 // the first match wins, so more specific topics come first.
 const TOPIC_PATTERNS = [
   ['auto-cancellation', /\b(cancel+(ation|ed|ing)?|refund|ibalik|i-?cancel|ikansela)\b/],
+  ['auto-availability', /\b(available|availability|avail|vacant|vacancy|bakante|libre pa|fully ?booked|full na|puno na)\b/],
   ['auto-cottage-rates', /\b(cottage|cottages|kubo|cabana|pavilion|umbrella|hut|kubol)\b/],
   ['auto-tour-rates', /\b(day ?tour|night ?tour|swimming|swim|languyan|entrance|pasok|entry|walk-?in fee|tour rate)\b/],
   ['auto-times', /\b(check ?-?in|check ?-?out|what time|anong oras|oras|open|bukas|close|sarado|hours)\b/],
@@ -124,6 +125,8 @@ export function buildAutoAnswer(topicId, { rooms = [], policy = DEFAULT_CANCELLA
         `You can rebook (move your dates) for free at least ${saved.dateChangeDays} days before arrival. To cancel or rebook, contact us here or look up your booking at ${SITE}/my-bookings.`,
       ].join('\n');
     }
+    case 'auto-availability':
+      return 'To see which rooms are free, tap "Check availability" below, then pick your dates and how many guests. I’ll answer right away with the free rooms and prices.';
     case 'auto-location':
       return [
         'We are at 402 Brgy. Buguion, Calumpit, Bulacan.',
@@ -136,4 +139,11 @@ export function buildAutoAnswer(topicId, { rooms = [], policy = DEFAULT_CANCELLA
 }
 
 // Sent once in a while when the bot can't answer a typed message.
-export const HANDOFF_MESSAGE = 'Thanks for your message! A staff member will reply here soon. For instant answers, tap a question below (room rates, cottages, tour rates, times, booking, cancellation, location).';
+export const HANDOFF_MESSAGE = 'Thanks for your message! A staff member will reply here soon. For instant answers, tap a question below (room rates, cottages, tour rates, times, booking, cancellation, location) or "Check availability".';
+
+// Staff answer the chat from 7:00 AM to 10:00 PM (resort time).
+export function handoffMessage(now = new Date()) {
+  const minutes = getResortNow(now).minutes;
+  if (minutes >= 7 * 60 && minutes < 22 * 60) return HANDOFF_MESSAGE;
+  return 'Thanks for your message! Our staff answers the chat from 7:00 AM to 10:00 PM, so we’ll reply in the morning. Meanwhile, tap a question below for instant answers, or "Check availability" to see free rooms.';
+}
