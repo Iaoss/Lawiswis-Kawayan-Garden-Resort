@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { guardedNavigate } from '../lib/leaveGuard';
 import { auth, db } from '../../firebase/firebase';
 import { doc, getDoc, collection, query, onSnapshot, where } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -60,7 +61,9 @@ const EXTRA_LABELS = {
 };
 
 export default function ReceptionistLayout({ children }) {
-  const navigate = useNavigate();
+  const routerNavigate = useNavigate();
+  // Asks first when the current page has unsaved work (e.g. a half-filled walk-in).
+  const navigate = useMemo(() => guardedNavigate(routerNavigate), [routerNavigate]);
   const { settings, updateSetting } = useSettings();
   const access = useStaffAccess();
   const [staffName, setStaffName] = useState('');
