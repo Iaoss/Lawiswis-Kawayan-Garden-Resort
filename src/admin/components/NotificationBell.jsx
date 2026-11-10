@@ -3,6 +3,7 @@ import { Timestamp, collection, onSnapshot, query, where } from 'firebase/firest
 import { db } from '../../firebase/firebase';
 import NotificationButton from '../../components/ui/notification-button';
 import { PulsingDot } from './TopbarControls';
+import { pushToast, variantForNotification } from '../lib/staffToasts';
 import {
   ACTIVE_MODIFICATION_STATUSES,
   ACTIVE_REFUND_STATUSES,
@@ -10,6 +11,8 @@ import {
   buildBookingNotifications,
   formatNotificationTime,
 } from '../lib/bookingNotifications';
+import { roomNotReadyNotifications } from '../lib/roomReadiness';
+import { manilaDateKey } from '../../lib/reservationStatus';
 
 // Bell in the staff top bar (admin and receptionist). Each notification card
 // is one button: clicking anywhere on it opens that booking.
@@ -61,6 +64,11 @@ function useNotificationReservations() {
       cancellations: query(reservations, where('cancellationRequested', '==', true)),
       refunds: query(reservations, where('refundRequestStatus', 'in', ACTIVE_REFUND_STATUSES)),
       changes: query(reservations, where('modificationRequest.status', 'in', ACTIVE_MODIFICATION_STATUSES)),
+      replies: query(reservations, where('unpaidFollowUp.guestReply', 'in', ['yes', 'no'])),
+      checkedIn: query(reservations, where('status', '==', 'checked-in')),
+      holdConflicts: query(reservations, where('holdConflict', '==', true)),
+      // Today's arrivals, to warn when their room is still being cleaned.
+      arrivingToday: query(reservations, where('checkIn', '>=', manilaDateKey()), where('checkIn', '<=', `${manilaDateKey()}`)),
     };
     const loaded = new Set();
     const stops = Object.entries(queries).map(([key, q]) => onSnapshot(q, snapshot => {
@@ -85,6 +93,99 @@ function useNotificationReservations() {
   return { reservations, ready };
 }
 
+const toMillis = value => (value?.toMillis ? value.toMillis() : value?.seconds ? value.seconds * 1000 : value ? new Date(value).getTime() || 0 : 0);
+
+// Unanswered contact inquiries and unread inbox emails from the last week.
+// Each feed is optional: receptionists only get inquiries when an admin gave
+// them that page, and only admins read the inbox.
+function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPath }) {
+  const [inquiries, setInquiries] = useState([]);
+  const [emails, setEmails] = useState([]);
+  const [feedback, setFeedback] = useState([]);
+  const [locks, setLocks] = useState([]);
+
+  // Staff accounts locked after too many wrong passwords (admins only).
+  useEffect(() => {
+    if (prefix !== '/admin') { setLocks([]); return undefined; }
+    return onSnapshot(query(collection(db, 'notifications'), where('type', '==', 'login-locked')),
+      snapshot => setLocks(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setLocks([]));
+  }, [prefix]);
+
+  // Guest feedback from the last week that staff haven't read yet. Low
+  // ratings (1–2★) show as "Unhappy Guest" so staff can follow up quickly.
+  useEffect(() => {
+    const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
+    return onSnapshot(query(collection(db, 'feedback'), where('createdAt', '>=', since)),
+      snapshot => setFeedback(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setFeedback([]));
+  }, []);
+
+  useEffect(() => {
+    if (!showInquiries) { setInquiries([]); return undefined; }
+    const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
+    return onSnapshot(query(collection(db, 'contacts'), where('createdAt', '>=', since)),
+      snapshot => setInquiries(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setInquiries([]));
+  }, [showInquiries]);
+
+  useEffect(() => {
+    if (!showEmails) { setEmails([]); return undefined; }
+    return onSnapshot(query(collection(db, 'emails'), where('folder', '==', 'inbox'), where('read', '==', false)),
+      snapshot => setEmails(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setEmails([]));
+  }, [showEmails]);
+
+  return useMemo(() => {
+    const weekAgo = Date.now() - NEW_BOOKING_DAYS * 86400000;
+    const inquiryItems = inquiries
+      .filter(item => item.status !== 'answered')
+      .map(item => ({
+        id: `inquiry_${item.id}`,
+        icon: 'ti-mail-question',
+        badge: 'Contact Inquiry',
+        message: `${item.name || item.email || 'Website visitor'} · ${item.subject || 'General Inquiry'}`,
+        details: String(item.message || '').slice(0, 110) || item.email || '',
+        timeMs: toMillis(item.createdAt),
+        path: `${prefix}/contact-inquiries`,
+      }));
+    const emailItems = emails
+      .filter(item => toMillis(item.date) >= weekAgo)
+      .map(item => ({
+        id: `email_${item.id}`,
+        icon: 'ti-mail',
+        badge: 'New Email',
+        message: `${item.fromName || item.from || 'Unknown sender'} · ${item.subject || '(no subject)'}`,
+        details: String(item.snippet || '').slice(0, 110),
+        timeMs: toMillis(item.date),
+        path: `${prefix}/email`,
+      }));
+    const feedbackItems = feedback
+      .filter(item => Number(item.rating) > 0 && !item.read)
+      .map(item => ({
+        id: Number(item.rating) <= 2 ? `negative-feedback_${item.id}` : `feedback_${item.id}`,
+        icon: Number(item.rating) <= 2 ? 'ti-mood-sad' : 'ti-message-star',
+        badge: Number(item.rating) <= 2 ? `Unhappy Guest · ${Number(item.rating)}★` : `New Feedback · ${Number(item.rating)}★`,
+        message: `${item.isAnonymous ? 'Anonymous guest' : (item.guestName || 'A guest')}${item.roomName ? ` · ${item.roomName}` : ''}`,
+        details: String(item.comment || 'No comment left.').slice(0, 110),
+        timeMs: toMillis(item.createdAt),
+        path: feedbackPath || `${prefix}/feedback`,
+      }));
+    const lockItems = locks
+      .filter(item => toMillis(item.createdAt) >= weekAgo && !item.resolved)
+      .map(item => ({
+        id: `login-locked_${item.id}`,
+        icon: 'ti-lock',
+        badge: 'Account Locked',
+        message: `${item.name || item.email || 'A staff account'} · 5 wrong passwords`,
+        details: `${item.email || ''} · locked for 15 minutes. If it wasn't them, reset the password in Users.`,
+        timeMs: toMillis(item.createdAt),
+        path: `${prefix}/users`,
+      }));
+    return [...inquiryItems, ...emailItems, ...feedbackItems, ...lockItems];
+  }, [inquiries, emails, feedback, locks, prefix, feedbackPath]);
+}
+
 const QUICK_LINKS = {
   '/admin': [
     { label: 'Bookings', icon: 'ti-calendar-event', path: '/admin/reservations', bg: 'rgba(200,240,110,0.1)', color: '#8fb83a' },
@@ -98,7 +199,7 @@ const QUICK_LINKS = {
   ],
 };
 
-export default function NotificationBell({ dark, accent, soundAlerts, prefix = '/admin' }) {
+export default function NotificationBell({ dark, accent, soundAlerts, prefix = '/admin', showInquiries = false, showEmails = false, feedbackPath = '' }) {
   const [open, setOpen] = useState(false);
   const [readIds, setReadIds] = useState(loadReadIds);
   const [now, setNow] = useState(() => Date.now());
@@ -113,9 +214,19 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
     return () => clearInterval(timer);
   }, []);
 
+  const messageItems = useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPath });
+  // Room status, to warn when a room is still being cleaned on arrival day.
+  const [rooms, setRooms] = useState([]);
+  useEffect(() => onSnapshot(collection(db, 'rooms'),
+    snapshot => setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+    () => setRooms([])), []);
   const notifications = useMemo(
-    () => buildBookingNotifications(reservations, { prefix, now }),
-    [reservations, prefix, now],
+    () => [
+      ...roomNotReadyNotifications(rooms, reservations, { todayKey: manilaDateKey(new Date(now)), prefix, now }),
+      ...buildBookingNotifications(reservations, { prefix, now }),
+      ...messageItems,
+    ].sort((a, b) => (b.timeMs || 0) - (a.timeMs || 0)),
+    [reservations, rooms, prefix, now, messageItems],
   );
   const unread = notifications.filter(n => !readIds.includes(n.id)).length;
 
@@ -132,6 +243,15 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
     const fresh = ids.filter(id => !knownRef.current.has(id) && !readIds.includes(id));
     ids.forEach(id => knownRef.current.add(id));
     if (fresh.length > 0 && soundAlerts) playSound();
+    // Each new item also pops up in the corner (see StaffToaster).
+    notifications.filter(n => fresh.includes(n.id)).slice(0, 4).forEach(n => pushToast({
+      id: n.id,
+      variant: variantForNotification(n.id),
+      title: n.badge,
+      description: [n.message, n.details].filter(Boolean).join(' · '),
+      path: n.bookingId ? `${n.path}?booking=${encodeURIComponent(n.bookingId)}` : n.path,
+      actionLabel: n.bookingId ? 'Open booking' : 'Open',
+    }));
   }, [ready, notifications, readIds, soundAlerts]);
 
   const markRead = ids => {
@@ -222,7 +342,7 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
                     key={n.id}
                     type="button"
                     onClick={() => openItem(n)}
-                    aria-label={`${n.badge}: ${n.message}. Open booking.`}
+                    aria-label={`${n.badge}: ${n.message}. ${n.bookingId ? 'Open booking' : 'Open'}.`}
                     onMouseEnter={event => { event.currentTarget.style.background = c.hover; }}
                     onMouseLeave={event => { event.currentTarget.style.background = rowBg; }}
                     style={{

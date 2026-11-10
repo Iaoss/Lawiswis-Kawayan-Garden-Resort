@@ -1,18 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Pagination, usePagination } from '../../components/ui/pagination';
-import DateOccupancy from '../../components/ui/date-occupancy';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
-import { OVERNIGHT_TIME_SLOTS, isCheckInPassed, isTourStartPassed } from '../../lib/bookingPricing';
-import { DATE_CHANGE_NOTICE_DAYS, getDaysBeforeArrival } from '../../lib/cancellationPolicy';
 
 const DARK = '#1a3a1a';
 const ACCENT = '#4a7c59';
 
-const todayLocal = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-};
+// Guests can't cancel or move a booking online; they contact the resort.
+const RESORT_PHONE = '0917 811 2332';
+const RESORT_EMAIL = 'lawiswiskawayan123@gmail.com';
 
 const formatMDY = value => {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));
@@ -43,20 +39,22 @@ export default function BookingHistory() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
-  // The change a guest asks for: booking type, dates, check-in time and guests.
-  const [requestedChange, setRequestedChange] = useState({
-    bookingOption: 'overnight', checkIn: '', checkOut: '', overnightTimeSlot: 'morning', adults: 1, children: 0,
-  });
-  const changeIsTour = requestedChange.bookingOption !== 'overnight';
-  // Cancellation cost shown before the guest confirms: { bookingId, preview }.
-  const [refundPreview, setRefundPreview] = useState(null);
-  // Closest free dates offered when the requested date is taken.
-  const [dateSuggestions, setDateSuggestions] = useState(null);
+  // Moving a booking online after a resort closure.
+  const [moveDate, setMoveDate] = useState('');
+  const [moveError, setMoveError] = useState('');
+  const [moveSuggestions, setMoveSuggestions] = useState([]);
+  const [moving, setMoving] = useState(false);
   const pagination = usePagination(bookings, { pageSize: 5 });
 
   useEffect(() => {
     const history = readStoredValue('booking_history', []);
     setBookings(Array.isArray(history) ? history.filter(item => item && item.bookingId) : []);
+
+    // The closure email links here with the booking number filled in.
+    try {
+      const ref = new URLSearchParams(window.location.search).get('ref');
+      if (ref) setReference(ref.slice(0, 32));
+    } catch (urlError) { /* ignore */ }
 
     const profile = readStoredValue('guest_profile', {});
     if (profile && typeof profile === 'object') {
@@ -88,15 +86,6 @@ export default function BookingHistory() {
     try {
       const result = await sendGuestAction('lookup', reference.trim());
       setLookupResult(result.reservation);
-      const found = result.reservation;
-      setRequestedChange({
-        bookingOption: getBookingOptionId(found),
-        checkIn: found.checkIn || '',
-        checkOut: found.checkOut || '',
-        overnightTimeSlot: OVERNIGHT_TIME_SLOTS.find(slot => slot.checkIn === found.checkInTime)?.id || 'morning',
-        adults: Math.max(1, Number(found.adults) || 1),
-        children: Math.max(0, Number(found.children) || 0),
-      });
     } catch (lookupError) {
       setError(lookupError.message || 'Could not find this reservation.');
     } finally {
@@ -104,99 +93,122 @@ export default function BookingHistory() {
     }
   };
 
-  // Step 1: show what cancelling would cost. Nothing is sent to the resort yet.
-  const previewRefund = async booking => {
-    setLoading(true);
-    setError('');
-    setNotice('');
+  const requestClosureMove = async checkIn => {
+    if (!lookupResult || !checkIn) return;
+    setMoving(true);
+    setMoveError('');
+    setMoveSuggestions([]);
     try {
-      const result = await sendGuestAction('refund-preview', booking.bookingId);
-      if (result.alreadyRequested) {
-        setNotice('A refund request for this reservation is already on file.');
-        return;
-      }
-      setRefundPreview({ bookingId: booking.bookingId, preview: result.preview });
-    } catch (previewError) {
-      setError(previewError.message || 'Could not work out the cancellation fee.');
+      const result = await sendGuestAction('schedule-change', reference.trim(), { checkIn });
+      setLookupResult(current => ({ ...current, modificationRequest: result.modificationRequest || current.modificationRequest, canReschedule: true }));
+      setNotice('Your new dates were sent. The resort will confirm them by email.');
+    } catch (moveFailure) {
+      setMoveError(moveFailure.message || 'Could not send your new dates.');
+      setMoveSuggestions(moveFailure.suggestions || []);
     } finally {
-      setLoading(false);
+      setMoving(false);
     }
   };
 
-  // Step 2: the guest has seen the fee and refund, and confirms.
-  const requestRefund = async booking => {
-    setLoading(true);
-    setError('');
-    setNotice('');
+  // Closure: cancel online with no fee and a 100% refund (staff send it).
+  const [refundBusy, setRefundBusy] = useState(false);
+  const requestClosureRefund = async () => {
+    if (!lookupResult || refundBusy) return;
+    if (!window.confirm('Cancel this booking and get back 100% of what you paid? This cannot be undone.')) return;
+    setRefundBusy(true);
+    setMoveError('');
     try {
-      const result = await sendGuestAction('refund', booking.bookingId);
-      setRefundPreview(null);
-      const update = item => item.bookingId === booking.bookingId
-        ? { ...item, refundRequestStatus: result.outcome || 'requested' }
-        : item;
-      const updatedBookings = bookings.map(update);
-      setBookings(updatedBookings);
-      try {
-        window.localStorage.setItem('booking_history', JSON.stringify(updatedBookings));
-      } catch (storageError) {
-        console.error('Unable to update booking history in local storage:', storageError);
-      }
-      if (lookupResult?.bookingId === booking.bookingId) {
-        setLookupResult({
-          ...lookupResult,
-          refundRequestStatus: result.outcome || 'requested',
-          refundDecision: result.decision || lookupResult.refundDecision,
-        });
-      }
-      setNotice(result.alreadyRequested
-        ? 'A refund request for this reservation is already on file.'
-        : result.outcome === 'eligible'
-          ? `Policy estimate: ₱${Number(result.decision?.refundableAmount || 0).toLocaleString()} refundable, pending staff approval.`
-          : result.decision?.reason || 'Your refund request was sent to the resort for review.');
-    } catch (refundError) {
-      setError(refundError.message || 'Could not submit the refund request.');
+      const result = await sendGuestAction('refund', reference.trim());
+      setLookupResult(current => ({
+        ...current,
+        refundRequestStatus: result.outcome || current.refundRequestStatus || 'eligible',
+        refundDecision: result.decision ? { outcome: result.decision.outcome, reason: result.decision.reason, refundableAmount: result.decision.refundableAmount } : current.refundDecision,
+      }));
+      setNotice('Cancellation sent. The resort will cancel your booking with no fee and refund 100% of what you paid. You will get an email.');
+    } catch (failure) {
+      setMoveError(failure.message || 'Could not send the cancellation.');
     } finally {
-      setLoading(false);
+      setRefundBusy(false);
     }
   };
 
-  const requestScheduleChange = async (event, booking) => {
-    event.preventDefault();
-    setLoading(true);
-    setError('');
-    setNotice('');
-    setDateSuggestions(null);
-    try {
-      // Tours are single-day, so their check-out is the same date.
-      const result = await sendGuestAction('schedule-change', booking.bookingId, {
-        ...requestedChange,
-        checkOut: changeIsTour ? requestedChange.checkIn : requestedChange.checkOut,
-        adults: Number(requestedChange.adults),
-        children: Number(requestedChange.children),
-      });
-      const updated = { ...booking, modificationRequest: result.modificationRequest };
-      if (lookupResult?.bookingId === booking.bookingId) setLookupResult(updated);
-      setNotice(result.alreadyRequested
-        ? 'A schedule-change request is already awaiting resort review.'
-        : `Your requested change was sent to resort staff. ${result.modificationRequest?.reason || ''}${result.modificationRequest?.proposedTotal != null ? ` New total: ₱${Number(result.modificationRequest.proposedTotal).toLocaleString()}.` : ''}`);
-    } catch (requestError) {
-      setError(requestError.message || 'Could not request a schedule change.');
-      if (requestError.suggestions?.length) setDateSuggestions({ bookingId: booking.bookingId, list: requestError.suggestions });
-    } finally {
-      setLoading(false);
+  const stayLength = booking => Math.max(0, Math.round((Date.parse(`${String(booking.checkOut || booking.checkIn).slice(0, 10)}T00:00:00Z`) - Date.parse(`${String(booking.checkIn).slice(0, 10)}T00:00:00Z`)) / 86400000));
+  const addDays = (key, days) => {
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+  };
+
+  const suggestionButtons = (list, disabled) => (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+      {list.map(option => (
+        <button key={option.checkIn} type="button" disabled={disabled} onClick={() => requestClosureMove(option.checkIn)}
+          style={{ border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '8px 12px', background: '#fff', color: DARK, fontWeight: 700, cursor: disabled ? 'default' : 'pointer' }}>
+          {formatMDY(option.checkIn)}{option.checkOut && option.checkOut !== option.checkIn ? ` – ${formatMDY(option.checkOut)}` : ''}
+        </button>
+      ))}
+    </div>
+  );
+
+  // Shown when the resort closed on this booking's dates.
+  const renderClosureMove = booking => {
+    if (!booking.canReschedule || !booking.closure) return null;
+    if (booking.refundRequestStatus) {
+      return (
+        <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: '#eff6f0', color: '#374151', fontSize: 13, lineHeight: 1.6 }}>
+          <strong style={{ color: DARK }}>Cancellation requested.</strong> No fee: the resort refunds 100% of what you paid and confirms by email.
+        </div>
+      );
     }
+    const request = booking.modificationRequest;
+    const pending = request && ['requested', 'needs_review', 'approved', 'awaiting_payment', 'awaiting_refund'].includes(request.status);
+    const rejected = request?.status === 'rejected';
+    const length = stayLength(booking);
+    const minDate = addDays(new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10), 1);
+    return (
+      <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: '#fff7ed', border: '1px solid #fed7aa', color: '#374151', fontSize: 13, lineHeight: 1.6 }}>
+        <strong style={{ color: '#9a3412' }}>The resort is closed {formatMDY(booking.closure.from)}{booking.closure.to !== booking.closure.from ? ` – ${formatMDY(booking.closure.to)}` : ''}{booking.closure.reason ? ` (${booking.closure.reason})` : ''}.</strong>
+        <div style={{ marginTop: 4 }}>Sorry for the trouble. You have two choices, both with <strong>no fee</strong>:</div>
+        <ol style={{ margin: '6px 0 0', paddingLeft: 20 }}>
+          <li><strong>Rebook:</strong> pick your preferred new date below. Same room, booking type, guests and price. The resort checks it and confirms by email; if it's not free, we suggest the closest free dates.</li>
+          <li><strong>Cancel:</strong> get back <strong>100%</strong> of what you paid.{' '}
+            {!pending && (
+              <button type="button" onClick={requestClosureRefund} disabled={refundBusy}
+                style={{ border: '1px solid #b91c1c', background: '#fff', color: '#b91c1c', borderRadius: 8, padding: '4px 10px', fontWeight: 700, cursor: refundBusy ? 'wait' : 'pointer', marginLeft: 4 }}>
+                {refundBusy ? 'Sending…' : 'Cancel with full refund'}
+              </button>
+            )}
+          </li>
+        </ol>
+        {pending ? (
+          <div style={{ marginTop: 10, fontWeight: 600 }}>New dates sent: {formatMDY(request.requestedCheckIn)}{request.requestedCheckOut !== request.requestedCheckIn ? ` – ${formatMDY(request.requestedCheckOut)}` : ''}. Waiting for the resort to confirm.</div>
+        ) : (
+          <>
+            {rejected && (
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: '#fef2f2', color: '#991b1b' }}>
+                The resort could not take {formatMDY(request.requestedCheckIn)}{request.staffReason ? `: ${request.staffReason}` : '.'}
+                {request.suggestions?.length > 0 && <div style={{ color: '#374151', marginTop: 6 }}>These dates are free for the same price. Tap one to request it:</div>}
+                {request.suggestions?.length > 0 && suggestionButtons(request.suggestions, moving)}
+              </div>
+            )}
+            <form onSubmit={event => { event.preventDefault(); requestClosureMove(moveDate); }} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 10 }}>
+              <label style={{ display: 'grid', gap: 4, fontSize: 12, fontWeight: 600 }}>
+                New check-in date
+                <input type="date" required min={minDate} value={moveDate} onChange={event => setMoveDate(event.target.value)} style={{ border: '1px solid #d1d5db', borderRadius: 8, padding: '9px 10px', fontSize: 14 }} />
+              </label>
+              {moveDate && <div style={{ fontSize: 12, paddingBottom: 10 }}>Check-out: <strong>{formatMDY(addDays(moveDate, length))}</strong></div>}
+              <button type="submit" disabled={moving || !moveDate} style={{ border: 0, borderRadius: 8, padding: '10px 16px', background: DARK, color: '#fff', fontWeight: 700, cursor: moving ? 'default' : 'pointer' }}>
+                {moving ? 'Sending...' : 'Request these dates'}
+              </button>
+            </form>
+            {moveError && <div style={{ marginTop: 8, color: '#b91c1c', fontWeight: 600 }}>{moveError}</div>}
+            {moveSuggestions.length > 0 && suggestionButtons(moveSuggestions, moving)}
+          </>
+        )}
+      </div>
+    );
   };
 
-  const canRequestRefund = booking => ['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase())
-    && !booking.refundRequestStatus;
-
-  // Policy: dates can only move 30+ days before arrival.
-  const datesLocked = booking => {
-    const days = getDaysBeforeArrival(booking.checkIn);
-    return days !== null && days < DATE_CHANGE_NOTICE_DAYS;
-  };
-
-  const renderBooking = (booking, allowModification = false) => (
+  const renderBooking = booking => (
     <article key={booking.bookingId} style={{ border: '1px solid #e5e7eb', borderRadius: 14, padding: 18, background: '#fff' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div>
@@ -228,109 +240,19 @@ export default function BookingHistory() {
           {booking.modificationRequest.reason && <div style={{ marginTop: 4 }}>{booking.modificationRequest.reason}</div>}
         </div>
       )}
-      {canRequestRefund(booking) && refundPreview?.bookingId !== booking.bookingId && (
-        <button type="button" disabled={loading} onClick={() => previewRefund(booking)} style={{ marginTop: 16, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '10px 14px', color: DARK, background: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
-          Cancel &amp; request refund
-        </button>
-      )}
-      {refundPreview?.bookingId === booking.bookingId && (() => {
-        const p = refundPreview.preview || {};
-        const peso = value => `₱${Number(value || 0).toLocaleString()}`;
-        const reviewOnly = p.outcome === 'needs_review';
-        return (
-          <section role="dialog" aria-label="Cancellation summary" style={{ marginTop: 16, border: '1px solid #f3c99b', background: '#fffaf3', borderRadius: 10, padding: 16, color: '#4b5563', fontSize: 13 }}>
-            <strong style={{ color: DARK, fontSize: 14 }}>Before you cancel</strong>
-            <dl style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '6px 16px', margin: '12px 0' }}>
-              <dt>Booking total</dt><dd style={{ margin: 0, fontWeight: 600 }}>{peso(p.totalAmount)}</dd>
-              <dt>Amount you paid</dt><dd style={{ margin: 0, fontWeight: 600 }}>{peso(p.amountPaid)}</dd>
-              {p.policyRate != null && (
-                <>
-                  <dt>Cancellation fee ({p.policyRate}%{p.daysBeforeCheckIn != null ? `, ${p.daysBeforeCheckIn} day${p.daysBeforeCheckIn === 1 ? '' : 's'} before arrival` : ''})</dt>
-                  <dd style={{ margin: 0, fontWeight: 600, color: '#b45309' }}>{peso(p.feeAmount)}</dd>
-                </>
-              )}
-              <dt style={{ fontWeight: 700, color: DARK }}>Refund to you</dt>
-              <dd style={{ margin: 0, fontWeight: 800, color: DARK }}>{reviewOnly ? 'Decided by staff' : peso(p.refundableAmount)}</dd>
-            </dl>
-            {p.reason && <p style={{ margin: '0 0 12px', fontSize: 12, lineHeight: 1.6 }}>{p.reason}</p>}
-            <p style={{ margin: '0 0 12px', fontSize: 12, lineHeight: 1.6 }}>
-              Resort staff approve every refund. Refunds go back to your original payment method. <Link to="/cancellation-policy" style={{ color: ACCENT }}>Read the cancellation policy</Link>.
-            </p>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <button type="button" disabled={loading} onClick={() => requestRefund(booking)} style={{ border: 0, borderRadius: 8, padding: '10px 14px', background: '#b45309', color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>
-                Confirm cancellation request
-              </button>
-              <button type="button" disabled={loading} onClick={() => setRefundPreview(null)} style={{ border: '1px solid #d1d5db', borderRadius: 8, padding: '10px 14px', background: '#fff', color: DARK, fontWeight: 700, cursor: 'pointer' }}>
-                Keep my booking
-              </button>
-            </div>
-          </section>
-        );
-      })()}
-      {allowModification
-        && (!booking.modificationRequest || ['rejected', 'completed'].includes(booking.modificationRequest.status))
-        && ['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase()) && (
-        <form onSubmit={event => requestScheduleChange(event, booking)} style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #e5e7eb', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, alignItems: 'end' }}>
-          <div style={{ gridColumn: '1 / -1', color: DARK, fontSize: 13, fontWeight: 700 }}>Change this booking</div>
-          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>Booking type
-            <select value={requestedChange.bookingOption} onChange={event => setRequestedChange(current => ({ ...current, bookingOption: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }}>
-              {BOOKING_OPTIONS.map(option => (
-                <option key={option.id} value={option.id}
-                  disabled={option.id !== 'overnight' && isTourStartPassed(requestedChange.checkIn, option.tourPeriod)}>
-                  {option.label}{option.id !== 'overnight' && isTourStartPassed(requestedChange.checkIn, option.tourPeriod) ? ' — closed for today' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          {datesLocked(booking) && (
-            <div style={{ gridColumn: '1 / -1', background: '#fff7ed', color: '#9a3412', borderRadius: 8, padding: 10, fontSize: 12, lineHeight: 1.6 }}>
-              Your arrival is less than {DATE_CHANGE_NOTICE_DAYS} days away, so the date can no longer be moved. You can still add guests or extend your stay. To travel on a different date, cancel this booking under the cancellation policy (50% penalty under 30 days, full charge under 7 days) and make a new booking.
-            </div>
-          )}
-          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>{changeIsTour ? 'New date' : 'New check-in'}
-            <input type="date" required min={todayLocal()} value={requestedChange.checkIn} disabled={datesLocked(booking)} onChange={event => { const value = event.target.value; setRequestedChange(current => ({ ...current, checkIn: value, checkOut: current.checkOut && current.checkOut <= value ? '' : current.checkOut })); }} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
-          </label>
-          {!changeIsTour && (
-            <>
-              <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>New check-out
-                <input type="date" required min={requestedChange.checkIn || todayLocal()} value={requestedChange.checkOut} onChange={event => setRequestedChange(current => ({ ...current, checkOut: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
-              </label>
-              <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>Check-in time
-                <select value={requestedChange.overnightTimeSlot} onChange={event => setRequestedChange(current => ({ ...current, overnightTimeSlot: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }}>
-                  {OVERNIGHT_TIME_SLOTS.map(slot => (
-                    <option key={slot.id} value={slot.id} disabled={isCheckInPassed(requestedChange.checkIn, slot)}>{slot.label}</option>
-                  ))}
-                </select>
-              </label>
-            </>
-          )}
-          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>Adults
-            <input type="number" min="1" max="40" required value={requestedChange.adults} onChange={event => setRequestedChange(current => ({ ...current, adults: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
-          </label>
-          <label style={{ display: 'grid', gap: 5, color: '#4b5563', fontSize: 11, fontWeight: 600 }}>Children (under 10)
-            <input type="number" min="0" max="40" required value={requestedChange.children} onChange={event => setRequestedChange(current => ({ ...current, children: event.target.value }))} style={{ border: '1px solid #d1d5db', borderRadius: 7, padding: 9, font: 'inherit' }} />
-          </label>
-          {dateSuggestions?.bookingId === booking.bookingId && dateSuggestions.list.length > 0 && (
-            <div style={{ gridColumn: '1 / -1', background: '#eff6f0', borderRadius: 8, padding: 12, fontSize: 12, color: DARK }}>
-              <strong>Closest available dates for this room</strong>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                {dateSuggestions.list.map((option, index) => (
-                  <button key={option.checkIn} type="button"
-                    onClick={() => { setRequestedChange(current => ({ ...current, checkIn: option.checkIn, checkOut: option.checkOut })); setDateSuggestions(null); setError(''); }}
-                    style={{ border: `1px solid ${ACCENT}`, borderRadius: 999, padding: '7px 12px', background: index === 0 ? DARK : '#fff', color: index === 0 ? '#fff' : DARK, fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
-                    {index === 0 ? 'Closest: ' : ''}{formatMDY(option.checkIn)}{option.checkOut !== option.checkIn ? ` – ${formatMDY(option.checkOut)}` : ''}
-                  </button>
-                ))}
-              </div>
-              <div style={{ marginTop: 6, color: '#4b5563' }}>Pick one to fill in the dates, then press “Request change”.</div>
-            </div>
-          )}
-          <DateOccupancy date={requestedChange.checkIn} focus={changeIsTour ? requestedChange.bookingOption : 'overnight'} colors={{ accent: DARK, background: '#fff' }} style={{ gridColumn: '1 / -1' }} />
-          <p style={{ gridColumn: '1 / -1', margin: 0, color: '#6b7280', fontSize: 11, lineHeight: 1.6 }}>
-            The resort recalculates the price for your new booking and staff review the request. If it costs more you'll get a payment link for the difference. Under the resort policy, fewer guests, a cheaper booking type or a shorter stay aren't refunded.
-          </p>
-          <button type="submit" disabled={loading || !contact.trim()} style={{ border: 0, borderRadius: 8, padding: '10px 14px', background: DARK, color: '#fff', fontWeight: 700, cursor: loading ? 'wait' : 'pointer' }}>Request change</button>
-        </form>
+      {renderClosureMove(booking)}
+      {['pending', 'confirmed'].includes(String(booking.status || '').toLowerCase()) && (
+        <div style={{ marginTop: 16, padding: 14, borderRadius: 10, background: '#eff6f0', color: '#374151', fontSize: 13, lineHeight: 1.6 }}>
+          <strong style={{ color: DARK }}>Need to move or cancel this booking?</strong>
+          <div style={{ marginTop: 4 }}>
+            Contact Lawiswis Kawayan Garden Resort and give your booking reference <strong>#{String(booking.bookingId).slice(0, 8).toUpperCase()}</strong>. Our staff will check the new dates and explain any fees under the <Link to="/cancellation-policy" style={{ color: ACCENT }}>cancellation policy</Link>.
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+            <a href={`tel:${RESORT_PHONE.replace(/\s/g, '')}`} style={{ border: 0, borderRadius: 8, padding: '9px 14px', background: DARK, color: '#fff', fontWeight: 700, textDecoration: 'none' }}>Call {RESORT_PHONE}</a>
+            <a href={`mailto:${RESORT_EMAIL}?subject=${encodeURIComponent(`Booking #${String(booking.bookingId).slice(0, 8).toUpperCase()}`)}`} style={{ border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '9px 14px', background: '#fff', color: DARK, fontWeight: 700, textDecoration: 'none' }}>Email us</a>
+            <Link to="/chat" style={{ border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '9px 14px', background: '#fff', color: DARK, fontWeight: 700, textDecoration: 'none' }}>Chat with us</Link>
+          </div>
+        </div>
       )}
     </article>
   );
@@ -341,7 +263,7 @@ export default function BookingHistory() {
         <header style={{ marginBottom: 28 }}>
           <p style={{ color: ACCENT, fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', margin: '0 0 8px' }}>GUEST SERVICES</p>
           <h1 style={{ color: DARK, fontFamily: "'Fraunces', Georgia, serif", fontSize: 'clamp(30px, 7vw, 42px)', margin: '0 0 10px' }}>My Bookings</h1>
-          <p style={{ color: '#6b7280', fontSize: 14, lineHeight: 1.7, margin: 0 }}>Review reservations saved on this device, look up a booking from another device, or send a refund request for the resort to review.</p>
+          <p style={{ color: '#6b7280', fontSize: 14, lineHeight: 1.7, margin: 0 }}>Review reservations saved on this device or look up a booking from another device. To move or cancel a booking, contact the resort.</p>
         </header>
 
         {bookings.length > 0 ? (
@@ -373,7 +295,7 @@ export default function BookingHistory() {
           </form>
           {error && <p role="alert" style={{ color: '#b91c1c', fontSize: 13, margin: '14px 0 0' }}>{error}</p>}
           {notice && <p role="status" style={{ color: DARK, background: '#eff6f0', borderRadius: 8, padding: 12, fontSize: 13, margin: '14px 0 0' }}>{notice}</p>}
-          {lookupResult && <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>{renderBooking(lookupResult, true)}</div>}
+          {lookupResult && <div style={{ display: 'grid', gap: 12, marginTop: 16 }}>{renderBooking(lookupResult)}</div>}
         </section>
         <div style={{ marginTop: 22, textAlign: 'center' }}><Link to="/rooms" style={{ color: DARK, fontWeight: 700, fontSize: 13 }}>Browse rooms</Link></div>
       </div>

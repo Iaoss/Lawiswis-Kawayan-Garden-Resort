@@ -3,20 +3,17 @@ import PageLayout from '../components/PageLayout';
 import { useSettings, DEFAULT_SETTINGS, DASHBOARD_KEYS } from '../components/SettingsContext';
 import { auth } from '../../firebase/firebase';
 import QuickRepliesManager from '../components/QuickRepliesManager';
+import CottageInventoryManager from '../components/CottageInventoryManager';
+import ClosedDatesManager from '../components/ClosedDatesManager';
 import { appConfirm } from '../../components/ui/app-dialog';
+import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../../firebase/firebase';
+import { RECEPTIONIST_DASHBOARD_SECTIONS, getReceptionistSections } from '../../lib/receptionistDashboard';
 
-const ACCENT_COLORS = [
-  { label: 'Lime',   value: '#9cb56f' },
-  { label: 'Teal',   value: '#5eead4' },
-  { label: 'Blue',   value: '#60a5fa' },
-  { label: 'Purple', value: '#c084fc' },
-  { label: 'Orange', value: '#fb923c' },
-  { label: 'Pink',   value: '#f472b6' },
-];
 
 const TABS = [
   { id: 'appearance',    label: 'Appearance',    icon: 'ti-palette' },
-  { id: 'notifications', label: 'Notifications', icon: 'ti-bell' },
+  { id: 'notifications', label: 'Alerts & security', icon: 'ti-bell' },
   { id: 'regional',      label: 'Regional',      icon: 'ti-world' },
   { id: 'dashboard',     label: 'Dashboard',     icon: 'ti-layout-dashboard' },
   { id: 'availability',  label: 'Resort Status', icon: 'ti-building-store' },
@@ -108,6 +105,25 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState('appearance');
   // Only admins change the resort status, so receptionists don't see that tab.
   const isReceptionistPortal = window.location.pathname.startsWith('/receptionist');
+  // Admins choose what receptionists see on their dashboard (shared setting).
+  const [receptionistSections, setReceptionistSections] = useState(() => getReceptionistSections(null));
+  const [sectionsError, setSectionsError] = useState('');
+  useEffect(() => {
+    if (isReceptionistPortal) return undefined;
+    return onSnapshot(doc(db, 'settings', 'receptionistDashboard'),
+      snapshot => setReceptionistSections(getReceptionistSections(snapshot.data())),
+      () => setSectionsError('The receptionist dashboard settings could not be loaded.'));
+  }, [isReceptionistPortal]);
+  const toggleReceptionistSection = async (id, value) => {
+    const next = { ...receptionistSections, [id]: value };
+    setReceptionistSections(next);
+    setSectionsError('');
+    try {
+      await setDoc(doc(db, 'settings', 'receptionistDashboard'), { sections: next, updatedAt: serverTimestamp(), updatedBy: auth.currentUser?.email || '' });
+    } catch (error) {
+      setSectionsError(error.message || 'Could not save.');
+    }
+  };
   const [resortAvailable, setResortAvailable] = useState(true);
   const [resortLimited, setResortLimited] = useState(false);
   const [availabilityReason, setAvailabilityReason] = useState('');
@@ -275,33 +291,6 @@ export default function Settings() {
         {/* ── APPEARANCE ── */}
         {activeTab === 'appearance' && (
           <>
-            <Section title="Accent color" t={t}>
-              <div style={{ padding: '12px 0 16px' }}>
-                <div style={{ fontSize: 12, color: t.SUBTEXT, marginBottom: 12 }}>
-                  The highlight color used across the panel. Dark mode lives in the top bar.
-                </div>
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  {ACCENT_COLORS.map(c => {
-                    const active = settings.accentColor === c.value;
-                    return (
-                      <div key={c.value} onClick={() => setLive('accentColor', c.value)}
-                        style={{ textAlign: 'center', cursor: 'pointer' }}>
-                        <div style={{
-                          width: 40, height: 40, borderRadius: 10, background: c.value,
-                          border: active ? `3px solid ${t.TEXT}` : `2px solid ${t.BORDER}`,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          transition: 'all 0.15s',
-                        }}>
-                          {active && <i className="ti ti-check" style={{ fontSize: 16, color: t.ACCENT_TEXT }} />}
-                        </div>
-                        <div style={{ fontSize: 9, color: t.MUTED, marginTop: 4 }}>{c.label}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </Section>
-
             <Section title="Text size" t={t}>
               <div style={{ padding: '12px 0 16px' }}>
                 <div style={{ fontSize: 12, color: t.SUBTEXT, marginBottom: 12 }}>Base font size of the panel</div>
@@ -338,6 +327,21 @@ export default function Settings() {
             </SettingRow>
           </Section>
         )}
+        {activeTab === 'notifications' && (
+          <Section title="Security on this computer" t={t}>
+            <SettingRow t={t} icon="ti-lock" label="Sign out when inactive" desc="Protects a shared front-desk computer if someone forgets to sign out">
+              <Toggle t={t} value={local.sessionTimeout !== false} onChange={v => set('sessionTimeout', v)} />
+            </SettingRow>
+            <SettingRow t={t} icon="ti-clock" label="Inactive for" desc="You get a warning 1 minute before" last>
+              <select value={String(local.autoLogout || '30')} disabled={local.sessionTimeout === false} onChange={e => set('autoLogout', e.target.value)} style={selectStyle}>
+                <option value="15">15 minutes</option>
+                <option value="30">30 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+              </select>
+            </SettingRow>
+          </Section>
+        )}
 
         {/* ── REGIONAL ── */}
         {activeTab === 'regional' && (
@@ -348,6 +352,17 @@ export default function Settings() {
                 <option value="USD">USD — US Dollar ($)</option>
               </select>
             </SettingRow>
+            {local.currency === 'USD' && (
+              <SettingRow t={t} icon="ti-arrows-exchange" label="Exchange rate"
+                desc="Pesos per US$1. Amounts in the staff portal are converted with this rate. Guests are still charged in pesos, and amounts you type (payments, prices) are in pesos.">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 13 }}>$1 = ₱</span>
+                  <input type="number" min="1" step="0.01" value={local.usdRate ?? 58}
+                    onChange={e => set('usdRate', e.target.value === '' ? '' : Number(e.target.value))}
+                    style={{ ...selectStyle, width: 90 }} />
+                </div>
+              </SettingRow>
+            )}
             <SettingRow t={t} icon="ti-calendar" label="Date format" desc="How dates appear across the system" last>
               <select value={local.dateFormat} onChange={e => set('dateFormat', e.target.value)} style={selectStyle}>
                 <option value="MM/DD/YYYY">MM/DD/YYYY</option>
@@ -373,6 +388,17 @@ export default function Settings() {
             <SettingRow t={t} icon="ti-chart-bar" label="Revenue chart" desc="Show the 6-month revenue chart" last>
               <Toggle t={t} value={local.showRevenueChart} onChange={v => set('showRevenueChart', v)} />
             </SettingRow>
+          </Section>
+        )}
+        {activeTab === 'dashboard' && !isReceptionistPortal && (
+          <Section title="What receptionists see on their dashboard" t={t}>
+            {RECEPTIONIST_DASHBOARD_SECTIONS.map((section, index) => (
+              <SettingRow key={section.id} t={t} icon={section.icon} label={section.label} desc={section.desc} last={index === RECEPTIONIST_DASHBOARD_SECTIONS.length - 1}>
+                <Toggle t={t} value={receptionistSections[section.id]} onChange={v => toggleReceptionistSection(section.id, v)} />
+              </SettingRow>
+            ))}
+            {sectionsError && <div role="alert" style={{ color: '#dc2626', fontSize: 12, padding: '8px 0 0' }}>{sectionsError}</div>}
+            <div style={{ fontSize: 11.5, color: t.MUTED || '#9ca3af', padding: '8px 0 0' }}>Applies to every receptionist right away. Saved for everyone, not just this computer.</div>
           </Section>
         )}
 
@@ -421,6 +447,8 @@ export default function Settings() {
               style={{ margin: '4px 0 16px', padding: '9px 16px', border: 0, borderRadius: 9, background: t.ACCENT, color: t.ACCENT_TEXT, fontSize: 12, fontWeight: 700, cursor: availabilitySaving ? 'wait' : 'pointer', opacity: availabilitySaving || availabilityLoading ? 0.65 : 1 }}>
               {availabilitySaving ? 'Saving…' : 'Save resort status'}
             </button>
+            <ClosedDatesManager t={t} />
+            <CottageInventoryManager t={t} />
           </Section>
         )}
 

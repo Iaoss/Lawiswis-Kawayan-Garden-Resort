@@ -7,6 +7,10 @@
 // so group/corporate bookings, and bookings confirmed straight away by an
 // online payment, never showed up.
 
+import { GUEST_REPLY_LABELS, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
+import { formatManilaTime, getCheckoutDue, getOutstandingBalance, getOverstay } from '../../lib/reservationStatus';
+import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive } from '../../lib/guestArrivals';
+
 export const NEW_BOOKING_DAYS = 7;
 export const ACTIVE_MODIFICATION_STATUSES = ['requested', 'needs_review', 'awaiting_payment', 'awaiting_refund'];
 export const ACTIVE_REFUND_STATUSES = ['requested', 'eligible', 'needs_review', 'awaiting_refund'];
@@ -44,20 +48,78 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
   const items = [];
 
   reservations.forEach(r => {
+    if (r.type === 'corporate-room') return; // group room blocks have no alerts of their own
     const guest = r.guestName || r.contactPerson || r.companyName || 'Guest';
     const status = lower(r.status);
 
     const createdMs = toMs(r.createdAt);
-    if (isGuestBooking(r) && createdMs >= since && status !== 'cancelled') {
+    // Extra rooms of a multi-room booking: the first room carries the alerts.
+    const extraRoom = Boolean(r.groupId && r.groupId !== r.id);
+    const roomCount = Number(r.groupRoomCount) > 1 ? Number(r.groupRoomCount) : 1;
+    if (isGuestBooking(r) && !extraRoom && createdMs >= since && status !== 'cancelled') {
       const group = lower(r.type) === 'corporate';
+      const unpaid = isUnpaidOnlineBooking(r);
       const paid = lower(r.paymentStatus) === 'paid' ? 'Paid' : lower(r.paymentStatus) === 'partial' ? 'Part paid' : 'Not paid yet';
       items.push({
         id: `new-booking_${r.id}`,
-        icon: group ? 'ti-users-group' : 'ti-calendar-plus',
-        badge: group ? 'New Group Booking' : 'New Booking',
+        icon: group ? 'ti-users-group' : unpaid ? 'ti-alert-triangle' : 'ti-calendar-plus',
+        badge: group ? 'New Group Booking' : unpaid ? 'New Booking · Unpaid' : 'New Booking',
         message: `${guest} · ${ref(r.id)}`,
-        details: `${r.checkIn || '—'}${r.checkOut && r.checkOut !== r.checkIn ? ` → ${r.checkOut}` : ''} · ${peso(r.totalAmount)} · ${paid}${status ? ` · ${status}` : ''}`,
+        details: `${r.checkIn || '—'}${r.checkOut && r.checkOut !== r.checkIn ? ` → ${r.checkOut}` : ''}${roomCount > 1 ? ` · ${roomCount} rooms` : ''} · ${peso(r.totalAmount)}${roomCount > 1 ? ' (first room)' : ''} · ${paid}${status ? ` · ${status}` : ''}`,
         timeMs: createdMs,
+        bookingId: r.id,
+        path,
+      });
+    }
+
+    // Checked-in guests whose check-out time is close, or already past.
+    const due = getCheckoutDue(r, new Date(now));
+    const overstay = !due && getOverstay(r, new Date(now));
+    if (due || overstay) {
+      const owes = Math.max(0, getOutstandingBalance(r));
+      const room = r.roomNumber ? `Room ${r.roomNumber}` : 'Group';
+      items.push({
+        id: due ? `checkout-due_${r.id}_${due.dueMs}` : `checkout-late_${r.id}_${r.checkOut}_${r.lateCheckoutUntil || ''}`,
+        icon: due ? 'ti-clock-hour-4' : 'ti-alarm',
+        badge: due ? 'Check-out Soon' : 'Past Check-out',
+        message: `${guest} · ${room}`,
+        details: due
+          ? `Due ${formatManilaTime(due.dueMs)} · in ${due.minutesLeft} min${owes > 0 ? ` · owes ${peso(owes)}` : ''}`
+          : `Overstayed ${overstay.label}${owes > 0 ? ` · owes ${peso(owes)}` : ''} · check out or give more time`,
+        // Keeps these near the top while they matter.
+        timeMs: now,
+        bookingId: r.id,
+        path,
+      });
+    }
+
+    // Checked in, but part of the group is still coming.
+    const waiting = guestsStillToArrive(r);
+    if (waiting > 0) {
+      items.push({
+        id: `guests-arriving_${r.id}_${arrivedGuestCount(r)}`,
+        icon: 'ti-users',
+        badge: 'Guests Still to Arrive',
+        message: `${guest} · ${r.roomNumber ? `Room ${r.roomNumber}` : ref(r.id)}`,
+        details: `${arrivedGuestCount(r)} of ${bookedGuestCount(r)} here · ${waiting} still to come. Open the booking and choose Guests arrived when they come.`,
+        timeMs: toMs(r.checkedInAt) || createdMs,
+        bookingId: r.id,
+        path,
+      });
+    }
+
+    // The guest answered "Did you make this reservation?".
+    const reply = r.unpaidFollowUp?.guestReply;
+    if (reply && GUEST_REPLY_LABELS[reply] && isUnpaidOnlineBooking(r)) {
+      items.push({
+        id: `guest-reply_${r.id}_${reply}_${toMs(r.unpaidFollowUp.guestRepliedAt)}`,
+        icon: reply === 'yes' ? 'ti-user-check' : 'ti-user-x',
+        badge: 'Guest Replied',
+        message: `${guest} · ${ref(r.id)}`,
+        details: reply === 'yes'
+          ? `${GUEST_REPLY_LABELS.yes}. Send a payment link.`
+          : `${GUEST_REPLY_LABELS.no}. You may cancel it.`,
+        timeMs: toMs(r.unpaidFollowUp.guestRepliedAt) || createdMs,
         bookingId: r.id,
         path,
       });
@@ -68,10 +130,24 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
       items.push({
         id: `date-change_${request.id || r.id}`,
         icon: 'ti-calendar-time',
-        badge: 'Change Requested',
-        message: `${guest} · ${ref(r.id)}`,
+        badge: request.closureMove ? 'Closure Reschedule' : 'Change Requested',
+        message: `${guest} · ${ref(r.id)}${request.closureMove ? ' · same price, approve or reject' : ''}`,
         details: `${request.originalCheckIn || r.checkIn || '—'} → ${request.requestedCheckIn || r.checkIn || '—'} · ${lower(request.status).replaceAll('_', ' ')}`,
         timeMs: toMs(request.requestedAt) || toMs(r.updatedAt) || createdMs,
+        bookingId: r.id,
+        path,
+      });
+    }
+
+    // Paid after the room hold ran out, and the room was taken meanwhile.
+    if (r.holdConflict && !['cancelled', 'checked-out'].includes(status)) {
+      items.push({
+        id: `hold-conflict_${r.id}`,
+        icon: 'ti-alert-octagon',
+        badge: 'Paid After Hold Expired',
+        message: `${guest} · ${ref(r.id)}`,
+        details: `Paid ${peso(r.amountPaid)} but the room was rebooked. Move them to another room or refund.`,
+        timeMs: toMs(r.holdConflictAt) || createdMs,
         bookingId: r.id,
         path,
       });

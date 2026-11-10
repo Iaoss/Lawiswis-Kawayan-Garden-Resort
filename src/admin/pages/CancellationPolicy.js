@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../../firebase/firebase';
-import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+import { db, auth } from '../../firebase/firebase';
+import { collection, getDocs, doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { useStaffAccess } from '../lib/useStaffAccess';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { staffApi } from '../lib/staffApi';
-import { DEFAULT_CANCELLATION_POLICY, getStaffCancellationFee, normalizeCancellationPolicy } from '../../lib/cancellationPolicy';
+import { DEFAULT_CANCELLATION_POLICY, describePolicyTiers, getStaffCancellationFee, normalizeCancellationPolicy } from '../../lib/cancellationPolicy';
+import ResortClosurePanel from '../components/ResortClosurePanel';
 
 // `embedded` is used when this renders inside the Settings page tab,
 // so it does not wrap itself in a second PageLayout.
@@ -41,6 +43,12 @@ export default function CancellationPolicy({ embedded = false }) {
     return dark ? { background: c.dbg, color: c.dtext } : { background: c.lbg, color: c.ltext };
   };
 
+  // Receptionists without the admin's "Cancel bookings" access send a
+  // request for an admin to approve instead.
+  const access = useStaffAccess();
+  const isReceptionist = window.location.pathname.startsWith('/receptionist');
+  const canCancel = !isReceptionist || access.can('cancel');
+
   const [reservations, setReservations] = useState([]);
   const [policy, setPolicy] = useState({ ...DEFAULT_CANCELLATION_POLICY });
   const [selected, setSelected] = useState(null);
@@ -58,7 +66,7 @@ export default function CancellationPolicy({ embedded = false }) {
   const fetchReservations = async () => {
     const resSnap = await getDocs(collection(db, 'reservations'));
     const data = resSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(r => r.status !== 'cancelled' && r.status !== 'checked-out');
+      .filter(r => r.status !== 'cancelled' && r.status !== 'checked-out' && r.type !== 'corporate-room');
     data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
     setReservations(data);
   };
@@ -76,6 +84,7 @@ export default function CancellationPolicy({ embedded = false }) {
   // Preview only; the server recalculates the same fee when cancelling.
   const calculateFee = (reservation) => getStaffCancellationFee({
     policy, checkIn: reservation.checkIn, totalAmount: Number(reservation.totalAmount || 0),
+    amountPaid: Number(reservation.amountPaid || 0),
   });
 
   const handleSelect = (r) => {
@@ -89,11 +98,23 @@ export default function CancellationPolicy({ embedded = false }) {
     if (!selected || !cancelResult || cancelBusy) return;
     setCancelBusy(true);
     try {
-      // The server calculates and saves the fee and refund, and frees the room.
-      const result = await staffApi('staff-billing', {
-        action: 'cancel-with-policy', reservationId: selected.id, reason: cancelReason.trim(),
-      });
-      setSuccess(`Reservation for ${selected.guestName} cancelled. Fee: ₱${result.fee.toLocaleString()} · Refund: ₱${result.refund.toLocaleString()}`);
+      if (!canCancel) {
+        await updateDoc(doc(db, 'reservations', selected.id), {
+          cancellationRequested: true,
+          cancellationRequestedBy: auth.currentUser?.uid || null,
+          cancellationRequestedAt: serverTimestamp(),
+          cancellationReason: cancelReason.trim(),
+        });
+        setSuccess(`Cancellation request for ${selected.guestName} sent to an admin.`);
+      } else {
+        // The server calculates and saves the fee and refund, frees the room
+        // and emails the guest a cancellation receipt.
+        const result = await staffApi('staff-billing', {
+          action: 'cancel-with-policy', reservationId: selected.id, reason: cancelReason.trim(),
+        });
+        setSuccess(`Reservation for ${selected.guestName} cancelled. Fee: ₱${result.fee.toLocaleString()} · Refund: ₱${result.refund.toLocaleString()}. `
+          + (result.emailSent ? `Email and receipt ${result.receiptNumber} sent to the guest.` : `The email was not sent (${result.emailError || 'no email on this booking'}).`));
+      }
       setCancelError('');
       setSelected(null);
       setCancelResult(null);
@@ -109,7 +130,14 @@ export default function CancellationPolicy({ embedded = false }) {
   };
 
   const handleSavePolicy = async () => {
-    await setDoc(doc(db, 'settings', 'cancellationPolicy'), policy);
+    const clean = normalizeCancellationPolicy({ ...policy, version: 2 });
+    if (!clean) {
+      setCancelError('Check the policy: percentages must be 0–100, days must be whole numbers, and the 50% tier can’t start after the 20% tier.');
+      return;
+    }
+    setCancelError('');
+    await setDoc(doc(db, 'settings', 'cancellationPolicy'), clean);
+    setPolicy(clean);
     setShowPolicyEdit(false);
     setSuccess('Cancellation policy saved');
   };
@@ -161,25 +189,37 @@ export default function CancellationPolicy({ embedded = false }) {
         <div style={{ ...S.card, padding: '20px', marginBottom: '20px' }}>
           <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '6px' }}>Cancellation fee policy</div>
           <div style={{ fontSize: '12px', color: SUBTEXT, marginBottom: '16px' }}>
-            Official policy: no penalty 30+ days before arrival, 50% of the total accommodation charge less than 30 days before, and the full charge less than 7 days before or on arrival (no-show). Date changes are only allowed 30+ days before arrival.
+            Official policy: 20% of the total more than 7 days before arrival, 50% within 4–7 days, 100% 3 days or less before or on the day (no-show). Guests can rebook (move dates) for free at least 7 days before arrival. You can change both the days and the percentages.
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '16px' }}>
-            {[
-              { label: '30 days or more before', key: 'atLeast30Days', kind: 'green' },
-              { label: 'Less than 30 days before', key: 'lessThan30Days', kind: 'yellow' },
-              { label: 'Less than 7 days / no-show', key: 'lessThan7Days', kind: 'red' },
-            ].map(f => (
-              <div key={f.key} style={{ ...badge(f.kind), borderRadius: '12px', padding: '16px', textAlign: 'center' }}>
-                <div style={{ fontSize: '11px', opacity: 0.85, marginBottom: '8px' }}>{f.label}</div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                  <input type="number" min="0" max="100" value={policy[f.key]}
-                    onChange={e => setPolicy({ ...policy, [f.key]: Number(e.target.value) })}
-                    style={{ width: '60px', border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '8px', fontSize: '18px', fontWeight: '700', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', background: dark ? 'rgba(0,0,0,0.25)' : '#fff', color: 'inherit' }} />
-                  <span style={{ fontSize: '18px', fontWeight: '700' }}>%</span>
+          {(() => {
+            const numberInput = (key, width = 60) => (
+              <input type="number" min="0" max={key.endsWith('Rate') ? 100 : 365} value={policy[key] ?? ''}
+                onChange={e => setPolicy({ ...policy, version: 2, [key]: e.target.value === '' ? '' : Number(e.target.value) })}
+                style={{ width, border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '7px', fontSize: '16px', fontWeight: '700', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', background: dark ? 'rgba(0,0,0,0.25)' : '#fff', color: 'inherit' }} />
+            );
+            const tiers = describePolicyTiers(normalizeCancellationPolicy({ ...policy, version: 2 }) || DEFAULT_CANCELLATION_POLICY);
+            const cards = [
+              { kind: 'green', rateKey: 'earlyRate', tier: tiers[0], days: <>More than {numberInput('moreThanDays', 56)} days before</> },
+              { kind: 'yellow', rateKey: 'midRate', tier: tiers[1], days: <>From {numberInput('midFromDays', 56)} days before</> },
+              { kind: 'red', rateKey: 'lateRate', tier: tiers[2], days: <>Less than that, or on the day</> },
+            ];
+            return (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', marginBottom: '14px' }}>
+                  {cards.map(card => (
+                    <div key={card.rateKey} style={{ ...badge(card.kind), borderRadius: '12px', padding: '14px', textAlign: 'center', display: 'grid', gap: '10px', justifyItems: 'center' }}>
+                      <div style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'center' }}>{card.days}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>{numberInput(card.rateKey)}<span style={{ fontSize: '16px', fontWeight: '700' }}>%</span></div>
+                      <div style={{ fontSize: '11px', opacity: 0.85 }}>{card.tier.label}</div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            ))}
-          </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '12px', color: TEXT, marginBottom: '16px' }}>
+                  Free rebooking (move dates) at least {numberInput('dateChangeDays', 56)} days before arrival
+                </div>
+              </>
+            );
+          })()}
           <button onClick={handleSavePolicy}
             style={{ background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: '10px', padding: '10px 24px', fontSize: '13px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
             Save policy
@@ -277,8 +317,10 @@ export default function CancellationPolicy({ embedded = false }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {[
                     { label: 'Total booking amount', value: `₱${cancelResult.totalAmount.toLocaleString()}`, color: TEXT },
+                    { label: 'Guest has paid', value: `₱${cancelResult.amountPaid.toLocaleString()}`, color: TEXT },
                     { label: 'Cancellation rate', value: `${cancelResult.rate}%`, color: RED },
                     { label: 'Cancellation fee', value: `₱${cancelResult.fee.toLocaleString()}`, color: RED, bold: true },
+                    { label: 'Kept by the resort', value: `₱${cancelResult.retained.toLocaleString()}`, color: TEXT },
                   ].map(row => (
                     <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
                       <span style={{ color: SUBTEXT }}>{row.label}</span>
@@ -317,6 +359,9 @@ export default function CancellationPolicy({ embedded = false }) {
             <h2 id="policy-cancel-title" style={{ color: TEXT, fontSize: '17px', margin: '0 0 10px' }}>Are you sure you want to cancel this reservation?</h2>
             <p style={{ color: SUBTEXT, fontSize: '13px', margin: '0 0 16px' }}>
               {selected.guestName} · Room {selected.roomNumber}. Cancellation fee: ₱{cancelResult.fee.toLocaleString()}; refund: ₱{cancelResult.refund.toLocaleString()}.
+              {canCancel
+                ? ' The guest will be emailed this breakdown with a cancellation receipt.'
+                : ' This sends a request to an admin, who makes the final cancellation.'}
             </p>
             <label htmlFor="policy-cancel-reason" style={{ display: 'block', color: SUBTEXT, fontSize: '12px', marginBottom: '6px' }}>Reason (optional)</label>
             <textarea id="policy-cancel-reason" value={cancelReason} onChange={event => setCancelReason(event.target.value)}
@@ -327,11 +372,18 @@ export default function CancellationPolicy({ embedded = false }) {
                 style={{ border: `1px solid ${BORDER}`, borderRadius: '8px', padding: '9px 14px', background: CARD2, color: TEXT, cursor: 'pointer' }}>Go back</button>
               <button type="button" disabled={cancelBusy} onClick={handleCancel}
                 style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: '#dc2626', color: '#fff', fontWeight: 700, cursor: cancelBusy ? 'wait' : 'pointer' }}>
-                {cancelBusy ? 'Processing…' : 'Confirm cancellation'}
+                {cancelBusy ? 'Processing…' : canCancel ? 'Confirm cancellation' : 'Send request'}
               </button>
             </div>
           </section>
         </div>
+      )}
+      {!isReceptionist && (
+        <ResortClosurePanel
+          reservations={reservations}
+          colors={{ CARD, CARD2, BORDER, TEXT, SUBTEXT, ACCENT, ACCENT_TEXT, dark }}
+          onChanged={fetchReservations}
+        />
       )}
     </>
   );

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { DEFAULT_USD_RATE, money, setMoneySettings } from '../lib/money';
 
 const STORAGE_KEY = 'lkgr_admin_settings';
 
@@ -10,6 +11,7 @@ export const DEFAULT_SETTINGS = {
   language: 'en',
   timezone: 'Asia/Manila',
   currency: 'PHP',
+  usdRate: DEFAULT_USD_RATE, // pesos per US$1, for showing amounts in dollars
   dateFormat: 'MM/DD/YYYY',
   notifications: true,
   soundAlerts: false,
@@ -43,7 +45,8 @@ function load() {
         delete parsed[oldKey];
       }
     });
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    // The accent colour is fixed; an old saved choice (e.g. pink) is ignored.
+    return { ...DEFAULT_SETTINGS, ...parsed, accentColor: DEFAULT_SETTINGS.accentColor };
   } catch { return DEFAULT_SETTINGS; }
 }
 
@@ -59,13 +62,14 @@ export function SettingsProvider({ children }) {
   }, []);
 
   const updateSetting = (key, value) => {
+    if (key === 'accentColor') return;
     const next = { ...settings, [key]: value };
     setSettings(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };
 
   const saveAll = (newSettings) => {
-    const next = { ...DEFAULT_SETTINGS, ...newSettings };
+    const next = { ...DEFAULT_SETTINGS, ...newSettings, accentColor: DEFAULT_SETTINGS.accentColor };
     setSettings(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };
@@ -94,6 +98,9 @@ export function SettingsProvider({ children }) {
     const zoomMap = { small: '0.9', medium: '1', large: '1.12' };
     root.style.fontSize = '';
     root.style.zoom = zoomMap[settings.fontSize] || '1';
+    // Screen-height parts (the sidebar) divide by this so they still fill
+    // exactly one screen at any text size (see portal-sidebar.css).
+    root.style.setProperty('--app-zoom', zoomMap[settings.fontSize] || '1');
     root.setAttribute('data-text-size', settings.fontSize || 'medium');
 
     // Accent color CSS variable
@@ -112,18 +119,9 @@ export function SettingsProvider({ children }) {
     return isNaN(d.getTime()) ? null : d;
   };
 
-  const formatCurrency = (amount) => {
-    const num = Number(amount) || 0;
-    try {
-      return new Intl.NumberFormat('en-PH', {
-        style: 'currency',
-        currency: settings.currency || 'PHP',
-        minimumFractionDigits: 2,
-      }).format(num);
-    } catch {
-      return `₱${num.toFixed(2)}`;
-    }
-  };
+  // Amounts are stored in pesos; in USD mode they're converted for display.
+  setMoneySettings({ currency: settings.currency, usdRate: settings.usdRate });
+  const formatCurrency = (amount) => money(amount, { decimals: 2 });
 
   const formatDate = (value, options) => {
     const date = toJsDate(value);

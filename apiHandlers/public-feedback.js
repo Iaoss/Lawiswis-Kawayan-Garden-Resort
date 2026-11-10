@@ -1,7 +1,7 @@
 import { adminDb } from '../lib/firebaseAdmin';
+import { isShownOnWebsite } from '../src/lib/feedbackPublishing';
 
 const MAX_PUBLIC_REVIEWS = 9;
-const MIN_PUBLIC_RATING = 4;
 const PLACEHOLDER_NAMES = new Set(['anonymous', 'guest', 'n/a', 'na', 'none', 'unknown']);
 const PLACEHOLDER_ROOMS = new Set(['', 'n/a', 'na', 'none', 'unknown', 'room not given', 'not given']);
 
@@ -45,17 +45,8 @@ export default async function handler(req, res) {
 
     const feedback = snapshot.docs
       .map(document => ({ id: document.id, ...document.data() }))
-      .filter(item => {
-        const sentiment = String(item.sentiment || '').toLowerCase();
-        const rating = Number(item.rating);
-        const positive = sentiment ? sentiment === 'positive' : (Number.isFinite(rating) && rating >= MIN_PUBLIC_RATING);
-        return positive
-          && Number.isFinite(rating) && rating <= 5
-          && typeof item.comment === 'string'
-          && item.comment.trim().length > 0
-          && item.comment.length <= 2000
-          && item.hidden !== true;
-      })
+      // Only positive reviews an admin chose to show (see feedbackPublishing).
+      .filter(isShownOnWebsite)
       .slice(0, MAX_PUBLIC_REVIEWS)
       .map(item => {
         const tags = Array.isArray(item.tags)

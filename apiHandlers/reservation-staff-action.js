@@ -1,14 +1,20 @@
+import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { logActivity } from '../lib/activityLog';
 import { calculateReservationModification } from '../lib/reservationModification';
-import { sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
+import { sendBookingCheckEmail, sendPaymentLinkEmail, sendRefundDecisionEmail, sendScheduleChangeEmail } from '../lib/email';
 import { createPayMongoCheckoutSession } from '../lib/paymongoCheckout';
 import { DEFAULT_CANCELLATION_POLICY, getDateRangeNights } from '../src/lib/cancellationPolicy';
 import { getOnlinePaymentAmount } from '../src/lib/paymentPolicy';
 import { getStayUnits, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getRequestedBookingFields } from '../src/lib/bookingDetails';
 import { getDateChangeBlock } from '../src/lib/cancellationPolicy';
+import { isUnpaidOnlineBooking } from '../src/lib/unpaidBookings';
+import { holdsRoom } from '../src/lib/unpaidBookings';
+import { getSamePriceSuggestions } from '../src/lib/closureReschedule';
+import { getRoomChangeError } from '../src/lib/roomChange';
+import { readSeasonPeriods } from '../lib/seasonStore';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
 
@@ -165,12 +171,28 @@ async function approveRefund({ reservationRef, reservationId, requestId, staff, 
     if (!Number.isFinite(amount) || amount <= 0 || cents(amount) > cents(reservation.amountPaid)) {
       throw new Error('Enter a positive refund amount no greater than the amount paid.');
     }
+    // The guest asked to cancel and be refunded, so approving the refund
+    // also cancels the booking and frees the room (if it isn't already).
+    const cancelNow = ['pending', 'confirmed'].includes(String(reservation.status || '').toLowerCase());
+    const roomRef = cancelNow && reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
+    const roomSnap = roomRef ? await transaction.get(roomRef) : null;
     transaction.update(reservationRef, {
       refundRequestStatus: 'processing',
       refundApprovedAt: FieldValue.serverTimestamp(),
       refundApprovedBy: staff.uid,
       refundApprovedAmount: amount,
+      cancellationRequested: false,
+      ...(cancelNow ? {
+        status: 'cancelled',
+        cancelledAt: new Date().toISOString(),
+        cancelledBy: staff.uid,
+        cancellationFee: Number(request.feeAmount || 0),
+        refundAmount: amount,
+        statusUpdatedAt: FieldValue.serverTimestamp(),
+        statusUpdatedBy: staff.uid,
+      } : {}),
     });
+    if (roomSnap?.exists && roomSnap.data().status !== 'occupied') transaction.update(roomRef, { status: 'vacant' });
     const auditRef = reservationRef.collection('refundAudit').doc();
     transaction.set(auditRef, {
       action: 'refund_approved',
@@ -306,9 +328,26 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     }
     const auditRef = reservationRef.collection('modificationAudit').doc();
     if (action === 'reject-modification') {
+      // Offer the guest the closest free dates for the same room that keep
+      // the same price (shown on their booking page and in the email).
+      let suggestions = [];
+      if (reservation.roomId) {
+        const others = await transaction.get(adminDb.collection('reservations').where('roomId', '==', reservation.roomId));
+        const bookedRanges = others.docs.filter(doc => doc.id !== reservationId).map(doc => doc.data())
+          .filter(other => holdsRoom(other) && typeof other.checkIn === 'string')
+          .map(other => ({ checkIn: other.checkIn.slice(0, 10), checkOut: String(other.checkOut || other.checkIn).slice(0, 10) }));
+        const todayKey = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+        const max = new Date(Date.now() + 8 * 3600000);
+        max.setUTCMonth(max.getUTCMonth() + 2);
+        suggestions = getSamePriceSuggestions({
+          reservation, requestedCheckIn: request.requestedCheckIn, bookedRanges, seasonPeriods: body.seasonPeriods || [],
+          today: todayKey, maxDate: max.toISOString().slice(0, 10),
+        });
+      }
       transaction.update(reservationRef, {
         'modificationRequest.status': 'rejected',
         'modificationRequest.staffReason': reason,
+        'modificationRequest.suggestions': suggestions,
         'modificationRequest.decidedAt': FieldValue.serverTimestamp(),
         'modificationRequest.decidedBy': staff.uid,
       });
@@ -316,7 +355,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
         action: 'schedule_change_rejected', staffUid: staff.uid, reason,
         createdAt: FieldValue.serverTimestamp(),
       });
-      return { rejected: true, reservation };
+      return { rejected: true, reservation: { ...reservation, modificationRequest: { ...request, suggestions } } };
     }
 
     if (!ACTIVE_RESERVATION_STATUSES.includes(String(reservation.status || '').toLowerCase())) {
@@ -324,28 +363,52 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     }
     const requestedCheckIn = request.requestedCheckIn;
     const requestedCheckOut = request.requestedCheckOut;
-    // Re-checked at approval time: the 30-day window may have passed since
-    // the guest asked.
-    const dateBlock = getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: requestedCheckIn });
-    if (dateBlock) throw new Error(`${dateBlock} Reject this request instead.`);
+    // Re-checked at approval time: the rebooking window may have passed
+    // since the guest asked. Admins can waive the date-change rule (e.g.
+    // typhoon closure), with a reason.
+    const closureMove = request.closureMove === true;
+    const waiving = closureMove || (body.waivePolicy === true && staff.role === 'admin');
+    if (!closureMove && body.waivePolicy === true && staff.role !== 'admin') throw new Error('Only an admin can waive the date-change rule.');
+    if (waiving && !closureMove && String(reason || '').trim().length < 5) throw new Error('Write why the date-change rule is waived.');
+    const savedPolicy = (await adminDb.doc('settings/cancellationPolicy').get()).data();
+    const dateBlock = waiving ? '' : getDateChangeBlock({ originalCheckIn: reservation.checkIn, newCheckIn: requestedCheckIn, policy: savedPolicy });
+    if (dateBlock) throw new Error(`${dateBlock} Reject this request, or (admins) waive the rule with a reason.`);
     const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
+    // Closure move whose room is taken on the new dates: staff may move it to
+    // another free room of the same size or bigger (same price, no fee).
+    const newRoomId = closureMove && typeof body.newRoomId === 'string' && body.newRoomId && body.newRoomId !== reservation.roomId ? body.newRoomId : '';
+    let movedRoom = null;
     let change;
     if (roomRef) {
-      const [roomSnapshot, conflicts] = await Promise.all([
+      const targetRoomId = newRoomId || reservation.roomId;
+      const [roomSnapshot, conflicts, newRoomSnapshot] = await Promise.all([
         transaction.get(roomRef),
-        transaction.get(adminDb.collection('reservations').where('roomId', '==', reservation.roomId)),
+        transaction.get(adminDb.collection('reservations').where('roomId', '==', targetRoomId)),
+        newRoomId ? transaction.get(adminDb.collection('rooms').doc(newRoomId)) : Promise.resolve(null),
       ]);
       if (!roomSnapshot.exists) throw new Error('The booked room could not be found.');
+      if (newRoomId) {
+        if (!newRoomSnapshot?.exists) throw new Error('The new room could not be found.');
+        const changeError = getRoomChangeError(roomSnapshot.data(), newRoomSnapshot.data());
+        if (changeError) throw new Error(changeError);
+        const data = newRoomSnapshot.data();
+        movedRoom = { roomId: newRoomId, roomNumber: data.roomNumber || '', roomType: data.type || '' };
+      }
       const conflict = conflicts.docs.some(doc => {
         if (doc.id === reservationId) return false;
         const other = doc.data();
-        return !['cancelled', 'checked-out', 'rejected'].includes(String(other.status || '').toLowerCase())
+        return holdsRoom(other)
           && typeof other.checkIn === 'string' && typeof other.checkOut === 'string'
           && stayRangesOverlap(requestedCheckIn, requestedCheckOut, other.checkIn.slice(0, 10), other.checkOut.slice(0, 10));
       });
-      if (conflict) throw new Error('The requested dates are no longer available.');
+      if (conflict) throw new Error(newRoomId ? `Room ${movedRoom.roomNumber} is booked on those dates too. Choose another room.` : 'The requested dates are no longer available.');
       const policySnapshot = await transaction.get(adminDb.doc('settings/cancellationPolicy'));
-      change = calculateReservationModification(
+      change = closureMove ? {
+        outcome: 'eligible', reason: 'Moved because the resort was closed: same price, no fee.',
+        checkIn: requestedCheckIn, checkOut: requestedCheckOut, oldTotal: Number(reservation.totalAmount || 0),
+        updatedTotal: Number(reservation.totalAmount || 0), difference: 0, changeType: 'closure_move', paymentDue: 0, refundDue: 0, cancellationFee: 0,
+        nights: reservation.bookingType === 'daytour' ? getStayUnits(requestedCheckIn, requestedCheckOut) : getDateRangeNights(requestedCheckIn, requestedCheckOut),
+      } : calculateReservationModification(
         reservation, roomSnapshot.data(), requestedCheckIn, requestedCheckOut,
         policySnapshot.exists ? policySnapshot.data() : DEFAULT_CANCELLATION_POLICY,
         getRequestedBookingFields(request),
@@ -396,6 +459,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
     } else {
       transaction.update(reservationRef, {
         ...getRequestedBookingFields(request),
+        ...(movedRoom || {}),
         checkIn: requestedCheckIn,
         checkOut: requestedCheckOut,
         totalAmount: change.updatedTotal,
@@ -410,6 +474,7 @@ async function decideModification({ reservationRef, reservationId, requestId, st
       requestedCheckOut,
       updatedTotal: change.updatedTotal,
       paymentDue: change.paymentDue || 0,
+      ...(movedRoom ? { fromRoomNumber: reservation.roomNumber || '', toRoomNumber: movedRoom.roomNumber } : {}),
       createdAt: FieldValue.serverTimestamp(),
     });
     return { reservation, change: updatedRequest, nextStatus };
@@ -471,6 +536,112 @@ async function decideModification({ reservationRef, reservationId, requestId, st
   return { status: result.nextStatus, checkoutUrl: checkout?.checkoutUrl || '' };
 }
 
+// ── Unpaid online bookings ─────────────────────────────────────────────
+// Any staff member can follow these up: ask the guest whether the booking
+// is really theirs, then email a payment link. These don't need a request ID.
+const UNPAID_ACTIONS = ['ask-guest-confirm', 'send-payment-link'];
+
+async function getUnpaidBooking(reservationRef) {
+  const snapshot = await reservationRef.get();
+  if (!snapshot.exists) throw new Error('This reservation could not be found.');
+  const reservation = snapshot.data();
+  if (!isUnpaidOnlineBooking(reservation)) {
+    throw new Error('Only pending online bookings with no payment can be followed up this way.');
+  }
+  if (!(reservation.email || reservation.guestEmail)) throw new Error('This booking has no email address.');
+  return reservation;
+}
+
+async function askGuestToConfirm({ reservationRef, reservationId, staff, siteUrl }) {
+  const reservation = await getUnpaidBooking(reservationRef);
+  const token = crypto.randomBytes(24).toString('hex');
+  await reservationRef.update({
+    'unpaidFollowUp.verifyToken': token,
+    'unpaidFollowUp.verifySentAt': FieldValue.serverTimestamp(),
+    'unpaidFollowUp.verifySentByName': staff.name || staff.email || '',
+    'unpaidFollowUp.guestReply': FieldValue.delete(),
+    'unpaidFollowUp.guestRepliedAt': FieldValue.delete(),
+  });
+  // The links open a page on the website that asks the guest to press a
+  // button, so email scanners that open links can't answer for them.
+  const base = `${siteUrl}/booking-check?id=${encodeURIComponent(reservationId)}&token=${token}`;
+  await sendBookingCheckEmail({
+    reservation,
+    bookingRef: reservationId.slice(0, 8).toUpperCase(),
+    yesUrl: `${base}&answer=yes`,
+    noUrl: `${base}&answer=no`,
+  });
+  return { sent: true };
+}
+
+async function sendUnpaidPaymentLink({ reservationRef, reservationId, staff, choice, siteUrl }) {
+  if (!['deposit', 'full'].includes(choice)) throw new Error('Choose the deposit or the full amount.');
+  const reservation = await getUnpaidBooking(reservationRef);
+  const amount = getOnlinePaymentAmount(Number(reservation.totalAmount || 0), choice);
+  const units = Number(reservation.nights) || 1;
+  const unitLabel = reservation.bookingType === 'daytour' ? 'day' : 'night';
+  // paymentType 'booking' makes the PayMongo webhook confirm the booking
+  // once at least the deposit is paid.
+  const session = await createPayMongoCheckoutSession({
+    reservationId,
+    amount,
+    guestName: reservation.guestName || 'Guest',
+    guestEmail: reservation.email || reservation.guestEmail || '',
+    description: `Room ${reservation.roomNumber || ''} (${reservation.roomType || ''}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`,
+    paymentType: 'booking',
+    paymentChoice: choice,
+    siteUrl,
+    withQr: true,
+  });
+  await reservationRef.update({
+    lastCheckoutSession: {
+      id: session.checkoutSessionId,
+      amount,
+      type: 'booking',
+      createdAt: new Date().toISOString(),
+    },
+    'unpaidFollowUp.paymentLinkSentAt': FieldValue.serverTimestamp(),
+    'unpaidFollowUp.paymentLinkSentByName': staff.name || staff.email || '',
+    'unpaidFollowUp.paymentLinkAmount': amount,
+    'unpaidFollowUp.paymentLinkChoice': choice,
+    'unpaidFollowUp.paymentLinkUrl': session.checkoutUrl,
+  });
+  await sendPaymentLinkEmail({
+    reservation,
+    bookingRef: reservationId.slice(0, 8).toUpperCase(),
+    amount,
+    choice,
+    paymentUrl: session.checkoutUrl,
+  });
+  return { sent: true, amount, checkoutUrl: session.checkoutUrl };
+}
+
+async function handleUnpaidAction(req, res, staff) {
+  const { action, reservationId, choice } = req.body || {};
+  if (typeof reservationId !== 'string' || !reservationId) {
+    return res.status(400).json({ error: 'A reservation is required.' });
+  }
+  const reservationRef = adminDb.collection('reservations').doc(reservationId);
+  const siteUrl = process.env.PUBLIC_SITE_URL || `https://${req.headers.host}`;
+  const ref = `#${reservationId.slice(0, 8).toUpperCase()}`;
+  try {
+    const result = action === 'ask-guest-confirm'
+      ? await askGuestToConfirm({ reservationRef, reservationId, staff, siteUrl })
+      : await sendUnpaidPaymentLink({ reservationRef, reservationId, staff, choice, siteUrl });
+    await logActivity(staff, {
+      action: action === 'ask-guest-confirm' ? 'unpaid_booking_check_sent' : 'payment_link_sent',
+      summary: action === 'ask-guest-confirm'
+        ? `Asked the guest to confirm unpaid booking ${ref}`
+        : `Emailed a ${choice === 'full' ? 'full payment' : 'deposit'} link (₱${Number(result.amount).toLocaleString()}) for booking ${ref}`,
+      reservationId,
+    });
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error('Unpaid booking follow-up failed:', error);
+    return res.status(409).json({ error: error.message || 'The email could not be sent.' });
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', ['POST']);
@@ -479,6 +650,7 @@ export default async function handler(req, res) {
   const staff = await verifyStaff(req);
   if (!staff) return res.status(401).json({ error: 'Not authorized.' });
   if (!adminDb) return res.status(503).json({ error: 'Reservation service is unavailable.' });
+  if (UNPAID_ACTIONS.includes(req.body?.action)) return handleUnpaidAction(req, res, staff);
   const { action, reservationId, requestId, reason = '', amount, updatedTotal } = req.body || {};
   if (!reservationId || !requestId || typeof reason !== 'string' || reason.length > 500) {
     return res.status(400).json({ error: 'A reservation, request ID, and valid reason are required.' });
@@ -496,7 +668,7 @@ export default async function handler(req, res) {
     } else if (['approve-modification', 'reject-modification'].includes(action)) {
       result = await decideModification({
         reservationRef, reservationId, requestId, staff, action, reason,
-        body: { updatedTotal },
+        body: { updatedTotal, waivePolicy: req.body?.waivePolicy === true, seasonPeriods: action === 'reject-modification' ? await readSeasonPeriods() : [] },
         siteUrl: process.env.PUBLIC_SITE_URL || `https://${req.headers.host}`,
       });
     } else {

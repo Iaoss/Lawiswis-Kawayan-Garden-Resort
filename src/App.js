@@ -5,6 +5,7 @@ import { RequireFeature } from './admin/lib/useStaffAccess';
 import Home from './client/pages/Home';
 import ClientLayout from './client/components/ClientLayout';
 import { AppDialogHost } from './components/ui/app-dialog';
+import { IS_TEST_SITE } from './firebase/firebase';
 
 // Pages load on demand, so guests never download the staff portal code.
 const Login = lazy(() => import('./admin/pages/Login'));
@@ -12,6 +13,7 @@ const AdminDashboard = lazy(() => import('./admin/pages/Dashboard'));
 const RoomManagement = lazy(() => import('./admin/pages/RoomManagement'));
 const WalkIn = lazy(() => import('./admin/pages/WalkIn'));
 const Reservations = lazy(() => import('./admin/pages/Reservations'));
+const PhoneDisplay = lazy(() => import('./admin/pages/PhoneDisplay'));
 const Billing = lazy(() => import('./admin/pages/Billing'));
 const PaymentTransactions = lazy(() => import('./admin/pages/PaymentTransactions'));
 const CustomerManagement = lazy(() => import('./admin/pages/CustomerManagement'));
@@ -25,17 +27,20 @@ const Messages = lazy(() => import('./admin/pages/Messages'));
 const ReceptionistDashboard = lazy(() => import('./admin/pages/ReceptionistDashboard'));
 const Rooms = lazy(() => import('./client/pages/Rooms'));
 const BookRoom = lazy(() => import('./client/pages/BookRoom'));
+const BookingWizard = lazy(() => import('./client/pages/BookingWizard'));
 const BookingHistory = lazy(() => import('./client/pages/BookingHistory'));
+const BookingCheck = lazy(() => import('./client/pages/BookingCheck'));
 const GuestChat = lazy(() => import('./client/pages/Chat'));
 const About = lazy(() => import('./client/pages/About'));
 const Contact = lazy(() => import('./client/pages/Contact'));
 const BookingTypeSelection = lazy(() => import('./client/pages/BookingTypeSelection'));
 const CorporateBooking = lazy(() => import('./client/pages/CorporateBooking'));
+const CottageBooking = lazy(() => import('./client/pages/CottageBooking'));
 const Amenities = lazy(() => import('./client/pages/Amenities'));
 const Certifications = lazy(() => import('./client/pages/Certifications'));
 const CustomerCarePage = lazy(() => import('./client/pages/CustomerCarePage'));
 const FeedbackForm = lazy(() => import('./client/pages/FeedbackForm'));
-const BookingTransactions = lazy(() => import('./admin/pages/BookingTransactions'));
+const NewsArticle = lazy(() => import('./client/pages/NewsArticle'));
 const Settings = lazy(() => import('./admin/pages/Settings'));
 const NewsManagement = lazy(() => import('./admin/pages/NewsManagement.js'));
 const Email = lazy(() => import('./admin/pages/Email.js'));
@@ -88,6 +93,11 @@ function BookingPaymentResult() {
 function App() {
   return (
     <Router>
+      {IS_TEST_SITE && (
+        <div role="note" style={{ position: 'fixed', top: 0, left: '50%', transform: 'translateX(-50%)', zIndex: 3000, background: '#b91c1c', color: '#fff', font: "700 11px 'Poppins', sans-serif", letterSpacing: '.08em', padding: '3px 12px', borderRadius: '0 0 8px 8px', pointerEvents: 'none' }}>
+          TEST SITE · test data and PayMongo test mode only
+        </div>
+      )}
       <ScrollToTopOnPageChange />
       <Suspense fallback={<PageLoading />}>
       <Routes>
@@ -101,6 +111,7 @@ function App() {
           <Route path="promos" element={<RequireStaffRoute allowedRoles={['admin']}><PromoCodes /></RequireStaffRoute>} />
           <Route path="walkin" element={<WalkIn />} />
           <Route path="reservations" element={<Reservations />} />
+          <Route path="phone-display" element={<PhoneDisplay />} />
           <Route path="billing" element={<Billing />} />
           <Route path="payments" element={<PaymentTransactions />} />
           <Route path="customers" element={<CustomerManagement />} />
@@ -122,13 +133,15 @@ function App() {
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<ReceptionistDashboard />} />
           <Route path="reservations" element={<Reservations />} />
+          <Route path="phone-display" element={<PhoneDisplay />} />
           <Route path="walkin" element={<WalkIn />} />
           <Route path="rooms" element={<RoomManagement />} />
           <Route path="billing" element={<Billing />} />
           <Route path="customers" element={<CustomerManagement />} />
           <Route path="history" element={<ReservationHistory />} />
           <Route path="messages" element={<Messages />} />
-          <Route path="transactions" element={<BookingTransactions />} />
+          {/* Booking Transactions was merged into Billing. */}
+          <Route path="transactions" element={<Navigate to="/receptionist/billing" replace />} />
           <Route path="cancellation" element={<CancellationPolicy />} />
           <Route path="settings" element={<Settings />} />
           {/* Admin pages a receptionist can open only while an admin has given them access. */}
@@ -149,11 +162,15 @@ function App() {
           <Route path="/rooms" element={<Rooms />} />
           <Route path="/booking-options" element={<BookingTypeSelection />} />
           <Route path="/corporate-booking" element={<CorporateBooking />} />
+          <Route path="/book-cottage" element={<CottageBooking />} />
+          <Route path="/book" element={<BookingWizard />} />
           <Route path="/book/:roomId" element={<BookRoom />} />
           <Route path="/my-bookings" element={<BookingHistory />} />
+          <Route path="/booking-check" element={<BookingCheck />} />
           <Route path="/amenities" element={<Amenities />} />
           <Route path="/about-us" element={<About />} />
           <Route path="/certifications" element={<Certifications />} />
+          <Route path="/news/:articleId" element={<NewsArticle />} />
           <Route path="/contact-us" element={<Contact />} />
           <Route path="/faqs" element={<CustomerCarePage pageKey="faqs" />} />
           <Route path="/safety-guidelines" element={<CustomerCarePage pageKey="safety-guidelines" />} />

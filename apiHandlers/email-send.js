@@ -8,7 +8,8 @@
 //   body: { to, cc?, subject, text, inReplyTo?, references? }
 
 import nodemailer from 'nodemailer';
-import { verifyStaff } from '../lib/verifyStaff';
+import { staffCan, verifyStaff } from '../lib/verifyStaff';
+import { renderEmail } from '../lib/emailLayout';
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -32,6 +33,9 @@ export default async function handler(req, res) {
 
   const staff = await verifyStaff(req);
   if (!staff) return res.status(401).json({ error: 'Not authorized.' });
+  // Sending as the resort: admins (Email page), or receptionists an admin
+  // gave Contact Inquiries access (to reply to inquiries).
+  if (!staffCan(staff, 'inquiries')) return res.status(403).json({ error: 'Only an admin can send email from the resort account.' });
 
   try {
     const { to, cc, subject, text, inReplyTo, references } = req.body || {};
@@ -59,7 +63,13 @@ export default async function handler(req, res) {
       cc: ccList.length ? ccList : undefined,
       subject: String(subject || '(no subject)').slice(0, 200),
       text: body,
-      html: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1f2937;white-space:pre-wrap">${escapeHtml(body)}</div>`,
+      // Staff-written message, on the resort letterhead.
+      html: renderEmail({
+        title: String(subject || 'Message from the resort').replace(/^(re|fwd?):\s*/i, '').slice(0, 200),
+        body: `<div style="font-size:14px;line-height:1.7;color:#1f2937;white-space:pre-wrap;">${escapeHtml(body)}</div>`,
+        signOff: false,
+        footerNote: 'To reply, simply answer this email.',
+      }),
       // These two headers keep replies in the same Gmail conversation.
       inReplyTo: inReplyTo || undefined,
       references: Array.isArray(references) && references.length ? references : undefined,

@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { DEFAULT_CANCELLATION_POLICY, describePolicyTiers, normalizeCancellationPolicy } from '../../lib/cancellationPolicy';
 import { Link, useLocation } from 'react-router-dom';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../../components/ui/accordion';
 import { BRASS, CREAM, FOREST, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
@@ -34,7 +35,7 @@ const pages = {
           'Kiddie pool (18 inches deep)',
           'Bubble pool (2 ft deep)',
         ],
-        closing: 'We also have poolside cabanas, a bar, a pavilion, and covered daybeds for your comfort and relaxation.',
+        closing: 'We also have umbrella huts, garden and poolside cabanas, a bar and a pavilion for your comfort and relaxation.',
       },
       {
         question: 'Do you accommodate large groups for events and functions?',
@@ -112,18 +113,17 @@ const pages = {
     lastUpdated: 'October 25, 2026',
     intro: 'Please review the following terms for cancellations, changes and refunds before booking.',
     items: [
-      ['1. 30-day notice', 'A cancellation penalty equivalent to 50% of the total accommodation charge will be imposed for booking cancellations made LESS than thirty (30) days prior to guest’s arrival.'],
-      ['2. 7-day notice', 'A cancellation penalty equivalent to FULL charge will be imposed for booking cancellations made LESS than seven (7) days prior to guest’s arrival or will be considered as NO SHOW.'],
+      ['POLICY_TIERS', ''],
       ['3. Cancellation on arrival date', 'Should cancellation be made upon arrival date; it will be considered as NO SHOW.'],
       ['4. Non-refundable payments', 'The amount paid is non-refundable or convertible in case of changes in booking upon arrival or during the stay.'],
       ['5. Force majeure', 'In cases of cancellation due to “force majeure”, the Hotel shall not be responsible for the cancellations or failures if such cancellations arise out of causes beyond its control. Such causes may include, but are not restricted to, acts of God or of public enemy, fires, floods, epidemics, quarantine restrictions, strikes, earthquakes, computer or communication failures, and severe weather.'],
       ['6. Changes to reservation', 'No refund will be made in reducing the number of rooms initially reserved, and on change of room type. For shortening of stay, a full room charge shall be observed.'],
       ['7. No show', 'No show is nonrefundable and non-re-bookable. We will keep you posted once there are additional changes.'],
-      ['8. Cancellations made 30 days or more before arrival', 'Cancellations made thirty (30) days or more before arrival carry no cancellation penalty. The amount paid is refunded in full.'],
-      ['9. Date changes', <>Booking dates can be changed only thirty (30) days or more before arrival, subject to availability, through <Link to="/my-bookings" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>My Bookings</Link>. If the new booking costs more, the difference must be paid. Less than thirty (30) days before arrival, dates can no longer be moved: please cancel under this policy and make a new booking.</>],
-      ['10. How to request a refund', <>Request a cancellation or refund through <Link to="/my-bookings" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>My Bookings</Link> using your booking reference and the email or mobile number used to book, or contact us. The resort reviews each request and confirms the refundable amount under this policy.</>],
+      ['8. Refund after the fee', 'Whatever you paid beyond the cancellation fee is refunded.'],
+      ['POLICY_REBOOK', ''],
+      ['10. How to request a refund', <>To cancel or ask for a refund, <Link to="/contact-us" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>contact us</Link> by phone, email or chat with your booking reference. The resort reviews each request and confirms the refundable amount under this policy.</>],
       ['11. How refunds are paid', 'Approved refunds of online payments are returned to the original payment method (card or e-wallet) through our payment provider, PayMongo. The time it takes to appear in your account depends on your bank or e-wallet provider. Refunds of payments made at the resort are arranged directly with our front desk.'],
-      ['12. Contact', 'Lawiswis Kawayan Garden Resort, 402 Brgy. Buguion, Calumpit, Bulacan, Philippines · Mobile: 0917 811 2332 · Email: lawiswiskawayyyan123@gmail.com'],
+      ['12. Contact', 'Lawiswis Kawayan Garden Resort, 402 Brgy. Buguion, Calumpit, Bulacan, Philippines · Mobile: 0917 811 2332 · Email: lawiswiskawayan123@gmail.com'],
     ],
     actions: true,
   },
@@ -142,7 +142,7 @@ const pages = {
       ['How long we keep it', 'We keep booking and payment records for as long as needed to provide your stay and for the period required by Philippine tax, accounting and other laws. Chat messages, inquiries and feedback are kept only as long as needed to respond and improve our service. Data we no longer need is deleted or anonymised.'],
       ['How we protect it', 'Access to personal data is limited to authorised resort staff. Prices, payments and booking changes are checked on our servers, card and e-wallet payments are handled on PayMongo’s secure checkout, and our staff are trained to handle your data confidentially. No system is completely secure, so please contact us right away if you believe your data has been misused.'],
       ['Your rights', <>Under the Data Privacy Act you have the right to be informed, to access your data, to object to its processing, to have it corrected, to have it erased or blocked, to data portability, to claim damages, and to file a complaint with the National Privacy Commission (<a href="https://privacy.gov.ph" target="_blank" rel="noreferrer" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>privacy.gov.ph</a>). To use any of these rights, contact us using the details below.</>],
-      ['Contact our Data Protection Officer', 'Data Protection Officer, Lawiswis Kawayan Garden Resort, 402 Brgy. Buguion, Calumpit, Bulacan, Philippines · Mobile: 0917 811 2332 · Email: lawiswiskawayyyan123@gmail.com'],
+      ['Contact our Data Protection Officer', 'Data Protection Officer, Lawiswis Kawayan Garden Resort, 402 Brgy. Buguion, Calumpit, Bulacan, Philippines · Mobile: 0917 811 2332 · Email: lawiswiskawayan123@gmail.com'],
       ['Changes to this notice', 'We may update this notice from time to time. The latest version is always on this page, with the date it was last updated.'],
     ],
   },
@@ -153,27 +153,61 @@ const pages = {
     intro: 'These terms apply when you use this website or book a stay or tour at Lawiswis Kawayan Garden Resort. By booking, you agree to them.',
     items: [
       ['1. Bookings', 'You agree that the details you give when booking are accurate and complete. All bookings are subject to availability. A booking stays pending until the required payment is received and confirmed; a verified online payment of at least the required deposit confirms it automatically, and a confirmation email is sent to you.'],
-      ['2. Rates and payment', 'Rates are in Philippine pesos and follow the resort’s published rate card. The total, including extra guests and any cottage, is calculated by our system when you book and is shown before you pay. Online payments are made through PayMongo’s secure checkout. You may pay in full or pay a 50% deposit; the remaining balance must be settled before check-out. Extra services (such as spa or photoshoot packages), extra guests and late check-out charges are added to your bill.'],
-      ['3. Check-in and check-out', 'Day tour: 8:00 AM to 5:00 PM. Night tour: 5:00 PM to 10:00 PM. Overnight stays: 10:00 AM to 8:00 AM, 2:00 PM to 12:00 NN, or 6:00 PM to 4:00 PM, as chosen when booking. Same-day bookings close once the chosen check-in time has passed. A valid ID may be requested at check-in. Staying past your check-out time may incur a late check-out charge.'],
-      ['4. Changes and cancellations', <>Date changes, cancellations and refunds follow our <Link to="/cancellation-policy" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>Cancellation &amp; Refund Policy</Link>.</>],
-      ['5. Guests and room capacity', 'Each room has a maximum number of adults and children, shown when booking. The number of guests may not exceed the room’s capacity, and extra guests are charged according to the rate card.'],
-      ['6. Resort rules and conduct', 'Guests agree to follow resort rules and staff instructions, including pool and safety guidelines, to respect other guests, and to take responsibility for any damage or loss caused by members of their party. The resort may refuse service or end a stay without refund for serious or repeated violations.'],
-      ['7. Personal belongings', 'Please keep your valuables secure. The resort’s responsibility for loss of or damage to guests’ belongings is limited to what is provided by law.'],
-      ['8. Force majeure', 'The resort is not responsible for failure to provide services because of events beyond its control, such as natural disasters, severe weather, epidemics, government restrictions, strikes, or power or communication failures.'],
-      ['9. Using this website', 'Please use this website only for lawful purposes. Do not attempt to interfere with it, alter prices or bookings, access other guests’ information, or submit false bookings. Bookings made by tampering with the website may be cancelled.'],
-      ['10. Privacy', <>How we handle your personal data is explained in our <Link to="/privacy-policy" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>Privacy Policy</Link>.</>],
-      ['11. Governing law', 'These terms are governed by the laws of the Republic of the Philippines.'],
-      ['12. Contact', 'Lawiswis Kawayan Garden Resort, 402 Brgy. Buguion, Calumpit, Bulacan, Philippines · Mobile: 0917 811 2332 · Email: lawiswiskawayyyan123@gmail.com'],
+      ['2. Rates and payment', 'Rates are in Philippine pesos and follow the resort’s published rate card. The total, including extra guests and any cottage, is calculated by our system when you book and is shown before you pay. Online payments are made through PayMongo’s secure checkout. You may pay in full or pay a 50% deposit; the remaining balance must be settled before check-out. Extra services (such as spa or photoshoot packages), extra guests and late check-out charges are added to your bill. All rates include 12% VAT; receipts show the net amount and the VAT. At the resort we accept cash and QR payments only.'],
+      ['3. What you need to book', 'Overnight stays require a room; a cottage alone cannot be booked for an overnight stay. Day tours (8:00 AM to 5:00 PM) and night tours (5:00 PM to 10:00 PM) need either a room or a cottage. When a room is booked, the cottage is optional.'],
+      ['4. Check-in and check-out', 'Overnight stays: 11:00 AM to 8:00 AM, 3:00 PM to 12:00 NN, or 7:00 PM to 4:00 PM, as chosen when booking. All room rates include entrance fees, pool access, overnight accommodation and plated breakfast; an extra person is ₱800 per night, with breakfast. Check-in times are flexible as long as the booked room is available. Late arrivals and walk-ins after 9:00 PM (even around midnight) are welcome; a 10% surcharge on the room rate applies when you arrive after 9:00 PM (for example, a ₱3,000 room becomes ₱3,300). A valid ID may be requested at check-in. Staying past your check-out time may incur a late check-out charge.'],
+      ['5. Changes and cancellations', <>Date changes, cancellations and refunds follow our <Link to="/cancellation-policy" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>Cancellation &amp; Refund Policy</Link>.</>],
+      ['6. Guests and room capacity', 'Each room has a maximum number of adults and children, shown when booking. The number of guests may not exceed the room’s capacity, and extra guests are charged according to the rate card.'],
+      ['7. Resort rules and conduct', 'Guests agree to follow resort rules and staff instructions, including pool and safety guidelines, to respect other guests, and to take responsibility for any damage or loss caused by members of their party. The resort may refuse service or end a stay without refund for serious or repeated violations.'],
+      ['8. Personal belongings', 'Please keep your valuables secure. The resort’s responsibility for loss of or damage to guests’ belongings is limited to what is provided by law.'],
+      ['9. Force majeure', 'The resort is not responsible for failure to provide services because of events beyond its control, such as natural disasters, severe weather, epidemics, government restrictions, strikes, or power or communication failures.'],
+      ['10. Using this website', 'Please use this website only for lawful purposes. Do not attempt to interfere with it, alter prices or bookings, access other guests’ information, or submit false bookings. Bookings made by tampering with the website may be cancelled.'],
+      ['11. Privacy', <>How we handle your personal data is explained in our <Link to="/privacy-policy" style={{ color: FOREST, fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: '3px' }}>Privacy Policy</Link>.</>],
+      ['12. Governing law', 'These terms are governed by the laws of the Republic of the Philippines.'],
+      ['13. Contact', 'Lawiswis Kawayan Garden Resort, 402 Brgy. Buguion, Calumpit, Bulacan, Philippines · Mobile: 0917 811 2332 · Email: lawiswiskawayan123@gmail.com'],
     ],
   },
 };
 
+// The saved cancellation policy (days and percentages), so this page always
+// matches what the system charges.
+function usePublicCancellationPolicy(active) {
+  const [policy, setPolicy] = useState(DEFAULT_CANCELLATION_POLICY);
+  useEffect(() => {
+    if (!active) return undefined;
+    let alive = true;
+    fetch('/api/cancellation-policy')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => { if (alive && data?.policy) setPolicy(normalizeCancellationPolicy(data.policy) || DEFAULT_CANCELLATION_POLICY); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [active]);
+  return policy;
+}
+
+function withPolicy(items, policy) {
+  const tiers = describePolicyTiers(policy);
+  return items.flatMap(([title, content]) => {
+    if (title === 'POLICY_TIERS') {
+      return [
+        ['1. Cancellation fees', `A cancellation fee applies to bookings that guests choose not to rebook at least ${policy.dateChangeDays} days before the date of booking, for any personal reason. Based on the total package price: ${tiers.map(t => `${t.rate}% for cancellations ${t.label.charAt(0).toLowerCase()}${t.label.slice(1)}`).join('; ')}.`],
+        ['2. No show', `Cancelling on the day of arrival, or not arriving, is a NO SHOW and carries the ${policy.lateRate}% charge.`],
+      ];
+    }
+    if (title === 'POLICY_REBOOK') {
+      return [['9. Rebooking (date changes)', `You can move your booking to new dates for free at least ${policy.dateChangeDays} days before arrival, subject to availability, by contacting the resort by phone, email or chat. If the new booking costs more, the difference must be paid. Less than ${policy.dateChangeDays} days before arrival, dates can no longer be moved: the booking can only be cancelled under the fees above.`]];
+    }
+    return [[title, content]];
+  });
+}
+
 export default function CustomerCarePage({ pageKey }) {
   const page = pages[pageKey];
   const location = useLocation();
+  const policy = usePublicCancellationPolicy(pageKey === 'cancellation-policy');
   if (!page) return null;
   const isFaqPage = pageKey === 'faqs';
-  const items = page.items;
+  const items = pageKey === 'cancellation-policy' ? withPolicy(page.items, policy) : page.items;
 
   return (
     <div style={{ background: PAPER, minHeight: '100vh' }}>

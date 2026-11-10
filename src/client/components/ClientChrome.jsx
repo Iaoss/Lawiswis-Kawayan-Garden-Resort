@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BRASS, FOREST_DEEP, PAPER, SANS, LINE } from './clientTheme';
 import { useResortAvailability } from './ResortAvailabilityContext';
-import { BookingTypeSelectionModal } from '../pages/BookingTypeSelection';
 import { BOOKING_TYPE_MODAL_EVENT } from '../lib/bookingTypeModal';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
+import '../mobile.css';
+import '../liquidGlass.css';
 
 const logo = optimizeImage('https://lawiswiskawayanresort.com/wp-content/uploads/2026/02/logo-white-new-01.png', IMAGE_WIDTHS.logo);
 // Floating pill navbar colours.
@@ -54,13 +55,54 @@ function NavDropdown({ label, items, onNavigate, active }) {
 export default function ClientChrome({ children }) {
   const { pathname: path } = useLocation();
   const navigate = useNavigate();
+
+  // Hidden way into the staff portal (no link for guests): type the word
+  // "huapro" anywhere outside a text box, press Ctrl + Shift + L (Cmd on a
+  // Mac — some graphics software, such as AMD Radeon, takes this one over),
+  // or tap the footer logo 5 times on a phone. It only opens the staff login
+  // page; the login itself protects the portal.
+  const logoTapsRef = useRef({ count: 0, timer: null });
+  const typedRef = useRef('');
+  useEffect(() => {
+    const SECRET = 'huapro';
+    const onKey = event => {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'l') {
+        event.preventDefault();
+        navigate('/admin/login');
+        return;
+      }
+      const target = event.target;
+      const typing = target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+      if (typing || event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1) return;
+      typedRef.current = (typedRef.current + event.key.toLowerCase()).slice(-SECRET.length);
+      if (typedRef.current === SECRET) {
+        typedRef.current = '';
+        navigate('/admin/login');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navigate]);
+  const onFooterLogoTap = () => {
+    const taps = logoTapsRef.current;
+    taps.count += 1;
+    clearTimeout(taps.timer);
+    if (taps.count >= 5) {
+      taps.count = 0;
+      navigate('/admin/login');
+      return;
+    }
+    // The 5 taps must come within about 2 seconds of each other.
+    taps.timer = setTimeout(() => { taps.count = 0; }, 2000);
+  };
+  useEffect(() => () => clearTimeout(logoTapsRef.current.timer), []);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [bookingModalOpen, setBookingModalOpen] = useState(false);
   const { available: resortAvailable, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const canBook = resortAvailable && !availabilityLoading;
+  // Book now opens the step-by-step booking page (Type → When → Room → …).
   const openBookingModal = () => {
     if (!canBook) return;
-    setBookingModalOpen(true);
+    navigate('/book');
   };
 
   useEffect(() => {
@@ -71,8 +113,12 @@ export default function ClientChrome({ children }) {
   useEffect(() => setMobileMenuOpen(false), [path]);
   const overHero = path === '/' || path === '/home';
   const [scrolled, setScrolled] = useState(false);
+  const [showTop, setShowTop] = useState(false);
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 24);
+    const onScroll = () => {
+      setScrolled(window.scrollY > 24);
+      setShowTop(window.scrollY > 700);
+    };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
@@ -88,19 +134,11 @@ export default function ClientChrome({ children }) {
   useEffect(() => {
     const handleOpen = () => {
       if (!canBook) return;
-      setBookingModalOpen(true);
+      navigate('/book');
     };
     window.addEventListener(BOOKING_TYPE_MODAL_EVENT, handleOpen);
     return () => window.removeEventListener(BOOKING_TYPE_MODAL_EVENT, handleOpen);
-  }, [canBook]);
-  useEffect(() => {
-    if (!bookingModalOpen) return undefined;
-    const onEscape = event => {
-      if (event.key === 'Escape') setBookingModalOpen(false);
-    };
-    document.addEventListener('keydown', onEscape);
-    return () => document.removeEventListener('keydown', onEscape);
-  }, [bookingModalOpen]);
+  }, [canBook, navigate]);
   const link = (label, href, onNavigate = () => {}) => (
     <button key={label} onClick={() => { onNavigate(); navigate(href); }} className={`client-nav-link${path === href || (href === '/home' && path === '/') || (href === '/rooms' && path.startsWith('/book/')) ? ' is-active' : ''}`} aria-current={path === href || (href === '/home' && path === '/') ? 'page' : undefined}>
       {label}
@@ -137,7 +175,7 @@ export default function ClientChrome({ children }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '18px' }}>
           <span><i className="ti ti-map-pin" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />402 Brgy. Buguion, Calumpit, Bulacan, PH</span>
           <span><i className="ti ti-phone" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />0917 811 2332</span>
-          <span><i className="ti ti-mail" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />lawiswiskawayyyan123@gmail.com</span>
+          <span><i className="ti ti-mail" style={{ fontSize: '12px', marginRight: '5px', color: BRASS }} />lawiswiskawayan123@gmail.com</span>
         </div>
         <div style={{ display: 'flex', gap: '14px', fontSize: '13px', alignItems: 'center' }}>
           <a href="https://www.facebook.com/search/top?q=lawiswis%20kawayan%20garden%20resort" target="_blank" rel="noopener noreferrer" aria-label="Facebook" style={{ color: 'inherit' }}><i className="ti ti-brand-facebook" /></a>
@@ -161,7 +199,7 @@ export default function ClientChrome({ children }) {
       </div>
       {mobileMenuOpen && (
         <div className="client-mobile-menu-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setMobileMenuOpen(false); }}>
-          <nav id="client-mobile-menu" className="client-mobile-nav" aria-label="Mobile navigation">
+          <nav id="client-mobile-menu" className="client-mobile-nav client-glass" aria-label="Mobile navigation">
             {renderNavigation(() => setMobileMenuOpen(false))}
             <button type="button" disabled={!canBook} onClick={() => { setMobileMenuOpen(false); openBookingModal(); }} className="client-mobile-book-button">
               {canBook ? 'BOOK YOUR STAY' : availabilityLoading ? 'CHECKING AVAILABILITY' : availabilityError ? 'BOOKING STATUS UNAVAILABLE' : 'RESERVATIONS TEMPORARILY CLOSED'}
@@ -169,28 +207,20 @@ export default function ClientChrome({ children }) {
           </nav>
         </div>
       )}
-      <BookingTypeSelectionModal
-        open={bookingModalOpen}
-        onClose={() => setBookingModalOpen(false)}
-        onSelectPersonal={() => {
-          setBookingModalOpen(false);
-          navigate('/rooms');
-        }}
-        onSelectCorporate={() => {
-          setBookingModalOpen(false);
-          navigate('/corporate-booking');
-        }}
-      />
       <main className="client-main">{children}</main>
-      <footer style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>
-        <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '34px' }}>
-          <div><img src={logo} alt="Lawiswis Kawayan" style={{ width: '180px', filter: 'brightness(0) invert(1)', marginBottom: '16px' }} /><p style={{ maxWidth: '300px', fontSize: '12px', lineHeight: 1.8, margin: 0 }}>A quiet bamboo garden hideaway in Calumpit, Bulacan, where work and play sit comfortably side by side.</p></div>
+      <footer className="client-footer" style={{ background: FOREST_DEEP, color: 'rgba(255,255,255,0.64)', padding: '46px 24px 24px' }}>
+        <div className="client-footer-grid" style={{ maxWidth: '1100px', margin: '0 auto', display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr 1fr', gap: '34px' }}>
+          <div className="client-footer-brand"><img src={logo} alt="Lawiswis Kawayan" onClick={onFooterLogoTap} draggable={false} style={{ width: '180px', filter: 'brightness(0) invert(1)', marginBottom: '16px', WebkitTapHighlightColor: 'transparent', userSelect: 'none' }} /><p style={{ maxWidth: '300px', fontSize: '12px', lineHeight: 1.8, margin: 0 }}>A quiet bamboo garden hideaway in Calumpit, Bulacan, where work and play sit comfortably side by side.</p></div>
           <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>EXPLORE</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/rooms')} style={{ cursor: 'pointer' }}>Our rooms</span><span onClick={() => navigate('/about-us')} style={{ cursor: 'pointer' }}>Our story</span><span onClick={() => navigate('/amenities')} style={{ cursor: 'pointer' }}>Our amenities</span><span onClick={() => navigate('/contact-us')} style={{ cursor: 'pointer' }}>Contact us</span></div></div>
           <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>POLICIES</strong><div style={{ display: 'grid', gap: '9px', marginTop: '14px', fontSize: '12px' }}><span onClick={() => navigate('/privacy-policy')} style={{ cursor: 'pointer' }}>Privacy Policy</span><span onClick={() => navigate('/terms-of-service')} style={{ cursor: 'pointer' }}>Terms of Service</span><span onClick={() => navigate('/cancellation-policy')} style={{ cursor: 'pointer' }}>Cancellation &amp; Refund Policy</span></div></div>
-          <div><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>VISIT</strong><p style={{ fontSize: '12px', lineHeight: 1.8, marginTop: '14px' }}>Open daily<br />Day tour 8:00 AM – 5:00 PM<br />Night tour 5:00 PM – 10:00 PM<br />Overnight check-in 10 AM, 2 PM or 6 PM</p></div>
+          <div className="client-footer-visit"><strong style={{ color: '#fff', fontSize: '11px', letterSpacing: '0.1em' }}>VISIT</strong><p style={{ fontSize: '12px', lineHeight: 1.8, marginTop: '14px' }}>Open daily<br />Day tour 8:00 AM – 5:00 PM<br />Night tour 5:00 PM – 10:00 PM<br />Overnight check-in 10 AM, 2 PM or 6 PM<br />Late arrival after 9 PM (+10%)</p></div>
         </div>
-        <div style={{ maxWidth: '1100px', borderTop: `1px solid ${LINE}33`, margin: '30px auto 0', paddingTop: '18px', fontSize: '10px' }}>© 2026 Lawiswis Kawayan Garden Resort</div>
+        <div className="client-footer-bottom" style={{ maxWidth: '1100px', borderTop: `1px solid ${LINE}33`, margin: '30px auto 0', paddingTop: '18px', fontSize: '10px' }}>© 2026 Lawiswis Kawayan Garden Resort</div>
       </footer>
+      <button type="button" aria-label="Back to top" className={`lk-to-top client-glass${showTop ? ' is-shown' : ''}`} tabIndex={showTop ? 0 : -1}
+        onClick={() => window.scrollTo({ top: 0, behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })}>
+        <i className="ti ti-arrow-up" aria-hidden="true" />
+      </button>
       <style>{`
         .client-header-wrap { position: sticky; top: 12px; z-index: 50; padding: 12px 16px 0; }
         .client-header-wrap.is-over-hero { height: 0; padding-top: 0; }
@@ -241,7 +271,6 @@ export default function ClientChrome({ children }) {
           .client-header-logo { width: 118px !important; }
           .client-header-cta { padding: 10px 14px !important; font-size: 10.5px !important; letter-spacing: 0.08em !important; }
           .client-mobile-menu-toggle { width: 38px !important; height: 38px !important; font-size: 19px !important; }
-          footer > div:first-child { grid-template-columns: 1fr !important; }
         }
       `}</style>
     </div>

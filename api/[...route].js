@@ -13,6 +13,7 @@ import sendPaymentReceipt from '../apiHandlers/send-payment-receipt';
 import sendReservationConfirmation from '../apiHandlers/send-reservation-confirmation';
 import validatePromoCode from '../apiHandlers/validate-promo-code';
 import contactInquiry from '../apiHandlers/contact-inquiry';
+import loginGuard from '../apiHandlers/login-guard';
 import newsletterSubscribe from '../apiHandlers/newsletter-subscribe';
 import newsletterBroadcast from '../apiHandlers/newsletter-broadcast';
 import resortAvailability from '../apiHandlers/resort-availability';
@@ -26,6 +27,15 @@ import arrivalReminders from '../apiHandlers/arrival-reminders';
 import sendThankYou from '../apiHandlers/send-thank-you';
 import reservationStatus from '../apiHandlers/reservation-status';
 import staffBilling from '../apiHandlers/staff-billing';
+import staffUsers from '../apiHandlers/staff-users';
+import imageUpload from '../apiHandlers/image-upload';
+import seasonalRates from '../apiHandlers/seasonal-rates';
+import cottageTypes from '../apiHandlers/cottage-types';
+import { loadCottageCatalog } from '../lib/cottageCatalog';
+import bookingReply from '../apiHandlers/booking-reply';
+import chatQuickReply from '../apiHandlers/chat-quick-reply';
+import createCottageReservation from '../apiHandlers/create-cottage-reservation';
+import cottageAvailability from '../apiHandlers/cottage-availability';
 
 // The body parser is disabled for the whole function because the PayMongo
 // webhook needs the raw body for signature checks. Other routes get req.body
@@ -54,12 +64,21 @@ const handlers = {
   'reservation-staff-action': reservationStaffAction,
   'reservation-status': reservationStatus,
   'staff-billing': staffBilling,
+  'staff-users': staffUsers,
+  'login-guard': loginGuard,
+  'image-upload': imageUpload,
+  'seasonal-rates': seasonalRates,
+  'cottage-types': cottageTypes,
   'create-corporate-reservation': createCorporateReservation,
   'public-feedback': publicFeedback,
   'submit-feedback': submitFeedback,
   'arrival-reminders': arrivalReminders,
   'send-thank-you': sendThankYou,
   occupancy,
+  'booking-reply': bookingReply,
+  'chat-quick-reply': chatQuickReply,
+  'create-cottage-reservation': createCottageReservation,
+  'cottage-availability': cottageAvailability,
 };
 
 function readBody(req) {
@@ -95,6 +114,23 @@ export default async function handler(req, res) {
     .split('/')
     .filter(Boolean)
     .pop();
+  // The cancellation policy (days and percentages) for the public pages.
+  if (endpoint === 'cancellation-policy') {
+    const { adminDb } = await import('../lib/firebaseAdmin');
+    const { DEFAULT_CANCELLATION_POLICY, normalizeCancellationPolicy } = await import('../src/lib/cancellationPolicy');
+    let policy = DEFAULT_CANCELLATION_POLICY;
+    try {
+      const snap = adminDb ? await adminDb.doc('settings/cancellationPolicy').get() : null;
+      policy = normalizeCancellationPolicy(snap?.exists ? snap.data() : null) || DEFAULT_CANCELLATION_POLICY;
+    } catch { /* fall back to the official policy */ }
+    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
+    return res.status(200).json({ policy });
+  }
+  // The server's clock, for the staff portal's floating clock.
+  if (endpoint === 'server-time') {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json({ now: Date.now() });
+  }
   const endpointHandler = handlers[endpoint];
 
   if (!endpointHandler) {
@@ -103,6 +139,8 @@ export default async function handler(req, res) {
 
   try {
     if (!RAW_BODY_ROUTES.has(endpoint)) await parseBody(req);
+    // Every price check uses the admin's current cottage list.
+    await loadCottageCatalog();
     return await endpointHandler(req, res);
   } catch (error) {
     console.error(`API ${endpoint} failed:`, error);

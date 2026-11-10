@@ -2,14 +2,15 @@ import React, { useMemo, useState } from 'react';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
-  formatLongDate, getCorporatePackage, getEarliestGroupDate, getGroupAdvanceNoticeError, getGroupGuestError,
+  formatLongDate, getCorporateNights, getCorporatePackage, getEarliestGroupDate, getGroupAdvanceNoticeError, getGroupGuestError,
   CORPORATE_FEATURE_ROWS, CORPORATE_PACKAGES, GROUP_ADVANCE_DAYS, MAX_GROUP_GUESTS, MIN_GROUP_GUESTS, isCorporateFeatureIncluded,
 } from '../../lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
-import { PREFERRED_CONTACT_METHODS } from '../../lib/preferredContactMethods';
+import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError } from '../../lib/preferredContactMethods';
 import { CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
+import { CLIENT_TYPES, normalizeAgencyDetails, perDiemFit } from '../../lib/agencyBilling';
 
 const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const addMonths = (date, months) => {
@@ -30,23 +31,33 @@ export default function CorporateBooking() {
     email: '',
     phone: '',
     preferredContactMethod: '',
+    contactLink: '',
     totalGuests: 15,
     bookingType: 'overnight',
     checkIn: '',
     checkOut: '',
     accommodationInterest: false,
     notes: '',
+    clientType: 'private',
+    office: '',
+    tin: '',
+    poNumber: '',
+    perDiemRate: '',
   });
+  // Government agencies send a request (no online deposit) and pay after the
+  // event through their Purchase Order.
+  const isGovernment = form.clientType === 'government';
+  const [sentRequest, setSentRequest] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [savedReservationId, setSavedReservationId] = useState('');
 
   const totalGuests = Number(form.totalGuests);
-  const selectedPackage = getCorporatePackage(totalGuests);
-  const dateNights = form.checkIn && form.checkOut
-    ? Math.ceil((new Date(`${form.checkOut}T00:00:00`) - new Date(`${form.checkIn}T00:00:00`)) / 86400000)
-    : 1;
-  const nights = form.bookingType === 'daytour' ? 1 : dateNights;
+  // Nights from the dates (a day tour is 1). Until check-out is picked, the
+  // price shows for 1 night.
+  const nights = getCorporateNights(form.bookingType, form.checkIn, form.checkOut) || 1;
+  const selectedPackage = getCorporatePackage(totalGuests, nights);
+  const nightLabel = form.bookingType === 'daytour' ? 'day tour' : `${nights} night${nights === 1 ? '' : 's'}`;
   const guestName = joinGuestName(form.firstName, form.lastName);
   const depositAmount = selectedPackage ? getOnlinePaymentAmount(selectedPackage.totalAmount, 'deposit') : 0;
   const dateValid = Boolean(form.checkIn && (form.bookingType === 'daytour'
@@ -54,6 +65,8 @@ export default function CorporateBooking() {
     : form.checkOut > form.checkIn && form.checkIn >= earliestDate && form.checkOut <= maxDate));
   const guestError = form.totalGuests === '' ? '' : getGroupGuestError(totalGuests);
   const noticeError = form.checkIn ? getGroupAdvanceNoticeError(form.checkIn) : '';
+
+  const fit = isGovernment && selectedPackage ? perDiemFit(selectedPackage.ratePerGuest, form.perDiemRate) : null;
 
   const packageFeatures = useMemo(() => selectedPackage
     ? CORPORATE_FEATURE_ROWS.filter(row => isCorporateFeatureIncluded(selectedPackage.id, nights, row.id))
@@ -102,6 +115,16 @@ export default function CorporateBooking() {
       setErrorMessage('Enter a valid first and last name (2–35 letters each).');
       return;
     }
+    const contactLinkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
+    if (contactLinkError) {
+      setErrorMessage(contactLinkError);
+      return;
+    }
+    const agency = isGovernment ? normalizeAgencyDetails(form) : { value: null };
+    if (agency.error) {
+      setErrorMessage(agency.error);
+      return;
+    }
 
     setSubmitting(true);
     let reservationId = savedReservationId;
@@ -118,12 +141,15 @@ export default function CorporateBooking() {
             email: form.email.trim(),
             phone: form.phone.trim(),
             preferredContactMethod: form.preferredContactMethod,
+            contactLink: form.preferredContactMethod === FACEBOOK_CONTACT_METHOD ? form.contactLink.trim() : '',
             totalGuests,
             bookingType: form.bookingType,
             checkIn: form.checkIn,
             checkOut: form.bookingType === 'daytour' ? form.checkIn : form.checkOut,
             accommodationInterest: form.accommodationInterest,
             notes: form.notes.trim(),
+            clientType: form.clientType,
+            ...(isGovernment ? { agency: agency.value } : {}),
           }),
         });
         const result = await response.json().catch(() => ({}));
@@ -131,6 +157,11 @@ export default function CorporateBooking() {
         reservationId = result.reservationId;
         if (!reservationId) throw new Error('The group reservation was created without a reference. Please contact the resort.');
         setSavedReservationId(reservationId);
+        if (result.chargeToAgency) {
+          setSentRequest({ reference: reservationId.slice(0, 8).toUpperCase(), email: form.email.trim() });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
       }
       await startPayment(reservationId);
     } catch (error) {
@@ -152,6 +183,11 @@ export default function CorporateBooking() {
           .corporate-booking-layout { grid-template-columns: minmax(0, 1fr) !important; padding: 24px 16px !important; }
           .corporate-booking-layout > *, .corporate-booking-layout form > section { min-width: 0; }
           .corporate-booking-summary { position: static !important; }
+          .corporate-packages-top { padding: 24px 16px 0 !important; }
+        }
+        @media (max-width: 640px) {
+          .corporate-packages-top .pkg-table { display: none !important; }
+          .corporate-packages-top .pkg-cards { display: grid !important; }
         }
       `}</style>
       <header style={{ background: FOREST_DEEP, color: '#fff', padding: '64px 24px 56px' }}>
@@ -163,18 +199,115 @@ export default function CorporateBooking() {
         </div>
       </header>
 
+      {/* Packages first, so guests compare tiers before filling in the form. */}
+      <div className="corporate-packages-top" style={{ maxWidth: '1100px', margin: '0 auto', padding: '38px 24px 0' }}>
+        <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px' }}>
+          <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 8px' }}>Compare packages</h2>
+          <p style={{ color: '#6b6a5c', font: `12px/1.7 ${SANS}`, margin: '0 0 16px' }}>
+            Your package depends on the number of guests. Prices are per guest, per night (a day tour counts as one).
+            Inclusions shown for {form.bookingType === 'daytour' ? 'a day tour' : `${nights} night${nights === 1 ? '' : 's'}`}. Availability of accommodation and whole-property rental is confirmed by the resort.
+          </p>
+          <div className="pkg-table" style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: '620px', borderCollapse: 'collapse', font: `12px/1.5 ${SANS}`, color: INK }}>
+              <thead>
+                <tr style={{ background: CREAM }}>
+                  <th scope="col" style={{ textAlign: 'left', padding: '12px', minWidth: '260px' }}>Package inclusion</th>
+                  {CORPORATE_PACKAGES.map(tier => {
+                    const yours = selectedPackage?.id === tier.id;
+                    return (
+                      <th key={tier.id} scope="col" style={{ padding: '12px', textAlign: 'center', background: yours ? FOREST : undefined, color: yours ? '#fff' : undefined }}>
+                        {tier.name}{yours && <span style={{ display: 'block', font: `600 9px ${SANS}`, letterSpacing: '.12em', color: '#e4d4a7' }}>YOUR GROUP</span>}
+                        <span style={{ display: 'block', fontWeight: 400 }}>{tier.minGuests}{tier.maxGuests ? `–${tier.maxGuests}` : '+'} guests · ₱{tier.ratePerGuest.toLocaleString()} / guest</span>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>{CORPORATE_FEATURE_ROWS.map(row => (
+                <tr key={row.id} style={{ borderBottom: `1px solid ${LINE}` }}>
+                  <th scope="row" style={{ textAlign: 'left', fontWeight: 500, padding: '12px' }}>{row.label}</th>
+                  {CORPORATE_PACKAGES.map(tier => (
+                    <td key={tier.id} style={{ textAlign: 'center', padding: '12px', background: selectedPackage?.id === tier.id ? '#f1f5ec' : undefined, color: isCorporateFeatureIncluded(tier.id, nights, row.id) ? FOREST : '#aaa' }}>
+                      {isCorporateFeatureIncluded(tier.id, nights, row.id) ? 'Included' : '—'}
+                    </td>
+                  ))}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          {/* Phones: one card per package, so nothing is hidden off to the side. */}
+          <div className="pkg-cards" style={{ display: 'none', gap: '12px' }}>
+            {CORPORATE_PACKAGES.map(tier => {
+              const yours = selectedPackage?.id === tier.id;
+              const included = CORPORATE_FEATURE_ROWS.filter(row => isCorporateFeatureIncluded(tier.id, nights, row.id));
+              return (
+                <article key={tier.id} style={{ border: `1px solid ${yours ? FOREST : LINE}`, background: yours ? '#f1f5ec' : '#fff', padding: '14px 16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                    <strong style={{ color: FOREST_DEEP, font: `600 16px ${SANS}` }}>{tier.name}</strong>
+                    {yours && <span style={{ background: FOREST, color: '#fff', font: `600 9px ${SANS}`, letterSpacing: '.12em', padding: '3px 8px' }}>YOUR GROUP</span>}
+                  </div>
+                  <div style={{ color: '#626355', font: `12px/1.6 ${SANS}`, margin: '2px 0 8px' }}>
+                    {tier.minGuests}{tier.maxGuests ? `–${tier.maxGuests}` : '+'} guests · ₱{tier.ratePerGuest.toLocaleString()} per guest, per night
+                  </div>
+                  <ul style={{ margin: 0, padding: 0, listStyle: 'none', color: INK, font: `12px/1.7 ${SANS}` }}>
+                    {included.map(row => <li key={row.id}><span aria-hidden="true" style={{ color: FOREST, fontWeight: 700 }}>✓</span> {row.label}</li>)}
+                  </ul>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      </div>
+
       <div className="corporate-booking-layout" style={{ maxWidth: '1100px', margin: '0 auto', padding: '38px 24px', display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(280px, .75fr)', gap: '24px', alignItems: 'start' }}>
+        {sentRequest ? (
+          <section role="status" style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '28px' }}>
+            <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 10px' }}>Request sent: #{sentRequest.reference}</h2>
+            <p style={{ color: INK, font: `14px/1.7 ${SANS}`, margin: '0 0 10px' }}>Thank you. We emailed a copy to <strong>{sentRequest.email}</strong>.</p>
+            <ol style={{ color: '#4b4d42', font: `13px/1.8 ${SANS}`, paddingLeft: '20px', margin: 0 }}>
+              <li>Our team sends your agency a quotation.</li>
+              <li>Your agency issues the Purchase Order (PO) and sends it to us.</li>
+              <li>We confirm the booking once the PO is received.</li>
+              <li>After the event, we send the Statement of Account and your agency settles it with the resort.</li>
+            </ol>
+          </section>
+        ) : (
         <form onSubmit={submit} style={{ display: 'grid', gap: '22px' }}>
           <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px' }}>
             <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 18px' }}>Your group</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px' }}>
-              <label style={labelStyle}>Company / organization<input required maxLength={120} name="companyName" value={form.companyName} onChange={changeField} style={inputStyle} /></label>
+              <label style={labelStyle}>Who is booking?<select name="clientType" value={form.clientType} onChange={changeField} style={inputStyle}>{CLIENT_TYPES.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}</select></label>
+              <label style={labelStyle}>{isGovernment ? 'Agency name' : 'Company / organization'}<input required maxLength={120} name="companyName" value={form.companyName} onChange={changeField} placeholder={isGovernment ? 'e.g. Department of Education' : ''} style={inputStyle} /></label>
+              {isGovernment && (
+                <>
+                  <label style={labelStyle}>Office / unit (optional)<input maxLength={120} name="office" value={form.office} onChange={changeField} placeholder="e.g. Region III, HR Division" style={inputStyle} /></label>
+                  <label style={labelStyle}>Agency TIN (optional)<input maxLength={20} name="tin" value={form.tin} onChange={changeField} placeholder="123-456-789-000" style={inputStyle} /></label>
+                  <label style={labelStyle}>Per diem per person per day (optional)<input type="number" min="0" max="20000" name="perDiemRate" value={form.perDiemRate} onChange={changeField} placeholder="₱" style={inputStyle} /></label>
+                  <label style={labelStyle}>Purchase Order no. (if you have it)<input maxLength={40} name="poNumber" value={form.poNumber} onChange={changeField} placeholder="Can be sent later" style={inputStyle} /></label>
+                </>
+              )}
               <label style={labelStyle}>Number of guests ({MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS})<input required type="number" min={MIN_GROUP_GUESTS} max={MAX_GROUP_GUESTS} step="1" name="totalGuests" value={form.totalGuests} onChange={changeField} aria-invalid={Boolean(guestError)} style={inputStyle} />{guestError && <span role="alert" style={{ color: '#b42318', font: `500 11px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none' }}>{guestError}</span>}</label>
               <label style={labelStyle}>Contact first name<input required minLength="2" maxLength="35" name="firstName" value={form.firstName} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Contact last name<input required minLength="2" maxLength="35" name="lastName" value={form.lastName} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Email address<input required type="email" maxLength="254" name="email" value={form.email} onChange={changeField} style={inputStyle} /></label>
               <label style={labelStyle}>Mobile number<input required type="tel" inputMode="numeric" pattern="09[0-9]{9}" maxLength="11" placeholder="09XXXXXXXXX" name="phone" value={form.phone} onChange={changeField} style={inputStyle} /></label>
-              <label style={labelStyle}>Preferred Contact Method *<select required name="preferredContactMethod" value={form.preferredContactMethod} onChange={changeField} style={inputStyle}><option value="">Select a method</option>{PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select></label>
+              <label style={labelStyle}>Preferred Contact Method<select required name="preferredContactMethod" value={form.preferredContactMethod} onChange={changeField} style={inputStyle}><option value="">Select a method</option>{PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select>
+                {['Email', 'Phone'].includes(form.preferredContactMethod) && (
+                  <span style={{ font: `500 12px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none', color: FOREST_DEEP }}>
+                    {(form.preferredContactMethod === 'Email' ? form.email : form.phone).trim()
+                      ? <>We'll contact you at <strong style={{ overflowWrap: 'anywhere' }}>{(form.preferredContactMethod === 'Email' ? form.email : form.phone).trim()}</strong></>
+                      : `Enter your ${form.preferredContactMethod === 'Email' ? 'email address' : 'mobile number'} above.`}
+                  </span>
+                )}
+              </label>
+              {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
+                <label style={labelStyle}>Facebook profile link
+                  <input required type="url" maxLength="200" name="contactLink" value={form.contactLink} onChange={changeField} placeholder="https://www.facebook.com/your.name" style={inputStyle} />
+                  <span style={{ font: `500 11px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none', color: form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink) ? '#b42318' : '#6b7280' }}>
+                    {(form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink)) || 'Copy the link from your Facebook profile and paste it here.'}
+                  </span>
+                </label>
+              )}
             </div>
           </section>
 
@@ -192,30 +325,15 @@ export default function CorporateBooking() {
               <input type="checkbox" name="accommodationInterest" checked={form.accommodationInterest} onChange={changeField} style={{ marginTop: '3px' }} />
               Please include optional accommodation and meal package options (without meals, plated meals, or managed buffet meals) in our follow-up.
             </label>
-            <label style={{ ...labelStyle, marginTop: '18px' }}>Additional details<textarea name="notes" maxLength="1000" rows="4" value={form.notes} onChange={changeField} placeholder="Tell us about your retreat, seminar, or event needs." style={{ ...inputStyle, resize: 'vertical' }} /></label>
-          </section>
-
-          <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px' }}>
-            <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 18px' }}>Package inclusions</h2>
-            <p style={{ color: '#6b6a5c', font: `12px/1.7 ${SANS}`, margin: '0 0 16px' }}>Selected inclusions are based on your guest tier and stay duration ({nights} night{nights === 1 ? '' : 's'}). Availability of accommodation and whole-property rental is confirmed by the resort.</p>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: '620px', borderCollapse: 'collapse', font: `12px/1.5 ${SANS}`, color: INK }}>
-                <thead><tr style={{ background: CREAM }}><th scope="col" style={{ textAlign: 'left', padding: '12px', minWidth: '260px' }}>Package inclusion</th>{CORPORATE_PACKAGES.map(tier => <th key={tier.id} scope="col" style={{ padding: '12px', textAlign: 'center' }}>{tier.name}<br /><span style={{ fontWeight: 400 }}>{tier.minGuests}{tier.maxGuests ? `–${tier.maxGuests}` : '+'} guests · ₱{tier.ratePerGuest.toLocaleString()} / guest</span></th>)}</tr></thead>
-                <tbody>{CORPORATE_FEATURE_ROWS.map(row => (
-                  <tr key={row.id} style={{ borderBottom: `1px solid ${LINE}` }}>
-                    <th scope="row" style={{ textAlign: 'left', fontWeight: 500, padding: '12px' }}>{row.label}</th>
-                    {CORPORATE_PACKAGES.map(tier => <td key={tier.id} style={{ textAlign: 'center', padding: '12px', color: isCorporateFeatureIncluded(tier.id, nights, row.id) ? FOREST : '#aaa' }}>{isCorporateFeatureIncluded(tier.id, nights, row.id) ? 'Included' : '—'}</td>)}
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
+            <label style={{ ...labelStyle, marginTop: '18px' }}>Additional details (optional)<textarea name="notes" maxLength="1000" rows="4" value={form.notes} onChange={changeField} placeholder="Tell us about your retreat, seminar, or event needs." style={{ ...inputStyle, resize: 'vertical' }} /></label>
           </section>
 
           {errorMessage && <div role="alert" style={{ background: '#fff1f0', border: '1px solid #efc2bf', color: '#9b2c24', padding: '14px', font: `12px/1.6 ${SANS}` }}>{errorMessage}</div>}
           <button type="submit" disabled={submitting || availabilityLoading || !available || !selectedPackage} style={{ border: 0, background: FOREST, color: '#fff', padding: '16px 20px', cursor: submitting || !available ? 'not-allowed' : 'pointer', opacity: submitting || !available ? .65 : 1, font: `600 12px ${SANS}`, letterSpacing: '.06em' }}>
-            {submitting ? 'STARTING SECURE CHECKOUT…' : savedReservationId ? `RETRY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT PAYMENT` : `CONTINUE · PAY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT${selectedPackage ? ` (₱${depositAmount.toLocaleString()})` : ''}`}
+            {isGovernment ? (submitting ? 'SENDING REQUEST…' : 'SEND BOOKING REQUEST · NO PAYMENT NOW') : submitting ? 'STARTING SECURE CHECKOUT…' : savedReservationId ? `RETRY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT PAYMENT` : `CONTINUE · PAY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT${selectedPackage ? ` (₱${depositAmount.toLocaleString()})` : ''}`}
           </button>
         </form>
+        )}
 
         <aside className="corporate-booking-summary" style={{ position: 'sticky', top: '105px', background: FOREST_DEEP, color: '#fff', padding: '25px' }}>
           <div style={{ color: '#e4d4a7', font: `600 10px ${SANS}`, letterSpacing: '.14em', textTransform: 'uppercase' }}>Your package</div>
@@ -223,13 +341,27 @@ export default function CorporateBooking() {
             <>
               <h2 style={{ font: `500 30px ${SERIF}`, margin: '12px 0 5px' }}>{selectedPackage.name}</h2>
               <div style={{ color: 'rgba(255,255,255,.7)', font: `12px ${SANS}` }}>{selectedPackage.minGuests}{selectedPackage.maxGuests ? `–${selectedPackage.maxGuests}` : '+'} guests · ₱{selectedPackage.ratePerGuest.toLocaleString()} per guest</div>
-              <div style={{ borderTop: '1px solid rgba(255,255,255,.2)', margin: '22px 0 14px', paddingTop: '16px', display: 'flex', justifyContent: 'space-between', font: `13px ${SANS}` }}><span>{totalGuests} guests</span><span>₱{selectedPackage.totalAmount.toLocaleString()}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#e4d4a7', font: `600 14px ${SANS}` }}><span>{RESERVATION_DEPOSIT_PERCENTAGE}% deposit</span><span>₱{depositAmount.toLocaleString()}</span></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', color: 'rgba(255,255,255,.7)', font: `12px ${SANS}` }}><span>Remaining balance</span><span>₱{(selectedPackage.totalAmount - depositAmount).toLocaleString()}</span></div>
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.2)', margin: '22px 0 10px', paddingTop: '16px', display: 'grid', gap: '6px', font: `12px ${SANS}`, color: 'rgba(255,255,255,.78)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><span>{totalGuests} guests × ₱{selectedPackage.ratePerGuest.toLocaleString()}</span><span>₱{selectedPackage.perNightAmount.toLocaleString()}{form.bookingType === 'daytour' ? '' : ' / night'}</span></div>
+                {form.bookingType !== 'daytour' && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><span>× {nightLabel}{form.checkOut ? '' : ' (pick check-out)'}</span></div>}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '14px', font: `600 15px ${SANS}` }}><span>Total</span><span>₱{selectedPackage.totalAmount.toLocaleString()}</span></div>
+              {isGovernment ? (
+                <div style={{ display: 'grid', gap: '8px', color: 'rgba(255,255,255,.82)', font: `12px/1.6 ${SANS}` }}>
+                  <div style={{ color: '#e4d4a7', fontWeight: 600 }}>Charge to agency: no payment now</div>
+                  {fit && <div style={{ color: fit.fits ? '#c8e6a0' : '#fcd9a8' }}>{fit.message}</div>}
+                  <div>We email a quotation. Your agency issues the PO, and pays after the event against our Statement of Account.</div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#e4d4a7', font: `600 14px ${SANS}` }}><span>{RESERVATION_DEPOSIT_PERCENTAGE}% deposit</span><span>₱{depositAmount.toLocaleString()}</span></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', color: 'rgba(255,255,255,.7)', font: `12px ${SANS}` }}><span>Remaining balance</span><span>₱{(selectedPackage.totalAmount - depositAmount).toLocaleString()}</span></div>
+                </>
+              )}
             </>
           ) : <p style={{ color: 'rgba(255,255,255,.78)', font: `13px/1.6 ${SANS}` }}>Corporate packages are available for groups of 15 guests or more.</p>}
           <p style={{ borderTop: '1px solid rgba(255,255,255,.2)', paddingTop: '16px', margin: '20px 0 0', color: 'rgba(255,255,255,.7)', font: `11px/1.7 ${SANS}` }}>Your request is subject to resort confirmation. Optional accommodation/meal packages and whole property rental require availability confirmation.</p>
-          {packageFeatures.length > 0 && <div aria-label="Included package benefits" style={{ marginTop: '18px', display: 'grid', gap: '7px', color: '#f1ead9', font: `11px/1.5 ${SANS}` }}>{packageFeatures.slice(0, 4).map(feature => <span key={feature.id}>✓ {feature.group}</span>)}</div>}
+          {packageFeatures.length > 0 && <div aria-label="Included package benefits" style={{ marginTop: '18px', display: 'grid', gap: '7px', color: '#f1ead9', font: `11px/1.5 ${SANS}` }}>{packageFeatures.slice(0, 4).map(feature => <span key={feature.id}>✓ {feature.label}</span>)}</div>}
         </aside>
       </div>
     </main>

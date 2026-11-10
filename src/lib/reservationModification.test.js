@@ -1,6 +1,6 @@
 import { calculateReservationModification } from '../../lib/reservationModification';
 
-const policy = { atLeast30Days: 0, lessThan30Days: 50, lessThan7Days: 100 };
+const policy = { version: 2, moreThanDays: 7, earlyRate: 20, midFromDays: 4, midRate: 50, lateRate: 100, dateChangeDays: 7 };
 // Noon, 24 Oct 2026, Philippine time.
 const now = new Date('2026-10-24T04:00:00Z');
 
@@ -30,8 +30,8 @@ describe('reservation change pricing (resort policy)', () => {
     expect(result).toMatchObject({ outcome: 'eligible', changeType: 'reduction_no_refund', updatedTotal: 9000, difference: 0, refundDue: 0 });
   });
 
-  test('refuses date moves less than 30 days before arrival or on arrival', () => {
-    const soon = { ...reservation, checkIn: '2026-11-10', checkOut: '2026-11-11' };
+  test('refuses date moves less than 7 days before arrival or on arrival', () => {
+    const soon = { ...reservation, checkIn: '2026-10-28', checkOut: '2026-10-29' };
     expect(calculateReservationModification(soon, room, '2026-11-12', '2026-11-13', policy, { now }).outcome).toBe('not_allowed');
     const today = { ...reservation, checkIn: '2026-10-24', checkOut: '2026-10-25' };
     expect(calculateReservationModification(today, room, '2026-10-27', '2026-10-28', policy, { now }).reason).toMatch(/non-convertible/);

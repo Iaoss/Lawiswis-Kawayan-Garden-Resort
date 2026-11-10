@@ -10,6 +10,11 @@ html, body { max-width: 100%; overflow-x: clip; }
 /* Keep images inside their box. (No height:auto here: it breaks full-size
    "cover" photos such as the hero slider and the About Us chapters.) */
 .portal-main-content img, .client-main img { max-width: 100%; }
+/* Staff pages each set min-height: 100vh, but they sit under the 60px top
+   bar inside a padded area that already fills the screen, so every page was
+   ~116px taller than the window: an empty strip at the bottom (worse on
+   short screens). The content area fills the height instead. */
+.portal-main-content [style*="min-height: 100vh"] { min-height: 0 !important; }
 
 /* ── Tablets (≤ 1024px) ───────────────────────────────── */
 @media (max-width: 1024px) {
@@ -39,9 +44,10 @@ html, body { max-width: 100%; overflow-x: clip; }
 
 /* ── Phones (≤ 767px) ─────────────────────────────────── */
 @media (max-width: 767px) {
-  /* Every multi-column grid becomes one column, except calendars. */
-  .portal-main-content [style*="grid-template-columns"]:not([style*="repeat(7"]),
-  .client-main [style*="grid-template-columns"]:not([style*="repeat(7"]):not([style*="repeat(2, minmax(0"]) {
+  /* Every multi-column grid becomes one column, except calendars and grids
+     marked "keep-columns" (they have their own phone layout). */
+  .portal-main-content [style*="grid-template-columns"]:not([style*="repeat(7"]):not(.keep-columns),
+  .client-main [style*="grid-template-columns"]:not([style*="repeat(7"]):not([style*="repeat(2, minmax(0"]):not(.keep-columns) {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 

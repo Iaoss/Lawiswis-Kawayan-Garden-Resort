@@ -1,0 +1,40 @@
+/* Phone-only layout for the guest website (screens 640px wide or less).
+   Everything here is inside the media query, so tablets and computers keep
+   their current layout exactly. */
+
+@media (max-width: 640px) {
+  /* The thin address / phone bar on top: the number is also in the menu,
+     the footer and the Contact page. */
+  .client-announcement-bar { display: none !important; }
+
+  /* Chat bubble: smaller and tucked into the corner so it doesn't cover
+     buttons; the open chat fills the width of the screen. */
+  .guest-chat { right: 12px !important; bottom: 12px !important; }
+  .guest-chat-fab { width: 50px !important; height: 50px !important; }
+  .guest-chat-fab svg { width: 22px; height: 22px; }
+  .guest-chat-panel { width: calc(100vw - 24px) !important; max-width: none !important; min-width: 0 !important; }
+
+  /* Footer: short and in two columns instead of one long list. */
+  .client-footer { padding: 30px 20px 18px !important; }
+  .client-footer-grid { grid-template-columns: 1fr 1fr !important; gap: 22px 18px !important; }
+  .client-footer-brand, .client-footer-visit { grid-column: 1 / -1; }
+  .client-footer-brand img { width: 140px !important; margin-bottom: 10px !important; }
+  .client-footer-brand p { font-size: 11.5px !important; line-height: 1.6 !important; }
+  .client-footer-visit p { margin-top: 8px !important; font-size: 11.5px !important; line-height: 1.7 !important; }
+  .client-footer-bottom { margin-top: 18px !important; padding-top: 12px !important; }
+
+  /* Rooms page: the room-type filters in one row you can swipe. */
+  .rooms-filter-row {
+    flex-wrap: nowrap !important; overflow-x: auto; margin: 0 -16px 28px !important; padding: 0 16px 4px;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .rooms-filter-row::-webkit-scrollbar { display: none; }
+  .rooms-filter-row .rooms-filter-chip { flex: none; }
+
+  /* Booking step 2: overnight / day / night side by side. */
+  /* (The 3 columns are set in BookingWizard.js.) */
+  .wizard-stay-options button { padding: 10px 8px !important; text-align: center !important; }
+  .wizard-stay-options strong { font-size: 13px !important; }
+  .wizard-stay-options span { font-size: 10.5px !important; line-height: 1.4 !important; display: block; margin-top: 2px; }
+
+}

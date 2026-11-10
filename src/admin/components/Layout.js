@@ -2,12 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
 import { collection, doc, getDoc, query, onSnapshot, where } from 'firebase/firestore';
-import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
 import logo from './logo-mark.png';
 import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
 import NotificationBell from './NotificationBell';
+import CheckInReminder from './CheckInReminder';
+import FloatingClock from './FloatingClock';
+import StaffToaster from './StaffToaster';
 import { AccountMenu, TopbarIconButton, topbarButtonStyle } from './TopbarControls';
 import {
   AnimatedSidebarInset,
@@ -16,6 +19,14 @@ import {
 } from '../../components/ui/animated-sidebar.tsx';
 import PortalSidebar from './PortalSidebar';
 import './portal-sidebar.css';
+import './portal-glass.css';
+import ShiftSummaryDialog from './ShiftSummaryDialog';
+import { useIdleLogout } from '../lib/staffSession';
+import { CheckInIdHost } from './CheckInIdDialog';
+import { loadCottageCatalogOnce } from '../../lib/useCottageCatalog';
+
+// Start loading the admin's cottage list as soon as the site opens.
+loadCottageCatalogOnce();
 
 // ── Nav structure ────────────────────────────────────────────
 const navItems = [
@@ -109,7 +120,11 @@ export default function Layout({ children }) {
     };
   }, []);
 
-  const handleLogout = async () => { await signOut(auth); window.location.href = '/admin/login'; };
+  // Signing out shows the end-of-shift summary first.
+  const [shiftOpen, setShiftOpen] = useState(false);
+  const handleLogout = () => setShiftOpen(true);
+  // Shared front-desk computer: sign out after inactivity (Settings → Notifications & security).
+  useIdleLogout({ enabled: settings?.sessionTimeout !== false, minutes: Number(settings?.autoLogout) || 30 });
 
   const initials = adminName
     ? adminName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
@@ -162,7 +177,7 @@ export default function Layout({ children }) {
           </AnimatedSidebarTrigger>
           <div>
             <div style={{ fontWeight: '600', fontSize: '17px', color: SIDEBAR_TEXT }}>{currentLabel}</div>
-            <div style={{ fontSize: '11px', color: MUTED }}>HuaPro Resort Management System</div>
+            <div className="portal-topbar-subtitle" style={{ fontSize: '11px', color: MUTED }}>HuaPro Resort Management System</div>
           </div>
 
           <div className="topbar-dock" style={{ '--dock-accent': ACCENT, justifyContent: 'flex-end', flexShrink: 0, marginLeft: 'auto' }}>
@@ -195,7 +210,7 @@ export default function Layout({ children }) {
               onClick={() => setChatOpen(true)}
             />
 
-            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/admin" />
+            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/admin" showInquiries showEmails />
 
             <TopbarIconButton
               icon="ti-settings"
@@ -224,6 +239,11 @@ export default function Layout({ children }) {
 
       {/* Slide-in Messages panel */}
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
+      <CheckInIdHost dark={dark} accent={ACCENT} />
+      <ShiftSummaryDialog open={shiftOpen} onClose={() => setShiftOpen(false)} staffName={adminName} dark={dark} accent={ACCENT} />
+      <FloatingClock dark={dark} />
+      <CheckInReminder soundAlerts={settings?.soundAlerts !== false} prefix="/admin" />
+      <StaffToaster prefix="/admin" enabled={settings?.notifications !== false} />
     </AnimatedSidebarProvider>
   );
 }

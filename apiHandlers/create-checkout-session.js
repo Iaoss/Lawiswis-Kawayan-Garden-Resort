@@ -30,7 +30,8 @@ export default async function handler(req, res) {
   }
 
   const checkoutType = paymentType || 'billing';
-  if (!['booking', 'billing'].includes(checkoutType)) {
+  // "group": staff link for the balance of several rooms booked together.
+  if (!['booking', 'billing', 'group'].includes(checkoutType)) {
     return res.status(400).json({ error: 'Invalid payment type' });
   }
 
@@ -41,7 +42,7 @@ export default async function handler(req, res) {
   // Balance-payment links ("billing") take an amount typed by staff, so only
   // signed-in staff may create them. Guest checkouts ("booking") never take
   // an amount from the browser: it comes from the saved reservation.
-  if (checkoutType === 'billing' && !(await verifyStaff(req))) {
+  if (['billing', 'group'].includes(checkoutType) && !(await verifyStaff(req))) {
     return res.status(401).json({ error: 'Only resort staff can create balance payment links.' });
   }
 
@@ -66,6 +67,8 @@ export default async function handler(req, res) {
     const unitLabel = reservation.bookingType === 'daytour' ? 'day' : 'night';
     description = reservation.type === 'corporate'
       ? `${reservation.packageName || 'Corporate'} corporate group booking · ${Number(reservation.totalGuests) || 0} guests`
+      : reservation.cottageOnly
+        ? `${reservation.roomNumber || 'Cottage'} — ${reservation.tourPeriod === 'night' ? 'night' : 'day'} tour · ${Number(reservation.totalGuests) || 0} guests`
       : checkoutType === 'billing'
         ? `Room ${reservation.roomNumber || ''} — ${guestName}`
         : `Room ${reservation.roomNumber || ''} (${reservation.roomType || ''}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`;
@@ -84,7 +87,31 @@ export default async function handler(req, res) {
       if (Number(reservation.amountPaid || 0) > 0) {
         return res.status(409).json({ error: 'A payment has already been recorded for this reservation' });
       }
-      checkoutAmount = getOnlinePaymentAmount(Number(reservation.totalAmount || 0), paymentChoice);
+      let bookingTotal = Number(reservation.totalAmount || 0);
+      const linkedIds = Array.isArray(reservation.groupReservationIds) ? reservation.groupReservationIds.filter(id => id !== reservationId) : [];
+      if (linkedIds.length) {
+        const linked = await Promise.all(linkedIds.map(id => adminDb.collection('reservations').doc(id).get()));
+        const active = linked.filter(snap => snap.exists && !['cancelled', 'checked-out'].includes(String(snap.data().status || '').toLowerCase()));
+        if (active.some(snap => Number(snap.data().amountPaid || 0) > 0)) {
+          return res.status(409).json({ error: 'A payment has already been recorded for one of these rooms' });
+        }
+        bookingTotal += active.reduce((sum, snap) => sum + Number(snap.data().totalAmount || 0), 0);
+        description = `${active.length + 1} rooms (${[reservation.roomNumber, ...active.map(snap => snap.data().roomNumber)].filter(Boolean).map(n => `Room ${n}`).join(', ')}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`;
+      }
+      checkoutAmount = getOnlinePaymentAmount(bookingTotal, paymentChoice);
+    } else if (checkoutType === 'group') {
+      const ids = Array.isArray(reservation.groupReservationIds) && reservation.groupReservationIds.length ? reservation.groupReservationIds : [reservationId];
+      const linked = await Promise.all(ids.map(id => adminDb.collection('reservations').doc(id).get()));
+      const active = linked.filter(snap => snap.exists && !['cancelled', 'checked-out'].includes(String(snap.data().status || '').toLowerCase()));
+      const groupBalance = active.reduce((sum, snap) => {
+        const r = snap.data();
+        return sum + Math.max(0, Number(r.totalAmount || 0) + Number(r.extraCharges || 0) - Number(r.amountPaid || 0));
+      }, 0);
+      checkoutAmount = Number(amount);
+      if (!Number.isFinite(checkoutAmount) || checkoutAmount <= 0 || checkoutAmount - groupBalance > 0.001) {
+        return res.status(400).json({ error: 'Enter a positive amount no greater than what the rooms still owe' });
+      }
+      description = `${active.length} rooms (${active.map(snap => `Room ${snap.data().roomNumber || ''}`).join(', ')}) — ${guestName}`;
     } else {
       if (modificationRequestId) {
         const modification = reservation.modificationRequest;
@@ -109,7 +136,11 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Could not validate reservation payment' });
   }
 
-  const siteUrl = process.env.PUBLIC_SITE_URL || `https://${req.headers.host}`;
+  // Where PayMongo sends the guest back. Only our own site: a forged Host
+  // header must not turn this into a redirect to someone else's page.
+  const host = String(req.headers.host || '').toLowerCase();
+  const trustedHost = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.vercel\.app$/.test(host) || /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host);
+  const siteUrl = process.env.PUBLIC_SITE_URL || (trustedHost ? `https://${host}` : 'https://lawiswis-kawayan-garden-resort.vercel.app');
 
   try {
     const session = await createPayMongoCheckoutSession({
@@ -143,6 +174,7 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     console.error('create-checkout-session failed:', err);
-    return res.status(502).json({ error: err.message || 'Failed to create checkout session' });
+    // Guests see a plain message; PayMongo's details stay in the server log.
+    return res.status(502).json({ error: 'The payment page could not be opened. Please try again in a moment.' });
   }
 }

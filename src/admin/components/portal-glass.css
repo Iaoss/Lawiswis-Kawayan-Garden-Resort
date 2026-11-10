@@ -1,0 +1,96 @@
+/* Staff portal "liquid glass": the sidebar and the top bar are frosted
+   glass over a soft green-and-brass background. Page content (cards,
+   tables, forms) stays solid so it is easy to read. Dark mode is
+   html[data-dark="true"] (see SettingsContext). */
+
+:root {
+  --pg-bg-1: rgba(124, 138, 94, 0.22);
+  --pg-bg-2: rgba(173, 138, 82, 0.16);
+  --pg-bg-3: rgba(59, 69, 48, 0.12);
+  --pg-glass: rgba(255, 255, 255, 0.58);
+  --pg-glass-strong: rgba(255, 255, 255, 0.72);
+  --pg-rim: rgba(255, 255, 255, 0.85);
+  --pg-edge: rgba(17, 24, 39, 0.08);
+  --pg-shine: rgba(255, 255, 255, 0.9);
+  --pg-shadow: 0 10px 30px rgba(30, 42, 24, 0.10);
+}
+html[data-dark="true"] {
+  --pg-bg-1: rgba(124, 138, 94, 0.20);
+  --pg-bg-2: rgba(173, 138, 82, 0.10);
+  --pg-bg-3: rgba(200, 240, 110, 0.06);
+  --pg-glass: rgba(28, 30, 28, 0.55);
+  --pg-glass-strong: rgba(28, 30, 28, 0.72);
+  --pg-rim: rgba(255, 255, 255, 0.10);
+  --pg-edge: rgba(255, 255, 255, 0.08);
+  --pg-shine: rgba(255, 255, 255, 0.14);
+  --pg-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+/* Soft colour behind everything, so the glass has something to frost. */
+[data-slot="sidebar-wrapper"] {
+  background-image:
+    radial-gradient(46% 38% at 8% 12%, var(--pg-bg-1), transparent 70%),
+    radial-gradient(40% 36% at 92% 6%, var(--pg-bg-2), transparent 70%),
+    radial-gradient(50% 40% at 70% 96%, var(--pg-bg-3), transparent 70%) !important;
+  background-attachment: fixed !important;
+}
+.portal-main-area,
+.portal-main-content {
+  background-color: transparent !important;
+}
+
+/* Each page also paints its own full-height grey box with square corners;
+   let the soft background show through instead. */
+.portal-main-content > .lk-enter > [style*="min-height: 100vh"] {
+  background: transparent !important;
+}
+
+/* Sidebar: a floating glass panel. */
+@media (min-width: 768px) {
+  [data-slot="sidebar"].portal-sidebar > div {
+    margin: 10px 0 10px 10px;
+    width: calc(100% - 10px) !important;
+    top: 10px !important;
+    height: calc(100svh / var(--app-zoom, 1) - 20px) !important;
+    border-radius: 22px;
+    border: 1px solid var(--pg-edge) !important;
+    background:
+      linear-gradient(160deg, var(--pg-shine) 0%, transparent 28%),
+      var(--pg-glass) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(170%);
+    backdrop-filter: blur(24px) saturate(170%);
+    box-shadow: inset 0 1px 0 var(--pg-rim), var(--pg-shadow);
+  }
+  [data-slot="sidebar"].portal-sidebar > div [data-slot="sidebar-header"] { border-color: var(--pg-edge) !important; }
+}
+
+/* Top bar: a floating glass pill that stays at the top while scrolling. */
+.portal-main-area > header {
+  margin: 10px 14px 0;
+  top: 10px !important;
+  border-radius: 18px;
+  border: 1px solid var(--pg-edge) !important;
+  background:
+    linear-gradient(180deg, var(--pg-shine) 0%, transparent 60%),
+    var(--pg-glass-strong) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  box-shadow: inset 0 1px 0 var(--pg-rim), var(--pg-shadow) !important;
+}
+.portal-main-content { padding-top: 22px !important; }
+
+/* Browsers without blur get solid panels. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-slot="sidebar"].portal-sidebar > div, .portal-main-area > header { background: var(--pg-glass-strong) !important; }
+  :root [data-slot="sidebar"].portal-sidebar > div, :root .portal-main-area > header { background-color: #fff !important; }
+  html[data-dark="true"] [data-slot="sidebar"].portal-sidebar > div, html[data-dark="true"] .portal-main-area > header { background-color: #1c1c1c !important; }
+}
+
+@media (max-width: 767px) {
+  .portal-main-area > header { margin: 8px 8px 0; top: 8px !important; border-radius: 16px; }
+  .portal-main-content { padding-top: 14px !important; }
+}
+
+@media print {
+  [data-slot="sidebar-wrapper"] { background-image: none !important; }
+}

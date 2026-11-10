@@ -27,7 +27,7 @@ const MENU_GROUPS = [
   {
     label: 'Front Desk / Operations',
     icon: 'ti ti-building-store',
-    children: ['Reservations', 'Walk-in', 'Room Management', 'Booking Transactions'],
+    children: ['Reservations', 'Walk-in', 'Room Management'],
   },
   {
     label: 'Financials',
@@ -71,7 +71,7 @@ const searchableCollections = [
   {
     name: 'payments',
     label: 'Payment',
-    path: (prefix) => `${prefix}/${prefix === '/admin' ? 'payments' : 'transactions'}`,
+    path: (prefix) => `${prefix}/${prefix === '/admin' ? 'payments' : 'billing'}`,
     fields: ['guestName', 'roomNumber', 'reservationId', 'amount', 'method', 'status'],
     title: (data) => data.guestName || 'Payment',
     detail: (data) => [`Room ${data.roomNumber || '—'}`, data.amount ? `₱${data.amount}` : null, data.method].filter(Boolean).join(' · '),
@@ -281,6 +281,8 @@ function SidebarAccount({ name, role, email, onLogout }) {
   const collapsed = !isMobile && state === 'collapsed';
   const { user } = useStaffAccess();
   const avatar = user?.avatar || '';
+  // Live from the account, so a name change shows straight away.
+  if (user?.name) name = user.name;
 
   return (
     <AnimatedSidebarFooter className="gap-3">
@@ -288,7 +290,7 @@ function SidebarAccount({ name, role, email, onLogout }) {
         <button
           type="button"
           onClick={openAvatarPicker}
-          title="Edit avatar"
+          title="Edit profile"
           className="group flex min-w-0 items-center gap-2.5 rounded-lg px-1 py-1 text-left hover:bg-muted"
         >
           <span className="relative shrink-0">
@@ -310,7 +312,7 @@ function SidebarAccount({ name, role, email, onLogout }) {
             icon={collapsed ? <StaffAvatar seed={avatar} name={name} size={22} /> : <i className="ti ti-mood-smile" />}
             onSelect={openAvatarPicker}
           >
-            {avatar ? 'Edit avatar' : 'Choose avatar'}
+            Edit profile
           </AnimatedSidebarMenuButton>
         </AnimatedSidebarMenuItem>
         <AnimatedSidebarMenuItem>

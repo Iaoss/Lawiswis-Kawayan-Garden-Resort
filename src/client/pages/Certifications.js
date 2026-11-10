@@ -2,14 +2,22 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { BRASS, INK, LINE, PAPER, RESORT_IMAGES, SERIF, SANS } from '../components/clientTheme';
 
-const sections = [
+// The resort's accreditations, as listed on lawiswiskawayanresort.com.
+const UPLOADS = 'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/';
+const ACCREDITATIONS = [
   {
-    title: 'Certifications & accreditations',
-    text: 'For current operating certificates and tourism accreditation details, please contact the resort directly.',
+    title: 'Department of Tourism Accredited Resort',
+    text: 'Accredited by the Department of Tourism (DOT) of the Philippines.',
+    logo: `${UPLOADS}Department_of_Tourism_DOT-400x400.png`,
+    alt: 'Department of Tourism (DOT) Philippines seal',
+    width: 120,
   },
   {
-    title: 'Awards & recognitions',
-    text: 'The official resort page does not list specific awards or recognitions. Please contact our team for verified information.',
+    title: 'PhilGEPS Accredited Establishment',
+    text: 'Registered with the Philippine Government Electronic Procurement System, so government offices can book the resort for official events.',
+    logo: `${UPLOADS}combined_LOGO-400x221.png`,
+    alt: 'PhilGEPS and Procurement Service logos',
+    width: 190,
   },
 ];
 
@@ -31,24 +39,25 @@ export default function Certifications() {
             <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.14em', textTransform: 'uppercase', marginBottom: '12px' }}>Lawiswis Kawayan Garden Resort</div>
             <h2 style={{ color: INK, font: `500 clamp(28px, 4vw, 38px)/1.2 ${SERIF}`, margin: '0 0 14px' }}>A welcoming place to gather and unwind.</h2>
             <p style={{ color: '#6b6a5c', font: `13px/1.8 ${SANS}`, margin: 0 }}>
-              The official certifications and awards page shares the resort’s invitation to guests, but does not publish specific credentials. Contact the resort for current, verified details.
+              Lawiswis Kawayan Garden Resort is a Department of Tourism accredited resort and a PhilGEPS accredited establishment. Contact the resort for copies of current certificates.
             </p>
             <Link to="/contact-us" style={{ display: 'inline-block', marginTop: '18px', color: INK, font: `600 11px ${SANS}`, letterSpacing: '.08em', textDecorationColor: BRASS, textUnderlineOffset: '4px' }}>CONTACT THE RESORT →</Link>
           </div>
         </div>
-        <div style={{ display: 'grid', gap: '18px', marginTop: '32px' }}>
-          {sections.map(section => (
-            <section key={section.title} style={{ display: 'grid', gridTemplateColumns: '48px minmax(0,1fr)', gap: '18px', background: '#fff', border: `1px solid ${LINE}`, padding: '26px' }}>
-              <span aria-hidden="true" style={{ color: BRASS, font: `500 24px ${SERIF}` }}>✦</span>
-              <div>
-                <h2 style={{ color: INK, font: `500 25px ${SERIF}`, margin: '0 0 9px' }}>{section.title}</h2>
-                <p style={{ color: '#6b6a5c', font: `13px/1.8 ${SANS}`, margin: 0 }}>{section.text}</p>
+        <h2 style={{ color: INK, font: `500 clamp(26px, 3.5vw, 34px)/1.2 ${SERIF}`, margin: '48px 0 18px', textAlign: 'center' }}>Certifications &amp; accreditations</h2>
+        <div className="accreditation-grid">
+          {ACCREDITATIONS.map(item => (
+            <section key={item.title} style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '30px 24px', textAlign: 'center', display: 'grid', justifyItems: 'center', gap: '14px' }}>
+              <div style={{ height: '120px', display: 'flex', alignItems: 'center' }}>
+                <img src={item.logo} alt={item.alt} loading="lazy" width={item.width} style={{ maxHeight: '120px', width: 'auto', maxWidth: '100%', objectFit: 'contain' }} />
               </div>
+              <h3 style={{ color: INK, font: `600 15px/1.35 ${SANS}`, letterSpacing: '.06em', textTransform: 'uppercase', margin: 0 }}>{item.title}</h3>
+              <p style={{ color: '#6b6a5c', font: `13px/1.7 ${SANS}`, margin: 0, maxWidth: '340px' }}>{item.text}</p>
             </section>
           ))}
         </div>
       </section>
-      <style>{`.certifications-intro{display:grid;grid-template-columns:1.05fr .95fr;gap:36px;align-items:stretch}@media(max-width:700px){.certifications-intro{grid-template-columns:1fr}}`}</style>
+      <style>{`.certifications-intro{display:grid;grid-template-columns:1.05fr .95fr;gap:36px;align-items:stretch}.accreditation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}@media(max-width:700px){.certifications-intro,.accreditation-grid{grid-template-columns:1fr}}`}</style>
     </div>
   );
 }

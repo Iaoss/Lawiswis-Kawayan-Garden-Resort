@@ -146,9 +146,9 @@ export const PLATFORM_RANGES = [
 ];
 
 const PLATFORMS = [
-  { id: 'online', name: 'Website (online)', color: '#89D7B7' },
-  { id: 'walk-in', name: 'Walk-in', color: '#9cb56f' },
-  { id: 'corporate', name: 'Corporate / group', color: '#60a5fa' },
+  { id: 'online', name: 'Website (online)', color: '#2E7D7B' },
+  { id: 'walk-in', name: 'Walk-in', color: '#71B280' },
+  { id: 'corporate', name: 'Corporate / group', color: '#134E5E' },
   { id: 'other', name: 'Other', color: '#a78bfa' },
 ];
 

@@ -7,18 +7,25 @@ import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
 import {
-  MAX_STAY_NIGHTS, OVERNIGHT_TIME_SLOTS, getRoomBaseRate, getRoomMaximumGuests, isCheckInPassed, isCoupleRoom, isTourStartPassed, stayRangesOverlap,
+  MAX_STAY_NIGHTS, OVERNIGHT_TIME_SLOTS, getRoomBaseRate, getRoomMaximumGuests, isCheckInPassed, isCoupleRoom, isTourStartPassed, isWalkInTourClosed, stayRangesOverlap,
 } from '../../lib/bookingPricing';
 import { BOOKING_OPTIONS, normalizeBookingDetails, priceBookingDetails } from '../../lib/bookingDetails';
-import { COTTAGE_OPTIONS, getCottageFee } from '../../lib/bookingPricing';
+import { COTTAGE_OPTIONS, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES, calculateCottageTourPrice, cottageName, getCottageFee } from '../../lib/bookingPricing';
 import { groupTooLargeNote, suggestCottage, suggestRooms } from '../../lib/bookingSuggestions';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { staffApi } from '../lib/staffApi';
+import OnlinePaymentQr from '../components/OnlinePaymentQr';
+import CorporateWalkInForm from '../components/CorporateWalkInForm';
+import AssignRoomsDialog from '../components/AssignRoomsDialog';
+import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
 import { appAlert } from '../../components/ui/app-dialog';
 import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
+import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
+import { useCottageCatalog } from '../../lib/useCottageCatalog';
+import { PH_MOBILE } from '../../lib/phoneNumber';
 
-const COUPLE_ROOM_LIMIT_MESSAGE = 'Couple Room accommodates a maximum of 1 extra adult or child. For larger groups, we suggest booking the Family Suite for 6.';
+const COUPLE_ROOM_LIMIT_MESSAGE = 'This room is full for that many guests. Couple rooms take 2 guests; a Couple Room with Extra Bed takes a third adult. For bigger groups, choose a Family Room or Family Suite.';
 
 const toIso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const getLocalToday = () => toIso(new Date());
@@ -121,7 +128,10 @@ export default function WalkIn() {
   const [reservations, setReservations] = useState([]);
   const [catFilter, setCatFilter] = useState('all');
   const [selectedRoom, setSelectedRoom] = useState(null);
-  const [step, setStep] = useState(1); // 1 = dates & room, 2 = guest details
+  const [step, setStep] = useState(1); // 1 = dates & room, 2 = guest details, 3 = payment
+  // The booking just created, waiting for payment (step 3).
+  const [created, setCreated] = useState(null); // { id, guestName, roomNumber, total, paid, checkIn, isToday, notes: [] }
+  const [payment, setPayment] = useState({ method: 'cash', amount: '', busy: false, error: '' });
   const [success, setSuccess] = useState('');
   const [saving, setSaving] = useState(false);
   const [upsellOpen, setUpsellOpen] = useState(false);
@@ -129,14 +139,21 @@ export default function WalkIn() {
   const [form, setForm] = useState({
     firstName: '', lastName: '', email: '', phone: '', address: '', preferredContactMethod: '',
     roomId: '', checkIn: '', checkOut: '',
-    bookingOption: 'overnight', overnightTimeSlot: 'morning', cottageId: '',
+    bookingOption: 'overnight', overnightTimeSlot: 'morning', cottageId: '', cottageOnly: false,
     adults: 1, children: 0,
-    paymentMethod: 'cash', paymentStatus: 'paid', notes: '',
+    // How many of the group are here now ('' = everyone); the rest come later.
+    guestsHereNow: '',
+    paymentMethod: 'cash', paymentStatus: 'pending', notes: '',
   });
 
   const today = getLocalToday();
   const guestName = joinGuestName(form.firstName, form.lastName);
-  const coupleGuestLimit = isCoupleRoom(selectedRoom) ? getRoomMaximumGuests(selectedRoom) : null;
+  // More rooms for the same group (the group is split across them).
+  const [extraRoomIds, setExtraRoomIds] = useState([]);
+  // Walk-in kind: a guest / family, or a corporate group.
+  const [mode, setMode] = useState('guest');
+  const [assignFor, setAssignFor] = useState(null);
+  const coupleGuestLimit = !extraRoomIds.length && isCoupleRoom(selectedRoom) ? getRoomMaximumGuests(selectedRoom) : null;
 
   // Live data: new online bookings show up here immediately, so availability stays current.
   useEffect(() => {
@@ -164,7 +181,7 @@ export default function WalkIn() {
       checkOut: isTour ? form.checkIn : form.checkOut,
       adults: Number(form.adults) || 1,
       children: Number(form.children) || 0,
-    })
+    }, { walkIn: true })
     : null;
   const stayError = detailsCheck?.error || '';
   const details = detailsCheck?.details || null;
@@ -173,14 +190,76 @@ export default function WalkIn() {
   const nights = details ? details.nights : 0;
   // Estimate only, using the same price rules as the server; the server
   // calculates the real total when the booking is saved.
+  // Tours without a room: just a cottage plus the swimming entrance.
+  const cottageOnly = isTour && form.cottageOnly;
+  const cottageRoom = cottageId => ({
+    id: 'cottage-only',
+    roomNumber: `${cottageName(COTTAGE_OPTIONS.find(option => option.id === cottageId)) || 'Cottage'} (cottage)`,
+    type: 'Cottage only — no room',
+    description: 'Day or night tour with a cottage. No room is booked.',
+    amenities: 'Pool access, Cottage',
+  });
+  const [cottageAvailability, setCottageAvailability] = useState(null);
+  useEffect(() => {
+    if (!form.checkIn) return undefined;
+    let active = true;
+    const period = isTour ? bookingOption.tourPeriod : 'both';
+    fetch(`/api/cottage-availability?date=${encodeURIComponent(form.checkIn)}&tourPeriod=${period}`)
+      .then(response => (response.ok ? response.json() : null))
+      .then(result => { if (active) setCottageAvailability(result?.availability || null); })
+      .catch(() => { if (active) setCottageAvailability(null); });
+    return () => { active = false; };
+  }, [form.checkIn, isTour, bookingOption.tourPeriod]);
+  const cottageLeftLabel = id => {
+    const entry = cottageAvailability?.[id];
+    if (!entry || entry.left === null) return '';
+    return entry.left <= 0 ? ' — fully booked' : ` — ${entry.left} left`;
+  };
+  const cottageSoldOut = id => {
+    const entry = cottageAvailability?.[id];
+    return Boolean(entry && entry.left !== null && entry.left <= 0);
+  };
+
+  const seasonPeriods = useSeasonPeriods();
+  useCottageCatalog(); // the admin's current cottage list
   const totalAmount = (() => {
+    if (cottageOnly) {
+      try {
+        return calculateCottageTourPrice({ adults: Number(form.adults) || 1, children: Number(form.children) || 0, tourPeriod: bookingOption.tourPeriod, cottageId: form.cottageId }).subtotalAmount;
+      } catch { return 0; }
+    }
     if (!selectedRoom || !details) return 0;
-    try { return priceBookingDetails(selectedRoom, details, { cottageId: form.cottageId, cottageFee: getCottageFee(form.cottageId) || 0 }).subtotalAmount; } catch { return 0; }
+    try { return priceBookingDetails(selectedRoom, details, { cottageId: form.cottageId, cottageFee: getCottageFee(form.cottageId) || 0, seasonPeriods }).subtotalAmount; } catch { return 0; }
   })();
+  const extraRooms = extraRoomIds.map(id => rooms.find(r => r.id === id)).filter(Boolean);
+  const roomSplit = selectedRoom && selectedRoom.id !== 'cottage-only' && extraRooms.length && details
+    ? splitGuestsAcrossRooms([selectedRoom, ...extraRooms], Number(form.adults) || 0, Number(form.children) || 0, {
+      fits: (room, a, c) => (getRoomMaximumGuests(room) || 99) >= a + c && !normalizeBookingDetails({ ...details, adults: a, children: c }, { room, walkIn: true }).error,
+      priceOf: (room, a, c) => { try { return priceBookingDetails(room, { ...details, adults: a, children: c }, { seasonPeriods }).subtotalAmount; } catch { return 1e9; } },
+    })
+    : null;
+  const priceFor = (room, a, c, withCottage) => {
+    try {
+      return priceBookingDetails(room, { ...details, adults: a, children: c }, withCottage
+        ? { cottageId: form.cottageId, cottageFee: getCottageFee(form.cottageId) || 0, seasonPeriods }
+        : { seasonPeriods }).subtotalAmount;
+    } catch { return 0; }
+  };
+  const groupLines = roomSplit
+    ? roomSplit.map((item, i) => {
+      const room = i === 0 ? selectedRoom : extraRooms[i - 1];
+      return { ...item, roomNumber: room.roomNumber, price: priceFor(room, item.adults, item.children, i === 0) };
+    })
+    : [];
+  const groupTotal = groupLines.reduce((sum, item) => sum + item.price, 0);
+  const estimatedTotal = extraRooms.length ? groupTotal : totalAmount;
+  const toggleExtraRoom = room => setExtraRoomIds(current => (current.includes(room.id)
+    ? current.filter(id => id !== room.id)
+    : current.length >= MAX_ROOMS_PER_BOOKING - 1 ? current : [...current, room.id]));
   // Today's times that have passed: move to the next open one.
   useEffect(() => {
     if (!form.checkIn) return;
-    if (form.bookingOption === 'day' && isTourStartPassed(form.checkIn, 'day') && !isTourStartPassed(form.checkIn, 'night')) {
+    if (form.bookingOption === 'day' && isWalkInTourClosed(form.checkIn, 'day') && !isTourStartPassed(form.checkIn, 'night')) {
       setForm(p => ({ ...p, bookingOption: 'night' }));
     }
     if (form.bookingOption === 'overnight') {
@@ -202,6 +281,13 @@ export default function WalkIn() {
     return { availableRooms: free, bookedCount: bookable.length - free.length };
   }, [rooms, reservations, datesReady, form.checkIn, stayCheckOut, today]);
 
+  // Extra rooms that are no longer free (dates changed) are dropped.
+  useEffect(() => {
+    if (!extraRoomIds.length) return;
+    const stillFree = extraRoomIds.filter(id => id !== selectedRoom?.id && availableRooms.some(r => r.id === id));
+    if (stillFree.length !== extraRoomIds.length) setExtraRoomIds(stillFree);
+  }, [availableRooms, extraRoomIds, selectedRoom]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Smart suggestion: best-fitting free rooms and cottage for the group ──
   const guestTotal = (Number(form.adults) || 0) + (Number(form.children) || 0);
   const roomSuggestions = useMemo(() => suggestRooms(availableRooms, details), [availableRooms, details]);
@@ -211,15 +297,28 @@ export default function WalkIn() {
   const activeCategory = WALK_IN_CATEGORIES.find(c => c.category === catFilter);
   const shownRooms = activeCategory ? getRoomsForCategory(availableRooms, activeCategory) : availableRooms;
 
+  // Overnight stays always need a room.
+  useEffect(() => {
+    if (!isTour && form.cottageOnly) setForm(p => ({ ...p, cottageOnly: false }));
+  }, [isTour, form.cottageOnly]);
+  // Keep the cottage-only "room" label in step with the chosen cottage.
+  useEffect(() => {
+    if (cottageOnly && selectedRoom?.id === 'cottage-only') {
+      const next = cottageRoom(form.cottageId);
+      if (next.roomNumber !== selectedRoom.roomNumber) setSelectedRoom(next);
+    }
+  }, [cottageOnly, form.cottageId, selectedRoom]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // If the chosen room becomes taken (dates changed, or someone just booked it), drop it.
   useEffect(() => {
-    if (selectedRoom && datesReady && !availableRooms.some(r => r.id === selectedRoom.id)) {
+    if (selectedRoom && selectedRoom.id !== 'cottage-only' && datesReady && !availableRooms.some(r => r.id === selectedRoom.id)) {
       setSelectedRoom(null);
       setForm(f => ({ ...f, roomId: '' }));
     }
   }, [availableRooms, selectedRoom, datesReady]);
 
   const handleSelectRoom = (room) => {
+    setExtraRoomIds(current => current.filter(id => id !== room.id));
     setSelectedRoom(room);
     setForm(f => ({ ...f, roomId: room.id }));
   };
@@ -230,7 +329,7 @@ export default function WalkIn() {
       setUpsellOpen(true);
       return;
     }
-    setForm(previous => ({ ...previous, [key]: value }));
+    setForm(previous => ({ ...previous, [key]: value, guestsHereNow: '' }));
   };
 
   const switchToFamilySuite = () => {
@@ -248,13 +347,16 @@ export default function WalkIn() {
     if (!selectedRoom) return appAlert('Choose a room for this guest first.', { title: 'No room selected', tone: 'warning' });
     if (stayError || !details) return appAlert(stayError || 'Choose the booking date first.', { title: 'Check the dates', tone: 'warning' });
     if (!isPreferredContactMethod(form.preferredContactMethod)) return appAlert('Choose how the guest prefers to be contacted.', { title: 'Contact method needed', tone: 'warning' });
+    if (cottageOnly && !form.cottageId) return appAlert('Choose a cottage for this cottage-only tour.', { title: 'Cottage needed', tone: 'warning' });
     if (coupleGuestLimit !== null && (Number(form.adults) || 0) + (Number(form.children) || 0) > coupleGuestLimit) {
       setUpsellOpen(true);
       return;
     }
+    if (extraRooms.length && !roomSplit) return appAlert(`These rooms don't fit all ${guestTotal} guests. Add or swap a room.`, { title: 'Rooms too small', tone: 'warning' });
     const errors = {
       firstName: NAME_PATTERN.test(form.firstName.trim()) ? '' : 'Enter 2-35 valid letters.',
       lastName: NAME_PATTERN.test(form.lastName.trim()) ? '' : 'Enter 2-35 valid letters.',
+      phone: PH_MOBILE.test(form.phone) ? '' : 'Enter a valid 11-digit mobile number starting with 09 (e.g. 09171234567).',
     };
     setNameErrors(errors);
     if (Object.values(errors).some(Boolean)) return;
@@ -265,9 +367,19 @@ export default function WalkIn() {
       // price from the room's nightly rate, and records any payment.
       let created;
       try {
+        // Created unpaid; the payment is taken in the next step.
         created = await staffApi('staff-billing', {
           action: 'create-walk-in',
-          booking: { ...form, checkOut: stayCheckOut, category: categoryOf(selectedRoom)?.category || '' },
+          booking: cottageOnly
+            ? { ...form, cottageOnly: true, roomId: '', paymentMethod: 'cash', paymentStatus: 'pending', checkOut: form.checkIn }
+            : {
+              ...form, cottageOnly: false, paymentMethod: 'cash', paymentStatus: 'pending', checkOut: stayCheckOut, category: categoryOf(selectedRoom)?.category || '',
+              ...(roomSplit ? {
+                adults: roomSplit[0].adults,
+                children: roomSplit[0].children,
+                additionalRooms: roomSplit.slice(1).map(item => ({ roomId: item.roomId, adults: item.adults, children: item.children })),
+              } : {}),
+            },
         });
       } catch (createError) {
         if (/just booked/.test(createError.message)) {
@@ -279,9 +391,6 @@ export default function WalkIn() {
         return;
       }
       const arrivesToday = created.arrivesToday;
-      const receiptMessage = created.amountPaid > 0
-        ? (created.receiptError ? ` Payment receipt failed: ${created.receiptError}` : ' Payment receipt emailed.')
-        : '';
 
       let confirmationMessage = '';
       try {
@@ -292,17 +401,73 @@ export default function WalkIn() {
       } catch (confirmationError) {
         confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
       }
-      setSuccess(`Reservation created for ${guestName}. Room ${selectedRoom.roomNumber} is ${arrivesToday ? 'now occupied' : `reserved for ${isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`}`}.${confirmationMessage}${receiptMessage}`);
-      setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', cottageId:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'paid', notes:'' });
-      setNameErrors({});
-      setSelectedRoom(null);
-      setCatFilter('all');
-      setStep(1);
+      // Next: take the payment. Guests pay in full before entering.
+      setCreated({
+        id: created.reservationId,
+        guestName,
+        roomNumber: created.rooms?.length > 1 ? created.rooms.map(item => item.roomNumber).join(', ') : selectedRoom.roomNumber,
+        total: Number(created.groupTotal ?? created.totalAmount ?? 0),
+        isGroup: (created.rooms?.length || 1) > 1,
+        paid: 0,
+        stayLabel: isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`,
+        isToday: arrivesToday,
+        notes: [confirmationMessage.trim()].filter(Boolean),
+        checkedIn: false,
+      });
+      setPayment({ method: 'cash', amount: String(Number(created.groupTotal ?? created.totalAmount ?? 0)), busy: false, error: '' });
+      setExtraRoomIds([]);
+      setSuccess('');
+      setStep(3);
     } catch (submitError) {
       appAlert(submitError.message || 'Unknown error.', { title: 'Couldn’t save the reservation', tone: 'danger' });
     } finally {
       setSaving(false);
     }
+  };
+
+  // Step 3: record the walk-in's payment. Paying the full amount for a stay
+  // that starts today checks the guest in and marks the room occupied.
+  const owedNow = created ? Math.max(0, Math.round((created.total - created.paid) * 100) / 100) : 0;
+  const recordWalkInPayment = async () => {
+    if (!created || payment.busy) return;
+    const amount = Number(payment.amount);
+    if (!Number.isFinite(amount) || amount <= 0) { setPayment(p => ({ ...p, error: 'Enter the amount received.' })); return; }
+    if (amount - owedNow > 0.001) { setPayment(p => ({ ...p, error: `The guest only owes ₱${owedNow.toLocaleString()}.` })); return; }
+    setPayment(p => ({ ...p, busy: true, error: '' }));
+    try {
+      const result = await staffApi('staff-billing', { action: created.isGroup ? 'record-group-payment' : 'record-payment', reservationId: created.id, amount, method: payment.method });
+      const receipt = result.receiptError ? `Receipt email failed: ${result.receiptError}` : result.receipt ? 'Receipt emailed.' : '';
+      setCreated(c => ({
+        ...c,
+        paid: Number(result.amountPaid || 0),
+        checkedIn: Boolean(result.autoCheckedIn) || c.checkedIn,
+        notes: [...c.notes, receipt].filter(Boolean),
+      }));
+      const left = Math.max(0, Math.round((created.total - Number(result.amountPaid || 0)) * 100) / 100);
+      setPayment(p => ({ ...p, busy: false, amount: left > 0 ? String(left) : '' }));
+    } catch (error) {
+      setPayment(p => ({ ...p, busy: false, error: error.message || 'The payment could not be saved.' }));
+    }
+  };
+
+  const finishWalkIn = () => {
+    if (created?.isCorporate) {
+      setSuccess(`Group booking created for ${created.guestName} (${created.roomNumber}, ${created.stayLabel}).${owedNow > 0 ? ` ₱${owedNow.toLocaleString()} is still due; collect it in Billing.` : ' Fully paid.'} ${created.notes.join(' ')}`.trim());
+    } else if (created) {
+      const state = created.checkedIn
+        ? `Fully paid: ${created.guestName} is checked in and Room ${created.roomNumber} is occupied.`
+        : owedNow > 0
+          ? `Room ${created.roomNumber} is reserved for ${created.stayLabel}. ₱${owedNow.toLocaleString()} is still due; collect it in Billing before check-in.`
+          : `Fully paid. Room ${created.roomNumber} is reserved for ${created.stayLabel}; check the guest in when they arrive.`;
+      setSuccess(`Reservation created for ${created.guestName}. ${state} ${created.notes.join(' ')}`.trim());
+    }
+    setCreated(null);
+    setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', cottageId:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'pending', notes:'' });
+    setNameErrors({});
+    setExtraRoomIds([]);
+    setSelectedRoom(null);
+    setCatFilter('all');
+    setStep(1);
   };
 
   /* ── shared styles ── */
@@ -319,16 +484,16 @@ export default function WalkIn() {
 
   const Breadcrumb = () => (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px', fontSize: '12px' }}>
-      {[{ n: 1, label: 'Dates & room' }, { n: 2, label: 'Guest details' }].map((s, i) => (
+      {[{ n: 1, label: 'Dates & room' }, { n: 2, label: 'Guest details' }, { n: 3, label: 'Payment' }].map((s, i) => (
         <React.Fragment key={s.n}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: step > s.n ? 'pointer' : 'default' }}
-            onClick={() => step > s.n && setStep(s.n)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: step > s.n && step < 3 ? 'pointer' : 'default' }}
+            onClick={() => step > s.n && step < 3 && setStep(s.n)}>
             <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: step >= s.n ? ACCENT : CARD2, color: step >= s.n ? ACCENT_TEXT : MUTED, fontSize: 10, fontWeight: 700 }}>
               {step > s.n ? '✓' : s.n}
             </div>
             <span style={{ color: step >= s.n ? TEXT : MUTED, fontWeight: step === s.n ? 600 : 400 }}>{s.label}</span>
           </div>
-          {i < 1 && <span style={{ color: BORDER2 }}>›</span>}
+          {i < 2 && <span style={{ color: BORDER2 }}>›</span>}
         </React.Fragment>
       ))}
     </div>
@@ -364,9 +529,63 @@ export default function WalkIn() {
           )}
         </AnimatePresence>
 
-        <Breadcrumb />
+        {step !== 3 && (
+          <div role="tablist" aria-label="Walk-in type" style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+            {[['guest', 'Guest / family'], ['corporate', 'Corporate / group']].map(([id, text]) => (
+              <button key={id} type="button" role="tab" aria-selected={mode === id} onClick={() => setMode(id)}
+                style={{ border: `1px solid ${mode === id ? ACCENT : BORDER2}`, background: mode === id ? ACCENT : CARD, color: mode === id ? ACCENT_TEXT : TEXT, borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                {text}
+              </button>
+            ))}
+          </div>
+        )}
 
-        <AnimatePresence mode="wait">
+        {mode === 'corporate' && step !== 3 && (
+          <CorporateWalkInForm
+            colors={{ CARD, CARD2, BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+            inp={inp}
+            label={label}
+            today={today}
+            onCreated={result => {
+              const f = result.form;
+              setCreated({
+                id: result.reservationId,
+                guestName: f.companyName,
+                roomNumber: result.packageName,
+                total: Number(result.totalAmount || 0),
+                paid: 0,
+                stayLabel: f.bookingType === 'daytour' ? `Day event on ${formatDate(f.checkIn)}` : `${formatDate(f.checkIn)} – ${formatDate(f.checkOut)}`,
+                isToday: f.checkIn === today,
+                notes: [],
+                checkedIn: false,
+                isCorporate: true,
+                corporate: {
+                  id: result.reservationId, type: 'corporate', companyName: f.companyName, guestName: `${f.firstName} ${f.lastName}`,
+                  packageName: result.packageName, packageId: result.packageId, totalGuests: f.totalGuests,
+                  checkIn: f.checkIn, checkOut: f.checkOut, nights: result.nights, assignedRooms: [],
+                },
+              });
+              setPayment({ method: 'cash', amount: String(Number(result.totalAmount || 0)), busy: false, error: '' });
+              setStep(3);
+            }}
+          />
+        )}
+
+        {assignFor && (
+          <AssignRoomsDialog
+            reservation={assignFor}
+            colors={{ CARD, CARD2, BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+            onClose={() => setAssignFor(null)}
+            onSaved={result => {
+              setAssignFor(null);
+              setCreated(c => (c ? { ...c, corporate: { ...c.corporate, assignedRooms: result.assignedRooms }, notes: [...c.notes.filter(n => !n.startsWith('Rooms:')), `Rooms: ${result.assignedRooms.map(item => item.roomNumber).join(', ') || 'none'}.`] } : c));
+            }}
+          />
+        )}
+
+        {(mode === 'guest' || step === 3) && <Breadcrumb />}
+
+        {(mode === 'guest' || step === 3) && <AnimatePresence mode="wait">
           <motion.div key={step} variants={stepVariants} initial="enter" animate="center" exit="exit">
 
             {/* ═════════ STEP 1 — Dates, then available rooms ═════════ */}
@@ -375,31 +594,64 @@ export default function WalkIn() {
                 <div style={{ flex: '1 1 480px', minWidth: 0 }}>
                   {/* Dates */}
                   <div style={{ ...card, marginBottom: 16 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 14 }}>Find a room 🏡</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 14 }}><i className="ti ti-home-search" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Find a room</div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 8 }}>How many guests?</div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 14 }}>
                       <div>
-                        <label style={label}>Adults *</label>
+                        <label style={label}>Adults</label>
                         <input type="number" min="1" value={form.adults} onChange={e => changeGuests('adults', e.target.value)} style={inp} />
                       </div>
                       <div>
                         <label style={label}>Children (under 10)</label>
                         <input type="number" min="0" value={form.children} onChange={e => changeGuests('children', e.target.value)} style={inp} />
                       </div>
+                      {guestTotal > 1 && (!form.checkIn || form.checkIn === today) && (
+                        <div>
+                          <label style={label}>Here now</label>
+                          <select value={form.guestsHereNow} onChange={e => setForm(p => ({ ...p, guestsHereNow: e.target.value }))} style={inp}>
+                            <option value="">All {guestTotal}</option>
+                            {Array.from({ length: guestTotal - 1 }, (_, i) => guestTotal - 1 - i).map(n => (
+                              <option key={n} value={n}>{n} ({guestTotal - n} coming later)</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                    {form.guestsHereNow !== '' && guestTotal > 1 && (
+                      <div style={{ fontSize: 11, color: '#d97706', margin: '-6px 0 12px' }}>
+                        {guestTotal - Number(form.guestsHereNow)} guest{guestTotal - Number(form.guestsHereNow) === 1 ? '' : 's'} will arrive later. Record them in Reservations (Guests arrived) when they come.
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 8 }}>Booking type</div>
+                    {/* Same-day bookings: a day or night tour checks in and out on one date. */}
+                    <div role="radiogroup" aria-label="Booking type" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 8 }}>
+                      {BOOKING_OPTIONS.map(option => {
+                        const closed = option.bookingType === 'daytour' && isWalkInTourClosed(form.checkIn, option.tourPeriod);
+                        const active = form.bookingOption === option.id;
+                        const sameDay = option.bookingType === 'daytour';
+                        return (
+                          <button key={option.id} type="button" role="radio" aria-checked={active} disabled={closed}
+                            onClick={() => setForm(p => ({ ...p, bookingOption: option.id }))}
+                            style={{ textAlign: 'left', border: `1.5px solid ${active ? ACCENT : BORDER2}`, background: active ? `${ACCENT}22` : CARD2, color: TEXT, borderRadius: 10, padding: '10px 12px', cursor: closed ? 'not-allowed' : 'pointer', opacity: closed ? 0.5 : 1, fontFamily: 'inherit' }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: sameDay ? ACCENT : MUTED }}>{sameDay ? 'Same day · single-day' : 'Stays the night'}</div>
+                            <div style={{ fontSize: 13, fontWeight: 700, marginTop: 2 }}>{sameDay ? (option.tourPeriod === 'night' ? 'Night tour' : 'Day tour') : 'Overnight stay'}</div>
+                            <div style={{ fontSize: 11, color: MUTED }}>{closed ? 'Closed for today' : sameDay ? (option.tourPeriod === 'night' ? '5:00 PM – 10:00 PM' : '8:00 AM – 5:00 PM') : 'Check out on a later date'}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: 11, color: MUTED, marginBottom: 12 }}>
+                      Day and night tours are single-day bookings: the guest checks in and out on the same date, and can book for today.
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, alignItems: 'end' }}>
                       <div>
-                        <label style={label}>Booking type *</label>
-                        <select value={form.bookingOption} style={inp}
-                          onChange={e => setForm(p => ({ ...p, bookingOption: e.target.value }))}>
-                          {BOOKING_OPTIONS.map(option => {
-                            const closed = option.bookingType === 'daytour' && isTourStartPassed(form.checkIn, option.tourPeriod);
-                            return <option key={option.id} value={option.id} disabled={closed}>{option.label}{closed ? ' — closed for today' : ''}</option>;
-                          })}
-                        </select>
-                      </div>
-                      <div>
-                        <label style={label}>{isTour ? 'Date *' : 'Check-in *'}</label>
+                        <label style={{ ...label, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>{isTour ? 'Date' : 'Check-in'}</span>
+                          {form.checkIn !== today && (
+                            <button type="button" onClick={() => setForm(p => ({ ...p, checkIn: today, checkOut: p.checkOut && p.checkOut <= today ? '' : p.checkOut }))}
+                              style={{ border: 0, background: 'transparent', color: ACCENT, fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0, textTransform: 'none', letterSpacing: 0 }}>Today</button>
+                          )}
+                        </label>
                         <input type="date" min={today} value={form.checkIn} style={inp}
                           onChange={e => {
                             const checkIn = e.target.value;
@@ -409,14 +661,14 @@ export default function WalkIn() {
                       {!isTour && (
                         <>
                           <div>
-                            <label style={label}>Check-out *</label>
+                            <label style={label}>Check-out</label>
                             <input type="date" disabled={!form.checkIn}
                               min={form.checkIn ? addDays(form.checkIn, 1) : today} max={maxCheckOut}
                               value={form.checkOut} style={{ ...inp, opacity: form.checkIn ? 1 : 0.6 }}
                               onChange={e => setForm(p => ({ ...p, checkOut: e.target.value }))} />
                           </div>
                           <div>
-                            <label style={label}>Check-in time *</label>
+                            <label style={label}>Check-in time</label>
                             <select value={form.overnightTimeSlot} style={inp}
                               onChange={e => setForm(p => ({ ...p, overnightTimeSlot: e.target.value }))}>
                               {OVERNIGHT_TIME_SLOTS.map(slot => {
@@ -442,10 +694,52 @@ export default function WalkIn() {
                     )}
                   </div>
 
+                  {/* Tours: with a room, or just a cottage */}
+                  {isTour && (
+                    <div style={{ ...card, marginBottom: 16 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Room or cottage?</div>
+                      <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>Day and night tours need at least a cottage. A room is optional.</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+                        {[[false, 'Room', 'Pick a room below; a cottage is optional'], [true, 'Cottage only', 'No room — entrance + cottage']].map(([value, name, hint]) => (
+                          <button key={name} type="button" onClick={() => { setForm(p => ({ ...p, cottageOnly: value })); if (!value && selectedRoom?.id === 'cottage-only') setSelectedRoom(null); }}
+                            style={{ textAlign: 'left', border: `1.5px solid ${form.cottageOnly === value ? ACCENT : BORDER2}`, background: form.cottageOnly === value ? `${ACCENT}22` : CARD2, color: TEXT, borderRadius: 10, padding: '10px 12px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                            <div style={{ fontSize: 13, fontWeight: 700 }}>{name}</div>
+                            <div style={{ fontSize: 11, color: MUTED }}>{hint}</div>
+                          </button>
+                        ))}
+                      </div>
+                      {cottageOnly && (
+                        <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
+                          <div>
+                            <label style={label}>Cottage</label>
+                            <select value={form.cottageId} onChange={e => setForm(p => ({ ...p, cottageId: e.target.value }))} style={inp}>
+                              <option value="">Choose a cottage</option>
+                              {COTTAGE_OPTIONS.filter(option => option.id).map(option => (
+                                <option key={option.id} value={option.id} disabled={cottageSoldOut(option.id) || guestTotal > option.maxGuests}>
+                                  {option.label} · ₱{option.price.toLocaleString()}{cottageLeftLabel(option.id)}{guestTotal > option.maxGuests ? ' — too small' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div style={{ fontSize: 12, color: MUTED }}>
+                            {form.cottageId && totalAmount > 0
+                              ? <>Entrance for {guestTotal} + cottage: <strong style={{ color: TEXT }}>₱{totalAmount.toLocaleString()}</strong></>
+                              : 'Choose a cottage that seats the whole group.'}
+                          </div>
+                          <button type="button" disabled={!datesReady || !form.cottageId || totalAmount <= 0}
+                            onClick={() => { setSelectedRoom(cottageRoom(form.cottageId)); setForm(f => ({ ...f, roomId: '' })); setStep(2); }}
+                            style={{ background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 12, fontSize: 13, fontWeight: 700, cursor: !datesReady || !form.cottageId ? 'not-allowed' : 'pointer', opacity: !datesReady || !form.cottageId ? 0.6 : 1, fontFamily: 'inherit' }}>
+                            Continue with the cottage →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Smart suggestion */}
-                  {datesReady && guestTotal > 0 && (
+                  {!cottageOnly && datesReady && guestTotal > 0 && (
                     <div style={{ ...card, marginBottom: 16, border: `1px solid ${ACCENT}` }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 4 }}>✨ Suggested for {guestTotal} guest{guestTotal === 1 ? '' : 's'}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 4 }}><i className="ti ti-sparkles" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Suggested for {guestTotal} guest{guestTotal === 1 ? '' : 's'}</div>
                       <div style={{ fontSize: 11, color: MUTED, marginBottom: 12 }}>Free rooms that fit the whole group, cheapest first for this {isTour ? bookingOption.label.toLowerCase() : 'stay'} (estimate).</div>
                       {roomSuggestions.length === 0 ? (
                         <div style={{ fontSize: 12, color: '#b45309' }}>{groupTooLargeNote(availableRooms, details)}</div>
@@ -482,7 +776,7 @@ export default function WalkIn() {
                   )}
 
                   {/* Results */}
-                  {!datesReady ? (
+                  {cottageOnly ? null : !datesReady ? (
                     <div style={{ ...card, textAlign: 'center', padding: '44px 20px', color: MUTED, fontSize: 13 }}>
                       <i className="ti ti-calendar-event" style={{ fontSize: 30, color: ACCENT, display: 'block', marginBottom: 10 }} />
                       Pick check-in and check-out dates to see which rooms are free.
@@ -537,6 +831,13 @@ export default function WalkIn() {
                                     </div>
                                     <span style={{ background: AVAIL_BG, color: AVAIL_TEXT, borderRadius: 20, padding: '2px 8px', fontSize: 9, fontWeight: 700 }}>Free</span>
                                   </div>
+                                  {selectedRoom && selectedRoom.id !== 'cottage-only' && !picked && (
+                                    <button type="button" onClick={event => { event.stopPropagation(); toggleExtraRoom(room); }}
+                                      disabled={!extraRoomIds.includes(room.id) && extraRoomIds.length >= MAX_ROOMS_PER_BOOKING - 1}
+                                      style={{ marginTop: 8, width: '100%', background: extraRoomIds.includes(room.id) ? ACCENT : 'transparent', color: extraRoomIds.includes(room.id) ? ACCENT_TEXT : TEXT, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '5px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                                      {extraRoomIds.includes(room.id) ? '✓ Added to group' : '+ Add room'}
+                                    </button>
+                                  )}
                                 </div>
                               </motion.div>
                             );
@@ -556,9 +857,19 @@ export default function WalkIn() {
                     </div>
                   ) : (
                     <>
-                      <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>{selectedRoom.roomNumber}</div>
-                      <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 12px' }}>{selectedRoom.type}{categoryOf(selectedRoom) ? ` · ${categoryOf(selectedRoom).category}` : ''}</div>
-                      {roomPhoto(selectedRoom, 150)}
+                      <div style={{ fontSize: 16, fontWeight: 700, color: TEXT }}>{[selectedRoom, ...extraRooms].map(room => room.roomNumber).join(' + ')}</div>
+                      <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 12px' }}>{selectedRoom.type}{categoryOf(selectedRoom) ? ` · ${categoryOf(selectedRoom).category}` : ''}{extraRooms.length ? ` · ${extraRooms.length + 1} rooms` : ''}</div>
+                      {extraRooms.length ? (
+                        // Several rooms: a picture of each one.
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                          {[selectedRoom, ...extraRooms].map(room => (
+                            <div key={room.id}>
+                              {roomPhoto(room, 90)}
+                              <div style={{ fontSize: 10.5, color: TEXT, fontWeight: 600, marginTop: 3 }}>{room.roomNumber}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : roomPhoto(selectedRoom, 150)}
                       <div style={{ fontSize: 12, fontWeight: 700, color: TEXT, margin: '14px 0 6px' }}>Overview</div>
                       <div style={{ fontSize: 11, color: MUTED, lineHeight: 1.6 }}>
                         {selectedRoom.description || 'A comfortable room at Lawiswis Kawayan Garden Resort.'}
@@ -569,11 +880,27 @@ export default function WalkIn() {
                       </div>
                       <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12, marginBottom: 12, fontSize: 12, color: MUTED }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{isTour ? bookingOption.label : 'Stay'}</span><span>{isTour ? formatDate(form.checkIn) : `${formatDate(form.checkIn)} → ${formatDate(form.checkOut)}`}</span></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} {stayUnit}{nights !== 1 ? 's' : ''} · est.</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{totalAmount.toLocaleString()}</span></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} {stayUnit}{nights !== 1 ? 's' : ''} · est.</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{estimatedTotal.toLocaleString()}</span></div>
+                        <div style={{ fontSize: 10.5, color: ACCENT, marginTop: 6 }}>✓ {isTour ? ROOM_RATE_INCLUDES.daytour : `${ROOM_RATE_INCLUDES.overnight}. ${EXTRA_PERSON_NOTE}`}.</div>
                       </div>
-                      <button type="button" onClick={() => setStep(2)}
+                      {extraRooms.length > 0 && (
+                        <div style={{ background: CARD2, borderRadius: 10, padding: 10, marginBottom: 12, fontSize: 11.5, color: TEXT }}>
+                          <div style={{ fontWeight: 700, marginBottom: 4 }}>{extraRooms.length + 1} rooms for {guestTotal} guests</div>
+                          {roomSplit ? groupLines.map(item => (
+                            <div key={item.roomId} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Room {item.roomNumber}: {item.adults} adult{item.adults === 1 ? '' : 's'}{item.children ? `, ${item.children} child${item.children === 1 ? '' : 'ren'}` : ''}</span>
+                              <span>₱{item.price.toLocaleString()}</span>
+                            </div>
+                          )) : <div style={{ color: '#b45309' }}>These rooms don't fit all {guestTotal} guests. Add or swap a room.</div>}
+                          <div style={{ color: MUTED, marginTop: 4 }}>The group is split between the rooms automatically. Tap a room's "✓ Added" to remove it.</div>
+                        </div>
+                      )}
+                      {!extraRooms.length && roomSuggestions.length === 0 && guestTotal > 1 && (
+                        <div style={{ fontSize: 11, color: MUTED, marginBottom: 10 }}>Group too big for one room? Press “+ Add room” on more rooms to split them.</div>
+                      )}
+                      <button type="button" onClick={() => setStep(2)} disabled={extraRooms.length > 0 && !roomSplit}
                         style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 13, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                        Continue · ₱{rateOf(selectedRoom).toLocaleString()} / {stayUnit}
+                        {extraRooms.length ? `Continue with ${extraRooms.length + 1} rooms` : `Continue · ₱${rateOf(selectedRoom).toLocaleString()} / ${stayUnit}`}
                       </button>
                     </>
                   )}
@@ -596,19 +923,20 @@ export default function WalkIn() {
 
                   <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div style={card}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>👤 Guest Details</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}><i className="ti ti-user" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Guest Details</div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                         {[
-                          { lbl: 'First Name *', key: 'firstName', ph: 'Juan', req: true },
-                          { lbl: 'Last Name *',  key: 'lastName',  ph: 'dela Cruz', req: true },
-                          { lbl: 'Phone *',      key: 'phone',     ph: '09XX XXX XXXX', req: true },
+                          { lbl: 'First Name', key: 'firstName', ph: 'Juan', req: true },
+                          { lbl: 'Last Name',  key: 'lastName',  ph: 'dela Cruz', req: true },
+                          { lbl: 'Mobile Number', key: 'phone', ph: '09XXXXXXXXX', req: true },
                           { lbl: 'Email',        key: 'email',     ph: 'juan@email.com', type: 'email' },
                           { lbl: 'Address',      key: 'address',   ph: 'City, Province' },
                         ].map(f => (
                           <div key={f.key}>
                             <label style={label}>{f.lbl}</label>
                             <input required={f.req} type={f.type || 'text'} value={form[f.key]}
-                              maxLength={['firstName', 'lastName'].includes(f.key) ? 35 : undefined}
+                              inputMode={f.key === 'phone' ? 'numeric' : undefined}
+                              maxLength={['firstName', 'lastName'].includes(f.key) ? 35 : f.key === 'phone' ? 11 : undefined}
                               onChange={e => {
                                 if (['firstName', 'lastName'].includes(f.key)) {
                                   const raw = e.target.value;
@@ -618,11 +946,21 @@ export default function WalkIn() {
                                     ...previous,
                                     [f.key]: !NAME_ALLOWED_CHARACTERS.test(raw) ? 'Numbers and special symbols are not allowed' : '',
                                   }));
+                                } else if (f.key === 'phone') {
+                                  // Philippine mobile number: digits only, 09XXXXXXXXX.
+                                  const digits = e.target.value.replace(/\D/g, '').slice(0, 11);
+                                  setForm(previous => ({ ...previous, phone: digits }));
+                                  setNameErrors(previous => ({ ...previous, phone: '' }));
                                 } else {
                                   setForm(previous => ({ ...previous, [f.key]: e.target.value }));
                                 }
                               }}
                               placeholder={f.ph} style={inp} />
+                            {f.key === 'phone' && (
+                              <div role={nameErrors.phone ? 'alert' : undefined} style={{ color: nameErrors.phone ? '#b91c1c' : MUTED, fontSize: 10, marginTop: 4 }}>
+                                {nameErrors.phone || '11-digit Philippine mobile number starting with 09.'}
+                              </div>
+                            )}
                             {['firstName', 'lastName'].includes(f.key) && (
                               <div role={nameErrors[f.key] ? 'alert' : undefined} style={{ color: nameErrors[f.key] ? '#b91c1c' : MUTED, fontSize: 10, marginTop: 4 }}>
                                 {nameErrors[f.key] || 'Use 2-35 letters, spaces, hyphens, or apostrophes.'}
@@ -631,7 +969,7 @@ export default function WalkIn() {
                           </div>
                         ))}
                         <div>
-                          <label style={label}>Preferred Contact Method *</label>
+                          <label style={label}>Preferred Contact Method</label>
                           <select required value={form.preferredContactMethod}
                             onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))} style={inp}>
                             <option value="">Select contact method</option>
@@ -642,7 +980,7 @@ export default function WalkIn() {
                     </div>
 
                     <div style={card}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>👥 Guests</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}><i className="ti ti-users" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Guests</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                           <label style={label}>Adults</label>
@@ -656,8 +994,8 @@ export default function WalkIn() {
                           <label style={label}>Cottage (optional)</label>
                           <select value={form.cottageId} onChange={e => setForm(p => ({ ...p, cottageId: e.target.value }))} style={inp}>
                             {COTTAGE_OPTIONS.map(option => (
-                              <option key={option.id || 'none'} value={option.id}>
-                                {option.id ? `${option.label} · ₱${option.price.toLocaleString()}` : option.label}
+                              <option key={option.id || 'none'} value={option.id} disabled={Boolean(option.id && cottageSoldOut(option.id))}>
+                                {option.id ? `${option.label} · ₱${option.price.toLocaleString()}${cottageLeftLabel(option.id)}` : option.label}
                               </option>
                             ))}
                           </select>
@@ -668,26 +1006,11 @@ export default function WalkIn() {
                       </div>
                     </div>
 
-                    <div style={card}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>💳 Payment</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                        <div>
-                          <label style={label}>Payment Method</label>
-                          <select value={form.paymentMethod} onChange={e => setForm({ ...form, paymentMethod: e.target.value })} style={inp}>
-                            <option value="cash">Cash</option>
-                            <option value="gcash">GCash</option>
-                            <option value="card">Credit/Debit Card</option>
-                            <option value="bank">Bank Transfer</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label style={label}>Payment Status</label>
-                          <select value={form.paymentStatus} onChange={e => setForm({ ...form, paymentStatus: e.target.value })} style={inp}>
-                            <option value="paid">Paid</option>
-                            <option value="partial">Partial</option>
-                            <option value="pending">Pending</option>
-                          </select>
-                        </div>
+                    <div style={{ ...card, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                      <i className="ti ti-cash" aria-hidden="true" style={{ fontSize: 18, color: ACCENT }} />
+                      <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
+                        <strong style={{ color: TEXT }}>Payment comes next.</strong> Walk-in guests pay in full before entering (cash or QR, no cards).
+                        After you reserve, you'll record the payment; paying in full for today checks the guest in.
                       </div>
                     </div>
 
@@ -699,20 +1022,20 @@ export default function WalkIn() {
 
                     <motion.button type="submit" disabled={saving} whileHover={{ scale: saving ? 1 : 1.01 }} whileTap={{ scale: saving ? 1 : 0.98 }}
                       style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 14, fontSize: 14, fontWeight: 700, cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.7 : 1, fontFamily: "'Poppins', sans-serif" }}>
-                      {saving ? 'Saving…' : '✅ Confirm Walk-in Reservation'}
+                      {saving ? 'Saving…' : 'Reserve & continue to payment →'}
                     </motion.button>
                   </form>
                 </div>
 
                 {/* Booking summary */}
                 <aside style={{ ...card, flex: '0 0 300px', maxWidth: '100%', position: 'sticky', top: 20 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}>📋 Booking Summary</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}><i className="ti ti-clipboard-list" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Booking Summary</div>
                   {roomPhoto(selectedRoom, 120)}
                   <div style={{ background: CARD2, borderRadius: 10, padding: 12, margin: '14px 0' }}>
                     <div style={{ fontWeight: 700, fontSize: 15, color: TEXT }}>{selectedRoom.roomNumber}</div>
                     <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 6px' }}>{selectedRoom.type}{categoryOf(selectedRoom) ? ` · ${categoryOf(selectedRoom).category}` : ''}</div>
                     <div style={{ fontSize: 20, fontWeight: 800, color: ACCENT }}>
-                      ₱{rateOf(selectedRoom).toLocaleString()}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/{stayUnit}</span>
+                      {cottageOnly ? `₱${totalAmount.toLocaleString()}` : <>₱{rateOf(selectedRoom).toLocaleString()}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/{stayUnit}</span></>}
                     </div>
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
@@ -736,8 +1059,100 @@ export default function WalkIn() {
                 </aside>
               </div>
             )}
+
+            {/* ═════════ STEP 3 — Payment ═════════ */}
+            {step === 3 && created && (
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                <div style={{ ...card, flex: '1 1 420px', minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Collect payment</div>
+                  <div style={{ fontSize: 12, color: MUTED, marginBottom: 16 }}>
+                    Booking #{created.id.slice(0, 8).toUpperCase()} · {created.guestName} · {created.isCorporate ? created.roomNumber : `Room ${created.roomNumber}`} · {created.stayLabel}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 16 }}>
+                    {[['Total', created.total], ['Paid', created.paid], ['Still due', owedNow]].map(([lbl, value]) => (
+                      <div key={lbl} style={{ background: CARD2, borderRadius: 10, padding: '10px 12px' }}>
+                        <div style={{ fontSize: 10, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{lbl}</div>
+                        <div style={{ fontSize: 17, fontWeight: 800, color: lbl === 'Still due' && value > 0 ? '#d97706' : TEXT }}>₱{Number(value).toLocaleString()}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {created.checkedIn ? (
+                    <div role="status" style={{ background: SUCCESS_BG, color: SUCCESS_TEXT, borderRadius: 10, padding: '12px 14px', fontSize: 13, fontWeight: 600, marginBottom: 14 }}>
+                      Fully paid. {created.guestName} is checked in and Room {created.roomNumber} is now occupied.
+                    </div>
+                  ) : owedNow <= 0 ? (
+                    <div role="status" style={{ background: SUCCESS_BG, color: SUCCESS_TEXT, borderRadius: 10, padding: '12px 14px', fontSize: 13, fontWeight: 600, marginBottom: 14 }}>
+                      Fully paid. {created.isToday ? 'Check the guest in from Reservations (one click).' : `Check the guest in from Reservations when they arrive on ${created.stayLabel}.`}
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12, marginBottom: 12 }}>
+                    <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: TEXT }}><i className="ti ti-cash" aria-hidden="true" /> Paid at the desk</div>
+                      <div style={{ fontSize: 11, color: MUTED, margin: '2px 0 10px' }}>Cash, or the guest scanned the resort's own GCash / QR Ph code.</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+                        <div>
+                          <label style={label}>Paid with</label>
+                          <select value={payment.method} onChange={e => setPayment(p => ({ ...p, method: e.target.value }))} style={inp}>
+                            <option value="cash">Cash</option>
+                            <option value="gcash">GCash</option>
+                            <option value="qrph">QR payment (QR Ph)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={label}>Amount received (₱)</label>
+                          <input type="number" min="1" step="0.01" max={owedNow} value={payment.amount}
+                            onChange={e => setPayment(p => ({ ...p, amount: e.target.value, error: '' }))} style={inp} />
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: MUTED, margin: '8px 0 12px' }}>
+                        The resort has no card terminal: cash or QR only. {created.isToday ? 'Paying the full amount checks the guest in now.' : 'The guest is checked in on arrival once fully paid.'}
+                      </div>
+                      {payment.error && <div role="alert" style={{ color: '#dc2626', fontSize: 12, marginBottom: 10 }}>{payment.error}</div>}
+                      <button type="button" onClick={recordWalkInPayment} disabled={payment.busy}
+                        style={{ width: '100%', background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: 12, padding: 13, fontSize: 14, fontWeight: 700, cursor: payment.busy ? 'wait' : 'pointer', fontFamily: 'inherit', marginBottom: 10 }}>
+                        {payment.busy ? 'Saving…' : `Record ₱${Number(payment.amount || 0).toLocaleString()} payment`}
+                      </button>
+                    </div>
+                    <OnlinePaymentQr
+                      reservationId={created.id}
+                      amount={owedNow}
+                      guestName={created.guestName || ''}
+                      paymentType={created.isGroup ? 'group' : 'billing'}
+                      colors={{ CARD2, BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+                      onPaid={result => {
+                        const paidNow = Number(result.amountPaid || 0);
+                        setCreated(c => ({
+                          ...c,
+                          paid: Math.round((Number(c.paid || 0) + paidNow) * 100) / 100,
+                          notes: [...c.notes, `Paid ₱${paidNow.toLocaleString()} online.${result.receipt?.sent ? ' Receipt emailed.' : ''}`],
+                        }));
+                        setPayment(p => ({ ...p, amount: '' }));
+                      }}
+                    />
+                    </div>
+                  )}
+                  {created.isCorporate && (
+                    <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 12, marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <div style={{ fontSize: 12, color: TEXT }}>
+                        <strong>Rooms for the group</strong>
+                        <div style={{ color: MUTED }}>{created.corporate.assignedRooms.length ? created.corporate.assignedRooms.map(item => `Room ${item.roomNumber}`).join(', ') : 'None yet. You can also do this later in Reservations.'}</div>
+                      </div>
+                      <button type="button" onClick={() => setAssignFor(created.corporate)}
+                        style={{ border: `1px solid ${ACCENT}`, background: 'transparent', color: TEXT, borderRadius: 9, padding: '8px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                        {created.corporate.assignedRooms.length ? 'Change rooms' : 'Assign rooms'}
+                      </button>
+                    </div>
+                  )}
+                  <button type="button" onClick={finishWalkIn}
+                    style={{ ...inp, cursor: 'pointer', textAlign: 'center', fontWeight: 600, color: owedNow > 0 ? MUTED : TEXT }}>
+                    {owedNow > 0 ? 'Collect later (guest not checked in yet)' : 'Done — start a new walk-in'}
+                  </button>
+                </div>
+              </div>
+            )}
           </motion.div>
-        </AnimatePresence>
+        </AnimatePresence>}
       </div>
 
       {upsellOpen && (

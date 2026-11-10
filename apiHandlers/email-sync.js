@@ -1,7 +1,11 @@
 // api/email-sync.js
 //
-// Connects to Gmail over IMAP, copies the latest messages from Inbox and Sent
-// into the Firestore `emails` collection, then disconnects.
+// Connects to Gmail over IMAP, copies the latest messages from Inbox, Sent
+// and Spam into the Firestore `emails` collection, then disconnects.
+// Gmail sometimes puts guest replies in Spam, so staff can see them too.
+//
+//   POST { action: 'not-spam', emailId }  moves a Spam email to the Inbox
+//   (Gmail then learns it isn't spam) and syncs again.
 // Only NEW messages are downloaded in full, so repeat syncs are fast.
 //
 // Usage:  POST /api/email-sync   (Authorization: Bearer <Firebase ID token>)
@@ -22,12 +26,25 @@ const MAX_TEXT = 100000;
 const addrList = (field) =>
   [].concat(field || []).flatMap((f) => f.value || []).map((a) => a.address).filter(Boolean);
 
+// Removes saved Spam emails that are no longer in Gmail's Spam folder.
+async function clearMissingSpam(keepUids) {
+  const snap = await adminDb.collection('emails').where('folder', '==', 'spam').get();
+  const gone = snap.docs.filter((d) => !keepUids.has(d.data().uid));
+  if (!gone.length) return;
+  const batch = adminDb.batch();
+  gone.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}
+
 async function syncFolder(client, path, folder) {
   const lock = await client.getMailboxLock(path);
   let added = 0;
   try {
     const total = client.mailbox.exists;
-    if (!total) return 0;
+    if (!total) {
+      if (folder === 'spam') await clearMissingSpam(new Set());
+      return 0;
+    }
 
     // Step 1: cheap fetch of UIDs + flags for the newest messages.
     const headers = [];
@@ -35,6 +52,8 @@ async function syncFolder(client, path, folder) {
       headers.push({ uid: m.uid, seen: m.flags.has('\\Seen') });
     }
     if (!headers.length) return 0;
+    // Spam emptied or moved in Gmail itself: drop those from the list here.
+    if (folder === 'spam') await clearMissingSpam(new Set(headers.map((h) => h.uid)));
 
     const col = adminDb.collection('emails');
     const idOf = (uid) => `${folder}_${uid}`;
@@ -101,6 +120,8 @@ export default async function handler(req, res) {
 
   const staff = await verifyStaff(req);
   if (!staff) return res.status(401).json({ error: 'Not authorized.' });
+  // The inbox is admin-only (same as the Firestore rules for emails).
+  if (staff.role !== 'admin') return res.status(403).json({ error: 'Only an admin can read the resort inbox.' });
 
   if (!adminDb) {
     return res.status(500).json({
@@ -133,10 +154,35 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'No Gmail Sent folder was found. Verify the Gmail account and IMAP access.' });
     }
 
+    const spamPath = boxes.find((b) => b.specialUse === '\\Junk')?.path || '[Gmail]/Spam';
+
+    // "Not spam": move the email to the Inbox in Gmail, then sync again.
+    if (req.body?.action === 'not-spam') {
+      const emailId = String(req.body?.emailId || '');
+      const ref = adminDb.collection('emails').doc(emailId);
+      const snap = await ref.get();
+      if (!snap.exists || snap.data().folder !== 'spam') {
+        return res.status(404).json({ error: 'This email is no longer in Spam.' });
+      }
+      const lock = await client.getMailboxLock(spamPath);
+      try {
+        await client.messageMove(String(snap.data().uid), 'INBOX', { uid: true });
+      } finally {
+        lock.release();
+      }
+      await ref.delete();
+    }
+
     const inbox = await syncFolder(client, 'INBOX', 'inbox');
     const sent = await syncFolder(client, sentPath, 'sent');
+    let spam = 0;
+    try {
+      spam = await syncFolder(client, spamPath, 'spam');
+    } catch (spamError) {
+      console.error('email-sync spam folder skipped:', spamError);
+    }
 
-    return res.status(200).json({ added: inbox + sent });
+    return res.status(200).json({ added: inbox + sent + spam, moved: req.body?.action === 'not-spam' });
   } catch (err) {
     console.error('email-sync error:', err);
     return res.status(500).json({

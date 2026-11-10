@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { collection, doc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
+import { appConfirm } from '../../components/ui/app-dialog';
 import { db } from '../../firebase/firebase';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
@@ -125,6 +126,25 @@ export default function PromoCodes() {
     }
   };
 
+  // Deleting removes the code for good. Bookings that already used it keep
+  // their discount; guests just can't enter it any more.
+  const deletePromo = async promo => {
+    const used = Number(promo.usageCount || 0);
+    const ok = await appConfirm(
+      `${promo.code} will be removed and guests can no longer use it.${used ? ` It was used ${used} time${used === 1 ? '' : 's'}; those bookings keep their discount.` : ''} To pause it instead, use Deactivate.`,
+      { title: `Delete ${promo.code}?`, tone: 'danger', confirmLabel: 'Delete' },
+    );
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, 'promoCodes', promo.id));
+      if (editingCode === promo.code) resetForm();
+      await fetchPromos();
+      setNotice({ type: 'success', text: `${promo.code} deleted.` });
+    } catch (error) {
+      setNotice({ type: 'error', text: error.code === 'permission-denied' ? 'Deleting was blocked by the database rules.' : (error.message || 'Could not delete the promo code.') });
+    }
+  };
+
   const inputStyle = {
     width: '100%', boxSizing: 'border-box', background: CARD2, border: `1px solid ${BORDER}`,
     borderRadius: '6px', padding: '9px 10px', color: TEXT, fontSize: '12px', outline: 'none',
@@ -188,6 +208,7 @@ export default function PromoCodes() {
                     <td style={{ padding: '12px', borderBottom: `1px solid ${BORDER}`, whiteSpace: 'nowrap' }}>
                       <button type="button" onClick={() => editPromo(promo)} style={{ background: 'transparent', color: TEXT, border: `1px solid ${BORDER}`, borderRadius: '5px', padding: '6px 9px', cursor: 'pointer', marginRight: '6px' }}>Edit</button>
                       <button type="button" onClick={() => toggleActive(promo)} style={{ background: 'transparent', color: promo.active ? '#b91c1c' : '#15803d', border: `1px solid ${BORDER}`, borderRadius: '5px', padding: '6px 9px', cursor: 'pointer' }}>{promo.active ? 'Deactivate' : 'Activate'}</button>
+                      <button type="button" onClick={() => deletePromo(promo)} style={{ background: 'transparent', color: '#b91c1c', border: `1px solid ${BORDER}`, borderRadius: '5px', padding: '6px 9px', cursor: 'pointer', marginLeft: '6px' }}>Delete</button>
                     </td>
                   </tr>)}
             </tbody>

@@ -127,3 +127,12 @@ describe('closest available dates', () => {
     expect(options).toEqual([{ checkIn: '2026-10-29', checkOut: '2026-10-29', daysFromRequested: 1 }]);
   });
 });
+
+test('cancellation revenue counts only what was actually kept', () => {
+  const { getRevenueBySource } = require('./dashboardMetrics');
+  const { rows } = getRevenueBySource([
+    { status: 'cancelled', checkIn: '2026-11-10', cancellationFee: 3000, cancellationRetained: 0 },
+    { status: 'cancelled', checkIn: '2026-11-11', cancellationFee: 3000, cancellationRetained: 1500 },
+  ]);
+  expect(rows.find(r => r.id === 'cancellationFees').value).toBe(1500);
+});

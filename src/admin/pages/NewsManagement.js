@@ -4,24 +4,11 @@ import { auth, db } from '../../firebase/firebase';
 import { collection, addDoc, getDocs, onSnapshot, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { safeHttpUrl } from '../../lib/safeUrl';
+import { uploadImage } from '../lib/uploadImage';
 
-// ── Cloudinary config (same account as Room Management) ─────
-const CLOUDINARY_CLOUD_NAME = 'x17b4eux';
-const CLOUDINARY_UPLOAD_PRESET = 'w8sfwf9b';
-
-const uploadToCloudinary = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-
-  const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
-    { method: 'POST', body: formData }
-  );
-  if (!res.ok) throw new Error('Cloudinary upload failed');
-  const data = await res.json();
-  return data.secure_url;
-};
+// Photos upload through the server, so no Cloudinary setting is in the page.
+const uploadToCloudinary = file => uploadImage(file, 'news');
 
 const LIME = '#9cb56f';
 const DARK = '#0a1a0a';
@@ -194,6 +181,11 @@ export default function NewsManagement() {
 
   const handleSubmit = async () => {
     if (!form.title || !form.category) return;
+    // Links must be ordinary web links (no javascript: and the like).
+    if (form.externalLink && !safeHttpUrl(form.externalLink)) {
+      setBroadcastError('The "Read more" link must start with https:// (or http://).');
+      return;
+    }
     if (notifySubscribers && form.status !== 'published') {
       setBroadcastError('Publish the article before sending it to subscribers.');
       return;
@@ -375,7 +367,7 @@ export default function NewsManagement() {
             <motion.div variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden' }}>
               <div style={{ background: CARD, borderRadius: 18, padding: '20px 22px', border: `1px solid ${BORDER}`, marginBottom: 16, boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : '0 2px 12px rgba(0,0,0,0.04)' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 16 }}>
-                  {editArticle ? '✏️ Edit Article' : '➕ Add New Article'}
+                  {editArticle ? <><i className="ti ti-pencil" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit Article</> : <><i className="ti ti-plus" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Add New Article</>}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   <div style={{ gridColumn: '1 / -1' }}>
@@ -418,8 +410,8 @@ export default function NewsManagement() {
                       onChange={e => setForm({ ...form, excerpt: e.target.value })} />
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
-                    <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Content (optional, full body)</label>
-                    <textarea style={{ ...inputStyle, minHeight: 90, resize: 'vertical' }} value={form.content} placeholder="Full article text…"
+                    <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Content (full story shown when guests tap Read More)</label>
+                    <textarea style={{ ...inputStyle, minHeight: 90, resize: 'vertical' }} value={form.content} placeholder="Full article text. Leave a blank line between paragraphs."
                       onChange={e => setForm({ ...form, content: e.target.value })} />
                   </div>
 
@@ -626,7 +618,7 @@ export default function NewsManagement() {
                           </span>
                         </div>
                         <div style={{ fontSize: 10, color: CATEGORY_COLORS[article.category] || MUTED, fontWeight: 600, marginBottom: 4 }}>
-                          🏷 {article.category || '—'}
+                          <i className="ti ti-tag" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />{article.category || '—'}
                         </div>
                         <div style={{ fontSize: 11, color: MUTED, marginBottom: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical' }}>
                           {article.excerpt || ''}
@@ -675,7 +667,7 @@ export default function NewsManagement() {
                       {badgeLabel(activeArticle.status)}
                     </span>
                     <span style={{ fontSize: 11, color: CATEGORY_COLORS[activeArticle.category] || MUTED, fontWeight: 600 }}>
-                      🏷 {activeArticle.category}
+                      <i className="ti ti-tag" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />{activeArticle.category}
                     </span>
                   </div>
                 </div>
@@ -724,7 +716,7 @@ export default function NewsManagement() {
                     fontWeight: 600,
                   }}
                 >
-                  🗑 Delete Article
+                  <i className="ti ti-trash" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Delete Article
                 </motion.button>
               </motion.div>
             )}

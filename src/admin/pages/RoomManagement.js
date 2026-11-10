@@ -1,31 +1,23 @@
-import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { onSnapshot, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import RoomExcelImport from '../components/RoomExcelImport';
 import { logStaffActivity } from '../lib/activityLog';
 import { useSettings } from '../components/SettingsContext';
 import { ROOM_TYPES, ROOM_TYPE_CATEGORY_MAP, normalizeRoomType } from '../utils/roomCatalog';
 import { resolveRoomImage } from '../../client/components/clientTheme';
+import { uploadImage } from '../lib/uploadImage';
+import SeasonalRatesManager from '../components/SeasonalRatesManager';
+import { formatSeasonDates, getCurrentOrNextSeason, normalizeSeasonPeriods, seasonalNightlyRate } from '../../lib/seasonalRates';
+import { money } from '../lib/money';
+import { formatClockLabel, getRoomsNotReadyForArrivals } from '../lib/roomReadiness';
+import { manilaDateKey } from '../../lib/reservationStatus';
 
 // ── Cloudinary config ────────────────────────────────────────
-const CLOUDINARY_CLOUD_NAME = 'x17b4eux';
-const CLOUDINARY_UPLOAD_PRESET = 'w8sfwf9b';
-
-const uploadToCloudinary = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-
-  const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
-    { method: 'POST', body: formData }
-  );
-  if (!res.ok) throw new Error('Cloudinary upload failed');
-  const data = await res.json();
-  return data.secure_url;
-};
+// Photos upload through the server, so no Cloudinary setting is in the page.
+const uploadToCloudinary = file => uploadImage(file, 'room');
 
 const LIME  = '#9cb56f';
 const DARK  = '#0a1a0a';
@@ -67,19 +59,7 @@ const StatusDot = ({ pulse }) => (
   />
 );
 
-// Spring-height expander (same easing as the SpringCard example)
-function Expand({ open, children }) {
-  const inner = useRef(null);
-  const [height, setHeight] = useState(0);
-  useLayoutEffect(() => {
-    setHeight(open && inner.current ? inner.current.offsetHeight : 0);
-  });
-  return (
-    <div style={{ height, overflow: 'hidden', transition: 'height 0.5s cubic-bezier(0.34,1.56,0.64,1)' }}>
-      <div ref={inner}>{children}</div>
-    </div>
-  );
-}
+
 
 const panelVariants = {
   hidden:  { opacity: 0, height: 0 },
@@ -115,9 +95,9 @@ const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', statu
 
 // Activity Log line for a room save; price and status changes are spelled out.
 function describeRoomSave(before, after) {
-  if (!before) return `Added Room ${after.roomNumber} (${after.type}, ₱${Number(after.price || 0).toLocaleString()})`;
+  if (!before) return `Added Room ${after.roomNumber} (${after.type}, ${money(Number(after.price || 0))})`;
   const changes = [];
-  if (Number(before.price) !== Number(after.price)) changes.push(`price ₱${Number(before.price || 0).toLocaleString()} → ₱${Number(after.price || 0).toLocaleString()}`);
+  if (Number(before.price) !== Number(after.price)) changes.push(`price ${money(Number(before.price || 0))} → ${money(Number(after.price || 0))}`);
   if (before.status !== after.status) changes.push(`status ${badgeLabel(before.status)} → ${badgeLabel(after.status)}`);
   return `Updated Room ${after.roomNumber}${changes.length ? `: ${changes.join(', ')}` : ''}`;
 }
@@ -140,7 +120,28 @@ export default function RoomManagement() {
   const [showForm, setShowForm]     = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [editRoom, setEditRoom]     = useState(null);
-  const [openId, setOpenId]         = useState(null);   // which card is expanded
+  const [openId, setOpenId]         = useState(null);   // room whose details window is open
+  // Holiday / peak-season rate happening now or coming up, shown on the cards.
+  const [seasonPeriods, setSeasonPeriods] = useState([]);
+  useEffect(() => onSnapshot(doc(db, 'settings', 'seasonalRates'),
+    snapshot => setSeasonPeriods(normalizeSeasonPeriods(snapshot.data())),
+    () => setSeasonPeriods([])), []);
+  // Today's arrivals, to warn when their room is still being cleaned.
+  const [arrivalsToday, setArrivalsToday] = useState([]);
+  useEffect(() => {
+    const today = manilaDateKey();
+    return onSnapshot(query(collection(db, 'reservations'), where('checkIn', '>=', today), where('checkIn', '<=', `${today}`)),
+      snapshot => setArrivalsToday(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setArrivalsToday([]));
+  }, []);
+  const season = getCurrentOrNextSeason(seasonPeriods, new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10));
+  // Escape closes the details window.
+  useEffect(() => {
+    if (!openId) return undefined;
+    const onKey = event => { if (event.key === 'Escape') setOpenId(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openId]);
   const [menuId, setMenuId]         = useState(null);   // which card's ⋯ menu is open
   const [search, setSearch]         = useState('');
   const [filterType, setFilterType] = useState('');
@@ -324,9 +325,6 @@ export default function RoomManagement() {
     const open = openId === room.id;
     const photoUrl = resolveRoomImage(room);
     const pill = STATUS_PILL[room.status] || STATUS_PILL.maintenance;
-    const amenities = room.amenities
-      ? room.amenities.split(',').map(a => a.trim()).filter(Boolean)
-      : (m.facilities || []);
     const rows = [
       ['Bed', m.bed],
       ['Guests', room.baseCapacity ? `${room.baseCapacity} guests` : m.guests],
@@ -335,11 +333,10 @@ export default function RoomManagement() {
 
     return (
       <motion.div key={room.id} custom={i} variants={roomCardVariants} initial="hidden" animate="visible"
-        onClick={() => setOpenId(open ? null : room.id)}
+        onClick={() => setOpenId(room.id)}
         style={{
           background: CARD, borderRadius: 16, padding: 10, cursor: 'pointer',
           border: open ? `2px solid ${LIME}` : `1px solid ${BORDER}`,
-          boxShadow: open ? (dark ? '0 10px 30px rgba(0,0,0,0.45)' : '0 10px 28px rgba(0,0,0,0.10)') : 'none',
           transition: 'box-shadow .3s, border-color .3s',
         }}>
         {/* Photo with status pill + ⋯ menu */}
@@ -361,9 +358,9 @@ export default function RoomManagement() {
                 <div onClick={e => e.stopPropagation()}
                   style={{ position: 'absolute', top: 32, right: 0, minWidth: 120, background: CARD, border: `1px solid ${BORDER}`, borderRadius: 10, boxShadow: '0 10px 28px rgba(0,0,0,0.25)', padding: 4, zIndex: 5 }}>
                   <button type="button" onClick={() => { setMenuId(null); handleEdit(room); }}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '8px 10px', fontSize: 12, color: TEXT, cursor: 'pointer', fontFamily: 'inherit', borderRadius: 6 }}>✏️ Edit</button>
+                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '8px 10px', fontSize: 12, color: TEXT, cursor: 'pointer', fontFamily: 'inherit', borderRadius: 6 }}><i className="ti ti-pencil" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit</button>
                   <button type="button" onClick={() => { setMenuId(null); requestDelete(room.id); }}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '8px 10px', fontSize: 12, color: '#f87171', cursor: 'pointer', fontFamily: 'inherit', borderRadius: 6 }}>🗑 Delete</button>
+                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 'none', padding: '8px 10px', fontSize: 12, color: '#f87171', cursor: 'pointer', fontFamily: 'inherit', borderRadius: 6 }}><i className="ti ti-trash" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Delete</button>
                 </div>
               )}
             </div>
@@ -384,19 +381,64 @@ export default function RoomManagement() {
           <div style={{ height: 1, background: BORDER, margin: '10px 0' }} />
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 17, fontWeight: 800, color: dark ? LIME : '#111' }}>
-              ₱{Number(room.price).toLocaleString()}<span style={{ fontSize: 10, fontWeight: 400, color: MUTED }}>/night</span>
+              {money(Number(room.price))}<span style={{ fontSize: 10, fontWeight: 400, color: MUTED }}>/night</span>
             </span>
             <span style={{ fontSize: 10, color: SUBTEXT, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              {open ? 'Hide' : 'Details'}
-              <i className="ti ti-chevron-down" style={{ fontSize: 12, transition: 'transform .4s', transform: open ? 'rotate(180deg)' : 'none' }} />
+              Details <i className="ti ti-arrow-up-right" style={{ fontSize: 12 }} />
             </span>
           </div>
+          {season && Number(room.price) > 0 && (
+            <div title={`${season.name}: ${season.percent > 0 ? '+' : ''}${season.percent}% on nights from ${season.from} to ${season.to}`}
+              style={{ marginTop: 6, fontSize: 10.5, fontWeight: 600, color: season.percent > 0 ? '#b45309' : '#15803d', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <i className="ti ti-calendar-dollar" aria-hidden="true" />
+              {money(seasonalNightlyRate(room.price, season))}/night on {formatSeasonDates(season)} ({season.percent > 0 ? '+' : ''}{season.percent}%)
+            </div>
+          )}
         </div>
 
-        {/* Expanded details */}
-        <Expand open={open}>
-          <div style={{ padding: '14px 4px 4px', display: 'flex', flexDirection: 'column', gap: 12 }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 11, color: dark ? '#89D7B7' : '#428475', fontWeight: 500 }}>📂 {TYPE_CATEGORY_MAP[room.type] || '—'}</div>
+      </motion.div>
+    );
+  };
+
+
+  // ── Details window for one room (opens over a blurred page) ──
+  const renderDetails = room => {
+    const m = ROOM_META[room.type] || {};
+    const photoUrl = resolveRoomImage(room);
+    const pill = STATUS_PILL[room.status] || STATUS_PILL.maintenance;
+    const amenities = room.amenities
+      ? room.amenities.split(',').map(a => a.trim()).filter(Boolean)
+      : (m.facilities || []);
+    return (
+      <div role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setOpenId(null); }}
+        style={{ position: 'fixed', inset: 0, zIndex: 1100, background: dark ? 'rgba(0,0,0,0.55)' : 'rgba(15,23,20,0.35)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)', display: 'grid', placeItems: 'center', padding: 16 }}>
+        <section role="dialog" aria-modal="true" aria-label={`Room ${room.roomNumber}`}
+          style={{ width: '100%', maxWidth: 560, maxHeight: 'calc(100vh - 32px)', overflowY: 'auto', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 18, boxShadow: '0 24px 70px rgba(0,0,0,0.35)', fontFamily: "'Poppins', sans-serif" }}>
+          <div style={{ position: 'relative', height: 220, background: photoUrl ? `url(${photoUrl}) center/cover no-repeat` : (dark ? '#282827' : '#f1f5f1'), borderRadius: '18px 18px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {!photoUrl && <i className="ti ti-bed" style={{ fontSize: 52, color: dark ? LIME : '#4a7c59' }} />}
+            <span style={{ position: 'absolute', top: 12, left: 12, background: pill, color: '#fff', padding: '4px 11px 4px 9px', borderRadius: 6, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <StatusDot pulse={PULSING_STATUSES.has(room.status)} />{badgeLabel(room.status)}
+            </span>
+            <button type="button" aria-label="Close" onClick={() => setOpenId(null)}
+              style={{ position: 'absolute', top: 10, right: 10, width: 34, height: 34, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.92)', color: '#111', fontSize: 18, cursor: 'pointer' }}>×</button>
+          </div>
+          <div style={{ padding: '16px 20px 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 19, fontWeight: 700, color: TEXT }}>{room.roomNumber}</div>
+              <div style={{ fontSize: 11, color: MUTED }}>#{room.id.slice(0, 6).toUpperCase()} · {room.type}{m.bed ? ` · ${m.bed}` : ''}{m.size ? ` · ${m.size}` : ''}</div>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: 19, fontWeight: 800, color: dark ? LIME : '#111' }}>{money(Number(room.price))}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/night</span></div>
+              {season && Number(room.price) > 0 && (
+                <div style={{ fontSize: 11, fontWeight: 600, color: season.percent > 0 ? '#b45309' : '#15803d' }}>
+                  {money(seasonalNightlyRate(room.price, season))} on {formatSeasonDates(season)} · {season.name}
+                </div>
+              )}
+            </div>
+          </div>
+          <div style={{ padding: '0 16px 10px' }}>
+          <div style={{ padding: '14px 4px 4px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: 11, color: dark ? '#89D7B7' : '#428475', fontWeight: 500 }}><i className="ti ti-folder" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />{TYPE_CATEGORY_MAP[room.type] || '—'}</div>
             <p style={{ fontSize: 11, color: SUBTEXT, lineHeight: 1.7, margin: 0 }}>{room.description || m.defaultDesc || 'No description yet.'}</p>
 
             {m.features?.length > 0 && (
@@ -447,14 +489,15 @@ export default function RoomManagement() {
                   </button>
                   <button type="button" onClick={() => requestDelete(room.id)}
                     style={{ padding: '7px 14px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', color: '#f87171' }}>
-                    🗑 Delete
+                    <i className="ti ti-trash" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Delete
                   </button>
                 </>
               )}
             </div>
           </div>
-        </Expand>
-      </motion.div>
+                  </div>
+        </section>
+      </div>
     );
   };
 
@@ -470,13 +513,18 @@ export default function RoomManagement() {
           </div>
         </motion.div>
 
+        {/* ── Holiday / peak-season prices (admins) ── */}
+        {!isReceptionist && (
+          <SeasonalRatesManager colors={{ CARD, BORDER, TEXT, SUBTEXT, INPUT_BG, ACCENT: settings?.accentColor || '#9cb56f' }} />
+        )}
+
         {/* ── Add/Edit Form ── */}
         <AnimatePresence initial={false}>
           {showForm && (
             <motion.div variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden' }}>
               <div style={{ background: CARD, borderRadius: 18, padding: '20px 22px', border: `1px solid ${BORDER}`, marginBottom: 16, boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : '0 2px 12px rgba(0,0,0,0.04)' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 16 }}>
-                  {editRoom ? '✏️ Edit Room' : '➕ Add New Room'}
+                  {editRoom ? <><i className="ti ti-pencil" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit Room</> : <><i className="ti ti-plus" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Add New Room</>}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   {[
@@ -594,7 +642,7 @@ export default function RoomManagement() {
             <motion.div variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden' }}>
               <div style={{ background: CARD, borderRadius: 18, padding: '20px 24px', border: `1px solid ${BORDER}`, marginBottom: 16 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>📥 Import Rooms from Excel</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}><i className="ti ti-file-import" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Import Rooms from Excel</div>
                   <button onClick={() => setShowImport(false)}
                     style={{ background: HOVER, border: `1px solid ${BORDER}`, borderRadius: 8, padding: '5px 12px', fontSize: 11, color: SUBTEXT, cursor: 'pointer', fontFamily: 'inherit' }}>
                     ✕ Close
@@ -606,6 +654,20 @@ export default function RoomManagement() {
           )}
         </AnimatePresence>
 
+        {getRoomsNotReadyForArrivals(rooms, arrivalsToday, manilaDateKey()).map(({ room, arrivals, first }) => (
+          <div key={`not-ready-${room.id}`} role="alert" style={{ marginBottom: 10, padding: '12px 14px', borderRadius: 12, background: dark ? '#3b1d1d' : '#fef2f2', border: `1px solid ${dark ? '#7f1d1d' : '#fecaca'}`, color: dark ? '#fca5a5' : '#991b1b', fontSize: 13, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <i className="ti ti-bucket-droplet" style={{ fontSize: 18 }} />
+            <div style={{ flex: '1 1 240px' }}>
+              <strong>Room {room.roomNumber} is still {String(room.status).toLowerCase()}</strong>, and a guest is staying there today:
+              {' '}{first.guestName || 'Guest'} checks in at {formatClockLabel(first.checkInTime)}{arrivals.length > 1 ? ` (+${arrivals.length - 1} more)` : ''}.
+              <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>Clean it first. When it's ready, mark it as available.</div>
+            </div>
+            <button type="button" onClick={() => markCleaned(room)}
+              style={{ padding: '8px 14px', background: '#166534', color: '#fff', border: 0, borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Mark as available
+            </button>
+          </div>
+        ))}
         {statusError && (
           <div role="alert" style={{ marginBottom: 12, padding: '10px 14px', borderRadius: 10, background: dark ? '#7f1d1d' : '#fee2e2', color: dark ? '#fca5a5' : '#991b1b', fontSize: 12 }}>
             {statusError}
@@ -682,6 +744,7 @@ export default function RoomManagement() {
 
         {/* ── Delete confirmation modal ── */}
         <AnimatePresence>
+          {(() => { const openRoom = rooms.find(r => r.id === openId); return openRoom ? renderDetails(openRoom) : null; })()}
           {!isReceptionist && confirmDeleteId && (
             <motion.div variants={backdropVariants} initial="hidden" animate="visible" exit="exit"
               onClick={() => setConfirmDeleteId(null)}

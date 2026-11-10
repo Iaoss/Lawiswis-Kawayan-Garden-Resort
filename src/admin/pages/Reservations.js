@@ -8,6 +8,8 @@ import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
 import StatusStepper from '../components/StatusStepper';
 import EditBookingDialog from '../components/EditBookingDialog';
+import AssignRoomsDialog from '../components/AssignRoomsDialog';
+import ChangeRequestCheck, { changeRequestBlocked } from '../components/ChangeRequestCheck';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import {
   DEFAULT_CHECKOUT_TIME,
@@ -16,11 +18,38 @@ import {
   getOutstandingBalance as outstandingAmount,
   getOverstay,
   getStatusTransitionError,
+  getEarlyCheckInError,
+  getCheckInPaymentError,
   hasOutstandingBalance,
+  mustPayBeforeCheckout,
+  getCheckoutDue,
+  formatManilaTime,
+  getScheduledCheckOutMs,
+  MAX_LATE_CHECKOUT_HOURS,
+  isReadyToCheckIn,
+  manilaDateKey,
 } from '../../lib/reservationStatus';
-import { appPrompt } from '../../components/ui/app-dialog';
+import { agencyStatusLabel, hasAgencyPo, isAgencyBilled } from '../../lib/agencyBilling';
+import { appConfirm, appPrompt } from '../../components/ui/app-dialog';
 import { useStaffAccess } from '../lib/useStaffAccess';
+import { describeUnpaidFollowUp, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
+import { getOnlinePaymentAmount } from '../../lib/paymentPolicy';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
+import { getReservationRemarks } from '../../lib/reservationRemarks';
+import { staffApi } from '../lib/staffApi';
+import { getLiveStayLabels, formatStayDateTime } from '../../lib/stayTimes';
+import { getDaysBeforeArrival } from '../../lib/cancellationPolicy';
+import { useCancellationPolicy } from '../lib/useCancellationPolicy';
+import { printDailySheet } from '../lib/printDailySheet';
+import { askCheckInId } from '../components/CheckInIdDialog';
+import { money } from '../lib/money';
+import { serverNow } from '../../lib/serverClock';
+import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive, splitArrivedGuests } from '../../lib/guestArrivals';
+
+// Pending/confirmed, never checked in, and the check-in date has passed
+// (same rule as lib/cancelBooking.js on the server).
+const canMarkNoShowNow = (r, now = new Date()) => ['pending', 'confirmed'].includes(String(r.status || '').toLowerCase())
+  && Boolean(r.checkIn) && String(r.checkIn).slice(0, 10) < manilaDateKey(now);
 
 const QUICK_VIEWS = {
   new: { label: 'New bookings', sortBy: 'booked', sortDir: 'desc' },
@@ -58,13 +87,6 @@ async function callReservationStatusApi(body) {
 
 // Auto-release only applies to non-checked-in bookings. Checked-in guests past
 // checkout must be handled by staff (overstay), never silently checked out.
-const isAutoReleasable = (r) => {
-  if (!r.checkOut || hasOutstandingBalance(r) || ['checked-out', 'cancelled', 'checked-in'].includes(r.status)) return false;
-  const checkOut = new Date(`${r.checkOut}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return !isNaN(checkOut.getTime()) && checkOut < today;
-};
 
 const matchesQuickView = (r, view, now = new Date()) => {
   if (view === 'overstayed') return !!getOverstay(r, now);
@@ -140,6 +162,20 @@ const tone = (t, name) => {
   return map[name] || map.gray;
 };
 
+// Rooms booked together (same groupId) count as one booking.
+const bookingKey = r => r.groupId || r.id;
+function byBooking(list) {
+  const map = new Map();
+  list.forEach(r => {
+    const key = bookingKey(r);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(r);
+  });
+  return [...map.values()].map(rooms => ({ r: rooms.find(x => x.id === x.groupId) || rooms[0], rooms }));
+}
+const roomsLabel = rooms => (rooms.length > 1 ? `Rooms ${rooms.map(x => x.roomNumber || '—').join(', ')}` : `Room ${rooms[0]?.roomNumber || '—'}`);
+const countBookings = list => new Set(list.map(bookingKey)).size;
+
 function Tag({ t, c = 'gray', title, children }) {
   const [bg, color] = tone(t, c);
   return <span title={title} style={{ background: bg, color, borderRadius: 6, padding: '2px 8px', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap' }}>{children}</span>;
@@ -158,13 +194,15 @@ function ReservationBoard({
   const [type, setType] = useState('all');
   const [pay, setPay] = useState('all');
   const [room, setRoom] = useState('all');
+  // Box clicked under the calendar ('' = show everything on the day).
+  const [dayFilter, setDayFilter] = useState('');
 
   const types = useMemo(() => [...new Set(reservations.map(r => r.type).filter(Boolean))], [reservations]);
-  const rooms = useMemo(() => [...new Set(reservations.map(r => r.roomNumber).filter(Boolean))].sort(), [reservations]);
+  const rooms = useMemo(() => [...new Set(reservations.flatMap(r => (r.groupRooms || [r]).map(x => x.roomNumber)).filter(Boolean))].sort(), [reservations]);
 
   const items = useMemo(() => reservations.filter(r =>
     (type === 'all' || r.type === type) &&
-    (room === 'all' || r.roomNumber === room) &&
+    (room === 'all' || (r.groupRooms || [r]).some(x => x.roomNumber === room)) &&
     (pay === 'all' || (pay === 'unpaid' ? owes(r) : !owes(r)))
   ), [reservations, type, room, pay, owes]);
 
@@ -188,10 +226,21 @@ function ReservationBoard({
   const filtersActive = type !== 'all' || pay !== 'all' || room !== 'all';
   const showNav = tab !== 'list' || scope === 'day';
 
-  const dayStats = {
-    arriving: items.filter(r => r.checkIn === selected && r.status !== 'cancelled').length,
-    departing: items.filter(r => r.checkOut === selected && r.status !== 'cancelled').length,
-    inHouse: items.filter(r => r.status === 'checked-in' && staysOn(r, selected)).length,
+  // The boxes under the calendar. Each is a filter for the selected day;
+  // counts are bookings (rooms booked together count once).
+  const active = r => r.status !== 'cancelled';
+  const DAY_FILTERS = [
+    { id: 'arriving', label: 'Arriving', c: 'green', test: r => r.checkIn === selected && active(r) },
+    { id: 'waiting', label: 'Waiting to check in', c: 'amber', test: r => r.checkIn === selected && ['pending', 'confirmed'].includes(r.status) },
+    { id: 'inHouse', label: 'In house', c: 'blue', test: r => r.status === 'checked-in' && staysOn(r, selected) },
+    { id: 'departing', label: 'Departing', c: 'amber', test: r => r.checkOut === selected && active(r) },
+    { id: 'balance', label: 'Balance due', c: 'red', test: r => staysOn(r, selected) && active(r) && r.status !== 'checked-out' && owes(r) },
+    { id: 'cancelled', label: 'Cancelled', c: 'gray', test: r => staysOn(r, selected) && r.status === 'cancelled' },
+  ];
+  const activeDayFilter = DAY_FILTERS.find(f => f.id === dayFilter);
+  const chooseDayFilter = id => {
+    setDayFilter(current => (current === id ? '' : id));
+    setTab('day');
   };
 
   const ctl = {
@@ -267,11 +316,22 @@ function ReservationBoard({
         {selected === todayIso ? 'Today' : formatDate(selected)}
       </div>
       <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
-        {[['Arriving', dayStats.arriving, 'green'], ['Departing', dayStats.departing, 'amber'], ['In house', dayStats.inHouse, 'blue']].map(([label, n, c]) => (
-          <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: t.CARD2, borderRadius: 9, padding: '8px 10px', fontSize: 12, color: t.TEXT }}>
-            {label}<Tag t={t} c={c}>{n}</Tag>
-          </div>
-        ))}
+        {DAY_FILTERS.map(f => {
+          const n = countBookings(items.filter(f.test));
+          const on = dayFilter === f.id;
+          if (f.id === 'cancelled' && !n && !on) return null;
+          return (
+            <button key={f.id} type="button" onClick={() => chooseDayFilter(f.id)} aria-pressed={on}
+              title={on ? 'Show everything on this day' : `Show only: ${f.label.toLowerCase()}`}
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: on ? t.ACCENT : t.CARD2, border: `1px solid ${on ? t.ACCENT : 'transparent'}`, borderRadius: 9, padding: '8px 10px', fontSize: 12, color: on ? t.ACCENT_TEXT : t.TEXT, fontWeight: on ? 700 : 400, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+              {f.label}<Tag t={t} c={f.c}>{n}</Tag>
+            </button>
+          );
+        })}
+        {dayFilter && (
+          <button type="button" onClick={() => setDayFilter('')}
+            style={{ border: 0, background: 'none', color: t.ACCENT, fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: '2px 0', textAlign: 'left', fontFamily: 'inherit' }}>Show everything on this day</button>
+        )}
       </div>
     </aside>
   );
@@ -280,7 +340,8 @@ function ReservationBoard({
   const row = (r) => {
     const color = STATUS_COLOR[r.status] || '#9ca3af';
     const overstay = overstayOf(r, now);
-    const unpaid = owes(r);
+    const roomsOnCard = r.groupRooms || [r];
+    const unpaid = roomsOnCard.some(owes);
     return (
       <div key={r.id} role="button" tabIndex={0} onClick={() => onSelect(r.id)}
         onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelect(r.id); } }}
@@ -295,15 +356,25 @@ function ReservationBoard({
             {r.guestName || 'Guest'} <span style={{ fontSize: 10, color: t.MUTED, fontWeight: 500 }}>#{r.id.slice(0, 8).toUpperCase()}</span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
-            <Tag t={t} c="green">Room {r.roomNumber || '—'}{r.roomType ? ` · ${r.roomType}` : ''}</Tag>
+            <Tag t={t} c="green">{roomsOnCard.length > 1 ? `${roomsOnCard.length} rooms: ${roomsOnCard.map(x => x.roomNumber || '—').join(', ')}` : `Room ${r.roomNumber || '—'}`}{r.roomType ? ` · ${r.roomType}` : ''}</Tag>
             {r.type && <Tag t={t} c="violet"><span style={{ textTransform: 'capitalize' }}>{r.type}</span></Tag>}
             <Tag t={t}>{r.checkOut && r.checkOut !== r.checkIn ? `${formatDate(r.checkIn)} – ${formatDate(r.checkOut)}` : formatDate(r.checkIn)}</Tag>
             <Tag t={t}>{nights(r)}</Tag>
             <Tag t={t} c={unpaid ? 'amber' : 'green'}>{unpaid ? 'Unpaid' : 'Paid'}</Tag>
             {r.cancellationRequested && <Tag t={t} c="red">Cancellation requested</Tag>}
             {isDelayedArrival(r) && <Tag t={t} c="amber" title="Guest has not checked in yet">Delayed arrival</Tag>}
+            {roomsOnCard.some(x => x.status !== r.status) && (
+              <Tag t={t} c="amber" title="The rooms in this booking are at different steps">
+                {roomsOnCard.map(x => `${x.roomNumber}: ${String(x.status).replace('-', ' ')}`).join(' · ')}
+              </Tag>
+            )}
             {overstay && <Tag t={t} c="red" title="Still checked in past check-out time">Overstayed {overstay.label}</Tag>}
           </div>
+          {getReservationRemarks(r).filter(item => item.type !== 'cancelled' || r.cancellationReason).map(item => (
+            <div key={item.type} style={{ marginTop: 6, fontSize: 11, color: t.MUTED, lineHeight: 1.5 }}>
+              <strong style={{ color: item.tone === 'red' ? '#dc2626' : item.tone === 'green' ? '#16a34a' : '#b45309' }}>{item.label}:</strong> {item.text}
+            </div>
+          ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 150, flex: '0 0 auto' }}>
           <BeamAvatar seed={guestAvatarSeed(r)} size={30} />
@@ -348,6 +419,19 @@ function ReservationBoard({
 
   // ── Day view: arriving / departing / staying ──
   const dayView = (() => {
+    if (activeDayFilter) {
+      const list = items.filter(activeDayFilter.test);
+      return (
+        <section>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: t.TEXT }}>{activeDayFilter.label} <span style={{ color: t.MUTED, fontWeight: 500 }}>({countBookings(list)})</span></div>
+            <button type="button" onClick={() => setDayFilter('')}
+              style={{ border: `1px solid ${t.BORDER2}`, background: t.CARD2, color: t.TEXT, borderRadius: 8, padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Show all</button>
+          </div>
+          {list.length ? <div style={{ display: 'grid', gap: 10 }}>{list.map(row)}</div> : empty(`Nothing for "${activeDayFilter.label.toLowerCase()}" on this day.`)}
+        </section>
+      );
+    }
     const live = dayItems.filter(r => r.status !== 'cancelled');
     const groups = [
       ['Arriving', live.filter(r => r.checkIn === selected)],
@@ -568,9 +652,17 @@ export default function Reservations() {
   const [toast, setToast] = useState(null);
   const [cancelDialog, setCancelDialog] = useState(null);
   const [statusBusyId, setStatusBusyId] = useState('');
+  // Days before arrival that guests can still rebook for free (saved policy).
+  const noticeDays = useCancellationPolicy().dateChangeDays;
   const [lateFeeDialog, setLateFeeDialog] = useState(null); // { reservation, amount, note }
+  // "Give more time" (late check-out): { reservation, hours, amount, note, busy }
+  const [extendDialog, setExtendDialog] = useState(null);
   const [lateFeeBusy, setLateFeeBusy] = useState(false);
+  // Recording the rest of a group arriving after check-in.
+  const [arrivalDialog, setArrivalDialog] = useState(null);
   const [editTarget, setEditTarget] = useState(null); // reservation being edited
+  const [moveRooms, setMoveRooms] = useState({}); // change request id -> other room to approve in
+  const [assignTarget, setAssignTarget] = useState(null); // corporate booking getting rooms
   const [cancelReason, setCancelReason] = useState('');
   const [cancelBusy, setCancelBusy] = useState(false);
   const [decisionBusy, setDecisionBusy] = useState('');
@@ -594,32 +686,15 @@ export default function Reservations() {
     return () => clearInterval(t);
   }, []);
 
-  // Past bookings with nothing owed are closed out through the server, which
-  // re-checks the balance and sets the room to cleaning.
-  const releaseExpiredRooms = useCallback(async (expired) => {
-    await Promise.all(expired.map(async reservation => {
-      try {
-        await callReservationStatusApi({ action: 'close-expired', reservationId: reservation.id });
-      } catch (err) {
-        console.warn('Expired room release skipped:', err.message);
-      }
-    }));
-  }, []);
-
   const fetchReservations = useCallback(async () => {
     const snap = await getDocs(collection(db, 'reservations'));
     let data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (isAdmin) {
-      const expired = data.filter(isAutoReleasable);
-      if (expired.length) {
-        await releaseExpiredRooms(expired);
-        const ids = new Set(expired.map(r => r.id));
-        data = data.map(r => ids.has(r.id) ? { ...r, status: 'checked-out' } : r);
-      }
-    }
+    // No-shows are no longer closed here as "checked out": the daily job
+    // marks them as no-shows (policy fee applies), or staff press
+    // "Mark no-show" on the booking.
     data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
     setReservations(data);
-  }, [isAdmin, releaseExpiredRooms]);
+  }, []);
 
   useEffect(() => {
     fetchReservations();
@@ -695,9 +770,25 @@ export default function Reservations() {
     });
   }, [overstayed]);
 
+  // Opening the dialog to cancel (not just request) asks the server what the
+  // fee and refund would be under the cancellation policy.
+  const loadCancelQuote = (kind, reservation, waive) => {
+    staffApi('staff-billing', { action: 'cancel-with-policy', reservationId: reservation.id, preview: true, noShow: kind === 'no-show', waive })
+      .then(quote => setCancelDialog(d => (d && d.reservation.id === reservation.id ? { ...d, quote, quoteError: '' } : d)))
+      .catch(error => setCancelDialog(d => (d && d.reservation.id === reservation.id
+        ? { ...d, quoteError: error.message || 'The fee could not be worked out.' } : d)));
+  };
   const openCancellationDialog = (kind, reservation) => {
     setCancelReason(kind === 'approve' ? reservation.cancellationReason || '' : '');
-    setCancelDialog({ kind, reservation });
+    setCancelDialog({ kind, reservation, quote: null, quoteError: '', waive: false });
+    if (kind === 'request') return;
+    loadCancelQuote(kind, reservation, false);
+  };
+  // Admins only: no fee, full refund (typhoon, resort closed, emergencies).
+  const toggleWaive = waive => {
+    if (!cancelDialog) return;
+    setCancelDialog(d => ({ ...d, waive, quote: null }));
+    loadCancelQuote(cancelDialog.kind, cancelDialog.reservation, waive);
   };
 
   // Changes a reservation's status on the server. The server enforces the
@@ -709,38 +800,91 @@ export default function Reservations() {
     if (!reservation || reservation.status === status) return;
     if (isReceptionist && reservation.status === 'cancelled') return;
     // Same one-step-at-a-time rule the server enforces.
-    const transitionError = getStatusTransitionError(reservation.status, status);
+    const transitionError = getStatusTransitionError(reservation.status, status)
+      || (status === 'checked-in' ? getEarlyCheckInError(reservation) || getCheckInPaymentError(reservation) : '');
     if (transitionError) {
       setToast({ type: 'error', text: transitionError });
       if (status === 'cancelled') throw new Error(transitionError);
       return;
     }
+    // Rooms booked together at the same step move with it (not cancellations,
+    // which stay per room).
+    const linkedRooms = status === 'cancelled' || !reservation.groupId ? [] : reservations.filter(r => r.id !== id
+      && r.groupId === reservation.groupId && r.status === reservation.status);
+    const allRooms = [reservation, ...linkedRooms];
     let force = false;
     let statusReason = reason;
-    if (status === 'checked-out' && hasOutstandingBalance(reservation)) {
-      const owedText = `₱${outstandingAmount(reservation).toLocaleString()}`;
+    if (status === 'checked-out' && allRooms.some(mustPayBeforeCheckout)) {
+      const owedText = `${money(allRooms.reduce((sum, r) => sum + Math.max(0, outstandingAmount(r)), 0))}`;
       if (!canOverrideCheckout) {
         setToast({ type: 'error', text: `This guest still owes ${owedText}. Collect payment in Billing before checking out.` });
         return;
       }
       const overrideReason = await appPrompt(
         `This guest still owes ${owedText}. You can check them out anyway; the reason and the unpaid amount are saved on the booking.`,
-        { title: 'Check out with an unpaid balance?', tone: 'warning', required: true, confirmLabel: 'Check out anyway', placeholder: 'e.g. Guest will settle by bank transfer tomorrow' },
+        { title: 'Check out with an unpaid balance?', tone: 'warning', required: true, confirmLabel: 'Check out anyway', placeholder: 'e.g. Guest will settle by GCash tomorrow' },
       );
       if (!overrideReason) return;
       force = true;
       statusReason = overrideReason.trim();
     }
+    // Checking out can't be undone: confirm, especially before the guest's
+    // check-out time (an accidental click while the guest is still here).
+    if (status === 'checked-out' && !force) {
+      const scheduled = getScheduledCheckOutMs(reservation);
+      const early = scheduled ? scheduled - Date.now() : 0;
+      const ok = await appConfirm(
+        `Check out ${reservation.guestName || 'this guest'} now?${scheduled ? ` Their check-out time is ${formatManilaTime(scheduled)}${early > 30 * 60000 ? `, ${Math.round(early / 3600000 * 10) / 10} hours from now` : ''}.` : ''} Only continue if the guest has returned the key and is leaving.`,
+        { title: early > 30 * 60000 ? 'Check out early?' : 'Is this guest ready to check out?', tone: early > 30 * 60000 ? 'warning' : 'info', confirmLabel: 'Yes, check out' },
+      );
+      if (!ok) return;
+    }
+    // Checking in: record which ID the guest showed (staff can skip).
+    let idCheck;
+    let arrivedGuests;
+    if (status === 'checked-in') {
+      const answer = await askCheckInId(reservation.guestName, {
+        bookedGuests: allRooms.reduce((sum, r) => sum + bookedGuestCount(r), 0),
+        arrivedGuests: allRooms.reduce((sum, r) => sum + arrivedGuestCount(r), 0),
+      });
+      if (!answer) return;
+      if (!answer.skipped) idCheck = { type: answer.type, last4: answer.last4 };
+      arrivedGuests = answer.arrivedGuests;
+    }
+    // The arrived guests fill each room's booked number in order.
+    const arrivedSplit = arrivedGuests ? splitArrivedGuests(arrivedGuests, allRooms.map(bookedGuestCount)) : allRooms.map(() => null);
     setStatusBusyId(id);
     try {
-      const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason: statusReason, force });
+      const result = await callReservationStatusApi({ action: 'set-status', reservationId: id, status, reason: statusReason, force, idCheck, ...(arrivedSplit[0] !== null ? { arrivedGuests: arrivedSplit[0] } : {}) });
+      const linkedErrors = [];
+      for (let i = 0; i < linkedRooms.length; i += 1) {
+        try {
+          await callReservationStatusApi({ action: 'set-status', reservationId: linkedRooms[i].id, status, reason: statusReason, force, idCheck, ...(arrivedSplit[i + 1] !== null ? { arrivedGuests: arrivedSplit[i + 1] } : {}) });
+        } catch (linkedError) {
+          linkedErrors.push(`Room ${linkedRooms[i].roomNumber || ''}: ${linkedError.message}`);
+        }
+      }
+      if (linkedErrors.length) setToast({ type: 'error', text: linkedErrors.join(' ') });
       // Show the change right away; the live listener will confirm it.
-      setReservations(list => list.map(r => (r.id === id ? { ...r, status } : r)));
+      // The check-in / check-out time shows straight away too.
+      const stamp = new Date(serverNow()).toISOString();
+      const changedIds = allRooms.map(r => r.id);
+      setReservations(list => list.map(r => {
+        const index = changedIds.indexOf(r.id);
+        if (index < 0) return r;
+        return {
+          ...r,
+          status,
+          ...(status === 'checked-in' && !r.checkedInAt ? { checkedInAt: stamp } : {}),
+          ...(status === 'checked-in' && arrivedSplit[index] !== null ? { arrivedGuests: arrivedSplit[index] } : {}),
+          ...(status === 'checked-out' && !r.checkedOutAt ? { checkedOutAt: stamp } : {}),
+        };
+      }));
       if (status === 'cancelled') return;
       if (status === 'checked-out') {
         setToast({
           type: 'success',
-          text: `Guest has checked out${result.overstayMinutes ? ' (late check-out recorded)' : ''}. ${reservation.roomName || 'The room'} is now under cleaning/maintenance.`,
+          text: `Guest has checked out${result.overstayMinutes ? ' (late check-out recorded)' : ''}. ${linkedRooms.length ? `Rooms ${allRooms.map(r => r.roomNumber).join(', ')} are` : `${reservation.roomName || 'The room'} is`} now under cleaning/maintenance.`,
         });
       }
       if (status === 'checked-out' && reservation.status !== 'checked-out') {
@@ -796,7 +940,7 @@ export default function Reservations() {
     if (!lateFeeDialog || lateFeeBusy) return;
     const amount = Number(lateFeeDialog.amount);
     if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_LATE_FEE) {
-      setToast({ type: 'error', text: `Enter a late check-out charge between ₱1 and ₱${MAX_LATE_FEE.toLocaleString()}.` });
+      setToast({ type: 'error', text: `Enter a late check-out charge between ₱1 and ₱${MAX_LATE_FEE.toLocaleString()} (in pesos).` });
       return;
     }
     setLateFeeBusy(true);
@@ -808,7 +952,7 @@ export default function Reservations() {
         note: lateFeeDialog.note,
       });
       setLateFeeDialog(null);
-      setToast({ type: 'success', text: `Late check-out charge of ₱${amount.toLocaleString()} added. Balance due: ₱${Math.max(0, result.balance).toLocaleString()}.` });
+      setToast({ type: 'success', text: `Late check-out charge of ${money(amount)} added. Balance due: ${money(Math.max(0, result.balance))}.` });
     } catch (error) {
       setToast({ type: 'error', text: error.message });
     } finally {
@@ -847,6 +991,17 @@ export default function Reservations() {
       if (answer === null) return;
       reason = answer;
     }
+    // Admins approving inside the rebooking window waive the rule, with a reason.
+    if (action === 'approve-modification' && extra.waivePolicy) {
+      const answer = await appPrompt('Saved in the Activity Log and shared with the guest.', {
+        title: `Waive the ${noticeDays}-day date-change rule?`,
+        tone: 'info',
+        required: true,
+        confirmLabel: 'Waive and approve',
+      });
+      if (answer === null) return;
+      reason = answer;
+    }
     setDecisionBusy(reservation.id);
     try {
       const token = await auth.currentUser?.getIdToken();
@@ -880,9 +1035,39 @@ export default function Reservations() {
     }
   };
 
-  const approveCancellation = async (reservation, reason) => {
-    await callReservationStatusApi({ action: 'set-status', reservationId: reservation.id, status: 'cancelled', reason: reason.trim() });
+  // Unpaid online bookings: ask the guest if the booking is theirs, or email
+  // a PayMongo payment link. Paying the link confirms the booking.
+  const followUpUnpaid = async (action, reservation, choice) => {
+    setDecisionBusy(reservation.id);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Please sign in again.');
+      const response = await fetch('/api/reservation-staff-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action, reservationId: reservation.id, choice }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'The email could not be sent.');
+      setToast({
+        type: 'success',
+        text: action === 'ask-guest-confirm'
+          ? `Email sent to ${reservation.email || 'the guest'} asking them to confirm the booking.`
+          : `Payment link for ${money(Number(result.amount))} emailed to ${reservation.email || 'the guest'}. The booking confirms itself once they pay.`,
+      });
+    } catch (error) {
+      setToast({ type: 'error', text: error.message || 'The email could not be sent.' });
+    } finally {
+      setDecisionBusy('');
+    }
+  };
+
+  // Cancels under the cancellation policy: the server saves the fee and
+  // refund and emails the guest a cancellation receipt.
+  const cancelWithPolicy = async (reservation, reason, { noShow = false, waive = false } = {}) => {
+    const result = await staffApi('staff-billing', { action: 'cancel-with-policy', reservationId: reservation.id, reason: reason.trim(), noShow, waive });
     await fetchReservations();
+    return result;
   };
 
   const denyCancellation = async (id) => {
@@ -896,13 +1081,21 @@ export default function Reservations() {
     try {
       if (cancelDialog.kind === 'request') {
         await requestCancellation(cancelDialog.reservation.id, cancelReason);
-      } else if (cancelDialog.kind === 'approve') {
-        await approveCancellation(cancelDialog.reservation, cancelReason);
+        setToast({ type: 'success', text: 'Cancellation request submitted.' });
       } else {
-        await updateStatus(cancelDialog.reservation.id, 'cancelled', cancelReason);
+        const noShow = cancelDialog.kind === 'no-show';
+        if (cancelDialog.waive && cancelReason.trim().length < 5) {
+          setToast({ type: 'error', text: 'Write why the policy is waived (for example "Typhoon, resort closed").' });
+          return;
+        }
+        const result = await cancelWithPolicy(cancelDialog.reservation, cancelReason, { noShow, waive: cancelDialog.waive });
+        const feeText = `Fee ${money(Number(result.fee || 0))} · refund ${money(Number(result.refund || 0))}`;
+        const what = noShow ? 'Marked as a no-show' : 'Reservation cancelled';
+        setToast(result.emailSent || (noShow && !(Number(result.amountPaid) > 0))
+          ? { type: 'success', text: `${what}. ${feeText}.${result.emailSent ? ` Email and receipt ${result.receiptNumber} sent to the guest.` : ''}` }
+          : { type: 'error', text: `${what} (${feeText}), but the email was not sent: ${result.emailError || 'no email on this booking'}.` });
       }
       setCancelDialog(null);
-      setToast({ type: 'success', text: cancelDialog.kind === 'request' ? 'Cancellation request submitted.' : 'Reservation cancelled.' });
     } catch (error) {
       console.error('Unable to complete reservation cancellation:', error);
       setToast({ type: 'error', text: error.message || 'Cancellation could not be completed.' });
@@ -951,10 +1144,64 @@ export default function Reservations() {
   };
 
   const selectedReservation = selectedId ? reservations.find(r => r.id === selectedId) : null;
+  // Rooms of a selected multi-room booking (for the details window).
+  const selectedGroupRooms = selectedReservation?.groupId
+    ? reservations.filter(r => r.groupId === selectedReservation.groupId) : [];
   const lateArrivals = reservations.filter(isDelayedArrival);
+  // Checked-in guests whose check-out time is within the next 2 hours.
+  const dueToCheckOut = reservations
+    .map(r => ({ r, due: getCheckoutDue(r, now) }))
+    .filter(x => x.due)
+    .sort((a, b) => a.due.dueMs - b.due.dueMs);
+  const billingPath = id => `${isReceptionist ? '/receptionist' : '/admin'}/billing?booking=${encodeURIComponent(id)}&from=reservations`;
 
+  const submitExtension = async () => {
+    if (!extendDialog || extendDialog.busy) return;
+    setExtendDialog(d => ({ ...d, busy: true }));
+    try {
+      const result = await callReservationStatusApi({
+        action: 'extend-checkout',
+        reservationId: extendDialog.reservation.id,
+        hours: Number(extendDialog.hours),
+        amount: extendDialog.amount === '' ? 0 : Number(extendDialog.amount),
+        note: extendDialog.note,
+      });
+      // Rooms booked together get the same extra time; the fee stays on the first room.
+      for (const room of (extendDialog.rooms || []).filter(x => x.id !== extendDialog.reservation.id && x.status === 'checked-in')) {
+        await callReservationStatusApi({ action: 'extend-checkout', reservationId: room.id, hours: Number(extendDialog.hours), amount: 0, note: extendDialog.note });
+      }
+      setExtendDialog(null);
+      setToast({ type: 'success', text: `${extendDialog.reservation.guestName || 'Guest'} can stay until ${result.untilLabel}.${result.fee ? ` ${money(Number(result.fee))} late check-out fee added to the bill.` : ''}` });
+    } catch (error) {
+      setExtendDialog(d => (d ? { ...d, busy: false } : d));
+      setToast({ type: 'error', text: error.message || 'More time could not be given.' });
+    }
+  };
+
+  const submitArrivals = async () => {
+    if (!arrivalDialog || arrivalDialog.busy) return;
+    const { reservation, count } = arrivalDialog;
+    setArrivalDialog(d => ({ ...d, busy: true }));
+    try {
+      const result = await callReservationStatusApi({ action: 'set-arrived-guests', reservationId: reservation.id, arrivedGuests: Number(count) });
+      setArrivalDialog(null);
+      setReservations(list => list.map(r => (r.id === reservation.id ? { ...r, arrivedGuests: result.arrivedGuests } : r)));
+      const left = Math.max(0, result.booked - result.arrivedGuests);
+      setToast({ type: 'success', text: left ? `${result.arrivedGuests} of ${result.booked} guests have arrived. ${left} still to come.` : `All ${result.booked} guests have arrived.` });
+    } catch (error) {
+      setArrivalDialog(d => (d ? { ...d, busy: false } : d));
+      setToast({ type: 'error', text: error.message || 'The guest count could not be saved.' });
+    }
+  };
+  const stillArriving = reservations.filter(r => guestsStillToArrive(r) > 0);
+
+  // Checked-out and cancelled bookings leave the list and the calendar right
+  // away; they stay in Customers and Reservation History. Choose
+  // "Checked-out" or "Cancelled" in the status filter to see them here.
+  const isFinished = r => r.status === 'checked-out' || r.status === 'cancelled';
   const filtered = sortRecords(reservations.filter(r => {
-    const matchFilter = filter === 'all' || r.status === filter;
+    if (r.type === 'corporate-room') return false; // shown on the group booking
+    const matchFilter = filter === 'all' ? !isFinished(r) : r.status === filter;
     const matchQuick = !quickView || matchesQuickView(r, quickView, now);
     // Guest, room, phone, email, status or booking reference (with or without #).
     const term = search.trim().toLowerCase().replace(/^#/, '');
@@ -962,6 +1209,23 @@ export default function Reservations() {
       .some(value => String(value || '').toLowerCase().includes(term));
     return matchFilter && matchQuick && matchSearch;
   }), sortBy, sortDir);
+
+  // One card per booking: rooms booked together show on the first room's
+  // card (status changes there apply to every room).
+  const boardReservations = (() => {
+    const seen = new Set();
+    const out = [];
+    filtered.forEach(r => {
+      if (!r.groupId) { out.push(r); return; }
+      if (seen.has(r.groupId)) return;
+      seen.add(r.groupId);
+      const rooms = reservations.filter(x => x.groupId === r.groupId && x.type !== 'corporate-room'
+        && (x.status !== 'cancelled' || r.status === 'cancelled'));
+      const lead = rooms.find(x => x.id === r.groupId) || rooms[0] || r;
+      out.push(rooms.length > 1 ? { ...lead, groupRooms: rooms } : r);
+    });
+    return out;
+  })();
 
   const clearQuickView = () => {
     setQuickView('');
@@ -984,7 +1248,7 @@ export default function Reservations() {
     const lockedReason = isReceptionist && r.status === 'cancelled'
       ? 'Cancelled bookings can only be changed by an admin.'
       : !canCancel && r.cancellationRequested ? 'Cancellation requested — waiting for an admin.' : '';
-    const owes = hasOutstandingBalance(r);
+    const owes = mustPayBeforeCheckout(r);
     return (
       <StatusStepper
         status={r.status}
@@ -993,23 +1257,81 @@ export default function Reservations() {
         lockedReason={lockedReason}
         colors={stepperColors}
         stepNotes={owes ? {
-          'checked-out': `Guest owes ₱${outstandingAmount(r).toLocaleString()}. Collect payment first${canOverrideCheckout ? ', or override with a reason' : ''}.`,
+          'checked-in': `Guest owes ${money(outstandingAmount(r))}. They must pay in full before check-in.`,
+          'checked-out': `Guest owes ${money(outstandingAmount(r))}. Collect payment first${canOverrideCheckout ? ', or override with a reason' : ''}.`,
         } : {}}
-        getStepError={to => getStatusTransitionError(r.status, to)}
+        getStepError={to => getStatusTransitionError(r.status, to) || (to === 'checked-in' ? getEarlyCheckInError(r) || getCheckInPaymentError(r) : '')}
         onSelect={status => updateStatus(r.id, status)}
         onCancel={() => openCancellationDialog(canCancel ? 'cancel' : 'request', r)}
         cancelLabel={canCancel ? 'Cancel booking' : 'Request cancellation'}
       />
     );
   };
+  // Under the stepper: "Checked in 2:05 PM" while the guest is in, and the
+  // check-out time for 5 minutes after they leave.
   const renderActions = (r) => (
-    <div onClick={event => event.stopPropagation()} style={{ minWidth: 190 }}>{renderStepper(r, true)}</div>
+    <div onClick={event => event.stopPropagation()} style={{ minWidth: 190 }}>
+      {renderStepper(r, true)}
+      {getLiveStayLabels(r, now).map(label => (
+        <div key={label.type} style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: label.type === 'in' ? (dark ? '#93c5fd' : '#1d4ed8') : MUTED, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <i className={`ti ${label.type === 'in' ? 'ti-login' : 'ti-logout'}`} aria-hidden="true" />{label.text}
+        </div>
+      ))}
+      {isAgencyBilled(r) && (
+        <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: hasAgencyPo(r) ? (dark ? '#c7d2fe' : '#3730a3') : (dark ? '#fcd34d' : '#b45309'), display: 'flex', alignItems: 'center', gap: 5 }}>
+          <i className="ti ti-building-bank" aria-hidden="true" />{agencyStatusLabel(r)}
+        </div>
+      )}
+      {r.type === 'corporate' && ['pending', 'confirmed', 'checked-in'].includes(r.status) && (
+        <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+          <span style={{ color: MUTED }}>{r.assignedRooms?.length ? `Rooms: ${r.assignedRooms.map(item => item.roomNumber).join(', ')}` : 'No rooms yet'}</span>
+          <button type="button" onClick={() => setAssignTarget(r)}
+            style={{ border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '3px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer', background: 'transparent', color: TEXT, fontFamily: 'inherit' }}>
+            {r.assignedRooms?.length ? 'Change rooms' : 'Assign rooms'}
+          </button>
+        </div>
+      )}
+      {/* Check-in date passed and the guest never came. */}
+      {canCancel && canMarkNoShowNow(r, now) && (
+        <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: dark ? '#fcd34d' : '#b45309' }}>
+            <i className="ti ti-user-question" aria-hidden="true" /> Didn’t arrive
+          </span>
+          <button type="button" onClick={() => openCancellationDialog('no-show', r)}
+            style={{ border: `1px solid ${dark ? '#fcd34d' : '#b45309'}`, borderRadius: 8, padding: '3px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer', background: 'transparent', color: dark ? '#fcd34d' : '#b45309', fontFamily: 'inherit' }}>
+            Mark no-show
+          </button>
+        </div>
+      )}
+      {/* Paid in full (e.g. online) and arriving today: one click on arrival. */}
+      {isReadyToCheckIn(r, now) && (
+        <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: dark ? '#86efac' : '#15803d', background: dark ? 'rgba(22,101,52,.35)' : '#dcfce7', borderRadius: 999, padding: '2px 8px', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <i className="ti ti-circle-check" aria-hidden="true" /> Paid in full · ready to check in
+          </span>
+          <button type="button" disabled={statusBusyId === r.id} onClick={() => updateStatus(r.id, 'checked-in')}
+            style={{ border: 0, borderRadius: 8, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: statusBusyId === r.id ? 'wait' : 'pointer', background: dark ? '#86efac' : '#15803d', color: dark ? '#052e16' : '#fff', fontFamily: 'inherit' }}>
+            {statusBusyId === r.id ? 'Checking in…' : 'Check in'}
+          </button>
+        </div>
+      )}
+    </div>
   );
   const canEditBooking = r => ['pending', 'confirmed', 'checked-in'].includes(r.status) && r.type !== 'corporate' && Boolean(r.roomId);
 
-  const pendingCancellations = reservations.filter(r => r.cancellationRequested);
-  const pendingRefunds = canDecideRefunds ? reservations.filter(r =>
-    ['eligible', 'needs_review'].includes(String(r.refundRequestStatus || '').toLowerCase())) : [];
+  // Every staff member sees open requests (they also appear in the bell);
+  // only those allowed to decide get the buttons.
+  const pendingCancellations = reservations.filter(r => r.cancellationRequested && r.status !== 'cancelled');
+  const pendingRefunds = reservations.filter(r =>
+    ['eligible', 'needs_review'].includes(String(r.refundRequestStatus || '').toLowerCase()));
+  const unpaidOnline = reservations.filter(isUnpaidOnlineBooking);
+  const followUpTime = value => {
+    const ms = value?.toMillis ? value.toMillis() : value?.seconds ? value.seconds * 1000 : 0;
+    return ms ? new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'just now';
+  };
+  const waitingForAdmin = (
+    <span style={{ fontSize: '11px', fontWeight: 600, color: MUTED }}>Waiting for an admin</span>
+  );
   const pendingModifications = reservations.filter(r =>
     ['requested', 'needs_review'].includes(String(r.modificationRequest?.status || '').toLowerCase()));
 
@@ -1018,6 +1340,14 @@ export default function Reservations() {
     <PageLayout>
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '20px' }}>
 
+        {/* Backup for internet outages: today's arrivals, departures and balances on paper. */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+          <button type="button" onClick={() => { if (!printDailySheet(reservations)) setToast({ type: 'error', text: 'Allow pop-ups for this site to print the sheet.' }); }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${BORDER2}`, background: CARD, color: TEXT, borderRadius: 9, padding: '7px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+            <i className="ti ti-printer" aria-hidden="true" /> Print today's sheet
+          </button>
+        </div>
+
         {toast && (
           <div role="status" onClick={() => setToast(null)}
             style={{ position: 'fixed', top: '18px', right: '18px', zIndex: 1000, maxWidth: '360px', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', background: toast.type === 'error' ? '#fee2e2' : '#dcfce7', color: toast.type === 'error' ? '#991b1b' : '#166534', border: `1px solid ${toast.type === 'error' ? '#fecaca' : '#bbf7d0'}`, boxShadow: '0 4px 14px rgba(0,0,0,0.12)', fontSize: '12px' }}>
@@ -1025,16 +1355,37 @@ export default function Reservations() {
           </div>
         )}
 
+        {assignTarget && (
+          <AssignRoomsDialog
+            reservation={assignTarget}
+            colors={{ CARD, CARD2, BORDER: BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+            onClose={() => setAssignTarget(null)}
+            onSaved={result => {
+              setAssignTarget(null);
+              setToast({ type: 'success', text: result.assignedRooms.length
+                ? `Rooms for ${result.companyName}: ${result.assignedRooms.map(item => item.roomNumber).join(', ')}.`
+                : `No rooms assigned to ${result.companyName}.` });
+            }}
+          />
+        )}
+
         {editTarget && (
           <EditBookingDialog
             reservation={editTarget}
+            reservations={reservations}
+            isAdmin={isAdmin}
+            onRoomAdded={result => {
+              setEditTarget(null);
+              setToast({ type: 'success', text: `Room ${result.roomNumber} added to the booking (${money(Number(result.totalAmount))}). Collect it in Billing.` });
+              fetchReservations();
+            }}
             colors={{ CARD, CARD2, BORDER, BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
             onClose={() => setEditTarget(null)}
             onSaved={result => {
               setEditTarget(null);
               setToast({
                 type: 'success',
-                text: `Booking updated. New total ₱${Number(result.totalAmount).toLocaleString()}.${result.overpaid > 0 ? ` The guest overpaid ₱${Number(result.overpaid).toLocaleString()}; arrange a refund.` : ''}`,
+                text: `Booking updated${result.roomChanged ? `: now in Room ${result.roomNumber}` : ''}. New total ${money(Number(result.totalAmount))}.${result.overpaid > 0 ? ` The guest overpaid ${money(Number(result.overpaid))}; arrange a refund.` : ''}`,
               });
               fetchReservations();
             }}
@@ -1073,6 +1424,84 @@ export default function Reservations() {
           </div>
         )}
 
+        {arrivalDialog && (() => {
+          const booked = bookedGuestCount(arrivalDialog.reservation);
+          const already = arrivedGuestCount(arrivalDialog.reservation);
+          return (
+            <div role="presentation" onClick={event => { if (event.target === event.currentTarget && !arrivalDialog.busy) setArrivalDialog(null); }}
+              style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: '16px' }}>
+              <form role="dialog" aria-modal="true" aria-labelledby="arrivals-title"
+                onSubmit={event => { event.preventDefault(); submitArrivals(); }}
+                style={{ width: '100%', maxWidth: '400px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '20px', display: 'grid', gap: '12px' }}>
+                <div id="arrivals-title" style={{ fontWeight: 700, fontSize: '15px', color: TEXT }}>Guests arrived</div>
+                <div style={{ fontSize: '12px', color: MUTED }}>
+                  {arrivalDialog.reservation.guestName || 'Guest'} · Room {arrivalDialog.reservation.roomNumber || '—'} · {already} of {booked} guests here now.
+                  Choose the total number of guests who are now at the resort.
+                </div>
+                <label style={{ display: 'grid', gap: '4px', fontSize: '12px', color: MUTED }}>Guests at the resort now
+                  <select value={arrivalDialog.count} disabled={arrivalDialog.busy} onChange={event => { const count = Number(event.target.value); setArrivalDialog(d => ({ ...d, count })); }}
+                    style={{ border: `1px solid ${BORDER2}`, borderRadius: '9px', padding: '9px 10px', color: TEXT, background: CARD2, font: 'inherit', fontSize: '13px' }}>
+                    {Array.from({ length: booked }, (_, i) => booked - i).map(n => (
+                      <option key={n} value={n}>{n === booked ? `All ${booked} guests` : `${n} of ${booked} (${booked - n} still to come)`}</option>
+                    ))}
+                  </select>
+                </label>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '9px' }}>
+                  <button type="button" disabled={arrivalDialog.busy} onClick={() => setArrivalDialog(null)}
+                    style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 14px', background: CARD2, color: TEXT, cursor: 'pointer' }}>Cancel</button>
+                  <button type="submit" disabled={arrivalDialog.busy}
+                    style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: ACCENT, color: ACCENT_TEXT, fontWeight: 700, cursor: arrivalDialog.busy ? 'wait' : 'pointer' }}>
+                    {arrivalDialog.busy ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          );
+        })()}
+
+        {extendDialog && (
+          <div role="presentation" onClick={event => { if (event.target === event.currentTarget && !extendDialog.busy) setExtendDialog(null); }}
+            style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: '16px' }}>
+            <form role="dialog" aria-modal="true" aria-labelledby="extend-title"
+              onSubmit={event => { event.preventDefault(); submitExtension(); }}
+              style={{ width: '100%', maxWidth: '420px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '20px', display: 'grid', gap: '12px' }}>
+              <div id="extend-title" style={{ fontWeight: 700, fontSize: '15px', color: TEXT }}>Give more time to check out</div>
+              <div style={{ fontSize: '12px', color: MUTED }}>
+                {extendDialog.reservation.guestName || 'Guest'} · Room {extendDialog.reservation.roomNumber || '—'} · now due {formatManilaTime(getScheduledCheckOutMs(extendDialog.reservation))}.
+                The new time is counted from now or the current check-out time, whichever is later.
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: MUTED, marginBottom: '6px' }}>Extra time</div>
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                  {Array.from({ length: MAX_LATE_CHECKOUT_HOURS }, (_, i) => i + 1).map(h => (
+                    <button key={h} type="button" onClick={() => setExtendDialog(d => ({ ...d, hours: h }))}
+                      style={{ ...inp, padding: '7px 12px', fontWeight: 600, background: Number(extendDialog.hours) === h ? ACCENT : CARD2, color: Number(extendDialog.hours) === h ? ACCENT_TEXT : TEXT }}>
+                      {h} hr{h === 1 ? '' : 's'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: MUTED }}>
+                Late check-out fee (₱, optional)
+                <input type="number" min="0" max={MAX_LATE_FEE} step="0.01" value={extendDialog.amount} placeholder="0"
+                  onChange={e => setExtendDialog(d => ({ ...d, amount: e.target.value }))} style={inp} />
+              </label>
+              <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: MUTED }}>
+                Note (optional)
+                <input type="text" maxLength={300} value={extendDialog.note} placeholder="e.g. Waiting for their ride"
+                  onChange={e => setExtendDialog(d => ({ ...d, note: e.target.value }))} style={inp} />
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                <button type="button" onClick={() => setExtendDialog(null)} disabled={extendDialog.busy} style={{ ...inp, fontWeight: 600 }}>Cancel</button>
+                <button type="submit" disabled={extendDialog.busy}
+                  style={{ background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: '10px', padding: '9px 14px', fontSize: '12px', fontWeight: 700, cursor: extendDialog.busy ? 'wait' : 'pointer' }}>
+                  {extendDialog.busy ? 'Saving…' : `Give ${extendDialog.hours} more hour${Number(extendDialog.hours) === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
         {cancelDialog && (
           <div role="presentation" onClick={event => {
             if (event.target === event.currentTarget && !cancelBusy) setCancelDialog(null);
@@ -1080,22 +1509,61 @@ export default function Reservations() {
             <section role="dialog" aria-modal="true" aria-labelledby="cancel-dialog-title"
               style={{ width: '100%', maxWidth: '440px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '16px', padding: '22px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
               <h2 id="cancel-dialog-title" style={{ color: TEXT, fontSize: '17px', margin: '0 0 10px' }}>
-                {cancelDialog.kind === 'request' ? 'Request reservation cancellation?' : 'Cancel this reservation?'}
+                {cancelDialog.kind === 'request' ? 'Request reservation cancellation?' : cancelDialog.kind === 'no-show' ? 'Mark as a no-show?' : 'Cancel this reservation?'}
               </h2>
               <p style={{ color: MUTED, fontSize: '13px', margin: '0 0 16px' }}>
-                Are you sure you want to cancel the reservation for {cancelDialog.reservation.guestName || 'this guest'} (Room {cancelDialog.reservation.roomNumber || '—'})?
+                {cancelDialog.kind === 'no-show'
+                  ? <>{cancelDialog.reservation.guestName || 'The guest'} (Room {cancelDialog.reservation.roomNumber || '—'}) didn’t arrive. The booking is closed as a no-show, the no-show fee applies and the room is freed.</>
+                  : <>Are you sure you want to cancel the reservation for {cancelDialog.reservation.guestName || 'this guest'} (Room {cancelDialog.reservation.roomNumber || '—'})?</>}
                 {cancelDialog.kind === 'request' && ' This will send a request to an administrator for approval.'}
               </p>
-              <label htmlFor="cancellation-reason" style={{ display: 'block', color: MUTED, fontSize: '12px', marginBottom: '6px' }}>Reason (optional)</label>
+              {isAdmin && cancelDialog.kind !== 'request' && (
+                <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', fontSize: '12px', color: TEXT, background: cancelDialog.waive ? (dark ? 'rgba(22,101,52,.25)' : '#ecfdf5') : 'transparent', border: `1px solid ${BORDER2}`, borderRadius: '10px', padding: '9px 11px', margin: '0 0 12px', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={cancelDialog.waive} disabled={cancelBusy} onChange={event => toggleWaive(event.target.checked)} style={{ marginTop: '2px' }} />
+                  <span><strong>Waive the policy</strong> (no fee, full refund): for typhoons, resort closures or emergencies. A reason is required and saved in the Activity Log.</span>
+                </label>
+              )}
+              {cancelDialog.kind !== 'request' && (() => {
+                const q = cancelDialog.quote;
+                const peso = v => `${money(Number(v || 0))}`;
+                if (cancelDialog.quoteError) {
+                  return <p style={{ color: '#dc2626', fontSize: '12px', margin: '0 0 14px' }}>{cancelDialog.quoteError}</p>;
+                }
+                if (!q) return <p style={{ color: MUTED, fontSize: '12px', margin: '0 0 14px' }}>Working out the cancellation fee…</p>;
+                const line = (label, value, strong) => (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '5px 0', fontSize: '12.5px', color: strong ? TEXT : MUTED, fontWeight: strong ? 700 : 400, borderTop: strong ? `1px solid ${BORDER2}` : 'none', marginTop: strong ? '4px' : 0 }}>
+                    <span>{label}</span><span style={{ color: TEXT }}>{value}</span>
+                  </div>
+                );
+                return (
+                  <div style={{ background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '12px', padding: '12px 14px', margin: '0 0 16px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: q.rate === 0 ? '#16a34a' : '#b45309', marginBottom: '6px' }}>
+                      {q.tier} · {q.daysBeforeCheckIn > 0 ? `${q.daysBeforeCheckIn} day${q.daysBeforeCheckIn === 1 ? '' : 's'} to go` : 'arrival day passed'}
+                    </div>
+                    {line('Booking total', peso(q.totalAmount))}
+                    {line('Guest has paid', peso(q.amountPaid))}
+                    {line(q.rate === 0 ? 'Cancellation fee (none)' : `Cancellation fee (${q.rate}%)`, peso(q.fee))}
+                    {line('Kept by the resort', peso(q.retained))}
+                    {line('Refund to the guest', peso(q.refund), true)}
+                    <div style={{ fontSize: '11px', color: MUTED, marginTop: '8px' }}>
+                      {q.hasEmail
+                        ? 'The guest will get an email with this breakdown and a cancellation receipt.'
+                        : 'This booking has no email address, so no cancellation email can be sent.'}
+                      {q.refund > 0 ? ' Give the refund to the guest after cancelling.' : ''}
+                    </div>
+                  </div>
+                );
+              })()}
+              <label htmlFor="cancellation-reason" style={{ display: 'block', color: MUTED, fontSize: '12px', marginBottom: '6px' }}>{cancelDialog.waive ? 'Reason for waiving the policy (required)' : 'Reason (optional)'}</label>
               <textarea id="cancellation-reason" value={cancelReason} onChange={event => setCancelReason(event.target.value)}
                 rows={3} maxLength={500} disabled={cancelBusy} placeholder="Enter a reason for cancellation"
                 style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', border: `1px solid ${BORDER2}`, borderRadius: '9px', padding: '10px', color: TEXT, background: CARD2, font: 'inherit', fontSize: '13px' }} />
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '9px', marginTop: '18px' }}>
                 <button type="button" disabled={cancelBusy} onClick={() => setCancelDialog(null)}
                   style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 14px', background: CARD2, color: TEXT, cursor: 'pointer' }}>Keep reservation</button>
-                <button type="button" disabled={cancelBusy} onClick={confirmCancellation}
-                  style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: '#dc2626', color: '#fff', fontWeight: 700, cursor: cancelBusy ? 'wait' : 'pointer' }}>
-                  {cancelBusy ? 'Processing…' : cancelDialog.kind === 'request' ? 'Confirm request' : 'Confirm cancellation'}
+                <button type="button" disabled={cancelBusy || (cancelDialog.kind !== 'request' && !cancelDialog.quote)} onClick={confirmCancellation}
+                  style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: '#dc2626', color: '#fff', fontWeight: 700, cursor: cancelBusy ? 'wait' : 'pointer', opacity: cancelDialog.kind !== 'request' && !cancelDialog.quote ? 0.6 : 1 }}>
+                  {cancelBusy ? 'Processing…' : cancelDialog.kind === 'request' ? 'Confirm request' : cancelDialog.kind === 'no-show' ? 'Mark no-show' : 'Confirm cancellation'}
                 </button>
               </div>
             </section>
@@ -1105,20 +1573,42 @@ export default function Reservations() {
         {selectedReservation && (() => {
           const s = selectedReservation;
           const sb = statusBadge(s.status);
-          const money = v => (v === undefined || v === null || v === '' ? '—' : `₱${Number(v).toLocaleString()}`);
           const so = getOverstay(s, now);
           const rows = [
             ['Phone Number', s.phone || 'Not provided'],
             ['Email Address', s.email || 'Not provided'],
             ['Preferred Contact Method', s.preferredContactMethod || 'Not provided'],
+            ...(s.contactLink ? [['Facebook Profile', <a href={/^https?:\/\//i.test(s.contactLink) ? s.contactLink : `https://${s.contactLink}`} target="_blank" rel="noopener noreferrer" style={{ color: ACCENT }}>{s.contactLink}</a>]] : []),
             ['Room', [s.roomNumber, s.roomType].filter(Boolean).join(' · ') || '—'],
+            ...(selectedGroupRooms.length > 1 ? [['Rooms in this booking', selectedGroupRooms.map(x => (
+              <div key={x.id}>
+                <button type="button" onClick={() => setSelectedId(x.id)} disabled={x.id === s.id}
+                  style={{ border: 0, background: 'none', padding: 0, font: 'inherit', color: x.id === s.id ? TEXT : ACCENT, fontWeight: x.id === s.id ? 700 : 600, cursor: x.id === s.id ? 'default' : 'pointer', textDecoration: x.id === s.id ? 'none' : 'underline' }}>
+                  Room {x.roomNumber || '—'}
+                </button>
+                {' '}· {x.status} · {money(x.totalAmount)}{hasOutstandingBalance(x) ? ` · owes ${money(outstandingAmount(x))}` : ''}
+              </div>
+            ))]] : []),
             ['Booking Type', BOOKING_OPTIONS.find(option => option.id === getBookingOptionId(s))?.label || '—'],
             ['Guests', `${Number(s.adults || 0)} adult(s), ${Number(s.children || 0)} child(ren)`],
+            ...(Number(s.dayVisitorAdults || 0) + Number(s.dayVisitorChildren || 0) > 0 ? [[
+              'Day Visitors (not staying overnight)',
+              `${Number(s.dayVisitorAdults || 0)} adult(s), ${Number(s.dayVisitorChildren || 0)} child(ren) · ${s.dayVisitorPeriod === 'night' ? 'night tour' : 'day tour'} · ${money(s.dayVisitorCharge)}`,
+            ]] : []),
             ['Check-in', [s.checkIn, s.checkInTime].filter(Boolean).join(' · ') || '—'],
             ['Check-out', [s.checkOut, s.checkOutTime].filter(Boolean).join(' · ') || '—'],
+            ...(s.checkedInAt ? [['Checked in at', formatStayDateTime(s.checkedInAt)]] : []),
+            ...(['checked-in', 'checked-out'].includes(s.status) && bookedGuestCount(s) > 0 ? [['Guests Arrived', guestsStillToArrive(s) > 0
+              ? <span style={{ color: '#d97706', fontWeight: 600 }}>{arrivedGuestCount(s)} of {bookedGuestCount(s)} · {guestsStillToArrive(s)} still to come</span>
+              : `All ${bookedGuestCount(s)} guest${bookedGuestCount(s) === 1 ? '' : 's'}`]] : []),
+            ...(s.checkInId ? [['ID shown', `${s.checkInId.type} ending ${s.checkInId.last4}${s.checkInId.checkedBy ? ` · checked by ${s.checkInId.checkedBy}` : ''}`]] : []),
+            ...(s.checkedOutAt ? [['Checked out at', formatStayDateTime(s.checkedOutAt)]] : []),
             ['Duration', nights(s)],
             ['Overstay', so ? `Overstayed by ${so.label}${s.overstay?.flaggedAt ? ' (flagged)' : ''}` : s.overstayMinutes ? 'Checked out late' : 'No'],
             ['Late Check-out Charges', getLateFeeTotal(s) > 0 ? money(getLateFeeTotal(s)) : 'None'],
+            ...(Number(s.lateCheckoutUntil) > 0 ? [['Late Check-out Until', formatManilaTime(Number(s.lateCheckoutUntil))]] : []),
+            ...(Number(s.lateArrivalSurcharge) > 0 ? [['Late Arrival Surcharge (after 9 PM)', money(s.lateArrivalSurcharge)]] : []),
+            ...(s.cottageOnly ? [['Booked', `Cottage only (no room) · entrance ${money(s.entranceFee)} + cottage ${money(s.cottageFee)}`]] : []),
             ['Special Requests', s.notes || 'None'],
             ['Payment Status', s.paymentStatus || '—'],
             ['Payment Method', s.paymentMethod || '—'],
@@ -1154,7 +1644,35 @@ export default function Reservations() {
                     </div>
                   ))}
                 </dl>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px' }}>
+                {hasOutstandingBalance(s) && s.status !== 'cancelled' && (
+                  <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', background: dark ? 'rgba(217,119,6,0.12)' : '#fff7ed', border: `1px solid ${dark ? 'rgba(217,119,6,0.35)' : '#fed7aa'}`, borderRadius: '10px', padding: '10px 12px' }}>
+                    <div style={{ fontSize: '12px', color: TEXT }}>
+                      <strong>Balance due: {money(Math.max(0, outstandingAmount(s)))}</strong>
+                      <div style={{ fontSize: '11px', color: MUTED }}>{['pending', 'confirmed'].includes(s.status) ? 'The guest pays in full before check-in. Paying the full balance on the stay date checks them in.' : 'Collect it before check-out.'}</div>
+                    </div>
+                    <button type="button" onClick={() => navigate(billingPath(s.id))}
+                      style={{ border: 'none', borderRadius: '8px', padding: '9px 14px', background: '#d97706', color: '#fff', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      <i className="ti ti-receipt" aria-hidden="true" /> Collect payment in Billing
+                    </button>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => navigate(billingPath(s.id))}
+                    style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Open in Billing</button>
+                  {s.status === 'checked-in' && bookedGuestCount(s) > 1 && (
+                    <button type="button" onClick={() => setArrivalDialog({ reservation: s, count: bookedGuestCount(s), busy: false })}
+                      style={{ border: `1px solid ${guestsStillToArrive(s) > 0 ? '#d97706' : BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Guests arrived</button>
+                  )}
+                  {s.status === 'checked-in' && (
+                    <button type="button" onClick={() => setExtendDialog({ reservation: s, rooms: selectedGroupRooms, hours: 1, amount: '', note: '', busy: false })}
+                      style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Give more time</button>
+                  )}
+                  {s.type === 'corporate' && ['pending', 'confirmed', 'checked-in'].includes(s.status) && (
+                    <button type="button" onClick={() => setAssignTarget(s)}
+                      style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>
+                      {s.assignedRooms?.length ? `Rooms (${s.assignedRooms.length})` : 'Assign rooms'}
+                    </button>
+                  )}
                   {canEditBooking(s) && (
                     <button type="button" onClick={() => setEditTarget(s)}
                       style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Edit booking</button>
@@ -1175,16 +1693,108 @@ export default function Reservations() {
               line to open the details and actions. Empty types are hidden. */}
           <section aria-label="Notifications" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '12px 14px', display: 'grid', gap: '8px', alignContent: 'start', minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Notifications</div>
-            {lateArrivals.length + overstayed.length + (canCancel ? pendingCancellations.length : 0) + pendingRefunds.length + pendingModifications.length === 0 && (
+            {stillArriving.length + dueToCheckOut.length + lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length === 0 && (
               <div style={{ fontSize: '12px', color: MUTED }}>All clear — nothing needs action right now.</div>
             )}
 
-            {lateArrivals.length > 0 && (
-              <NotificationGroup title="Late arrivals" detail="Confirmed guests past their check-in time" count={lateArrivals.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
-                {lateArrivals.map(r => (
+            {dueToCheckOut.length > 0 && (
+              <NotificationGroup title="Due to check out" detail="Checked-in guests leaving within 2 hours" count={byBooking(dueToCheckOut.map(x => x.r)).length} color="#2563eb" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {byBooking(dueToCheckOut.map(x => x.r)).map(({ r, rooms }) => {
+                  const due = dueToCheckOut.find(x => x.r.id === r.id)?.due || dueToCheckOut.find(x => rooms.includes(x.r)).due;
+                  const owedTotal = rooms.reduce((sum, x) => sum + Math.max(0, outstandingAmount(x)), 0);
+                  const owes = owedTotal > 0;
+                  const btn = { background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' };
+                  return (
+                    <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: `1px solid ${BORDER}` }}>
+                      <div style={{ fontSize: '12px', color: TEXT }}>
+                        <strong>{r.guestName || 'Guest'}</strong> — {roomsLabel(rooms)}
+                        <div style={{ fontSize: '11px', color: due.minutesLeft <= 30 ? '#d97706' : MUTED, fontWeight: due.minutesLeft <= 30 ? 700 : 400 }}>
+                          Check-out at {formatManilaTime(due.dueMs)} · in {due.minutesLeft >= 60 ? `${Math.floor(due.minutesLeft / 60)}h ${due.minutesLeft % 60}m` : `${due.minutesLeft} min`}
+                          {owes ? ` · owes ${money(owedTotal)}` : ' · fully paid'}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button onClick={() => setSelectedId(r.id)} style={btn}>View</button>
+                        {owes && <button onClick={() => navigate(billingPath(r.id))} style={{ ...btn, color: '#d97706' }}>Collect {money(owedTotal)}</button>}
+                        <button onClick={() => setExtendDialog({ reservation: r, rooms, hours: 1, amount: '', note: '', busy: false })} style={btn}>Give more time</button>
+                        <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
+                          style={{ ...btn, background: ACCENT, color: ACCENT_TEXT, border: 'none', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </NotificationGroup>
+            )}
+
+            {unpaidOnline.length > 0 && (
+              <NotificationGroup title="Unpaid online bookings" detail="Booked online but nothing paid yet. Check they are real, then send a payment link" count={unpaidOnline.length} color="#dc2626" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {unpaidOnline.map(r => {
+                  const followUp = r.unpaidFollowUp || {};
+                  const total = Number(r.totalAmount || 0);
+                  const deposit = total > 0 ? getOnlinePaymentAmount(total, 'deposit') : 0;
+                  const busy = decisionBusy === r.id;
+                  const btn = { background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: busy ? 'wait' : 'pointer' };
+                  return (
+                    <div key={r.id} style={{ display: 'grid', gap: '8px', padding: '10px 0', borderTop: `1px solid ${BORDER}` }}>
+                      <div style={{ fontSize: '12px', color: TEXT }}>
+                        <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'} · #{r.id.slice(0, 8).toUpperCase()}
+                        <div style={{ fontSize: '10px', color: MUTED }}>
+                          {formatDate(r.checkIn)}{r.checkOut && r.checkOut !== r.checkIn ? ` – ${formatDate(r.checkOut)}` : ''} · {money(total)} · booked {followUpTime(r.createdAt)}
+                          {r.email ? ` · ${r.email}` : ''}{r.phone ? ` · ${r.phone}` : ''}
+                        </div>
+                        <div style={{ fontSize: '11px', marginTop: '4px', fontWeight: 600, color: followUp.guestReply === 'no' ? '#dc2626' : followUp.guestReply === 'yes' ? (dark ? '#86efac' : '#15803d') : MUTED }}>
+                          {describeUnpaidFollowUp(followUp, followUpTime)}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        <button disabled={busy} onClick={() => setSelectedId(r.id)} style={btn}>View</button>
+                        <button disabled={busy || !r.email} onClick={() => followUpUnpaid('ask-guest-confirm', r)} style={btn}
+                          title={r.email ? 'Email the guest asking if this booking is theirs' : 'No email on this booking'}>
+                          {followUp.verifySentAt ? 'Ask again' : 'Ask guest to confirm'}
+                        </button>
+                        {total > 0 && (
+                          <>
+                            <button disabled={busy || !r.email} onClick={() => followUpUnpaid('send-payment-link', r, 'deposit')}
+                              style={{ ...btn, background: '#166534', color: '#fff', border: 0 }}>
+                              Send deposit link {money(deposit)}
+                            </button>
+                            <button disabled={busy || !r.email} onClick={() => followUpUnpaid('send-payment-link', r, 'full')} style={btn}>
+                              Send full link {money(total)}
+                            </button>
+                          </>
+                        )}
+                        <button disabled={busy} onClick={() => openCancellationDialog(canCancel ? 'cancel' : 'request', r)}
+                          style={{ ...btn, color: '#dc2626' }}>{canCancel ? 'Cancel booking' : 'Request cancellation'}</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </NotificationGroup>
+            )}
+
+            {stillArriving.length > 0 && (
+              <NotificationGroup title="Guests still to arrive" detail="Checked in, but part of the group is coming later" count={byBooking(stillArriving).length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {byBooking(stillArriving).map(({ r, rooms }) => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: `1px solid ${BORDER}` }}>
                     <div style={{ fontSize: '12px', color: TEXT }}>
-                      <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'}
+                      <strong>{r.guestName || 'Guest'}</strong> — {roomsLabel(rooms)}
+                      <div style={{ fontSize: '10px', color: MUTED }}>
+                        {rooms.reduce((n, x) => n + arrivedGuestCount(x), 0)} of {rooms.reduce((n, x) => n + bookedGuestCount(x), 0)} here · {rooms.reduce((n, x) => n + guestsStillToArrive(x), 0)} still to come{rooms.length > 1 ? ` (${rooms.filter(x => guestsStillToArrive(x) > 0).map(x => x.roomNumber).join(', ')})` : ''}{r.phone ? ` · ${r.phone}` : ''}
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => { const waiting = rooms.find(x => guestsStillToArrive(x) > 0) || r; setArrivalDialog({ reservation: waiting, count: bookedGuestCount(waiting), busy: false }); }}
+                      style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Guests arrived</button>
+                  </div>
+                ))}
+              </NotificationGroup>
+            )}
+
+            {lateArrivals.length > 0 && (
+              <NotificationGroup title="Late arrivals" detail="Confirmed guests past their check-in time" count={byBooking(lateArrivals).length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {byBooking(lateArrivals).map(({ r, rooms }) => (
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '8px 0', borderTop: `1px solid ${BORDER}` }}>
+                    <div style={{ fontSize: '12px', color: TEXT }}>
+                      <strong>{r.guestName || 'Guest'}</strong> — {roomsLabel(rooms)}
                       <div style={{ fontSize: '10px', color: MUTED }}>Expected {formatDate(r.checkIn)} {r.checkInTime || ''}{r.phone ? ` · ${r.phone}` : ''}</div>
                     </div>
                     <button onClick={() => setSelectedId(r.id)}
@@ -1207,8 +1817,8 @@ export default function Reservations() {
                       <div style={{ fontSize: '10px', color: MUTED }}>
                         Overstayed {info.label} · was due {formatDate(r.checkOut)} {r.checkOutTime || DEFAULT_CHECKOUT_TIME}
                         {r.phone ? ` · ${r.phone}` : ''}
-                        {getLateFeeTotal(r) > 0 ? ` · Late fees ₱${getLateFeeTotal(r).toLocaleString()}` : ''}
-                        {hasOutstandingBalance(r) ? ` · Owes ₱${outstandingAmount(r).toLocaleString()}` : ''}
+                        {getLateFeeTotal(r) > 0 ? ` · Late fees ${money(getLateFeeTotal(r))}` : ''}
+                        {hasOutstandingBalance(r) ? ` · Owes ${money(outstandingAmount(r))}` : ''}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -1220,10 +1830,12 @@ export default function Reservations() {
                         <button onClick={() => flagOverstay(r)} disabled={statusBusyId === r.id}
                           style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Flag overstay</button>
                       )}
+                      <button onClick={() => setExtendDialog({ reservation: r, hours: 1, amount: '', note: '', busy: false })}
+                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Give more time</button>
                       <button onClick={() => setLateFeeDialog({ reservation: r, amount: '', note: `Overstayed ${info.label}` })}
                         style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Add late fee</button>
                       <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
-                        title={hasOutstandingBalance(r) ? 'Collect the balance before checking out' : undefined}
+                        title={mustPayBeforeCheckout(r) ? 'Collect the balance before checking out' : undefined}
                         style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
                     </div>
                   </div>
@@ -1231,15 +1843,21 @@ export default function Reservations() {
               </NotificationGroup>
             )}
 
-            {canCancel && pendingCancellations.length > 0 && (
-              <NotificationGroup title="Cancellation requests" detail="Sent by receptionists for approval" count={pendingCancellations.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+            {pendingCancellations.length > 0 && (
+              <NotificationGroup title="Cancellation requests" detail="From guests online, or from receptionists" count={pendingCancellations.length} color="#d97706" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
                 {pendingCancellations.map(r => (
                   <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${ROWLINE}` }}>
                     <div style={{ fontSize: '12px', color: TEXT }}>
                       <strong>{r.guestName}</strong> — Room {r.roomNumber}
+                      <span style={{ marginLeft: 6, fontSize: '10px', fontWeight: 700, color: '#d97706' }}>{r.cancellationRequestedBy === 'guest' ? 'From guest' : 'From staff'}</span>
                       <div style={{ fontSize: '10px', color: MUTED }}>Reason: {r.cancellationReason || 'No reason given'}</div>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <button onClick={() => setSelectedId(r.id)}
+                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                        View
+                      </button>
+                      {canCancel ? (<>
                       <button onClick={() => openCancellationDialog('approve', r)}
                         style={{ background: '#dc2626', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
                         Approve
@@ -1248,6 +1866,7 @@ export default function Reservations() {
                         style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
                         Deny
                       </button>
+                      </>) : waitingForAdmin}
                     </div>
                   </div>
                 ))}
@@ -1260,12 +1879,12 @@ export default function Reservations() {
                   <article key={`refund-${r.id}`} style={{ background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '16px' }}>
                     <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Refund request · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
                     <p style={{ margin: '8px 0', color: MUTED, fontSize: '12px' }}>
-                      {r.refundDecision?.reason || 'Staff review requested'} · Proposed refund ₱{Number(r.refundDecision?.refundableAmount || 0).toLocaleString()}
+                      {r.refundDecision?.reason || 'Staff review requested'} · Proposed refund {money(Number(r.refundDecision?.refundableAmount || 0))}
                     </p>
                     {r.refundDecision?.alternatives?.length > 0 && (
                       <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '11px' }}>Options: {r.refundDecision.alternatives.join(' ')}</p>
                     )}
-                    {r.refundRequestStatus === 'needs_review' && (
+                    {canDecideRefunds && r.refundRequestStatus === 'needs_review' && (
                       <label style={{ display: 'inline-grid', gap: 4, margin: '0 10px 10px 0', color: MUTED, fontSize: 11 }}>
                         Staff-verified refund amount (₱)
                         <input type="number" min="0.01" step="0.01" value={manualRefunds[r.id] || ''}
@@ -1273,6 +1892,7 @@ export default function Reservations() {
                           style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 7, padding: '8px' }} />
                       </label>
                     )}
+                    {!canDecideRefunds ? waitingForAdmin : (
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       <button disabled={decisionBusy === r.id || (r.refundRequestStatus === 'needs_review' && !manualRefunds[r.id])}
                         onClick={() => decideRequest('approve-refund', r, r.refundRequestStatus === 'needs_review' ? { amount: manualRefunds[r.id] } : {})}
@@ -1282,6 +1902,7 @@ export default function Reservations() {
                       <button disabled={decisionBusy === r.id} onClick={() => decideRequest('review-refund', r)}
                         style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Keep for manual review</button>
                     </div>
+                    )}
                   </article>
                 ))}
               </NotificationGroup>
@@ -1294,11 +1915,15 @@ export default function Reservations() {
                   const requiresManualPrice = request.outcome === 'needs_review';
                   return (
                     <article key={`modification-${r.id}`} style={{ background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '16px' }}>
-                      <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Schedule change · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
+                      <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>{request.closureMove ? 'Closure reschedule (same price, no fee)' : 'Schedule change'} · {r.guestName || 'Guest'} · #{r.id.slice(0, 8).toUpperCase()}</div>
                       <p style={{ margin: '8px 0', color: MUTED, fontSize: '12px' }}>
                         {request.originalCheckIn} – {request.originalCheckOut} → {request.requestedCheckIn} – {request.requestedCheckOut}
                       </p>
                       <p style={{ margin: '4px 0 10px', color: MUTED, fontSize: '12px' }}>{request.reason}</p>
+                      <ChangeRequestCheck reservation={r} request={request} reservations={reservations}
+                        colors={{ TEXT, MUTED, CARD, CARD2, BORDER2 }}
+                        newRoomId={moveRooms[r.id] || ''}
+                        onPickRoom={roomId => setMoveRooms(current => ({ ...current, [r.id]: roomId }))} />
                       {requiresManualPrice && (
                         <label style={{ display: 'inline-grid', gap: 4, margin: '0 10px 10px 0', color: MUTED, fontSize: 11 }}>
                           Staff-verified updated total (₱)
@@ -1307,13 +1932,30 @@ export default function Reservations() {
                             style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 7, padding: '8px' }} />
                         </label>
                       )}
-                      {request.paymentDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>50% deposit due on extension: ₱{Number(request.paymentDue).toLocaleString()}</p>}
-                      {request.refundDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>Calculated refund after reduction: ₱{Number(request.refundDue).toLocaleString()}</p>}
+                      {request.paymentDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>50% deposit due on extension: {money(Number(request.paymentDue))}</p>}
+                      {request.refundDue > 0 && <p style={{ color: MUTED, fontSize: 11 }}>Calculated refund after reduction: {money(Number(request.refundDue))}</p>}
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                        <button disabled={decisionBusy === r.id} onClick={() => decideRequest(
-                          'approve-modification', r,
-                          requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {},
-                        )} style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Approve</button>
+                        {(() => {
+                          const roomTaken = changeRequestBlocked({ reservation: r, request, reservations, newRoomId: moveRooms[r.id] });
+                          return (
+                            <button disabled={decisionBusy === r.id || roomTaken} onClick={() => decideRequest(
+                              'approve-modification', r,
+                              { ...(requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {}), ...(moveRooms[r.id] ? { newRoomId: moveRooms[r.id] } : {}) },
+                            )} title={roomTaken ? 'The room is booked on the new dates. Pick another room or reject.' : undefined}
+                              style={{ background: '#166534', color: '#fff', border: 0, borderRadius: 8, padding: '7px 12px', cursor: roomTaken ? 'not-allowed' : 'pointer', opacity: roomTaken ? 0.5 : 1 }}>
+                              {moveRooms[r.id] ? 'Approve in the new room' : 'Approve'}
+                            </button>
+                          );
+                        })()}
+                        {isAdmin && !request.closureMove && (getDaysBeforeArrival(r.checkIn) ?? 99) < noticeDays && (
+                          <button disabled={decisionBusy === r.id} onClick={() => decideRequest(
+                            'approve-modification', r,
+                            { ...(requiresManualPrice ? { updatedTotal: manualTotals[r.id] } : {}), waivePolicy: true },
+                          )} title={`Arrival is less than ${noticeDays} days away. Approve anyway (typhoon, closure, emergency).`}
+                            style={{ background: 'transparent', color: dark ? '#86efac' : '#166534', border: `1px solid ${dark ? '#86efac' : '#166534'}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>
+                            Approve (waive {noticeDays}-day rule)
+                          </button>
+                        )}
                         <button disabled={decisionBusy === r.id} onClick={() => decideRequest('reject-modification', r)}
                           style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '7px 12px', cursor: 'pointer' }}>Reject</button>
                       </div>
@@ -1337,7 +1979,7 @@ export default function Reservations() {
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
               {/* Filter */}
               <select value={filter} onChange={e => setFilter(e.target.value)} style={inp} aria-label="Filter by status">
-                <option value="all">All status</option>
+                <option value="all">All active</option>
                 <option value="pending">Pending</option>
                 <option value="confirmed">Confirmed</option>
                 <option value="checked-in">Checked-in</option>
@@ -1364,7 +2006,7 @@ export default function Reservations() {
 
         {/* List / Day / Week / Month board */}
         <ReservationBoard
-          reservations={filtered}
+          reservations={boardReservations}
           t={{ dark, CARD, CARD2, BORDER, BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
           formatDate={formatDate}
           now={now}

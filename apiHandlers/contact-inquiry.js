@@ -2,7 +2,8 @@ import nodemailer from 'nodemailer';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 
-const INBOX = 'info@lawiswiskawayanresort.com';
+// Website inquiries go to the resort's testing Gmail inbox.
+const INBOX = 'lawiswiskawayan123@gmail.com';
 const EMAIL_RE = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 const transporter = nodemailer.createTransport({
   service: 'gmail',

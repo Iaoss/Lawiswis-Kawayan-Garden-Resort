@@ -38,9 +38,16 @@ import {
   getGuestCountViolation,
   getStayUnits,
   isSingleDayStay,
+  normalizeDayVisitors,
   stayRangesOverlap,
 } from '../src/lib/bookingPricing';
-import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { getCottageAvailabilityFor } from '../lib/cottageStock';
+import { cottageAvailabilityError } from '../src/lib/cottages';
+import { holdsRoom } from '../src/lib/unpaidBookings';
+import { readSeasonPeriods } from '../lib/seasonStore';
+import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
+import { getAdditionalRoomsError } from '../src/lib/groupBooking';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -87,6 +94,9 @@ export default async function handler(req, res) {
       preferredContactMethod,
       paymentMethod,
       promoCode: submittedPromoCode,
+      dayVisitors: submittedDayVisitors,
+      contactLink,
+      additionalRooms, // more rooms for the same stay: [{ roomId, adults, children }]
       website, // honeypot field — real guests never fill this in
     } = req.body || {};
 
@@ -112,6 +122,9 @@ export default async function handler(req, res) {
           : 'Reservations are temporarily closed. Please contact the resort for updates.',
       });
     }
+    // Planned closed dates (maintenance): other dates can still be booked.
+    const closedPeriod = availabilitySnap.exists ? findClosedPeriod(availabilitySnap.data().closedDates, checkIn, checkOut) : null;
+    if (closedPeriod) return res.status(409).json({ error: closedPeriodMessage(closedPeriod) });
 
     // ---- 2. Basic validation -------------------------------------------
     if (typeof roomId !== 'string' || typeof email !== 'string'
@@ -156,6 +169,7 @@ export default async function handler(req, res) {
     if (requestedCottageFee === null) {
       return res.status(400).json({ error: 'Choose a valid cottage option.' });
     }
+    // A cottage is optional, including for day and night tours with a room.
     if (paymentMethod !== 'online') {
       return res.status(400).json({ error: 'Reservations must be paid online through PayMongo.' });
     }
@@ -174,6 +188,18 @@ export default async function handler(req, res) {
     if (singleDay && bookingType !== 'daytour') {
       return res.status(400).json({ error: 'Single-day bookings must be day tours. Choose a check-out date after check-in for an overnight stay.' });
     }
+    // A day or night tour is one date only.
+    if (!singleDay && bookingType === 'daytour') {
+      return res.status(400).json({ error: 'A day or night tour is for one date only. Choose the same check-in and check-out date, or book an overnight stay.' });
+    }
+    let dayVisitors = null;
+    try {
+      dayVisitors = bookingType === 'overnight' ? normalizeDayVisitors(submittedDayVisitors) : null;
+    } catch (visitorError) {
+      return res.status(400).json({ error: visitorError.message });
+    }
+    const contactLinkError = getContactLinkError(preferredContactMethod, contactLink);
+    if (contactLinkError) return res.status(400).json({ error: contactLinkError });
 
     const stayError = getStayDurationError(checkIn, checkOut, { allowSingleDay: singleDay });
     if (stayError) return res.status(400).json({ error: stayError });
@@ -211,7 +237,8 @@ export default async function handler(req, res) {
 
     const hasOverlap = roomResSnap.docs.some((d) => {
       const r = d.data();
-      if (r.status === 'cancelled') return false; // cancelled bookings free up the dates
+      // Cancelled bookings and expired unpaid holds free up the dates.
+      if (!holdsRoom(r)) return false;
       const existingIn = toDateKey(r.checkIn);
       const existingOut = toDateKey(r.checkOut);
       if (!existingIn || !existingOut) return false;
@@ -224,8 +251,38 @@ export default async function handler(req, res) {
       });
     }
 
+    // ---- 5a. Extra rooms (same dates, one payment) ------------------------
+    const roomsError = getAdditionalRoomsError(roomId, additionalRooms);
+    if (roomsError) return res.status(400).json({ error: roomsError });
+    const extraRooms = [];
+    for (const item of additionalRooms || []) {
+      const extraSnap = await adminDb.collection('rooms').doc(item.roomId).get();
+      if (!extraSnap.exists) return res.status(404).json({ error: 'One of the extra rooms could not be found.' });
+      const extraRoom = extraSnap.data();
+      const extraCapacity = getGuestCountViolation(extraRoom, item.adults, item.children);
+      if (extraCapacity) return res.status(400).json({ error: `Room ${extraRoom.roomNumber}: ${extraCapacity}`, code: 'ROOM_CAPACITY_LIMIT' });
+      const extraBookings = await adminDb.collection('reservations').where('roomId', '==', item.roomId).get();
+      const taken = extraBookings.docs.some(d => {
+        const r = d.data();
+        if (!holdsRoom(r)) return false;
+        const existingIn = toDateKey(r.checkIn);
+        const existingOut = toDateKey(r.checkOut);
+        return existingIn && existingOut && stayRangesOverlap(checkIn, checkOut, existingIn, existingOut);
+      });
+      if (taken) return res.status(409).json({ error: `Sorry, Room ${extraRoom.roomNumber} is already booked for part of your dates. Remove it or pick another room.` });
+      extraRooms.push({ id: item.roomId, room: extraRoom, adults: item.adults, children: item.children });
+    }
+
+    // ---- 5b. The cottage must still be free for that date and time --------
+    if (cottageId) {
+      const cottageAvailability = await getCottageAvailabilityFor(checkIn, bookingType === 'daytour' ? tourPeriod : 'both');
+      const cottageError = cottageAvailabilityError(cottageAvailability, cottageId);
+      if (cottageError) return res.status(409).json({ error: cottageError });
+    }
+
     // ---- 6. Create the reservation ---------------------------------------
     const nights = getStayUnits(checkIn, checkOut);
+    const seasonPeriods = await readSeasonPeriods();
     const pricing = calculateBookingPrice({
       room,
       bookingType,
@@ -235,10 +292,26 @@ export default async function handler(req, res) {
       tourPeriod: bookingType === 'daytour' ? tourPeriod : 'day',
       cottageId: cottageId || '',
       cottageFee: requestedCottageFee,
+      dayVisitors,
+      lateArrival: Boolean(timeSlot.lateArrival),
+      season: { periods: seasonPeriods, checkIn, checkOut },
     });
     const totalAmount = pricing.subtotalAmount;
 
     const docRef = adminDb.collection('reservations').doc();
+    // Extra rooms: priced on their own (no cottage or day visitors; those
+    // stay on the first room), linked to the first booking.
+    const extraDocs = extraRooms.map(extra => {
+      const extraPricing = calculateBookingPrice({
+        room: extra.room, bookingType, nights, adults: extra.adults, children: extra.children,
+        tourPeriod: bookingType === 'daytour' ? tourPeriod : 'day', cottageId: '', cottageFee: 0, dayVisitors: null,
+        lateArrival: Boolean(timeSlot.lateArrival), season: { periods: seasonPeriods, checkIn, checkOut },
+      });
+      return { ref: adminDb.collection('reservations').doc(), extra, pricing: extraPricing };
+    });
+    const groupFields = extraDocs.length
+      ? { groupId: docRef.id, groupReservationIds: [docRef.id, ...extraDocs.map(item => item.ref.id)], groupRoomCount: extraDocs.length + 1 }
+      : {};
     const promoCode = normalizePromoCode(submittedPromoCode);
     const reservationData = {
       roomId,
@@ -266,8 +339,17 @@ export default async function handler(req, res) {
       extraGuestCharge: pricing.extraGuestCharge,
       cottageId: pricing.cottageId,
       cottageFee: pricing.cottageFee,
+      dayVisitorAdults: pricing.dayVisitorAdults,
+      dayVisitorChildren: pricing.dayVisitorChildren,
+      dayVisitorPeriod: pricing.dayVisitorPeriod,
+      dayVisitorCharge: pricing.dayVisitorCharge,
+      lateArrival: Boolean(timeSlot.lateArrival),
+      lateArrivalSurcharge: pricing.lateArrivalSurcharge,
+      seasonalSurcharge: pricing.seasonalSurcharge || 0,
+      seasonalLabel: pricing.seasonalLabel || '',
       notes: notes || '',
       preferredContactMethod,
+      contactLink: preferredContactMethod === 'Facebook Messenger' ? String(contactLink).trim() : '',
       paymentMethod,
       subtotalAmount: totalAmount,
       nights,
@@ -275,6 +357,7 @@ export default async function handler(req, res) {
       status: 'pending',
       paymentStatus: 'pending',
       createdAt: FieldValue.serverTimestamp(),
+      ...groupFields,
     };
     let discountAmount = 0;
     let discountedTotal = totalAmount;
@@ -315,6 +398,48 @@ export default async function handler(req, res) {
       await docRef.create({ ...reservationData, totalAmount, promoCode: '', promoDiscount: 0 });
     }
 
+    // Linked rooms: same guest and dates, their own room, guests and price.
+    if (extraDocs.length) {
+      const batch = adminDb.batch();
+      extraDocs.forEach(({ ref, extra, pricing: p }) => {
+        batch.create(ref, {
+          ...reservationData,
+          roomId: extra.id,
+          roomNumber: extra.room.roomNumber,
+          roomType: extra.room.type,
+          adults: extra.adults,
+          children: extra.children,
+          baseCapacity: p.baseCapacity,
+          baseRate: p.baseRate,
+          totalGuests: p.totalGuests,
+          extraGuests: p.extraGuests,
+          extraGuestCharge: p.extraGuestCharge,
+          cottageId: '',
+          cottageFee: 0,
+          dayVisitorAdults: 0,
+          dayVisitorChildren: 0,
+          dayVisitorPeriod: '',
+          dayVisitorCharge: 0,
+          lateArrivalSurcharge: p.lateArrivalSurcharge,
+          seasonalSurcharge: p.seasonalSurcharge || 0,
+          seasonalLabel: p.seasonalLabel || '',
+          subtotalAmount: p.subtotalAmount,
+          totalAmount: p.subtotalAmount,
+          promoCode: '',
+          promoDiscount: 0,
+          notes: `Booked together with Room ${room.roomNumber} (booking #${docRef.id.slice(0, 8).toUpperCase()}).${notes ? ` ${notes}` : ''}`.slice(0, 1000),
+        });
+      });
+      try {
+        await batch.commit();
+      } catch (linkError) {
+        // Keep it all-or-nothing: drop the first booking if the others failed.
+        await docRef.delete().catch(() => {});
+        throw linkError;
+      }
+    }
+    const groupTotal = Math.round((discountedTotal + extraDocs.reduce((sum, item) => sum + item.pricing.subtotalAmount, 0)) * 100) / 100;
+
     // ---- 7. Send the "reservation received" email --------------------------
     // Wrapped separately so an email-sending failure (bad API key, Resend
     // outage, etc.) never breaks the actual booking — the guest still gets
@@ -326,11 +451,11 @@ export default async function handler(req, res) {
         {
           guestName: normalizedGuestName,
           email,
-          roomNumber: room.roomNumber,
-          roomType: room.type,
+          roomNumber: extraDocs.length ? [room.roomNumber, ...extraDocs.map(item => item.extra.room.roomNumber)].join(', ') : room.roomNumber,
+          roomType: extraDocs.length ? `${extraDocs.length + 1} rooms` : room.type,
           checkIn,
           checkOut,
-          totalAmount: discountedTotal,
+          totalAmount: groupTotal,
           nights,
           paymentMethod,
         },
@@ -348,6 +473,12 @@ export default async function handler(req, res) {
       promoCode,
       nights,
       pricing,
+      // Several rooms: what the guest pays for all of them.
+      groupTotal,
+      rooms: [
+        { reservationId: docRef.id, roomNumber: room.roomNumber, totalAmount: discountedTotal },
+        ...extraDocs.map(item => ({ reservationId: item.ref.id, roomNumber: item.extra.room.roomNumber, totalAmount: item.pricing.subtotalAmount })),
+      ],
     });
   } catch (err) {
     console.error('create-reservation error:', err);

@@ -2,12 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
 import { doc, getDoc, collection, query, onSnapshot, where } from 'firebase/firestore';
-import { signOut, onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
 import './portal-sidebar.css';
+import './portal-glass.css';
 import logo from './logo-mark.png';
 import NotificationBell from './NotificationBell';
+import CheckInReminder from './CheckInReminder';
+import FloatingClock from './FloatingClock';
+import StaffToaster from './StaffToaster';
 import {
   AnimatedSidebarInset,
   AnimatedSidebarProvider,
@@ -17,6 +21,13 @@ import PortalSidebar from './PortalSidebar';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { AccountMenu, TopbarIconButton, topbarButtonStyle } from './TopbarControls';
 import { AnimatedThemeToggler } from '../../client/components/ui/animated-theme-toggler.tsx';
+import ShiftSummaryDialog from './ShiftSummaryDialog';
+import { useIdleLogout } from '../lib/staffSession';
+import { CheckInIdHost } from './CheckInIdDialog';
+import { loadCottageCatalogOnce } from '../../lib/useCottageCatalog';
+
+// Start loading the admin's cottage list as soon as the site opens.
+loadCottageCatalogOnce();
 
 const navItems = [
   { label: 'Dashboard', path: '/receptionist/dashboard', icon: 'ti-layout-dashboard' },
@@ -24,7 +35,6 @@ const navItems = [
   { label: 'Reservations', path: '/receptionist/reservations', icon: 'ti-calendar-event' },
   { label: 'Walk-in', path: '/receptionist/walkin', icon: 'ti-walk' },
   { label: 'Billing', path: '/receptionist/billing', icon: 'ti-receipt' },
-  { label: 'Booking Transactions', path: '/receptionist/transactions', icon: 'ti-credit-card' },
   { label: 'Customers', path: '/receptionist/customers', icon: 'ti-users' },
   { label: 'History', path: '/receptionist/history', icon: 'ti-clock' },
   { label: 'Cancellation', path: '/receptionist/cancellation', icon: 'ti-file-x' },
@@ -90,7 +100,7 @@ export default function ReceptionistLayout({ children }) {
           const data = userDoc.data();
           if (data.role !== 'receptionist') window.location.href = '/admin/login';
           setStaffName(data.name || 'Receptionist');
-          setStaffRole(data.role || 'receptionist');
+          setStaffRole(data.customRoleName || data.role || 'receptionist');
           setStaffEmail(user.email || data.email || '');
         }
       } else {
@@ -107,10 +117,11 @@ export default function ReceptionistLayout({ children }) {
     };
   }, []);
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    window.location.href = '/admin/login';
-  };
+  // Signing out shows the end-of-shift summary first.
+  const [shiftOpen, setShiftOpen] = useState(false);
+  const handleLogout = () => setShiftOpen(true);
+  // Shared front-desk computer: sign out after inactivity (Settings → Notifications & security).
+  useIdleLogout({ enabled: settings?.sessionTimeout !== false, minutes: Number(settings?.autoLogout) || 30 });
 
   const initials = staffName
     ? staffName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
@@ -165,7 +176,7 @@ export default function ReceptionistLayout({ children }) {
           </AnimatedSidebarTrigger>
           <div style={{ minWidth: 0, overflow: 'hidden' }}>
             <div style={{ fontWeight: '600', fontSize: '17px', color: SIDEBAR_TEXT }}>{currentLabel}</div>
-            <div style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>HuaPro Resort Management System</div>
+            <div className="portal-topbar-subtitle" style={{ fontSize: '11px', color: MUTED, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>HuaPro Resort Management System</div>
           </div>
 
           <div className="topbar-dock" style={{ '--dock-accent': ACCENT, justifyContent: 'flex-end', flexShrink: 0, marginLeft: 'auto' }}>
@@ -199,7 +210,7 @@ export default function ReceptionistLayout({ children }) {
               onClick={() => setChatOpen(true)}
             />
 
-            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/receptionist" />
+            <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/receptionist" showInquiries={access.can('inquiries')} feedbackPath={access.can('feedback') ? '/receptionist/feedback' : '/receptionist/dashboard'} />
 
             <TopbarIconButton
               icon="ti-settings"
@@ -227,6 +238,11 @@ export default function ReceptionistLayout({ children }) {
       </AnimatedSidebarInset>
 
       <ChatPanel dark={dark} accent={ACCENT} open={chatOpen} onClose={() => setChatOpen(false)} />
+      <CheckInIdHost dark={dark} accent={ACCENT} />
+      <ShiftSummaryDialog open={shiftOpen} onClose={() => setShiftOpen(false)} staffName={staffName} dark={dark} accent={ACCENT} />
+      <FloatingClock dark={dark} />
+      <CheckInReminder soundAlerts={settings?.soundAlerts !== false} prefix="/receptionist" />
+      <StaffToaster prefix="/receptionist" enabled={settings?.notifications !== false} />
     </AnimatedSidebarProvider>
   );
 }

@@ -6,31 +6,25 @@ import {
   doc, Timestamp, query, orderBy,
 } from 'firebase/firestore';
 import ReceptionistLayout from '../components/ReceptionistLayout';
+import ShiftHandoverBanner from '../components/ShiftHandoverBanner';
 import { useSettings } from '../components/SettingsContext';
 import { AnimatedGradient } from '../../components/ui/animated-gradient-card';
-import { getOverstay, getOverstayStats, getPeriodRange, getReservationAverages, manilaDateKey } from '../../lib/reservationStatus';
+import { getOverstay, getOverstayStats, getPeriodRange, getReservationAverages, isReadyToCheckIn, manilaDateKey } from '../../lib/reservationStatus';
+import { appAlert } from '../../components/ui/app-dialog';
 import { getFeedbackSummary } from '../../lib/dashboardMetrics';
+import { printDailySheet } from '../lib/printDailySheet';
+import { checkInGuest as checkInWithId } from '../lib/checkInGuest';
+import { getReceptionistSections } from '../../lib/receptionistDashboard';
+import { money } from '../lib/money';
+import { serverNow } from '../../lib/serverClock';
+import { FOREST_MEADOW, FOREST_MEADOW_BLOBS } from '../lib/cardGradient';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-// Vivid gradients (same look as the Payments page and Admin dashboard).
-// 5 entries because the receptionist dashboard can show up to 5 stat cards.
-const STAT_CARD_GRADIENTS = [
-  'linear-gradient(135deg, #a5b4fc 0%, #c4b5fd 100%)', // periwinkle → lavender
-  'linear-gradient(180deg, #a5b4fc 0%, #fdba74 100%)', // blue → peach
-  'linear-gradient(135deg, #fdba74 0%, #fb7185 100%)', // orange → pink
-  'linear-gradient(135deg, #89D7B7 0%, #67e8f9 100%)', // mint → aqua
-  'linear-gradient(135deg, #67e8f9 0%, #a5b4fc 100%)', // aqua → periwinkle
-];
+// Every stat card uses the Forest Meadow gradient (up to 5 cards).
+const STAT_CARD_GRADIENTS = Array(5).fill(FOREST_MEADOW);
 
-// Soft white/pastel blobs drifting over each gradient
-const STAT_BLOB_COLORS = [
-  ['#ffffff', '#e0e7ff', '#ede9fe'],
-  ['#ffffff', '#dbeafe', '#ffedd5'],
-  ['#ffffff', '#ffedd5', '#ffe4e6'],
-  ['#ffffff', '#d1fae5', '#cffafe'],
-  ['#ffffff', '#cffafe', '#e0e7ff'],
-];
+const STAT_BLOB_COLORS = Array(5).fill(FOREST_MEADOW_BLOBS);
 
 // ── date helpers ──────────────────────────────────────────────
 function toJSDate(val) {
@@ -66,6 +60,26 @@ export default function ReceptionistDashboard() {
 
   const [stats, setStats] = useState({ todayArrivals: 0, todayDepartures: 0, checkedIn: 0, pendingPayments: 0, availableRooms: 0, totalRooms: 0 });
   const [arrivals, setArrivals] = useState([]);
+  // Sections the admin chose to show (Settings → Dashboard).
+  const [show, setShow] = useState(() => getReceptionistSections(null));
+  useEffect(() => onSnapshot(doc(db, 'settings', 'receptionistDashboard'),
+    snapshot => setShow(getReceptionistSections(snapshot.data())),
+    () => setShow(getReceptionistSections(null))), []);
+  const [checkingIn, setCheckingIn] = useState('');
+
+  // One-click check-in for guests who already paid in full.
+  const checkInGuest = async reservation => {
+    setCheckingIn(reservation.id);
+    try {
+      const done = await checkInWithId(reservation);
+      if (!done) return;
+      setArrivals(list => list.map(r => (r.id === reservation.id ? { ...r, status: 'checked-in', checkedInAt: new Date(serverNow()).toISOString() } : r)));
+    } catch (error) {
+      appAlert(error.message || 'The guest could not be checked in.', { title: 'Check-in failed', tone: 'warning' });
+    } finally {
+      setCheckingIn('');
+    }
+  };
   const [departures, setDepartures] = useState([]);
   const [allReservations, setAllReservations] = useState([]);
 
@@ -94,7 +108,7 @@ export default function ReceptionistDashboard() {
       const roomsSnap = await getDocs(collection(db, 'rooms'));
       const resSnap = await getDocs(collection(db, 'reservations'));
       const rooms = roomsSnap.docs.map(d => d.data());
-      const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room');
       const today = manilaDateKey(); // Philippine date (toISOString would give the UTC date)
       const todayArrivals = reservations.filter(r => r.checkIn === today);
       const todayDepartures = reservations.filter(r => r.checkOut === today);
@@ -187,7 +201,7 @@ export default function ReceptionistDashboard() {
       map[key][type]++;
     };
     tasks.forEach(t => add(dateKey(t.date), 'tasks'));
-    allReservations.forEach(r => add(dateKey(r.checkIn), 'reservations'));
+    allReservations.filter(r => r.status !== 'cancelled').forEach(r => add(dateKey(r.checkIn), 'reservations'));
     return map;
   }, [tasks, allReservations]);
 
@@ -207,7 +221,7 @@ export default function ReceptionistDashboard() {
 
   const selectedKey = dateKey(selectedDay);
   const dayTasks = tasks.filter(t => dateKey(t.date) === selectedKey);
-  const dayReservations = allReservations.filter(r => dateKey(r.checkIn) === selectedKey);
+  const dayReservations = allReservations.filter(r => r.status !== 'cancelled' && dateKey(r.checkIn) === selectedKey);
 
   const inputStyle = {
     width: '100%', padding: '7px 10px', borderRadius: '8px',
@@ -232,7 +246,7 @@ export default function ReceptionistDashboard() {
     },
     {
       label: 'Overstaying Now', value: analytics.overstays.activeCount, icon: 'ti-clock-exclamation', to: '/receptionist/reservations?view=overstayed',
-      detail: `${analytics.overstays.historicalCount} in last 30 days · ₱${analytics.overstays.lateFeeTotal.toLocaleString()} late fees`,
+      detail: `${analytics.overstays.historicalCount} in last 30 days · ${money(analytics.overstays.lateFeeTotal)} late fees`,
     },
     { label: 'Currently Checked In', value: stats.checkedIn, icon: 'ti-home-check', to: '/receptionist/reservations?view=checked-in' },
     { label: 'Pending Payments', value: stats.pendingPayments, icon: 'ti-clock', to: '/receptionist/reservations?view=pending-payment' },
@@ -243,6 +257,7 @@ export default function ReceptionistDashboard() {
   return (
     <ReceptionistLayout>
       <div style={{ fontFamily: "'Poppins', sans-serif" }}>
+        <ShiftHandoverBanner dark={dark} />
         {/* Date */}
         <div style={{ marginBottom: '20px' }}>
           <div style={{ fontSize: '13px', color: MUTED }}>
@@ -251,6 +266,7 @@ export default function ReceptionistDashboard() {
         </div>
 
         {/* Stats */}
+        {show.stats && (
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cards.length}, minmax(0, 1fr))`, gap: '14px', marginBottom: '24px' }}>
           {cards.map((c, index) => (
             <div
@@ -285,13 +301,19 @@ export default function ReceptionistDashboard() {
             </div>
           ))}
         </div>
+        )}
 
-        {settings.showRecentReservations !== false && (
+        {show.arrivals && settings.showRecentReservations !== false && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
           {/* Today's Arrivals */}
           <div style={S.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Today's Arrivals</div>
+              <button type="button" onClick={() => { if (!printDailySheet(allReservations)) appAlert('Allow pop-ups for this site to print the sheet.', { title: 'Pop-up blocked', tone: 'warning' }); }}
+                title="Print today's arrivals, departures and balances, in case the internet goes down"
+                style={{ marginLeft: 'auto', marginRight: 8, background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: TEXT }}>
+                <i className="ti ti-printer" aria-hidden="true" /> Print today's sheet
+              </button>
               <button type="button" onClick={() => navigate('/receptionist/reservations')}
                 style={{ background: ACCENT, border: 'none', borderRadius: '8px', padding: '6px 14px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: ACCENT_TEXT }}>
                 View all
@@ -319,6 +341,15 @@ export default function ReceptionistDashboard() {
                         <span style={{ background: dark ? '#14532d' : '#dcfce7', color: dark ? '#86efac' : '#16a34a', padding: '3px 8px', borderRadius: '20px', fontSize: '10px', fontWeight: '600' }}>
                           {r.status}
                         </span>
+                        {isReadyToCheckIn(r) && (
+                          <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '10px', fontWeight: 700, color: dark ? '#86efac' : '#15803d' }}>Paid in full · ready</span>
+                            <button type="button" disabled={checkingIn === r.id} onClick={() => checkInGuest(r)}
+                              style={{ border: 0, borderRadius: 7, padding: '3px 9px', fontSize: '10px', fontWeight: 700, cursor: checkingIn === r.id ? 'wait' : 'pointer', background: dark ? '#86efac' : '#15803d', color: dark ? '#052e16' : '#fff', fontFamily: "'Poppins', sans-serif" }}>
+                              {checkingIn === r.id ? 'Checking in…' : 'Check in'}
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -358,7 +389,7 @@ export default function ReceptionistDashboard() {
                         <td style={{ ...S.td, fontWeight: '500' }}>{r.guestName}</td>
                         <td style={S.td}>Room {r.roomNumber}</td>
                         <td style={{ ...S.td, color: balance > 0 ? unpaidColor : clearedColor, fontWeight: '600' }}>
-                          ₱{balance.toLocaleString()}
+                          {money(balance)}
                         </td>
                         <td style={S.td}>
                           <span style={{
@@ -380,6 +411,7 @@ export default function ReceptionistDashboard() {
         )}
 
         {/* Quick Actions */}
+        {show.quickActions && (
         <div style={{ ...S.card, marginTop: '16px' }}>
           <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '16px' }}>Quick Actions</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
@@ -399,8 +431,10 @@ export default function ReceptionistDashboard() {
             ))}
           </div>
         </div>
+        )}
 
         {/* Guest satisfaction (live from the QR feedback form) */}
+        {show.feedback && (
         <div style={{ ...S.card, marginTop: '16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
             <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Guest Satisfaction</div>
@@ -448,8 +482,10 @@ export default function ReceptionistDashboard() {
             </div>
           )}
         </div>
+        )}
 
         {/* ── Tasks + Overstaying guests ── */}
+        {show.tasks && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px' }}>
 
           {/* Tasks */}
@@ -548,8 +584,10 @@ export default function ReceptionistDashboard() {
             </div>
           </div>
         </div>
+        )}
 
         {/* ── Calendar ── */}
+        {show.calendar && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: '16px', marginTop: '16px' }}>
 
           <div style={S.card}>
@@ -564,7 +602,7 @@ export default function ReceptionistDashboard() {
 
             <div style={{ display: 'flex', gap: '14px', marginBottom: '10px' }}>
               {[
-                { color: '#6ee7b7', label: 'Tasks' },
+                { color: '#71B280', label: 'Tasks' },
                 { color: ACCENT, label: 'Reservations' },
               ].map(l => (
                 <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -607,7 +645,7 @@ export default function ReceptionistDashboard() {
                     </div>
                     {ev && (
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '2px', marginTop: '3px' }}>
-                        {ev.tasks > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#6ee7b7' }} />}
+                        {ev.tasks > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#71B280' }} />}
                         {ev.reservations > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: ACCENT }} />}
                       </div>
                     )}
@@ -630,7 +668,7 @@ export default function ReceptionistDashboard() {
 
               {dayTasks.length > 0 && (
                 <div>
-                  <div style={{ fontSize: '10px', fontWeight: '700', color: '#6ee7b7', marginBottom: '6px' }}>TASKS</div>
+                  <div style={{ fontSize: '10px', fontWeight: '700', color: '#71B280', marginBottom: '6px' }}>TASKS</div>
                   {dayTasks.map(t => (
                     <div key={t.id} style={{ fontSize: '11px', color: TEXT, marginBottom: '4px', textDecoration: t.completed ? 'line-through' : 'none' }}>
                       • {t.title}
@@ -652,6 +690,7 @@ export default function ReceptionistDashboard() {
             </div>
           </div>
         </div>
+        )}
       </div>
     </ReceptionistLayout>
   );

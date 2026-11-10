@@ -97,3 +97,59 @@ export function describeExpiry(expiresMs, now = Date.now()) {
   if (hours < 48) return `${hours} h left`;
   return `${Math.round(hours / 24)} days left`;
 }
+
+// ── Custom roles ─────────────────────────────────────────────
+// An admin can save a named set of features as a role (e.g. "Cashier":
+// Payment Transactions + Reports). A staff member with that role is a
+// receptionist whose access map holds a permanent grant for each of the
+// role's features, marked { fromRole: roleId }. So the browser, the server
+// and the Firestore rules all keep checking the same access map.
+// Roles are stored in settings/staffRoles as { roles: { [id]: role } }.
+
+export const STAFF_ROLES_DOC = ['settings', 'staffRoles'];
+
+export function normalizeRole(id, role = {}) {
+  const name = String(role.name || '').trim().slice(0, 40);
+  return {
+    id,
+    name,
+    description: String(role.description || '').trim().slice(0, 160),
+    features: Array.isArray(role.features) ? role.features.filter(f => ACCESS_FEATURE_IDS.includes(f)) : [],
+  };
+}
+
+export function listRoles(rolesDoc) {
+  const roles = rolesDoc && typeof rolesDoc.roles === 'object' ? rolesDoc.roles : {};
+  return Object.entries(roles)
+    .map(([id, role]) => normalizeRole(id, role))
+    .filter(role => role.name)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function getRoleError(role, existing = []) {
+  if (!role.name || role.name.length < 2) return 'Give the role a name (at least 2 letters).';
+  if (['admin', 'receptionist'].includes(role.name.toLowerCase())) return 'Admin and Receptionist are built in. Choose another name.';
+  if (existing.some(other => other.id !== role.id && other.name.toLowerCase() === role.name.toLowerCase())) return 'Another role already has that name.';
+  if (!role.features.length) return 'Choose at least one feature for this role.';
+  return '';
+}
+
+// Which access entries change when a staff member gets `role` (or none):
+// add the role's features, remove grants that came from a role and are no
+// longer included. Temporary grants an admin gave by hand are kept.
+export function planRoleAccess(user, role) {
+  const access = user?.access && typeof user.access === 'object' ? user.access : {};
+  const wanted = new Set(role ? role.features : []);
+  const add = [...wanted];
+  const remove = Object.entries(access)
+    .filter(([id, grant]) => grant && grant.fromRole && !wanted.has(id))
+    .map(([id]) => id);
+  return { add, remove };
+}
+
+// Role label for a staff member: the custom role's name, or Admin/Receptionist.
+export function roleLabel(user) {
+  if (!user) return '';
+  if (user.role === 'receptionist' && user.customRoleName) return user.customRoleName;
+  return user.role === 'admin' ? 'Admin' : user.role === 'receptionist' ? 'Receptionist' : (user.role || 'No role');
+}

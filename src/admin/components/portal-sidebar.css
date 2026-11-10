@@ -3,6 +3,25 @@
   display: none;
 }
 
+/* Text size (Settings) zooms the whole page, and the browser zooms
+   screen-height units too: at "Small" the sidebar would end 10% short, at
+   "Large" its bottom (profile, sign out) would fall off the screen.
+   Dividing by the zoom keeps these exactly one screen tall. */
+[data-slot="sidebar-wrapper"],
+.portal-main-area {
+  min-height: calc(100vh / var(--app-zoom, 1)) !important;
+  min-height: calc(100svh / var(--app-zoom, 1)) !important;
+}
+
+[data-slot="sidebar"] > div {
+  height: calc(100vh / var(--app-zoom, 1)) !important;
+  height: calc(100svh / var(--app-zoom, 1)) !important;
+}
+
+.portal-chat-panel {
+  height: calc(100vh / var(--app-zoom, 1)) !important;
+}
+
 @media (max-width: 767px) {
   .portal-main-area > header {
     gap: 8px;
@@ -25,15 +44,37 @@
   .portal-mobile-menu {
     display: block;
   }
+
+  /* Phones: less in the top bar, and report tiles two per row. */
+  .portal-topbar-subtitle {
+    display: none !important;
+  }
+
+  .report-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  .report-summary-card {
+    min-height: 0 !important;
+    padding: 14px !important;
+  }
+
+  .report-summary-card .report-card-value {
+    font-size: 22px !important;
+  }
+
+  .report-summary-card .report-icon {
+    display: none !important;
+  }
 }
 
 @media print {
+  html,
   body,
   .portal-main-area,
-  .portal-main-area > main,
-  .report-print-root {
+  .portal-main-content {
     background: #fff !important;
-    color: #111 !important;
     margin: 0 !important;
     padding: 0 !important;
     min-height: 0 !important;
@@ -43,34 +84,15 @@
   [data-slot="sidebar"],
   [data-mobile="true"],
   .portal-main-area > header,
-  .report-print-controls,
-  .portal-main-content > :not(.report-print-root) {
+  .report-print-controls {
     display: none !important;
   }
 
-  .report-print-root {
-    display: block !important;
-    font-family: Arial, sans-serif !important;
-  }
-
-  .report-print-root > div {
-    break-inside: avoid;
-  }
-
-  .report-print-root table {
-    border-collapse: collapse !important;
-    width: 100% !important;
-  }
-
-  .report-print-root th,
-  .report-print-root td {
-    border: 1px solid #d1d5db !important;
-    color: #111 !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  .report-print-root > div > div {
-    box-shadow: none !important;
+  /* The entrance animation must not leave the page faded or shifted. */
+  .lk-enter,
+  .lk-enter-soft {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
   }
 }

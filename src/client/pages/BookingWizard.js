@@ -1,0 +1,560 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../../firebase/firebase';
+import { BRASS, CREAM, FOREST, FOREST_DEEP, INK, LINE, MOSS, PAPER, SERIF, SANS } from '../components/clientTheme';
+import { useResortAvailability } from '../components/ResortAvailabilityContext';
+import BookingSteps from '../components/BookingSteps';
+import { useIsPhone } from '../lib/useIsPhone';
+import { pickRecommendedRooms } from '../../lib/bookingSuggestions';
+import { decorateRoom } from '../lib/roomCatalog';
+import {
+  calculateBookingPrice, describeRoomCapacity, getGuestCountViolation, getResortNow, getRoomCapacityPolicy,
+  getStayDurationError, getStayUnits, getTourCutoffError,
+} from '../../lib/bookingPricing';
+import { MIN_GROUP_GUESTS } from '../../lib/corporatePackages';
+import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
+import { closedPeriodMessage, findClosedPeriod, formatClosedRange } from '../../lib/closedDates';
+import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
+
+// Step-by-step start of a booking: 1 Type (personal or group), 2 When (stay
+// type, dates, guests), 3 Choose a room (only rooms free on those dates,
+// best fits first) — or, for day and night tours, just a cottage. The rest
+// (stay details, your details, review & pay) happens on /book/:roomId.
+
+const STAYS = [
+  { id: 'overnight', name: 'Overnight stay', hint: 'Sleep over · check out another day', phoneName: 'Overnight', phoneHint: 'Sleep over' },
+  { id: 'day', name: 'Day tour', hint: 'Same day · 8:00 AM – 5:00 PM', phoneHint: '8 AM – 5 PM' },
+  { id: 'night', name: 'Night tour', hint: 'Same day · 5:00 PM – 10:00 PM', phoneHint: '5 – 10 PM' },
+];
+const MAX_PERSONAL_GUESTS = MIN_GROUP_GUESTS - 1;
+
+const addDaysKey = (key, days) => {
+  const [y, m, d] = key.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  return date.toISOString().slice(0, 10);
+};
+const addMonthsKey = (key, months) => {
+  const [y, m, d] = key.split('-').map(Number);
+  const result = new Date(Date.UTC(y, m - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)).getUTCDate();
+  result.setUTCDate(Math.min(d, lastDay));
+  return result.toISOString().slice(0, 10);
+};
+const peso = value => `₱${Number(value || 0).toLocaleString('en-PH')}`;
+const longDate = key => (key ? new Date(`${key}T00:00:00`).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '');
+
+export default function BookingWizard() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [params, setParams] = useSearchParams();
+  const { available: resortOpen, loading: resortLoading, closedDates = [] } = useResortAvailability();
+  const today = getResortNow().dateKey;
+  // Phones get a more compact layout (see src/client/mobile.css).
+  const isPhone = useIsPhone();
+  const seasonPeriods = useSeasonPeriods();
+  const maxDate = addMonthsKey(today, 2);
+  const presetRoomId = params.get('room') || '';
+
+  const [step, setStep] = useState(() => {
+    const wanted = params.get('step');
+    if (wanted === 'room' && params.get('checkIn')) return 2;
+    return presetRoomId || params.get('type') === 'personal' ? 1 : 0;
+  });
+  const [stay, setStay] = useState(() => (['overnight', 'day', 'night'].includes(params.get('stay')) ? params.get('stay') : 'overnight'));
+  const [checkIn, setCheckIn] = useState(() => params.get('checkIn') || '');
+  const [checkOut, setCheckOut] = useState(() => params.get('checkOut') || '');
+  const [adults, setAdults] = useState(() => Math.max(1, Number(params.get('adults')) || 2));
+  const [children, setChildren] = useState(() => Math.max(0, Number(params.get('children')) || 0));
+  const [whenError, setWhenError] = useState('');
+
+  const [rooms, setRooms] = useState([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [availableIds, setAvailableIds] = useState(null);
+  const [availabilityError, setAvailabilityError] = useState('');
+  // The room whose details panel is open (step 3).
+  const [detailsFor, setDetailsFor] = useState(null);
+  const [photoIndex, setPhotoIndex] = useState(0);
+
+  const isTour = stay !== 'overnight';
+  const stayEnd = isTour ? checkIn : checkOut;
+  const guests = Number(adults) + Number(children);
+
+  useEffect(() => {
+    getDocs(collection(db, 'rooms'))
+      .then(snapshot => setRooms(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).map(decorateRoom)))
+      .catch(() => setRooms([]))
+      .finally(() => setRoomsLoading(false));
+  }, []);
+
+  // Close the details panel with Escape.
+  useEffect(() => {
+    if (!detailsFor) return undefined;
+    const onKey = event => { if (event.key === 'Escape') setDetailsFor(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [detailsFor]);
+
+  // Scroll to the top whenever the step changes.
+  useEffect(() => { window.scrollTo({ top: 0, behavior: 'smooth' }); }, [step]);
+
+  // Keep the address in step so Back and refresh work. Only while this page
+  // is showing: once the guest moves on to a room or cottage, leave the new
+  // page's address (and the details passed to it) alone.
+  useEffect(() => {
+    if (location.pathname !== '/book') return;
+    const next = new URLSearchParams();
+    if (presetRoomId) next.set('room', presetRoomId);
+    if (step >= 1) next.set('type', 'personal');
+    next.set('stay', stay);
+    if (checkIn) next.set('checkIn', checkIn);
+    if (!isTour && checkOut) next.set('checkOut', checkOut);
+    next.set('adults', String(adults));
+    next.set('children', String(children));
+    if (step === 2) next.set('step', 'room');
+    if (next.toString() !== params.toString()) setParams(next, { replace: true });
+  }, [step, stay, checkIn, checkOut, adults, children, isTour, presetRoomId, setParams, params, location.pathname]);
+
+  const presetRoom = rooms.find(room => room.id === presetRoomId) || null;
+
+  const validateWhen = () => {
+    if (!checkIn) return isTour ? 'Choose the date of your tour.' : 'Choose your check-in date.';
+    if (checkIn < today || checkIn > maxDate) return `Choose a date from today up to ${longDate(maxDate)}.`;
+    if (isTour) {
+      const cutoff = getTourCutoffError(checkIn, stay);
+      if (cutoff) return cutoff;
+    } else {
+      if (!checkOut) return 'Choose your check-out date.';
+      if (checkOut > maxDate) return `Check-out can be up to ${longDate(maxDate)}.`;
+      const duration = getStayDurationError(checkIn, checkOut);
+      if (duration) return duration;
+    }
+    const closedPeriod = findClosedPeriod(closedDates, checkIn, isTour ? checkIn : checkOut);
+    if (closedPeriod) return closedPeriodMessage(closedPeriod);
+    if (!(Number(adults) >= 1)) return 'At least one adult is needed.';
+    if (guests > MAX_PERSONAL_GUESTS) return `For ${MIN_GROUP_GUESTS} or more guests, please use a group booking.`;
+    return '';
+  };
+
+  const goToRooms = () => {
+    const error = validateWhen();
+    setWhenError(error);
+    if (!error) setStep(2);
+  };
+
+  // Which rooms are free on the chosen dates.
+  useEffect(() => {
+    if (step !== 2 || !checkIn || !stayEnd) return undefined;
+    // Closed dates (e.g. opened from an old link): no rooms to show.
+    const closedPeriod = findClosedPeriod(closedDates, checkIn, stayEnd);
+    if (closedPeriod) { setAvailableIds([]); setAvailabilityError(closedPeriodMessage(closedPeriod)); return undefined; }
+    let active = true;
+    setAvailableIds(null);
+    setAvailabilityError('');
+    fetch(`/api/room-availability?${new URLSearchParams({ startDate: checkIn, endDate: stayEnd })}`)
+      .then(response => response.json().then(data => ({ ok: response.ok, data })))
+      .then(({ ok, data }) => {
+        if (!active) return;
+        if (!ok) throw new Error(data.error || 'Availability could not be checked.');
+        setAvailableIds(data.availableRoomIds || []);
+      })
+      .catch(error => { if (active) { setAvailableIds([]); setAvailabilityError(error.message || 'Availability could not be checked.'); } });
+    return () => { active = false; };
+  }, [step, checkIn, stayEnd, closedDates]);
+
+  const nights = isTour ? 1 : getStayUnits(checkIn, checkOut);
+  const priceFor = room => {
+    try {
+      return calculateBookingPrice({
+        room, bookingType: isTour ? 'daytour' : 'overnight', nights: Math.max(1, nights || 1),
+        adults: Number(adults), children: Number(children), tourPeriod: isTour ? stay : 'day',
+        season: { periods: seasonPeriods, checkIn, checkOut: stayEnd },
+      }).subtotalAmount;
+    } catch { return null; }
+  };
+
+  // Several rooms: the guest adds rooms and the group is split across them.
+  const [picked, setPicked] = useState([]);
+  const priceForCounts = (room, a, c) => {
+    try {
+      return calculateBookingPrice({
+        room, bookingType: isTour ? 'daytour' : 'overnight', nights: Math.max(1, nights || 1),
+        adults: a, children: c, tourPeriod: isTour ? stay : 'day',
+        season: { periods: seasonPeriods, checkIn, checkOut: stayEnd },
+      }).subtotalAmount;
+    } catch { return null; }
+  };
+  const togglePicked = room => setPicked(current => (current.includes(room.id)
+    ? current.filter(id => id !== room.id)
+    : current.length >= MAX_ROOMS_PER_BOOKING ? current : [...current, room.id]));
+  const pickedRooms = picked.map(id => rooms.find(room => room.id === id)).filter(Boolean);
+  const split = pickedRooms.length
+    ? splitGuestsAcrossRooms(pickedRooms, Number(adults), Number(children), {
+      fits: (room, a, c) => !getGuestCountViolation(room, a, c),
+      priceOf: (room, a, c) => priceForCounts(room, a, c) ?? 1e9,
+    })
+    : null;
+  const splitTotal = split ? split.reduce((sum, item, i) => sum + (priceForCounts(pickedRooms[i], item.adults, item.children) || 0), 0) : 0;
+  const continueWithPicked = () => {
+    if (!split) return;
+    navigate(`/book/${split[0].roomId}?checkIn=${encodeURIComponent(checkIn)}&checkOut=${encodeURIComponent(stayEnd)}`, {
+      state: {
+        bookingForm: {
+          bookingType: isTour ? 'daytour' : 'overnight',
+          tourPeriod: isTour ? stay : 'day',
+          adults: Number(adults),
+          children: Number(children),
+          checkIn,
+          checkOut: stayEnd,
+        },
+        extraRoomIds: split.slice(1).map(item => item.roomId),
+      },
+    });
+  };
+
+  const { fitting, tooSmall, partRooms = [] } = useMemo(() => {
+    if (!availableIds) return { fitting: [], tooSmall: 0, partRooms: [] };
+    const free = rooms.filter(room => availableIds.includes(room.id));
+    const fits = free
+      .filter(room => !getGuestCountViolation(room, Number(adults), Number(children)))
+      .map(room => ({ room, price: priceFor(room), kind: getRoomCapacityPolicy(room)?.label || room.groupTitle, spare: (getRoomCapacityPolicy(room)?.maxGuests || 99) - guests }))
+      .filter(entry => entry.price !== null)
+      // Cheapest first; at the same price, the room closest to the group size.
+      .sort((a, b) => a.price - b.price || a.spare - b.spare || String(a.room.title).localeCompare(String(b.room.title)));
+    return { fitting: fits, tooSmall: free.length - fits.length, partRooms: free.filter(room => getGuestCountViolation(room, Number(adults), Number(children))) };
+  }, [rooms, availableIds, adults, children, stay, nights, seasonPeriods]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const presetEntry = presetRoom ? fitting.find(entry => entry.room.id === presetRoom.id) : null;
+  const { recommended, others } = pickRecommendedRooms(fitting.filter(entry => entry.room.id !== presetRoomId));
+
+  const chooseRoom = room => {
+    navigate(`/book/${room.id}?checkIn=${encodeURIComponent(checkIn)}&checkOut=${encodeURIComponent(stayEnd)}`, {
+      state: {
+        bookingForm: {
+          bookingType: isTour ? 'daytour' : 'overnight',
+          tourPeriod: isTour ? stay : 'day',
+          adults: Number(adults),
+          children: Number(children),
+          checkIn,
+          checkOut: stayEnd,
+        },
+      },
+    });
+  };
+  const chooseCottageOnly = () => {
+    navigate(`/book-cottage?${new URLSearchParams({ date: checkIn, tour: stay, adults: String(adults), children: String(children) })}`);
+  };
+
+  const card = { background: '#fff', border: `1px solid ${LINE}`, padding: 'clamp(18px, 4vw, 28px)', minWidth: 0 };
+  const choice = active => ({ textAlign: 'left', border: `1.5px solid ${active ? FOREST : LINE}`, background: active ? CREAM : '#fff', padding: '16px 18px', cursor: 'pointer', fontFamily: SANS, color: FOREST_DEEP, minWidth: 0 });
+  const label = { display: 'grid', gap: 6, color: FOREST_DEEP, font: `600 11px/1.4 ${SANS}`, letterSpacing: '.06em', textTransform: 'uppercase', minWidth: 0 };
+  const input = { border: `1px solid ${LINE}`, padding: '12px', font: `14px ${SANS}`, color: INK, background: '#fff', minWidth: 0, width: '100%', boxSizing: 'border-box' };
+  const primary = { border: 0, background: FOREST, color: '#fff', padding: '14px 22px', font: `600 13px ${SANS}`, letterSpacing: '.05em', cursor: 'pointer' };
+  const secondary = { border: `1px solid ${LINE}`, background: '#fff', color: FOREST, padding: '13px 18px', font: `600 13px ${SANS}`, cursor: 'pointer' };
+  const counter = (value, setValue, min, name) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <button type="button" aria-label={`Fewer ${name}`} disabled={value <= min} onClick={() => setValue(Math.max(min, value - 1))} style={{ ...secondary, padding: '10px 14px', opacity: value <= min ? 0.5 : 1 }}>−</button>
+      <span style={{ minWidth: 28, textAlign: 'center', font: `600 16px ${SANS}`, color: INK }} aria-live="polite">{value}</span>
+      <button type="button" aria-label={`More ${name}`} disabled={value + (name === 'adults' ? Number(children) : Number(adults)) >= MAX_PERSONAL_GUESTS} onClick={() => setValue(value + 1)} style={{ ...secondary, padding: '10px 14px' }}>+</button>
+    </div>
+  );
+
+  const roomCard = (entry, badge) => {
+    const { room, price } = entry;
+    return (
+      <article key={room.id} style={{ background: '#fff', border: `1px solid ${badge === 'Your pick' ? FOREST : LINE}`, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ position: 'relative', height: 170, overflow: 'hidden' }}>
+          <img src={room.cover} alt={room.title} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          {badge && <span style={{ position: 'absolute', top: 12, left: 12, background: badge === 'Your pick' ? FOREST : BRASS, color: '#fff', padding: '5px 10px', font: `600 10px ${SANS}`, letterSpacing: '.08em', textTransform: 'uppercase' }}>{badge}</span>}
+        </div>
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
+          <div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>{entry.kind}</div>
+          <strong style={{ font: `500 20px ${SERIF}`, color: INK }}>{room.title}</strong>
+          <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>{describeRoomCapacity(getRoomCapacityPolicy(room)) || 'Ask us about capacity'}{room.location ? ` · ${room.location}` : ''}</span>
+          <p className="wizard-room-desc" style={{ margin: '2px 0 0', font: `12.5px/1.6 ${SANS}`, color: '#55584b', display: '-webkit-box', WebkitLineClamp: isPhone ? 2 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{room.description}</p>
+          <button type="button" onClick={() => { setDetailsFor(entry); setPhotoIndex(0); }}
+            style={{ alignSelf: 'flex-start', border: 0, background: 'none', padding: '2px 0 6px', color: FOREST, font: `600 12px ${SANS}`, textDecoration: 'underline', textUnderlineOffset: 3, cursor: 'pointer' }}>
+            View room details
+          </button>
+          <div style={{ marginTop: 'auto', paddingTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, borderTop: `1px solid ${LINE}` }}>
+            <span style={{ font: `600 18px ${SERIF}`, color: FOREST }}>
+              {entry.partOnly ? <><small style={{ font: `11px ${SANS}`, color: '#8d8877' }}>from </small>{peso(entry.fromPrice)}</> : <>{peso(price)}<small style={{ font: `11px ${SANS}`, color: '#8d8877' }}> for your group</small></>}
+            </span>
+            <span style={{ display: 'flex', gap: 6 }}>
+              {(() => {
+                const added = picked.includes(room.id);
+                const full = !added && picked.length >= MAX_ROOMS_PER_BOOKING;
+                return (
+                  <button type="button" onClick={() => togglePicked(room)} disabled={full} aria-pressed={added}
+                    title={full ? `Up to ${MAX_ROOMS_PER_BOOKING} rooms` : 'Book this room together with other rooms'}
+                    style={{ ...secondary, padding: '10px 12px', fontSize: 12, background: added ? '#eef3ea' : '#fff', opacity: full ? 0.5 : 1 }}>
+                    {added ? '✓ Added' : '+ Add room'}
+                  </button>
+                );
+              })()}
+              {!entry.partOnly && <button type="button" onClick={() => chooseRoom(room)} style={{ ...primary, padding: '10px 16px', fontSize: 12 }}>Choose</button>}
+            </span>
+          </div>
+        </div>
+      </article>
+    );
+  };
+
+  return (
+    <main style={{ background: PAPER, minHeight: '70vh', padding: 'clamp(28px, 6vw, 64px) 16px', fontFamily: SANS }}>
+      <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+        <BookingSteps current={step} onStep={index => setStep(index)} />
+
+        {!resortLoading && !resortOpen && (
+          <div role="alert" style={{ background: '#fef2f2', color: '#991b1b', padding: 14, marginBottom: 18, font: `13px ${SANS}` }}>Reservations are temporarily closed.</div>
+        )}
+
+        {step === 0 && (
+          <section style={card}>
+            <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 10 }}>Step 1 of 6</div>
+            <h1 style={{ color: FOREST_DEEP, font: `500 clamp(28px, 5vw, 40px)/1.15 ${SERIF}`, margin: '0 0 8px' }}>What kind of booking?</h1>
+            <p style={{ color: '#6b6a5c', font: `14px/1.7 ${SANS}`, margin: '0 0 22px' }}>Pick the one that fits your group.</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 14 }}>
+              <button type="button" onClick={() => setStep(1)} style={choice(false)}>
+                <span style={{ display: 'block', color: FOREST, font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: 10 }}>Personal booking</span>
+                <strong style={{ display: 'block', font: `500 24px ${SERIF}`, marginBottom: 6 }}>1–{MAX_PERSONAL_GUESTS} guests</strong>
+                <span style={{ color: '#6b6a5c', font: `13px/1.6 ${SANS}` }}>Overnight stay, or a day or night tour — with a room or just a cottage.</span>
+              </button>
+              <button type="button" onClick={() => navigate('/corporate-booking')} style={{ ...choice(false), background: FOREST, color: '#fff', borderColor: FOREST }}>
+                <span style={{ display: 'block', color: '#e4d4a7', font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: 10 }}>Corporate / big group</span>
+                <strong style={{ display: 'block', font: `500 24px ${SERIF}`, marginBottom: 6 }}>{MIN_GROUP_GUESTS}–250 guests</strong>
+                <span style={{ color: 'rgba(255,255,255,.8)', font: `13px/1.6 ${SANS}` }}>Group packages priced per guest. Book at least 1 week ahead.</span>
+              </button>
+            </div>
+          </section>
+        )}
+
+        {step === 1 && (
+          <section style={card}>
+            <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 10 }}>Step 2 of 6</div>
+            <h1 style={{ color: FOREST_DEEP, font: `500 clamp(28px, 5vw, 40px)/1.15 ${SERIF}`, margin: '0 0 8px' }}>When are you coming?</h1>
+            {presetRoom && <p style={{ color: '#6b6a5c', font: `14px ${SANS}`, margin: '0 0 6px' }}>You picked <strong style={{ color: FOREST }}>{presetRoom.title}</strong>. We'll check it's free for your dates.</p>}
+            <div className="wizard-stay-options keep-columns" style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(3, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: isPhone ? 6 : 10, margin: isPhone ? '14px 0' : '18px 0' }}>
+              {STAYS.map(option => {
+                const closed = option.id !== 'overnight' && checkIn === today && Boolean(getTourCutoffError(today, option.id));
+                return (
+                  <button key={option.id} type="button" aria-pressed={stay === option.id} onClick={() => { setStay(option.id); setWhenError(''); }} style={choice(stay === option.id)}>
+                    <strong style={{ display: 'block', font: `600 15px ${SANS}` }}>{isPhone && option.phoneName ? option.phoneName : option.name}</strong>
+                    <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>{closed ? (isPhone ? 'Closed today' : 'Closed for today — pick another date') : (isPhone ? option.phoneHint : option.hint)}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="keep-columns" style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: isPhone ? 10 : 14 }}>
+              <label style={label}>{isTour ? 'Date' : 'Check-in'}
+                <input type="date" min={today} max={maxDate} value={checkIn} onChange={e => { const value = e.target.value; setCheckIn(value); if (checkOut && checkOut <= value) setCheckOut(''); setWhenError(''); }} style={input} />
+              </label>
+              {!isTour && (
+                <label style={label}>Check-out
+                  <input type="date" min={checkIn ? addDaysKey(checkIn, 1) : addDaysKey(today, 1)} max={maxDate} value={checkOut} onChange={e => { setCheckOut(e.target.value); setWhenError(''); }} style={input} />
+                </label>
+              )}
+            </div>
+            <div className="keep-columns" style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: isPhone ? 10 : 14, marginTop: 18 }}>
+              <div style={label}>Adults{counter(Number(adults), setAdults, 1, 'adults')}</div>
+              <div style={label}>Children (under 10){counter(Number(children), setChildren, 0, 'children')}</div>
+            </div>
+            {!isTour && checkIn && checkOut && !getStayDurationError(checkIn, checkOut) && (
+              <p style={{ color: FOREST, font: `600 13px ${SANS}`, margin: '16px 0 0' }}>{nights} night{nights === 1 ? '' : 's'} · {longDate(checkIn)} → {longDate(checkOut)}</p>
+            )}
+            {closedDates.length > 0 && (
+              <p style={{ color: '#92400e', font: `13px/1.5 ${SANS}`, margin: '14px 0 0' }}>
+                Closed (can’t be booked): {closedDates.map(item => `${formatClosedRange(item)}${item.reason ? ` (${item.reason})` : ''}`).join('; ')}
+              </p>
+            )}
+            {whenError && <p role="alert" style={{ color: '#b42318', font: `13px ${SANS}`, margin: '14px 0 0' }}>{whenError}</p>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => (presetRoomId ? navigate('/rooms') : setStep(0))} style={secondary}>← Back</button>
+              <button type="button" onClick={goToRooms} disabled={!resortOpen} style={{ ...primary, opacity: resortOpen ? 1 : 0.6 }}>See available rooms →</button>
+            </div>
+          </section>
+        )}
+
+        {step === 2 && (
+          <section>
+            <div style={{ ...card, marginBottom: 16 }}>
+              <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 10 }}>Step 3 of 6</div>
+              <h1 style={{ color: FOREST_DEEP, font: `500 clamp(28px, 5vw, 40px)/1.15 ${SERIF}`, margin: '0 0 6px' }}>Choose a room</h1>
+              <p style={{ color: '#6b6a5c', font: `14px/1.6 ${SANS}`, margin: 0 }}>
+                {STAYS.find(option => option.id === stay).name} · {isTour ? longDate(checkIn) : `${longDate(checkIn)} → ${longDate(checkOut)}`} · {adults} adult{Number(adults) === 1 ? '' : 's'}{Number(children) ? `, ${children} child${Number(children) === 1 ? '' : 'ren'}` : ''}
+                {' '}<button type="button" onClick={() => setStep(1)} style={{ border: 0, background: 'none', color: FOREST, textDecoration: 'underline', cursor: 'pointer', font: `600 13px ${SANS}`, padding: 0 }}>Change</button>
+              </p>
+            </div>
+
+            {/* No room: only for tours */}
+            <button type="button" onClick={isTour ? chooseCottageOnly : undefined} disabled={!isTour}
+              style={{ ...choice(false), width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, marginBottom: 18, opacity: isTour ? 1 : 0.6, cursor: isTour ? 'pointer' : 'not-allowed' }}>
+              <span>
+                <strong style={{ display: 'block', font: `600 15px ${SANS}` }}>No room — just a cottage</strong>
+                <span style={{ font: `12px/1.6 ${SANS}`, color: '#6b6a5c' }}>
+                  {isTour ? 'Swim and relax for the tour with your own cottage. Entrance per person + cottage.' : 'Only for day and night tours. Overnight stays need a room.'}
+                </span>
+              </span>
+              {isTour && <span style={{ font: `600 13px ${SANS}`, color: FOREST, whiteSpace: 'nowrap' }}>See cottages →</span>}
+            </button>
+
+            {roomsLoading || availableIds === null ? (
+              <div style={{ ...card, textAlign: 'center', color: MOSS }}>Checking which rooms are free…</div>
+            ) : availabilityError ? (
+              <div role="alert" style={{ ...card, color: '#b42318' }}>{availabilityError} <button type="button" onClick={() => setStep(1)} style={{ ...secondary, marginLeft: 8, padding: '8px 12px' }}>Change dates</button></div>
+            ) : (
+              <>
+                {presetRoom && (
+                  presetEntry ? (
+                    <div style={{ marginBottom: 22 }}>
+                      <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 10px' }}>Your room is free</h2>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>{roomCard(presetEntry, 'Your pick')}</div>
+                    </div>
+                  ) : (
+                    <div role="status" style={{ ...card, marginBottom: 18, color: '#9a3412', background: '#fff7ed', borderColor: '#fed7aa' }}>
+                      {presetRoom.title} {getGuestCountViolation(presetRoom, Number(adults), Number(children)) && availableIds.includes(presetRoom.id)
+                        ? `is too small for ${guests} guests.`
+                        : 'is already booked for those dates.'} Here are rooms that fit instead.
+                    </div>
+                  )
+                )}
+                {fitting.length === 0 ? (
+                  <div style={{ ...card, color: '#6b6a5c' }}>
+                    {partRooms.length
+                      ? `No single room fits ${guests} guests. Add 2 or more rooms below and we'll split your group between them.`
+                      : `No room is free for ${guests} guest${guests === 1 ? '' : 's'} on those dates. Try other dates${isTour ? ', or book just a cottage above' : ''}.`}
+                  </div>
+                ) : (
+                  <>
+                    {recommended.length > 0 && (
+                      <>
+                        <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 4px' }}>Recommended for your group</h2>
+                        <p style={{ color: '#6b6a5c', font: `12px ${SANS}`, margin: '0 0 12px' }}>Free on your dates: rooms made for {guests} guest{guests === 1 ? '' : 's'}, plus one with a little more space.</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16, marginBottom: 26 }}>
+                          {recommended.map(entry => roomCard(entry, entry.badge))}
+                        </div>
+                      </>
+                    )}
+                    {others.length > 0 && (
+                      <>
+                        <h2 style={{ font: `500 20px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 12px' }}>Other available rooms</h2>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
+                          {others.map(entry => roomCard(entry, ''))}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+                {tooSmall > 0 && guests > 1 && (
+                  <>
+                    <h2 style={{ font: `500 20px ${SERIF}`, color: FOREST_DEEP, margin: '26px 0 4px' }}>Or split your group into more rooms</h2>
+                    <p style={{ color: '#6b6a5c', font: `12px ${SANS}`, margin: '0 0 12px' }}>These rooms are too small for all {guests} of you, but you can add two or more and we'll split your group.</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
+                      {partRooms.map(room => roomCard({ room, partOnly: true, fromPrice: priceForCounts(room, 1, 0), kind: getRoomCapacityPolicy(room)?.label || room.groupTitle }, ''))}
+                    </div>
+                  </>
+                )}
+                {picked.length > 0 && (
+                  <div role="status" style={{ position: 'sticky', bottom: 12, zIndex: 20, marginTop: 20, background: FOREST_DEEP, color: '#fff', padding: '14px 16px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', boxShadow: '0 12px 30px rgba(0,0,0,.25)' }}>
+                    <div style={{ flex: '1 1 260px', font: `13px/1.6 ${SANS}` }}>
+                      <strong>{picked.length} room{picked.length === 1 ? '' : 's'} for {guests} guest{guests === 1 ? '' : 's'}</strong>
+                      <div style={{ opacity: 0.9 }}>
+                        {split
+                          ? split.map((item, i) => `${pickedRooms[i].title}: ${item.adults} adult${item.adults === 1 ? '' : 's'}${item.children ? `, ${item.children} child${item.children === 1 ? '' : 'ren'}` : ''}`).join(' · ')
+                          : picked.length === 1
+                            ? 'Add one more room to split your group.'
+                            : `These rooms don't fit all ${guests} of you. Add or swap a room.`}
+                      </div>
+                    </div>
+                    {split && <strong style={{ font: `600 18px ${SERIF}` }}>{peso(splitTotal)}</strong>}
+                    <button type="button" onClick={() => setPicked([])} style={{ ...secondary, padding: '9px 12px', fontSize: 12 }}>Clear</button>
+                    <button type="button" onClick={continueWithPicked} disabled={!split}
+                      style={{ ...primary, padding: '10px 16px', fontSize: 12, background: '#d4f550', color: FOREST_DEEP, opacity: split ? 1 : 0.5 }}>
+                      Continue with {picked.length} room{picked.length === 1 ? '' : 's'} →
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+            <div style={{ marginTop: 22 }}>
+              <button type="button" onClick={() => setStep(1)} style={secondary}>← Back</button>
+            </div>
+          </section>
+        )}
+      </div>
+
+      {detailsFor && (() => {
+        const { room, price } = detailsFor;
+        const policy = getRoomCapacityPolicy(room);
+        const photos = room.gallery?.length ? room.gallery : [room.cover];
+        const photo = photos[Math.min(photoIndex, photos.length - 1)];
+        const facts = [
+          ['Room type', room.groupTitle],
+          ['Location', room.location],
+          ['Guests', describeRoomCapacity(policy) || room.capacity],
+          ['Beds', room.bedNote],
+          ['Your stay', `${STAYS.find(option => option.id === stay).name} · ${isTour ? longDate(checkIn) : `${longDate(checkIn)} → ${longDate(checkOut)}`}`],
+        ].filter(([, value]) => value);
+        return (
+          <div role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDetailsFor(null); }}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,20,.55)', zIndex: 1200, display: 'grid', placeItems: 'center', padding: 16 }}>
+            <section role="dialog" aria-modal="true" aria-label={`${room.title} details`}
+              style={{ background: '#fff', width: '100%', maxWidth: 720, maxHeight: 'calc(100vh - 32px)', overflowY: 'auto', boxSizing: 'border-box', fontFamily: SANS }}>
+              <div style={{ position: 'relative', background: '#e9e6dc' }}>
+                <img src={photo} alt={room.title} style={{ width: '100%', height: 'clamp(200px, 42vw, 340px)', objectFit: 'cover', display: 'block' }} />
+                <button type="button" onClick={() => setDetailsFor(null)} aria-label="Close"
+                  style={{ position: 'absolute', top: 12, right: 12, width: 36, height: 36, border: 0, borderRadius: '50%', background: 'rgba(255,255,255,.92)', color: INK, fontSize: 20, cursor: 'pointer' }}>×</button>
+                {photos.length > 1 && (
+                  <div style={{ position: 'absolute', bottom: 10, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 6 }}>
+                    {photos.map((src, index) => (
+                      <button key={src} type="button" aria-label={`Photo ${index + 1}`} onClick={() => setPhotoIndex(index)}
+                        style={{ width: 9, height: 9, padding: 0, borderRadius: '50%', border: 0, cursor: 'pointer', background: index === photoIndex ? '#fff' : 'rgba(255,255,255,.5)' }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div style={{ padding: 'clamp(18px, 4vw, 28px)', display: 'grid', gap: 14 }}>
+                <div>
+                  <div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>{detailsFor.kind || room.groupTitle}</div>
+                  <h2 style={{ margin: '4px 0 0', font: `500 clamp(24px, 4vw, 32px)/1.15 ${SERIF}`, color: FOREST_DEEP }}>{room.title}</h2>
+                </div>
+                {room.tagline && <p style={{ margin: 0, font: `italic 15px/1.6 ${SERIF}`, color: FOREST }}>{room.tagline}</p>}
+                <p style={{ margin: 0, font: `14px/1.8 ${SANS}`, color: '#4a4c40' }}>{room.description}</p>
+                {room.groupIntro && <p style={{ margin: 0, font: `13px/1.7 ${SANS}`, color: '#6b6a5c' }}>{room.groupIntro}</p>}
+                <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px 18px' }}>
+                  {facts.map(([label, value]) => (
+                    <div key={label} style={{ borderTop: `1px solid ${LINE}`, paddingTop: 8 }}>
+                      <dt style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase' }}>{label}</dt>
+                      <dd style={{ margin: '3px 0 0', font: `13px/1.5 ${SANS}`, color: INK }}>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                {room.amenities?.length > 0 && (
+                  <div>
+                    <div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: 8 }}>Amenities</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {room.amenities.map(item => <span key={item} style={{ background: CREAM, color: FOREST_DEEP, padding: '5px 10px', font: `12px ${SANS}` }}>{item}</span>)}
+                    </div>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', borderTop: `1px solid ${LINE}`, paddingTop: 14 }}>
+                  <span style={{ font: `600 22px ${SERIF}`, color: FOREST }}>
+                    {detailsFor.partOnly
+                      ? <><small style={{ font: `12px ${SANS}`, color: '#8d8877' }}>from </small>{peso(detailsFor.fromPrice)}</>
+                      : <>{peso(price)}<small style={{ font: `12px ${SANS}`, color: '#8d8877' }}> for {guests} guest{guests === 1 ? '' : 's'}</small></>}
+                  </span>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button type="button" onClick={() => setDetailsFor(null)} style={secondary}>Back to rooms</button>
+                    {detailsFor.partOnly
+                      ? <button type="button" onClick={() => { togglePicked(room); setDetailsFor(null); }} style={primary}>{picked.includes(room.id) ? 'Remove room' : '+ Add room'}</button>
+                      : <button type="button" onClick={() => chooseRoom(room)} style={primary}>Choose this room</button>}
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+    </main>
+  );
+}

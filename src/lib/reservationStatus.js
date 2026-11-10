@@ -1,3 +1,6 @@
+import { serverNow } from './serverClock';
+import { canStayOnAgencyCredit, isAgencyBilled } from './agencyBilling';
+
 // Shared reservation status, overstay and analytics helpers.
 // Used by the staff pages and by the server (apiHandlers/reservation-status.js),
 // so both sides agree on what counts as an overstay.
@@ -19,6 +22,51 @@ const STATUS_LABELS = { pending: 'Pending', confirmed: 'Confirmed', 'checked-in'
 //   - any booking can be cancelled except a finished (checked-out) stay,
 //     and a cancelled booking stays cancelled.
 // Unrecognised old statuses can move anywhere, so they can be fixed.
+// A guest can only be checked in from their check-in date (Philippine
+// time). Early arrivals on the day itself are fine.
+export function getEarlyCheckInError(reservation, now = new Date()) {
+  const checkIn = typeof reservation?.checkIn === 'string' ? reservation.checkIn.slice(0, 10) : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(checkIn)) return '';
+  if (checkIn <= manilaDateKey(now)) return '';
+  const [y, m, d] = checkIn.split('-').map(Number);
+  const label = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  return `This booking starts on ${label}. The guest can only be checked in from that day.`;
+}
+
+// Guests pay in full before they enter the resort, so check-in needs a zero
+// balance. Returns the reason check-in is blocked, or ''.
+export function getCheckInPaymentError(reservation) {
+  // Government groups billed to their agency pay after the event, once the
+  // Purchase Order is on file.
+  if (canStayOnAgencyCredit(reservation)) return '';
+  if (isAgencyBilled(reservation)) return 'This group is billed to its agency. Save the agency’s Purchase Order (PO) number in Billing first.';
+  const owed = Math.round(getOutstandingBalance(reservation) * 100) / 100;
+  if (owed <= 0) return '';
+  return `The guest still owes ₱${owed.toLocaleString()}. Record the full payment in Billing first; the booking is checked in automatically once the balance is ₱0.`;
+}
+
+// True when a fully paid booking can be checked in today: it's pending or
+// confirmed and today (Philippine time) falls within its stay.
+export function canAutoCheckIn(reservation, now = new Date()) {
+  if (!['pending', 'confirmed'].includes(String(reservation?.status || '').toLowerCase())) return false;
+  if (hasOutstandingBalance(reservation)) return false;
+  const today = manilaDateKey(now);
+  const checkIn = String(reservation?.checkIn || '').slice(0, 10);
+  const checkOut = String(reservation?.checkOut || checkIn).slice(0, 10);
+  return Boolean(checkIn) && checkIn <= today && (checkOut >= today || checkOut === checkIn);
+}
+
+// A confirmed booking that's fully paid (e.g. paid online) and arrives
+// today: staff only need to check the guest in when they come.
+export function isReadyToCheckIn(reservation, now = new Date()) {
+  if (String(reservation?.status || '').toLowerCase() !== 'confirmed') return false;
+  if (hasOutstandingBalance(reservation) || !(Number(reservation?.totalAmount) > 0)) return false;
+  const today = manilaDateKey(now);
+  const checkIn = String(reservation?.checkIn || '').slice(0, 10);
+  const checkOut = String(reservation?.checkOut || checkIn).slice(0, 10);
+  return Boolean(checkIn) && checkIn <= today && (checkOut > today || checkOut === checkIn);
+}
+
 export function getStatusTransitionError(from, to) {
   if (from === to) return '';
   if (!RESERVATION_STATUSES.includes(to)) return 'Choose a valid reservation status.';
@@ -52,11 +100,35 @@ function parseClock(value, fallback = DEFAULT_CHECKOUT_TIME) {
 }
 
 // Scheduled check-out moment (ms since epoch), or null if the date is missing.
+// A late check-out staff agreed to (lateCheckoutUntil) moves it later.
 export function getScheduledCheckOutMs(reservation) {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(reservation?.checkOut || '');
   if (!match) return null;
   const { hours, minutes } = parseClock(reservation.checkOutTime);
-  return Date.UTC(+match[1], +match[2] - 1, +match[3], hours - MANILA_OFFSET_HOURS, minutes);
+  const booked = Date.UTC(+match[1], +match[2] - 1, +match[3], hours - MANILA_OFFSET_HOURS, minutes);
+  const extended = Number(reservation.lateCheckoutUntil);
+  return Number.isFinite(extended) && extended > booked ? extended : booked;
+}
+
+// Longest late check-out staff can give in one go.
+export const MAX_LATE_CHECKOUT_HOURS = 6;
+// How early a checked-in guest shows as "due to check out".
+export const CHECKOUT_DUE_WINDOW_MINUTES = 120;
+
+// A checked-in guest whose check-out time is coming up within the window
+// (not yet past it; past it is an overstay). Returns { dueMs, minutesLeft } or null.
+export function getCheckoutDue(reservation, now = new Date(), windowMinutes = CHECKOUT_DUE_WINDOW_MINUTES) {
+  if (reservation?.status !== 'checked-in') return null;
+  const dueMs = getScheduledCheckOutMs(reservation);
+  if (dueMs === null) return null;
+  const minutesLeft = Math.ceil((dueMs - now.getTime()) / 60000);
+  if (minutesLeft <= 0 || minutesLeft > windowMinutes) return null;
+  return { dueMs, minutesLeft };
+}
+
+// "12:30 PM" in Philippine time.
+export function formatManilaTime(ms) {
+  return new Date(ms).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' });
 }
 
 export function formatDuration(ms) {
@@ -99,10 +171,16 @@ export function hasOutstandingBalance(reservation) {
   return Math.round(getOutstandingBalance(reservation) * 100) > 0;
 }
 
+// Money the guest must settle before checking out. An agency group with a
+// PO leaves with the bill open ("Due from agency").
+export function mustPayBeforeCheckout(reservation) {
+  return hasOutstandingBalance(reservation) && !canStayOnAgencyCredit(reservation);
+}
+
 // ── Analytics ──────────────────────────────────────────────────────────────
 
 // Today's date in Philippine time, as YYYY-MM-DD.
-export function manilaDateKey(now = new Date()) {
+export function manilaDateKey(now = new Date(serverNow())) {
   return new Date(now.getTime() + MANILA_OFFSET_HOURS * 3600000).toISOString().slice(0, 10);
 }
 

@@ -114,7 +114,7 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
       }} />
 
       {/* Panel */}
-      <div style={{
+      <div className="portal-chat-panel" style={{
         position: 'fixed', top: 0, right: 0, height: '100vh', width: PANEL_WIDTH,
         maxWidth: '100vw', background: PANEL_BG, zIndex: 301,
         display: 'flex', flexDirection: 'column',
@@ -195,17 +195,17 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
             {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 10, background: CHAT_BG }}>
               {messages.map(m => (
-                <div key={m.id} style={{ alignSelf: m.sender === 'staff' ? 'flex-end' : 'flex-start', maxWidth: '78%' }}>
+                <div key={m.id} style={{ alignSelf: ['staff', 'bot'].includes(m.sender) ? 'flex-end' : 'flex-start', maxWidth: '78%' }}>
                   <div style={{
-                    background: m.sender === 'staff' ? ACCENT : BUBBLE_BG,
-                    border: m.sender === 'staff' ? 'none' : `1px solid ${BORDER}`,
-                    borderRadius: 14, padding: '10px 14px', fontSize: 12,
-                    color: m.sender === 'staff' ? ACCENT_TEXT : TEXT,
+                    background: ['staff', 'bot'].includes(m.sender) ? ACCENT : BUBBLE_BG,
+                    border: ['staff', 'bot'].includes(m.sender) ? 'none' : `1px solid ${BORDER}`,
+                    borderRadius: 14, padding: '10px 14px', fontSize: 12, whiteSpace: 'pre-line', overflowWrap: 'anywhere',
+                    color: ['staff', 'bot'].includes(m.sender) ? ACCENT_TEXT : TEXT,
                   }}>
                     {m.text}
                   </div>
-                  <div style={{ fontSize: 10, color: MUTED, marginTop: 4, display: 'flex', gap: 6, justifyContent: m.sender === 'staff' ? 'flex-end' : 'flex-start' }}>
-                    {m.isBot && <span>🤖 Auto-reply</span>}
+                  <div style={{ fontSize: 10, color: MUTED, marginTop: 4, display: 'flex', gap: 6, justifyContent: ['staff', 'bot'].includes(m.sender) ? 'flex-end' : 'flex-start' }}>
+                    {(m.isBot || m.sender === 'bot') && <span>Auto-reply</span>}
                     <span>{(m.timestamp || m.createdAt)?.seconds ? new Date((m.timestamp || m.createdAt).seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}</span>
                   </div>
                 </div>

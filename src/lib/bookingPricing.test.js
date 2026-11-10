@@ -52,32 +52,35 @@ describe('same-day tour cutoff (Philippine time)', () => {
 
 describe('same-day overnight cutoff (Philippine time)', () => {
   const lunchtime = new Date('2026-10-24T04:35:00Z'); // 12:35 PM in Manila
-  it('blocks check-in times that have passed today', () => {
-    expect(getOvernightCutoffError('2026-10-24', 'morning', lunchtime)).toMatch(/10:00 AM/);
-    expect(getOvernightCutoffError('2026-10-24', 'afternoon', lunchtime)).toBe('');
-    expect(getOvernightCutoffError('2026-10-25', 'morning', lunchtime)).toBe('');
+  it('keeps a check-in time open until the next one starts (flexible check-in)', () => {
+    const afterTwo = new Date('2026-10-24T06:35:00Z'); // 2:35 PM in Manila
+    expect(getOvernightCutoffError('2026-10-24', 'morning', lunchtime)).toBe('');
+    expect(getOvernightCutoffError('2026-10-24', 'morning', afterTwo)).toMatch(/11:00 AM/);
+    expect(getOvernightCutoffError('2026-10-24', 'afternoon', afterTwo)).toBe('');
+    expect(getOvernightCutoffError('2026-10-25', 'morning', afterTwo)).toBe('');
   });
-  it('closes today entirely after the last check-in time', () => {
-    const evening = new Date('2026-10-24T10:30:00Z'); // 6:30 PM in Manila
-    expect(areOvernightCheckInsClosed('2026-10-24', lunchtime)).toBe(false);
-    expect(areOvernightCheckInsClosed('2026-10-24', evening)).toBe(true);
-    expect(getOvernightCutoffError('2026-10-24', 'evening', evening)).toMatch(/All of today/);
+  it('still takes late arrivals after 9 PM, so today never fully closes', () => {
+    const night = new Date('2026-10-24T13:30:00Z'); // 9:30 PM in Manila
+    expect(areOvernightCheckInsClosed('2026-10-24', night)).toBe(false);
+    expect(getOvernightCutoffError('2026-10-24', 'evening', night)).toMatch(/later check-in time/);
+    expect(getOvernightCutoffError('2026-10-24', 'late', night)).toBe('');
   });
 });
 
 describe('cottage selection', () => {
-  it('uses the rate card cottage prices', () => {
+  it('uses the cottage rates', () => {
     expect(getCottageFee('')).toBe(0);
-    expect(getCottageFee('daybed')).toBe(1000);
-    expect(getCottageFee('cabana')).toBe(1500);
+    expect(getCottageFee('umbrella-hut')).toBe(500);
+    expect(getCottageFee('garden-cabana')).toBe(1000);
+    expect(getCottageFee('poolside-cabana')).toBe(1500);
     expect(getCottageFee('pavilion')).toBe(3000);
-    expect(getCottageFee('umbrella-hut')).toBeNull();
+    expect(getCottageFee('daybed')).toBeNull();
     expect(getCottageFee('bogus')).toBeNull();
   });
-  it('still reprices bookings saved with the old cabana rates', () => {
+  it('still reprices bookings saved with the old cottages', () => {
     const base = { room: { name: 'Couple Room' }, bookingType: 'overnight', nights: 1, adults: 2, children: 0 };
-    expect(calculateBookingPrice({ ...base, cottageId: 'umbrella-hut', cottageFee: 500 }).cottageFee).toBe(500);
-    expect(calculateBookingPrice({ ...base, cottageId: 'cabana', cottageFee: 1000 }).cottageFee).toBe(1000);
+    expect(calculateBookingPrice({ ...base, cottageId: 'daybed', cottageFee: 1000 }).cottageFee).toBe(1000);
+    expect(calculateBookingPrice({ ...base, cottageId: 'cabana', cottageFee: 1500 }).cottageFee).toBe(1500);
     expect(() => calculateBookingPrice({ ...base, cottageId: 'pavilion', cottageFee: 500 })).toThrow();
   });
 });
@@ -96,7 +99,7 @@ describe('couple room occupancy', () => {
     expect(getRoomMaximumGuests({ name: 'Family Suite for 6' })).toBe(6);
     expect(getRoomMaximumGuests({ name: 'Family Suite', maxGuests: 6 })).toBe(6);
     expect(getRoomCapacityPolicy({ name: 'Couple Room with Extra Bed' })).toMatchObject({
-      maxAdults: 3, maxChildren: 1, maxGuests: 4,
+      maxAdults: 3, maxChildren: 1, maxGuests: 3,
     });
     expect(getGuestCountViolation({ type: 'FamilyRoom', baseCapacity: 4 }, 4, 1)).toContain('maximum of 4 guests');
     expect(getGuestCountViolation({ type: 'MainVilla', maxGuests: 25 }, 20, 6)).toContain('maximum of 25 guests');
@@ -122,12 +125,12 @@ describe('booking pricing', () => {
   it.each([
     [{ type: 'FamilyRoom', baseCapacity: 4 }, 3600, 4600, 4],
     [{ type: 'FamilyRoom', baseCapacity: 6 }, 5200, 6200, 6],
-    [{ type: 'FamilySuite', baseCapacity: 4 }, 4100, 5600, 4],
-    [{ type: 'FamilySuite', baseCapacity: 6 }, 5700, 7200, 6],
+    [{ type: 'FamilySuite', baseCapacity: 4 }, 4600, 5600, 4],
+    [{ type: 'FamilySuite', baseCapacity: 6 }, 6200, 7200, 6],
     [{ type: 'JuniorSuite4' }, 6500, 8000, 4],
-    [{ name: 'Paraiso Suite for 8', type: 'PresidentialSuite' }, 10000, 12000, 8],
+    [{ name: 'Paraiso Suite for 12', type: 'PresidentialSuite' }, 10000, 12000, 12],
     [{ name: 'Halimuyak Suite for 8', type: 'PresidentialSuite' }, 10000, 12000, 8],
-    [{ name: 'Main Villa for 20', type: 'MainVilla' }, 18500, 24500, 20],
+    [{ name: 'Main Villa for 25', type: 'MainVilla' }, 16500, 22000, 25],
   ])('configures %o at both stay rates', (room, daytour, overnight, capacity) => {
     expect(getRoomBaseRate(room, 'daytour')).toEqual({ amount: daytour, baseCapacity: capacity });
     expect(getRoomBaseRate(room, 'overnight')).toEqual({ amount: overnight, baseCapacity: capacity });
@@ -150,10 +153,10 @@ describe('booking pricing', () => {
       extraAdults: 1,
       extraChildren: 1,
       extraAdultRate: 800,
-      extraChildRate: 400,
-      extraGuestCharge: 2400,
+      extraChildRate: 800,
+      extraGuestCharge: 3200,
       cottageFee: 500,
-      subtotalAmount: 12100,
+      subtotalAmount: 12900,
     });
   });
 
@@ -169,8 +172,8 @@ describe('booking pricing', () => {
       baseRate: 6500,
       baseCapacity: 4,
       extraGuests: 2,
-      extraGuestCharge: 750,
-      subtotalAmount: 7250,
+      extraGuestCharge: 950,
+      subtotalAmount: 7450,
     });
   });
 
@@ -186,9 +189,9 @@ describe('booking pricing', () => {
       extraAdults: 1,
       extraChildren: 1,
       extraAdultRate: 375,
-      extraChildRate: 275,
-      extraGuestCharge: 1300,
-      subtotalAmount: 5300,
+      extraChildRate: 375,
+      extraGuestCharge: 1500,
+      subtotalAmount: 5500,
     });
   });
 
@@ -202,5 +205,16 @@ describe('booking pricing', () => {
       cottageId: 'pavilion',
       cottageFee: 1000,
     })).toThrow('Choose a valid cottage rate.');
+  });
+});
+
+describe('room capacity wording', () => {
+  const { describeRoomCapacity } = require('./bookingPricing');
+  test('couple rooms read "2 adults + 1 child", others "Up to N guests"', () => {
+    expect(describeRoomCapacity({ maxAdults: 2, maxChildren: 1, maxGuests: 3 })).toBe('2 adults + 1 child');
+    expect(describeRoomCapacity({ maxAdults: 2, maxChildren: 1, maxGuests: 2 })).toBe('Up to 2 guests');
+    expect(describeRoomCapacity({ maxAdults: 6, maxChildren: 6, maxGuests: 6 })).toBe('Up to 6 guests');
+    expect(describeRoomCapacity({ maxAdults: 3, maxChildren: 1, maxGuests: 4 })).toBe('3 adults + 1 child');
+    expect(describeRoomCapacity(null)).toBe('');
   });
 });

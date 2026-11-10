@@ -6,7 +6,7 @@ module.exports = {
     extend: {
       colors: {
         background: 'hsl(var(--background))',
-        foreground: 'hsl(var(--foreground))',
+        foreground: 'hsl(var(--foreground) / <alpha-value>)',
         border: 'hsl(var(--border))',
         muted: 'hsl(var(--muted) / <alpha-value>)',
         'muted-foreground': 'hsl(var(--muted-foreground))',
@@ -16,6 +16,23 @@ module.exports = {
         primary: {
           DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
           foreground: 'hsl(var(--primary-foreground))',
+        },
+        // Alert toast colours (src/components/ui/alert-toast.tsx).
+        success: {
+          DEFAULT: 'hsl(var(--success) / <alpha-value>)',
+          foreground: 'hsl(var(--success-foreground))',
+        },
+        warning: {
+          DEFAULT: 'hsl(var(--warning) / <alpha-value>)',
+          foreground: 'hsl(var(--warning-foreground))',
+        },
+        info: {
+          DEFAULT: 'hsl(var(--info) / <alpha-value>)',
+          foreground: 'hsl(var(--info-foreground))',
+        },
+        destructive: {
+          DEFAULT: 'hsl(var(--destructive) / <alpha-value>)',
+          foreground: 'hsl(var(--destructive-foreground))',
         },
       },
       keyframes: {

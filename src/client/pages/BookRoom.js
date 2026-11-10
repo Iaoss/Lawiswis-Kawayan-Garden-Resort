@@ -6,6 +6,9 @@ import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
   calculateBookingPrice,
+  MAX_DAY_VISITORS,
+  LATE_ARRIVAL_SURCHARGE_RATE,
+  getSwimmingRate,
   COTTAGE_OPTIONS,
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
@@ -20,15 +23,22 @@ import {
   isCheckInPassed,
   getTourCutoffError,
   isSingleDayStay,
+  describeRoomCapacity,
 } from '../../lib/bookingPricing';
-import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
+import { EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES } from '../../lib/bookingPricing';
+import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
+import BookingSteps from '../components/BookingSteps';
 import { Pagination, usePagination } from '../../components/ui/pagination';
-import DateOccupancy from '../../components/ui/date-occupancy';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
+import { closedPeriodMessage, findClosedPeriod } from '../../lib/closedDates';
+import { splitGuestsAcrossRooms } from '../../lib/groupBooking';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
+import { decorateRoom } from '../lib/roomCatalog';
+import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
+import { useCottageCatalog } from '../../lib/useCottageCatalog';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -151,7 +161,7 @@ const WALLETS = [
 export default function BookRoom() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { available: resortAvailable, reason: unavailableReason, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
+  const { available: resortAvailable, reason: unavailableReason, closedDates, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
   const today = formatDate(new Date());
   const maximumBookingDate = formatDate(addMonths(new Date(), 2));
   const isBookingsRoute = window.location.pathname === '/my-bookings';
@@ -174,6 +184,10 @@ export default function BookRoom() {
   const [previewReservationRef, setPreviewReservationRef] = useState('');
   const [termsRead, setTermsRead] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
+  // The form is split into steps so it isn't all on one screen:
+  // 0 Stay details, 1 Your details, 2 Review & pay.
+  const [formStep, setFormStep] = useState(0);
+  useCottageCatalog(); // the admin's current cottage list
   // Saving the guest's details on this device is opt-in (off unless they
   // already chose to save them before). See the Privacy Policy.
   const [rememberDetails, setRememberDetails] = useState(() => Boolean(readLocalValue(GUEST_PROFILE_KEY, null)));
@@ -198,6 +212,7 @@ export default function BookRoom() {
     phone: '',
     address: '',
     preferredContactMethod: '',
+    contactLink: '', // Facebook profile link when Facebook Messenger is chosen
     checkIn: params.get('checkIn') || '',
     checkOut: params.get('checkOut') || '',
     adults: 1,
@@ -207,6 +222,11 @@ export default function BookRoom() {
     tourPeriod: 'day',
     overnightTimeSlot: 'morning',
     cottageId: '',
+    // Guests joining an overnight stay for a day/night tour only.
+    hasDayVisitors: false,
+    dayVisitorAdults: 1,
+    dayVisitorChildren: 0,
+    dayVisitorPeriod: 'day',
     notes: '',
     paymentMethod: 'online',
     website: '', // honeypot — real guests leave this blank; see hidden field below
@@ -289,49 +309,145 @@ export default function BookRoom() {
     </form>
   );
   const stayUnit = form.bookingType === 'daytour' ? 'day' : 'night';
+  const dayVisitors = useMemo(() => (form.bookingType === 'overnight' && form.hasDayVisitors
+    && Number(form.dayVisitorAdults) + Number(form.dayVisitorChildren) > 0
+    ? { adults: Number(form.dayVisitorAdults), children: Number(form.dayVisitorChildren), tourPeriod: form.dayVisitorPeriod }
+    : null), [form.bookingType, form.hasDayVisitors, form.dayVisitorAdults, form.dayVisitorChildren, form.dayVisitorPeriod]);
+  const visitorRate = getSwimmingRate(form.dayVisitorPeriod);
+  // Arriving after 9:00 PM adds 10% of the room rate.
+  const lateArrivalChosen = form.bookingType === 'overnight'
+    && Boolean(OVERNIGHT_TIME_SLOTS.find(slot => slot.id === form.overnightTimeSlot)?.lateArrival);
+  const isTourBooking = form.bookingType === 'daytour';
+
+  // How many of each cottage are still free for this date and time.
+  const [cottageAvailability, setCottageAvailability] = useState(null);
+  useEffect(() => {
+    if (!form.checkIn) return undefined;
+    let active = true;
+    const period = form.bookingType === 'daytour' ? form.tourPeriod : 'both';
+    fetch(`/api/cottage-availability?date=${encodeURIComponent(form.checkIn)}&tourPeriod=${period}`)
+      .then(response => (response.ok ? response.json() : null))
+      .then(result => { if (active) setCottageAvailability(result?.availability || null); })
+      .catch(() => { if (active) setCottageAvailability(null); });
+    return () => { active = false; };
+  }, [form.checkIn, form.bookingType, form.tourPeriod]);
+
+  // Switching between an overnight stay and a tour keeps the dates sensible:
+  // a day or night tour is one date, an overnight stay needs a later check-out.
+  const changeBookingType = choice => {
+    setForm(previous => {
+      if (choice === 'overnight') {
+        let checkOut = previous.checkOut;
+        if (previous.checkIn && previous.checkOut <= previous.checkIn) {
+          const next = new Date(`${previous.checkIn}T00:00:00`);
+          next.setDate(next.getDate() + 1);
+          checkOut = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+          if (checkOut > maximumBookingDate) checkOut = previous.checkOut;
+        }
+        return { ...previous, bookingType: 'overnight', checkOut };
+      }
+      return { ...previous, bookingType: 'daytour', tourPeriod: choice, checkOut: previous.checkIn || previous.checkOut };
+    });
+  };
+  const seasonPeriods = useSeasonPeriods();
+  const [availableRooms, setAvailableRooms] = useState([]);
+  // Several rooms (picked on "Choose a room"): the group the guest entered is
+  // split across them automatically, cheapest split first.
+  const [extraRoomIds] = useState(() => (Array.isArray(location.state?.extraRoomIds) ? location.state.extraRoomIds.slice(0, 2) : []));
+  const priceRoomFor = (target, a, c) => {
+    try {
+      return calculateBookingPrice({
+        room: target, bookingType: form.bookingType, nights: Math.max(1, nights || 1), adults: a, children: c,
+        tourPeriod: form.bookingType === 'daytour' ? form.tourPeriod : 'day', cottageId: '', cottageFee: 0,
+        lateArrival: lateArrivalChosen, season: { periods: seasonPeriods, checkIn: form.checkIn, checkOut: form.checkOut },
+      }).subtotalAmount;
+    } catch { return null; }
+  };
+  const extraRoomDocs = extraRoomIds.map(id => availableRooms.find(item => item.id === id)).filter(Boolean);
+  const roomsLoaded = extraRoomDocs.length === extraRoomIds.length;
+  const roomSplit = room && extraRoomIds.length && roomsLoaded
+    ? splitGuestsAcrossRooms([room, ...extraRoomDocs], Number(form.adults), Number(form.children), {
+      fits: (target, a, c) => !getGuestCountViolation(target, a, c),
+      priceOf: (target, a, c) => priceRoomFor(target, a, c) ?? 1e9,
+    })
+    : null;
+  const splitProblem = extraRoomIds.length && roomsLoaded && room && !roomSplit
+    ? `These ${extraRoomIds.length + 1} rooms don't fit ${Number(form.adults) + Number(form.children)} guests. Go back and change the rooms.`
+    : '';
+  const mainAdults = roomSplit ? roomSplit[0].adults : Number(form.adults);
+  const mainChildren = roomSplit ? roomSplit[0].children : Number(form.children);
+  const extraRooms = roomSplit
+    ? roomSplit.slice(1).map((item, i) => ({ ...item, roomNumber: extraRoomDocs[i].roomNumber, price: priceRoomFor(extraRoomDocs[i], item.adults, item.children) || 0 }))
+    : [];
   const pricing = useMemo(() => room && nights > 0
     ? calculateBookingPrice({
       room,
       bookingType: form.bookingType,
       nights,
-      adults: Number(form.adults),
-      children: Number(form.children),
+      adults: mainAdults,
+      children: mainChildren,
       tourPeriod: form.tourPeriod,
       cottageId: form.cottageId,
       cottageFee: getCottageFee(form.cottageId) ?? 0,
+      dayVisitors: dayVisitors,
+      lateArrival: lateArrivalChosen,
+      season: { periods: seasonPeriods, checkIn: form.checkIn, checkOut: form.checkOut },
     })
-    : null, [room, nights, form.bookingType, form.adults, form.children, form.tourPeriod, form.cottageId]);
+    : null, [room, nights, form.bookingType, mainAdults, mainChildren, form.tourPeriod, form.cottageId, dayVisitors, lateArrivalChosen, seasonPeriods, form.checkIn, form.checkOut]);
   const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
   const discountAmount = activePromo?.discountAmount || 0;
   const bookingTotal = useMemo(() => Math.max(0, totalAmount - discountAmount), [totalAmount, discountAmount]);
+  // More rooms for the same stay (booked and paid together).
+  const extrasTotal = extraRooms.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  const grandTotal = Math.round((bookingTotal + extrasTotal) * 100) / 100;
   const paymentChoice = selectedPaymentChoice || 'deposit';
-  const onlinePaymentAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, paymentChoice) : 0;
+  const onlinePaymentAmount = grandTotal > 0 ? getOnlinePaymentAmount(grandTotal, paymentChoice) : 0;
   const depositPercentage = RESERVATION_DEPOSIT_PERCENTAGE;
-  const depositAmount = bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, 'deposit') : 0;
-  const balanceAmount = Math.max(0, bookingTotal - depositAmount);
+  const depositAmount = grandTotal > 0 ? getOnlinePaymentAmount(grandTotal, 'deposit') : 0;
+  const balanceAmount = Math.max(0, grandTotal - depositAmount);
   const roomCapacity = getRoomCapacityPolicy(room);
-  const guestCountViolation = getGuestCountViolation(room, Number(form.adults), Number(form.children));
+  const guestCountViolation = extraRoomIds.length
+    ? (roomsLoaded ? splitProblem : '')
+    : getGuestCountViolation(room, Number(form.adults), Number(form.children));
   const maxExtraGuests = roomCapacity ? Math.max(0, roomCapacity.maxGuests - (pricing?.baseCapacity || 2)) : 0;
-  const [availableRooms, setAvailableRooms] = useState([]);
   const [roomSuggestionsLoading, setRoomSuggestionsLoading] = useState(false);
   const baseCapacity = pricing?.baseCapacity || 2;
   const groupSize = Number(form.adults) + Number(form.children);
-  const suggestedRooms = useMemo(() => {
+  // Rooms that fit the group, cheapest for this booking first (room rate
+  // plus extra guests). The top 3 are shown as cards (for 3 guests these are
+  // the Couple Rooms with Extra Bed); other room kinds that also fit are
+  // listed underneath as alternatives.
+  const { suggestedRooms, otherRoomKinds } = useMemo(() => {
+    const adults = Number(form.adults);
+    const children = Number(form.children);
+    const priceFor = item => {
+      try {
+        return calculateBookingPrice({
+          room: item, bookingType: form.bookingType, nights: Math.max(1, nights || 1), adults, children,
+          tourPeriod: form.tourPeriod,
+        }).subtotalAmount;
+      } catch { return Number.MAX_SAFE_INTEGER; }
+    };
     const matchingRooms = availableRooms
       .filter(item => item.id !== room?.id && !['maintenance', 'cleaning', 'occupied', 'unavailable'].includes(String(item.status || '').toLowerCase()))
-      .filter(item => !getGuestCountViolation(item, Number(form.adults), Number(form.children)))
-      .sort((first, second) => {
-        const firstCapacity = getRoomCapacityPolicy(first)?.maxGuests || Number.MAX_SAFE_INTEGER;
-        const secondCapacity = getRoomCapacityPolicy(second)?.maxGuests || Number.MAX_SAFE_INTEGER;
-        return firstCapacity - secondCapacity || String(first.roomNumber || first.name).localeCompare(String(second.roomNumber || second.name));
-      });
-    if (!matchingRooms.length) return [];
-    const closestCapacity = getRoomCapacityPolicy(matchingRooms[0])?.maxGuests;
-    const closestMatches = matchingRooms.filter(item => getRoomCapacityPolicy(item)?.maxGuests === closestCapacity);
-    return (closestMatches.length >= 2 ? closestMatches : matchingRooms).slice(0, 2);
-  }, [availableRooms, form.adults, form.children, room?.id]);
+      .filter(item => !getGuestCountViolation(item, adults, children))
+      .map(item => ({ item, price: priceFor(item), kind: getRoomCapacityPolicy(item)?.label || item.type || '' }))
+      .sort((a, b) => a.price - b.price
+        || (getRoomCapacityPolicy(a.item)?.maxGuests || 99) - (getRoomCapacityPolicy(b.item)?.maxGuests || 99)
+        || String(a.item.roomNumber || a.item.name).localeCompare(String(b.item.roomNumber || b.item.name)));
+    const withPrice = entry => ({ ...entry.item, suggestedPrice: entry.price, suggestedKind: entry.kind });
+    const picks = matchingRooms.slice(0, 3).map(withPrice);
+    const shownKinds = new Set(picks.map(item => item.suggestedKind));
+    const others = [];
+    matchingRooms.slice(3).forEach(entry => {
+      if (others.length >= 3 || shownKinds.has(entry.kind)) return;
+      shownKinds.add(entry.kind);
+      others.push(withPrice(entry));
+    });
+    return { suggestedRooms: picks, otherRoomKinds: others };
+  }, [availableRooms, form.adults, form.children, form.bookingType, form.tourPeriod, nights, room?.id]);
 
   // Land at the top whenever the page moves to another step (bookings tab,
   // payment preview, confirmation).
@@ -346,6 +462,29 @@ export default function BookRoom() {
       setForm(previous => ({ ...previous, bookingType: 'daytour' }));
     }
   }, [singleDay, form.bookingType]);
+
+  // A day or night tour covers one date only. If a tour still has two dates
+  // (e.g. it was switched from an overnight stay), keep just the first date.
+  useEffect(() => {
+    if (form.bookingType === 'daytour' && form.checkIn && form.checkOut !== form.checkIn) {
+      setForm(previous => ({ ...previous, checkOut: previous.checkIn }));
+    }
+  }, [form.bookingType, form.checkIn, form.checkOut]);
+
+  // Keep the address bar in step with the dates on the form, only while this
+  // room's page is the one showing (not while leaving for the booking steps).
+  useEffect(() => {
+    if (!roomId || !form.checkIn || !form.checkOut) return;
+    if (location.pathname !== `/book/${roomId}`) return;
+    const current = new URLSearchParams(location.search);
+    if (current.get('checkIn') === form.checkIn && current.get('checkOut') === form.checkOut) return;
+    navigate(`/book/${roomId}?checkIn=${encodeURIComponent(form.checkIn)}&checkOut=${encodeURIComponent(form.checkOut)}`, { replace: true, state: location.state });
+  }, [roomId, form.checkIn, form.checkOut, location.pathname, location.search, location.state, navigate]);
+
+  // An old broken link (/book/book?…) goes to the booking steps instead.
+  useEffect(() => {
+    if (roomId === 'book') navigate(`/book${location.search}`, { replace: true });
+  }, [roomId, location.search, navigate]);
 
   // Today's day tour closes at its 8:00 AM check-in, so move to the night tour while it's still open.
   useEffect(() => {
@@ -423,6 +562,7 @@ export default function BookRoom() {
         preferredContactMethod: isPreferredContactMethod(profile.preferredContactMethod)
           ? profile.preferredContactMethod
           : previous.preferredContactMethod,
+        contactLink: typeof profile.contactLink === 'string' ? profile.contactLink : previous.contactLink,
       }));
     }
 
@@ -600,13 +740,66 @@ export default function BookRoom() {
     setFieldErrors(previous => ({ ...previous, [name]: validateField(name, normalized) }));
   };
 
+  // Checks for the current step before moving on. Returns true when OK.
+  const checkStayStep = () => {
+    if (!datesValid || nights <= 0) { setErrorMsg('Choose valid dates first.'); return false; }
+    if (tourCutoffError) { setErrorMsg(tourCutoffError); return false; }
+    if (guestCountViolation) { setErrorMsg(guestCountViolation); return false; }
+    return true;
+  };
+  const checkDetailsStep = () => {
+    const guestErrors = {
+      firstName: validateField('firstName', form.firstName),
+      lastName: validateField('lastName', form.lastName),
+      phone: validateField('phone', form.phone),
+    };
+    setFieldErrors(guestErrors);
+    const firstBad = Object.keys(guestErrors).find(key => guestErrors[key]);
+    if (firstBad) { document.getElementById(firstBad)?.focus(); return false; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(form.email || '').trim())) {
+      setErrorMsg('Enter a valid email address.');
+      document.getElementById('email')?.focus();
+      return false;
+    }
+    if (!isPreferredContactMethod(form.preferredContactMethod)) {
+      setErrorMsg('Please choose a preferred contact method.');
+      document.getElementById('preferredContactMethod')?.focus();
+      return false;
+    }
+    const linkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
+    if (linkError) { setErrorMsg(linkError); document.getElementById('contactLink')?.focus(); return false; }
+    return true;
+  };
+  const goToFormStep = next => {
+    setErrorMsg('');
+    setFormStep(next);
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+  };
+  const nextFormStep = () => {
+    setErrorMsg('');
+    if (formStep === 0 && !checkStayStep()) return;
+    if (formStep === 1 && !checkDetailsStep()) return;
+    goToFormStep(Math.min(2, formStep + 1));
+  };
+  // Back to the room choice step, keeping the dates and guests.
+  const backToRoomChoice = () => {
+    const stay = form.bookingType === 'daytour' ? (form.tourPeriod === 'night' ? 'night' : 'day') : 'overnight';
+    navigate(`/book?${new URLSearchParams({ type: 'personal', stay, checkIn: form.checkIn, ...(stay === 'overnight' ? { checkOut: form.checkOut } : {}), adults: String(form.adults), children: String(form.children), step: 'room' })}`);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    // Enter on an earlier step moves to the next step instead of paying.
+    if (formStep < 2) { nextFormStep(); return; }
     if (!resortAvailable || availabilityError) {
       setErrorMsg(availabilityError || unavailableReason || 'Reservations are temporarily closed.');
       return;
     }
     if (!room) return;
+    const closedPeriod = findClosedPeriod(closedDates, form.checkIn, singleDay ? form.checkIn : form.checkOut);
+    if (closedPeriod) { setErrorMsg(closedPeriodMessage(closedPeriod)); return; }
+    if (extraRoomIds.length && !roomSplit) { setErrorMsg(splitProblem || 'Your rooms are still loading. Try again in a moment.'); return; }
     const guestErrors = {
       firstName: validateField('firstName', form.firstName),
       lastName: validateField('lastName', form.lastName),
@@ -620,6 +813,12 @@ export default function BookRoom() {
     if (!isPreferredContactMethod(form.preferredContactMethod)) {
       setErrorMsg('Please choose a preferred contact method.');
       document.getElementById('preferredContactMethod')?.focus();
+      return;
+    }
+    const contactLinkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
+    if (contactLinkError) {
+      setErrorMsg(contactLinkError);
+      document.getElementById('contactLink')?.focus();
       return;
     }
     if (guestCountViolation) {
@@ -654,6 +853,7 @@ export default function BookRoom() {
           phone: form.phone,
           address: form.address,
           preferredContactMethod: form.preferredContactMethod,
+          contactLink: form.preferredContactMethod === FACEBOOK_CONTACT_METHOD ? form.contactLink.trim() : '',
           checkIn: form.checkIn,
           checkOut: form.checkOut,
           checkInTime: form.bookingType === 'daytour'
@@ -662,14 +862,16 @@ export default function BookRoom() {
           checkOutTime: form.bookingType === 'daytour'
             ? (form.tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT.checkOut : DAYTOUR_TIME_SLOT.checkOut)
             : OVERNIGHT_TIME_SLOTS.find(slot => slot.id === form.overnightTimeSlot).checkOut,
-          adults: Number(form.adults),
-          children: Number(form.children),
+          adults: mainAdults,
+          children: mainChildren,
           bookingType: form.bookingType,
           tourPeriod: form.tourPeriod,
           cottageId: form.cottageId,
+          dayVisitors,
           notes: form.notes,
           paymentMethod: form.paymentMethod,
           promoCode: activePromo?.code || '',
+          additionalRooms: extraRooms.map(item => ({ roomId: item.roomId, adults: Number(item.adults), children: Number(item.children) })),
           website: form.website,
         }),
       });
@@ -694,6 +896,7 @@ export default function BookRoom() {
         email: form.email.trim(),
         address: form.address.trim(),
         preferredContactMethod: form.preferredContactMethod,
+        contactLink: form.preferredContactMethod === FACEBOOK_CONTACT_METHOD ? form.contactLink.trim() : '',
       };
       if (rememberDetails) {
         setSavedProfile(profile);
@@ -708,10 +911,10 @@ export default function BookRoom() {
 
       const historyEntry = {
         bookingId: reservationId,
-        roomName: `Room ${room.roomNumber} (${room.type})`,
+        roomName: extraRooms.length ? `Rooms ${[room.roomNumber, ...extraRooms.map(item => item.roomNumber)].join(', ')}` : `Room ${room.roomNumber} (${room.type})`,
         checkIn: form.checkIn,
         checkOut: form.checkOut,
-        totalAmount: Number(data.totalAmount || 0),
+        totalAmount: Number(data.groupTotal ?? data.totalAmount ?? 0),
         status: 'Pending',
         createdAt: new Date().toISOString(),
       };
@@ -723,11 +926,11 @@ export default function BookRoom() {
 
       // The server priced this booking itself. If that differs from what this
       // page showed (stale rates, or the page was edited), ask before paying.
-      const serverTotal = Number(data.totalAmount || 0);
-      if (Math.round(serverTotal * 100) !== Math.round(bookingTotal * 100)) {
+      const serverTotal = Number(data.groupTotal ?? data.totalAmount ?? 0);
+      if (Math.round(serverTotal * 100) !== Math.round(grandTotal * 100)) {
         const serverDue = getOnlinePaymentAmount(serverTotal, paymentChoice);
         const proceed = await appConfirm(
-          `The resort's price for this booking is ₱${serverTotal.toLocaleString()}, not the ₱${bookingTotal.toLocaleString()} shown on this page.\nContinue to pay ₱${serverDue.toLocaleString()} now?`,
+          `The resort's price for this booking is ₱${serverTotal.toLocaleString()}, not the ₱${grandTotal.toLocaleString()} shown on this page.\nContinue to pay ₱${serverDue.toLocaleString()} now?`,
           { title: 'The price has changed', tone: 'warning', confirmLabel: `Pay ₱${serverDue.toLocaleString()}`, cancelLabel: 'Not now' },
         );
         if (!proceed) {
@@ -820,13 +1023,19 @@ export default function BookRoom() {
             <span style={{ color: '#6b7280' }}>Check-out</span>
             <span style={{ fontWeight: '600' }}>{form.checkOut}</span>
           </div>
+          {extraRooms.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}>
+              <span style={{ color: '#6b7280' }}>Rooms</span>
+              <span style={{ fontWeight: '600' }}>{[room?.roomNumber, ...extraRooms.map(item => item.roomNumber)].filter(Boolean).map(n => `Room ${n}`).join(', ')}</span>
+            </div>
+          )}
           {activePromo && <>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}><span style={{ color: '#6b7280' }}>Subtotal</span><span style={{ fontWeight: '600' }}>₱{totalAmount.toLocaleString()}</span></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px', color: '#15803d' }}><span>{activePromo.code} discount</span><span>−₱{discountAmount.toLocaleString()}</span></div>
           </>}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', borderTop: '1px solid #e5e7eb', paddingTop: '10px', marginTop: '10px' }}>
             <span style={{ fontWeight: '600' }}>Total Amount</span>
-            <span style={{ fontWeight: '700', color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
+            <span style={{ fontWeight: '700', color: ACCENT }}>₱{grandTotal.toLocaleString()}</span>
           </div>
         </div>
         <p style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '20px' }}>
@@ -941,31 +1150,316 @@ export default function BookRoom() {
                 <button onClick={openDateEditor} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates here</button>
               )
             ) : (
-              <button onClick={() => navigate('/rooms')} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
+              <button onClick={() => navigate(`/book?room=${encodeURIComponent(roomId || '')}&type=personal`)} style={{ background: DARK, color: '#fff', border: 0, borderRadius: '8px', padding: '11px 18px', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>Choose dates</button>
             )}
           </div>
         ) : (
         <div className="booking-layout">
         {/* Booking Form */}
         <div>
-          <button type="button" onClick={() => navigate('/rooms')} style={{ padding: 0, border: 0, background: 'transparent', color: ACCENT, fontSize: '12px', cursor: 'pointer', marginBottom: '14px' }}>← Back to rooms</button>
-          <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#111', marginBottom: '6px' }}>Complete Your Booking</h1>
-          <p style={{ fontSize: '13px', color: '#9ca3af', marginBottom: '28px' }}>Fill in your details to reserve Room {room.roomNumber}</p>
+          <BookingSteps current={3 + formStep} onStep={index => (index <= 2 ? backToRoomChoice() : goToFormStep(index - 3))} />
+          <button type="button" onClick={() => (formStep === 0 ? backToRoomChoice() : goToFormStep(formStep - 1))} style={{ padding: 0, border: 0, background: 'transparent', color: ACCENT, fontSize: '12px', cursor: 'pointer', marginBottom: '14px' }}>
+            ← {formStep === 0 ? 'Back to room choice' : formStep === 1 ? 'Back to stay details' : 'Back to your details'}
+          </button>
+          <h1 style={{ fontSize: '24px', fontWeight: '700', color: '#111', marginBottom: '6px' }}>{['Stay details', 'Your details', 'Review & pay'][formStep]}</h1>
+          <p style={{ fontSize: '13px', color: '#9ca3af', marginBottom: '28px' }}>
+            {[`Times, guests and extras for ${room.roomName || `Room ${room.roomNumber}`}`, 'Who is booking, and how we should reach you', 'Check the price, choose how much to pay, and agree to the terms'][formStep]}
+          </p>
 
           <form onSubmit={handleSubmit}>
-            {/* Guest Info */}
+            {formStep === 0 && (
+            <>
+            {/* Stay Details */}
             <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '16px' }}>
               <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>1</span>
+                Stay Details
+              </div>
+              <div className="responsive-grid-2" style={{ gap: '14px' }}>
+                <div style={{ gridColumn: '1 / -1', background: resortAvailable ? LIGHT : '#fef2f2', padding: '14px', borderRadius: '8px', color: resortAvailable ? '#355a42' : '#991b1b', fontSize: '13px' }}>
+                  {singleDay
+                    ? <><strong>Date:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> Single-day booking (day tour)</>
+                    : <><strong>Check-in:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> <strong>Check-out:</strong> {form.checkOut}</>}
+                  {resortAvailable && !dateEditor.open && <button type="button" onClick={openDateEditor} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Change dates</button>}
+                  {resortAvailable && dateEditor.open && renderDateEditor()}
+                  {!resortAvailable && <div style={{ marginTop: 5 }}>{availabilityError || unavailableReason || 'Reservations are temporarily closed.'}</div>}
+                  {resortAvailable && (() => {
+                    const closedPeriod = findClosedPeriod(closedDates, form.checkIn, singleDay ? form.checkIn : form.checkOut);
+                    return closedPeriod ? <div role="alert" style={{ marginTop: 6, color: '#991b1b', fontWeight: 600 }}>{closedPeriodMessage(closedPeriod)}</div> : null;
+                  })()}
+                </div>
+                <div>
+                  <label htmlFor="booking-type" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Booking Type</label>
+                  {/* Picking Day tour / Night tour also sets the Swimming Tour below.
+                      Changing the Swimming Tour by hand updates this to match, since
+                      both read the same booking type + tour period. */}
+                  <select id="booking-type"
+                    value={form.bookingType === 'daytour' ? (form.tourPeriod === 'night' ? 'night' : 'day') : 'overnight'}
+                    onChange={e => changeBookingType(e.target.value)}
+                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
+                    <option value="overnight">Overnight stay{singleDay ? ' (check-out moves to the next day)' : ''}</option>
+                    <option value="day" disabled={dayTourClosed}>Day tour (8:00 AM–5:00 PM){dayTourClosed ? ' — closed for today' : ''}</option>
+                    <option value="night" disabled={nightTourClosed}>Night tour (5:00 PM–10:00 PM){nightTourClosed ? ' — closed for today' : ''}</option>
+                  </select>
+                </div>
+                {form.bookingType === 'overnight' ? (
+                  <div>
+                    <label htmlFor="overnight-time-slot" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Check-in / Check-out Time</label>
+                    <select id="overnight-time-slot" value={form.overnightTimeSlot} onChange={e => setForm(previous => ({ ...previous, overnightTimeSlot: e.target.value }))}
+                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
+                      {OVERNIGHT_TIME_SLOTS.map(slot => {
+                        const passed = isCheckInPassed(form.checkIn, slot);
+                        return <option key={slot.id} value={slot.id} disabled={passed}>{slot.label}{passed ? ' — passed for today' : ''}</option>;
+                      })}
+                    </select>
+                    <div style={{ fontSize: '10px', color: lateArrivalChosen ? '#9a3412' : '#9ca3af', marginTop: '5px', lineHeight: 1.5 }}>
+                      {lateArrivalChosen
+                        ? `Arriving after 9:00 PM adds ${Math.round(LATE_ARRIVAL_SURCHARGE_RATE * 100)}% of the room rate${pricing?.lateArrivalSurcharge ? ` (₱${pricing.lateArrivalSurcharge.toLocaleString()})` : ''}. Late arrivals and midnight walk-ins are welcome.`
+                        : 'Check-in times are flexible as long as the room is free. Arriving after 9:00 PM? Choose the late arrival option.'}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ alignSelf: 'end', background: LIGHT, color: '#355a42', padding: '12px', borderRadius: '8px', fontSize: '12px' }}>
+                    {form.tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT.label : DAYTOUR_TIME_SLOT.label}
+                  </div>
+                )}
+                {form.bookingType === 'daytour' && (
+                  <div>
+                    <label htmlFor="tour-period" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Swimming Tour</label>
+                    <select id="tour-period" value={form.tourPeriod} onChange={e => setForm(previous => ({ ...previous, tourPeriod: e.target.value }))}
+                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
+                      <option value="day" disabled={dayTourClosed}>Day swimming (8:00 AM–5:00 PM){dayTourClosed ? ' — closed for today' : ''}</option>
+                      <option value="night" disabled={nightTourClosed}>Night swimming (5:00 PM–10:00 PM){nightTourClosed ? ' — closed for today' : ''}</option>
+                    </select>
+                  </div>
+                )}
+                {tourCutoffError && (
+                  <div role="alert" style={{ gridColumn: '1 / -1', background: '#fef2f2', color: '#991b1b', padding: '12px', borderRadius: '8px', fontSize: '12px' }}>
+                    {tourCutoffError}
+                  </div>
+                )}
+                {[
+                  { key: 'adults', label: 'Adults', min: 1, rate: 800 },
+                  { key: 'children', label: 'Children (under 10)', min: 0, rate: 800 },
+                ].map(guestType => {
+                  const count = Number(form[guestType.key]);
+                  return (
+                    <div key={guestType.key}>
+                      <label htmlFor={`${guestType.key}-count`} style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{guestType.label}</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button type="button" aria-label={`Remove one ${guestType.label.toLowerCase()}`} disabled={count <= guestType.min} onClick={() => changeGuestCount(guestType.key, count - 1)}
+                          style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: count <= guestType.min ? 'not-allowed' : 'pointer' }}>−</button>
+                        <input id={`${guestType.key}-count`} type="number" min={guestType.min} value={count} onChange={event => changeGuestCount(guestType.key, event.target.value)}
+                          style={{ minWidth: 0, flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 12px', fontSize: '13px', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                        <button type="button" aria-label={`Add one ${guestType.label.toLowerCase()}`} onClick={() => changeGuestCount(guestType.key, count + 1)}
+                          style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: 'pointer' }}>+</button>
+                      </div>
+                      <div style={{ color: '#6b7280', fontSize: '10px', lineHeight: 1.6, marginTop: '6px' }}>
+                        Base capacity: {baseCapacity} guests · Extra {guestType.key === 'adults' ? 'adult' : 'child'}: ₱{guestType.rate.toLocaleString()} / person / night
+                        {roomCapacity && <span> · Maximum: {roomCapacity.maxAdults} adults, {roomCapacity.maxChildren} children, {roomCapacity.maxGuests} guests total</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {form.bookingType === 'overnight' && (
+                <section aria-labelledby="day-visitors-title" style={{ marginTop: '16px', border: '1px solid #e5e7eb', borderRadius: '12px', padding: '14px' }}>
+                  <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={form.hasDayVisitors}
+                      onChange={e => setForm(previous => ({ ...previous, hasDayVisitors: e.target.checked }))}
+                      style={{ marginTop: '3px', accentColor: ACCENT }} />
+                    <span>
+                      <strong id="day-visitors-title" style={{ fontSize: '13px', color: '#111' }}>Someone is visiting but not staying overnight</strong>
+                      <span style={{ display: 'block', fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                        A friend or family member who joins you for a day or night tour, then goes home. They pay the swimming rate and don't use the room's guest count.
+                      </span>
+                    </span>
+                  </label>
+                  {form.hasDayVisitors && (
+                    <div className="responsive-grid-2" style={{ gap: '12px', marginTop: '12px' }}>
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <label htmlFor="day-visitor-period" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>They will join for</label>
+                        <select id="day-visitor-period" value={form.dayVisitorPeriod} onChange={e => setForm(previous => ({ ...previous, dayVisitorPeriod: e.target.value }))}
+                          style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: '#fff' }}>
+                          <option value="day">Day tour (8:00 AM–5:00 PM) · ₱{getSwimmingRate('day').adult} adult, ₱{getSwimmingRate('day').child} child</option>
+                          <option value="night">Night tour (5:00 PM–10:00 PM) · ₱{getSwimmingRate('night').adult} adult, ₱{getSwimmingRate('night').child} child</option>
+                        </select>
+                      </div>
+                      {[
+                        { key: 'dayVisitorAdults', label: 'Visiting adults', min: 0, rate: visitorRate.adult },
+                        { key: 'dayVisitorChildren', label: 'Visiting children (under 10)', min: 0, rate: visitorRate.child },
+                      ].map(visitor => {
+                        const count = Number(form[visitor.key]);
+                        const otherKey = visitor.key === 'dayVisitorAdults' ? 'dayVisitorChildren' : 'dayVisitorAdults';
+                        const atMax = count + Number(form[otherKey]) >= MAX_DAY_VISITORS;
+                        const setCount = value => setForm(previous => {
+                          const other = Number(previous[otherKey]);
+                          const next = Math.max(visitor.min, Math.min(MAX_DAY_VISITORS - other, Number(value) || 0));
+                          return { ...previous, [visitor.key]: next };
+                        });
+                        return (
+                          <div key={visitor.key}>
+                            <label htmlFor={`${visitor.key}-count`} style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{visitor.label}</label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <button type="button" aria-label={`Remove one ${visitor.label.toLowerCase()}`} disabled={count <= visitor.min} onClick={() => setCount(count - 1)}
+                                style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: count <= visitor.min ? 'not-allowed' : 'pointer' }}>−</button>
+                              <input id={`${visitor.key}-count`} type="number" min={visitor.min} max={MAX_DAY_VISITORS} value={count} onChange={event => setCount(event.target.value)}
+                                style={{ minWidth: 0, flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 12px', fontSize: '13px', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                              <button type="button" aria-label={`Add one ${visitor.label.toLowerCase()}`} disabled={atMax} onClick={() => setCount(count + 1)}
+                                style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: atMax ? 'not-allowed' : 'pointer' }}>+</button>
+                            </div>
+                            <div style={{ color: '#6b7280', fontSize: '10px', marginTop: '6px' }}>₱{visitor.rate.toLocaleString()} each, one visit</div>
+                          </div>
+                        );
+                      })}
+                      <div style={{ gridColumn: '1 / -1', background: LIGHT, color: '#355a42', borderRadius: '8px', padding: '10px 12px', fontSize: '12px' }}>
+                        {pricing?.dayVisitorCharge > 0
+                          ? <>Day visitors: <strong>₱{pricing.dayVisitorCharge.toLocaleString()}</strong>, added to your total. Visitors leave by {form.dayVisitorPeriod === 'night' ? NIGHTTOUR_TIME_SLOT.checkOut : DAYTOUR_TIME_SLOT.checkOut}.</>
+                          : 'Add at least one visitor, or untick the box.'}
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
+              {guestCountViolation && (
+                <div role="alert" style={{ marginTop: '14px', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.5, color: '#9a3412' }}>
+                  <strong>This room is too small for {groupSize} guests.</strong> {roomCapacity?.label && roomCapacity.label !== 'Selected room' ? `${roomCapacity.label} rooms take` : 'It takes'} up to {roomCapacity?.maxGuests ?? baseCapacity} guest{(roomCapacity?.maxGuests ?? baseCapacity) === 1 ? '' : 's'}{maxExtraGuests > 0 ? ` (${maxExtraGuests} more than the base ${baseCapacity})` : ''}. Pick one of the rooms below that fits your group.
+                </div>
+              )}
+              {/* The room was chosen in step 3, so other rooms only show here when
+                  the guest count changed and this room no longer fits. */}
+              {groupSize > 0 && guestCountViolation && (
+                <section aria-labelledby="room-suggestions-title" style={{ marginTop: '16px', border: '1px solid #d8e7db', background: '#f7fbf7', borderRadius: '12px', padding: '14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <div>
+                      <h3 id="room-suggestions-title" style={{ margin: 0, fontSize: '13px', color: DARK }}>Rooms that fit your group of {groupSize}</h3>
+                      <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#4b6352' }}>
+                        {guestCountViolation ? 'Choose a room below to continue with this group size.' : 'Compare rooms before you continue; your entered booking details will be kept.'}
+                      </p>
+                    </div>
+                    {roomSuggestionsLoading && <span style={{ fontSize: '11px', color: '#4b6352' }}>Finding rooms...</span>}
+                  </div>
+                  {suggestedRooms.length > 0 ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px', marginTop: '12px' }}>
+                      {suggestedRooms.map(suggestedRoom => {
+                        const capacity = getRoomCapacityPolicy(suggestedRoom);
+                        const details = getRoomComparisonDetails(suggestedRoom);
+                        return (
+                          <article key={suggestedRoom.id} style={{ background: '#fff', border: '1px solid #d8e7db', borderRadius: '10px', padding: '12px', minWidth: 0 }}>
+                            <strong style={{ display: 'block', color: DARK, fontSize: '13px' }}>{suggestedRoom.roomNumber || suggestedRoom.name || suggestedRoom.type}</strong>
+                            {suggestedRoom.suggestedKind && <span style={{ display: 'block', marginTop: '3px', color: DARK, fontSize: '11px', fontWeight: 600 }}>{suggestedRoom.suggestedKind}</span>}
+                            <span style={{ display: 'block', marginTop: '3px', color: '#52725b', fontSize: '11px' }}>{describeRoomCapacity(capacity) || `Up to ${capacity?.maxGuests} guests`}{suggestedRoom.suggestedPrice < Number.MAX_SAFE_INTEGER ? ` · ₱${suggestedRoom.suggestedPrice.toLocaleString()} for your group` : ''}</span>
+                            <div style={{ marginTop: '10px', fontSize: '11px', color: '#374151', lineHeight: 1.5 }}>
+                              <div><strong>Layout:</strong> {details.layout}</div>
+                              <div><strong>Comfort:</strong> {details.comfort}</div>
+                              <div><strong>Amenities:</strong> {details.amenities.slice(0, 3).join(', ')}</div>
+                            </div>
+                            <button type="button" onClick={() => switchToRoom(suggestedRoom)} style={{ marginTop: '12px', width: '100%', border: 0, background: DARK, color: '#d4f550', borderRadius: '8px', padding: '9px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                              Switch to this room
+                            </button>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ) : !roomSuggestionsLoading && (
+                    <p style={{ margin: '12px 0 0', fontSize: '11px', color: '#4b6352' }}>No other currently available room matches this guest mix. Please contact the resort for help.</p>
+                  )}
+                  {otherRoomKinds.length > 0 && (
+                    <div style={{ marginTop: '12px', fontSize: '11px', color: '#4b6352', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+                      <span>Also fits your group:</span>
+                      {otherRoomKinds.map(other => (
+                        <button key={other.id} type="button" onClick={() => switchToRoom(other)}
+                          style={{ border: '1px solid #d8e7db', background: '#fff', color: DARK, borderRadius: '999px', padding: '5px 10px', fontSize: '11px', cursor: 'pointer' }}>
+                          {other.suggestedKind || 'Room'} · {other.roomNumber || other.name}{other.suggestedPrice < Number.MAX_SAFE_INTEGER ? ` · ₱${other.suggestedPrice.toLocaleString()}` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
+              {form.checkIn && form.checkOut && nights > 0 && (
+                <div style={{ marginTop: '14px' }}>
+                  <OccupancyBadge startDate={form.checkIn} endDate={form.checkOut} />
+                </div>
+              )}
+
+              {extraRoomIds.length > 0 && (
+                <div style={{ marginTop: 14, border: '1px solid #dfe7da', borderRadius: 12, padding: 14, background: '#f7faf5' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: 13, color: DARK }}>Your {extraRoomIds.length + 1} rooms</strong>
+                    <button type="button" onClick={backToRoomChoice} style={{ border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}>Change rooms</button>
+                  </div>
+                  {!roomsLoaded || !room ? (
+                    <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>Loading your rooms…</div>
+                  ) : roomSplit ? (
+                    <div style={{ display: 'grid', gap: 4, marginTop: 8, fontSize: 12.5, color: '#374151' }}>
+                      {[{ roomNumber: room.roomNumber, adults: mainAdults, children: mainChildren, price: totalAmount }, ...extraRooms].map(item => (
+                        <div key={item.roomNumber} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                          <span>Room {item.roomNumber} · {item.adults} adult{item.adults === 1 ? '' : 's'}{item.children ? `, ${item.children} child${item.children === 1 ? '' : 'ren'}` : ''}</span>
+                          <span style={{ fontWeight: 600 }}>₱{Number(item.price || 0).toLocaleString()}</span>
+                        </div>
+                      ))}
+                      <div style={{ fontSize: 11.5, color: '#6b7280', marginTop: 2 }}>We split your group between the rooms the cheapest way. The cottage stays with the first room.</div>
+                    </div>
+                  ) : (
+                    <div role="alert" style={{ fontSize: 12.5, color: '#b91c1c', marginTop: 6 }}>{splitProblem}</div>
+                  )}
+                </div>
+              )}
+              <div style={{ marginTop: '14px' }}>
+                <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Special Requests (optional)</label>
+                <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+                  placeholder="Any special requests or notes..."
+                  rows={3}
+                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
+              </div>
+              <div style={{ marginTop: '14px' }}>
+                <label htmlFor="cottage-selection" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Optional Cottage
+                </label>
+                <select id="cottage-selection" value={form.cottageId} onChange={e => {
+                  // The option value is only the cottage id; the server looks up the price.
+                  const cottageId = e.target.value;
+                  setForm(previous => ({ ...previous, cottageId }));
+                }}
+                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
+                  {COTTAGE_OPTIONS.map(option => {
+                    const entry = option.id ? cottageAvailability?.[option.id] : null;
+                    const soldOut = Boolean(entry && entry.left !== null && entry.left <= 0);
+                    return (
+                      <option key={option.id || 'none'} value={option.id} disabled={soldOut}>
+                        {option.id
+                          ? `${option.label} · ₱${option.price.toLocaleString()}${soldOut ? ' — fully booked' : entry && entry.left !== null ? ` — ${entry.left} left` : ''}`
+                          : option.label}
+                      </option>
+                    );
+                  })}
+                </select>
+                {isTourBooking && (
+                  <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '5px' }}>
+                    Don't need a room? <a href="/book-cottage" style={{ color: DARK, fontWeight: 600 }}>Book just a cottage</a> for your tour.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            </>
+            )}
+            {formStep === 1 && (
+            <>
+            {/* Guest Info */}
+            <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '16px' }}>
+              <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>2</span>
                 Guest Information
               </div>
               <div className="responsive-grid-2" style={{ gap: '14px' }}>
                 {[
-                  { label: 'First Name *', key: 'firstName', placeholder: 'Juan', type: 'text', required: true },
-                  { label: 'Last Name *', key: 'lastName', placeholder: 'dela Cruz', type: 'text', required: true },
-                  { label: 'Phone Number *', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: true },
-                  { label: 'Email Address *', key: 'email', placeholder: 'juan@email.com', type: 'email', required: true },
-                  { label: 'Address', key: 'address', placeholder: 'City, Province', type: 'text', required: false },
+                  { label: 'First Name', key: 'firstName', placeholder: 'Juan', type: 'text', required: true },
+                  { label: 'Last Name', key: 'lastName', placeholder: 'dela Cruz', type: 'text', required: true },
+                  { label: 'Phone Number', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: true },
+                  { label: 'Email Address', key: 'email', placeholder: 'juan@email.com', type: 'email', required: true },
+                  { label: 'Address (optional)', key: 'address', placeholder: 'City, Province', type: 'text', required: false },
                 ].map(f => (
                   <div key={f.key}>
                     <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{f.label}</label>
@@ -987,13 +1481,39 @@ export default function BookRoom() {
                   </div>
                 ))}
                 <div>
-                  <label htmlFor="preferredContactMethod" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preferred Contact Method *</label>
+                  <label htmlFor="preferredContactMethod" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preferred Contact Method</label>
                   <select id="preferredContactMethod" name="preferredContactMethod" required value={form.preferredContactMethod}
                     onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))}
                     style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: '#fff' }}>
                     <option value="">Select contact method</option>
                     {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
                   </select>
+                  {/* Email / Phone reuse what the guest typed above; Facebook needs a link. */}
+                  {['Email', 'Phone'].includes(form.preferredContactMethod) && (() => {
+                    const value = form.preferredContactMethod === 'Email' ? form.email.trim() : form.phone.trim();
+                    return (
+                      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px', background: LIGHT, color: '#355a42', borderRadius: '8px', padding: '9px 12px', fontSize: '12px' }}>
+                        <i className={`ti ${form.preferredContactMethod === 'Email' ? 'ti-mail' : 'ti-phone'}`} aria-hidden="true" style={{ fontSize: '15px' }} />
+                        {value
+                          ? <span>We'll contact you at <strong style={{ overflowWrap: 'anywhere' }}>{value}</strong></span>
+                          : <span>Enter your {form.preferredContactMethod === 'Email' ? 'email address' : 'phone number'} above.</span>}
+                      </div>
+                    );
+                  })()}
+                  {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
+                    <div style={{ marginTop: '8px' }}>
+                      <label htmlFor="contactLink" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px' }}>Facebook profile link</label>
+                      <input id="contactLink" name="contactLink" type="url" required maxLength={200} value={form.contactLink}
+                        onChange={e => setForm(previous => ({ ...previous, contactLink: e.target.value }))}
+                        placeholder="https://www.facebook.com/your.name"
+                        style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
+                      <div style={{ color: form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink) ? '#b91c1c' : '#9ca3af', fontSize: '10px', marginTop: '5px' }}>
+                        {form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink)
+                          ? getContactLinkError(form.preferredContactMethod, form.contactLink)
+                          : 'Open your Facebook profile, copy the link from the address bar and paste it here.'}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               {savedProfile && (
@@ -1022,173 +1542,10 @@ export default function BookRoom() {
 
             </div>
 
-            {/* Stay Details */}
-            <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '16px' }}>
-              <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>2</span>
-                Stay Details
-              </div>
-              <div className="responsive-grid-2" style={{ gap: '14px' }}>
-                <div style={{ gridColumn: '1 / -1', background: resortAvailable ? LIGHT : '#fef2f2', padding: '14px', borderRadius: '8px', color: resortAvailable ? '#355a42' : '#991b1b', fontSize: '13px' }}>
-                  {singleDay
-                    ? <><strong>Date:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> Single-day booking (day tour)</>
-                    : <><strong>Check-in:</strong> {form.checkIn} <span style={{ margin: '0 12px' }}>·</span> <strong>Check-out:</strong> {form.checkOut}</>}
-                  {resortAvailable && !dateEditor.open && <button type="button" onClick={openDateEditor} style={{ marginLeft: '14px', border: 0, background: 'transparent', color: DARK, textDecoration: 'underline', cursor: 'pointer', font: "inherit" }}>Change dates</button>}
-                  {resortAvailable && dateEditor.open && renderDateEditor()}
-                  {!resortAvailable && <div style={{ marginTop: 5 }}>{availabilityError || unavailableReason || 'Reservations are temporarily closed.'}</div>}
-                </div>
-                <div>
-                  <label htmlFor="booking-type" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Booking Type</label>
-                  {/* Picking Day tour / Night tour also sets the Swimming Tour below.
-                      Changing the Swimming Tour by hand updates this to match, since
-                      both read the same booking type + tour period. */}
-                  <select id="booking-type"
-                    value={form.bookingType === 'daytour' ? (form.tourPeriod === 'night' ? 'night' : 'day') : 'overnight'}
-                    onChange={e => {
-                      const choice = e.target.value;
-                      setForm(previous => (choice === 'overnight'
-                        ? { ...previous, bookingType: 'overnight' }
-                        : { ...previous, bookingType: 'daytour', tourPeriod: choice }));
-                    }}
-                    style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                    <option value="overnight" disabled={singleDay}>Overnight stay{singleDay ? ' (needs a later check-out date)' : ''}</option>
-                    <option value="day" disabled={dayTourClosed}>Day tour (8:00 AM–5:00 PM){dayTourClosed ? ' — closed for today' : ''}</option>
-                    <option value="night" disabled={nightTourClosed}>Night tour (5:00 PM–10:00 PM){nightTourClosed ? ' — closed for today' : ''}</option>
-                  </select>
-                </div>
-                {form.bookingType === 'overnight' ? (
-                  <div>
-                    <label htmlFor="overnight-time-slot" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Check-in / Check-out Time</label>
-                    <select id="overnight-time-slot" value={form.overnightTimeSlot} onChange={e => setForm(previous => ({ ...previous, overnightTimeSlot: e.target.value }))}
-                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                      {OVERNIGHT_TIME_SLOTS.map(slot => {
-                        const passed = isCheckInPassed(form.checkIn, slot);
-                        return <option key={slot.id} value={slot.id} disabled={passed}>{slot.label}{passed ? ' — passed for today' : ''}</option>;
-                      })}
-                    </select>
-                  </div>
-                ) : (
-                  <div style={{ alignSelf: 'end', background: LIGHT, color: '#355a42', padding: '12px', borderRadius: '8px', fontSize: '12px' }}>
-                    {form.tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT.label : DAYTOUR_TIME_SLOT.label}
-                  </div>
-                )}
-                {form.bookingType === 'daytour' && (
-                  <div>
-                    <label htmlFor="tour-period" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Swimming Tour</label>
-                    <select id="tour-period" value={form.tourPeriod} onChange={e => setForm(previous => ({ ...previous, tourPeriod: e.target.value }))}
-                      style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                      <option value="day" disabled={dayTourClosed}>Day swimming (8:00 AM–5:00 PM){dayTourClosed ? ' — closed for today' : ''}</option>
-                      <option value="night" disabled={nightTourClosed}>Night swimming (5:00 PM–10:00 PM){nightTourClosed ? ' — closed for today' : ''}</option>
-                    </select>
-                  </div>
-                )}
-                {tourCutoffError && (
-                  <div role="alert" style={{ gridColumn: '1 / -1', background: '#fef2f2', color: '#991b1b', padding: '12px', borderRadius: '8px', fontSize: '12px' }}>
-                    {tourCutoffError}
-                  </div>
-                )}
-                <DateOccupancy
-                  date={form.checkIn}
-                  focus={form.bookingType === 'daytour' ? form.tourPeriod : 'overnight'}
-                  colors={{ accent: ACCENT, background: '#fff' }}
-                  style={{ gridColumn: '1 / -1' }}
-                />
-                {[
-                  { key: 'adults', label: 'Adults', min: 1, rate: 800 },
-                  { key: 'children', label: 'Children (under 10)', min: 0, rate: 400 },
-                ].map(guestType => {
-                  const count = Number(form[guestType.key]);
-                  return (
-                    <div key={guestType.key}>
-                      <label htmlFor={`${guestType.key}-count`} style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{guestType.label}</label>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <button type="button" aria-label={`Remove one ${guestType.label.toLowerCase()}`} disabled={count <= guestType.min} onClick={() => changeGuestCount(guestType.key, count - 1)}
-                          style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: count <= guestType.min ? 'not-allowed' : 'pointer' }}>−</button>
-                        <input id={`${guestType.key}-count`} type="number" min={guestType.min} value={count} onChange={event => changeGuestCount(guestType.key, event.target.value)}
-                          style={{ minWidth: 0, flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 12px', fontSize: '13px', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
-                        <button type="button" aria-label={`Add one ${guestType.label.toLowerCase()}`} onClick={() => changeGuestCount(guestType.key, count + 1)}
-                          style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: 'pointer' }}>+</button>
-                      </div>
-                      <div style={{ color: '#6b7280', fontSize: '10px', lineHeight: 1.6, marginTop: '6px' }}>
-                        Base capacity: {baseCapacity} guests · Extra {guestType.key === 'adults' ? 'adult' : 'child'}: ₱{guestType.rate.toLocaleString()} / person / night
-                        {roomCapacity && <span> · Maximum: {roomCapacity.maxAdults} adults, {roomCapacity.maxChildren} children, {roomCapacity.maxGuests} guests total</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              {guestCountViolation && (
-                <div role="alert" style={{ marginTop: '14px', background: '#fff7ed', border: '1px solid #fdba74', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.5, color: '#9a3412' }}>
-                  <strong>Notice:</strong> You have exceeded the recommended capacity for this room (Maximum: {maxExtraGuests} extra guest{maxExtraGuests === 1 ? '' : 's'}). Please consider booking a larger room or additional rooms to ensure comfort.
-                </div>
-              )}
-              {groupSize > 0 && (
-                <section aria-labelledby="room-suggestions-title" style={{ marginTop: '16px', border: '1px solid #d8e7db', background: '#f7fbf7', borderRadius: '12px', padding: '14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'baseline', flexWrap: 'wrap' }}>
-                    <div>
-                      <h3 id="room-suggestions-title" style={{ margin: 0, fontSize: '13px', color: DARK }}>Rooms that fit your group of {groupSize}</h3>
-                      <p style={{ margin: '4px 0 0', fontSize: '11px', color: '#4b6352' }}>
-                        {guestCountViolation ? 'Choose a room below to continue with this group size.' : 'Compare rooms before you continue; your entered booking details will be kept.'}
-                      </p>
-                    </div>
-                    {roomSuggestionsLoading && <span style={{ fontSize: '11px', color: '#4b6352' }}>Finding rooms...</span>}
-                  </div>
-                  {suggestedRooms.length > 0 ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${suggestedRooms.length}, minmax(0, 1fr))`, gap: '10px', marginTop: '12px' }}>
-                      {suggestedRooms.map(suggestedRoom => {
-                        const capacity = getRoomCapacityPolicy(suggestedRoom);
-                        const details = getRoomComparisonDetails(suggestedRoom);
-                        return (
-                          <article key={suggestedRoom.id} style={{ background: '#fff', border: '1px solid #d8e7db', borderRadius: '10px', padding: '12px', minWidth: 0 }}>
-                            <strong style={{ display: 'block', color: DARK, fontSize: '13px' }}>{suggestedRoom.roomNumber || suggestedRoom.name || suggestedRoom.type}</strong>
-                            <span style={{ display: 'block', marginTop: '3px', color: '#52725b', fontSize: '11px' }}>Up to {capacity?.maxGuests} guests</span>
-                            <div style={{ marginTop: '10px', fontSize: '11px', color: '#374151', lineHeight: 1.5 }}>
-                              <div><strong>Layout:</strong> {details.layout}</div>
-                              <div><strong>Comfort:</strong> {details.comfort}</div>
-                              <div><strong>Amenities:</strong> {details.amenities.slice(0, 3).join(', ')}</div>
-                            </div>
-                            <button type="button" onClick={() => switchToRoom(suggestedRoom)} style={{ marginTop: '12px', width: '100%', border: 0, background: DARK, color: '#d4f550', borderRadius: '8px', padding: '9px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
-                              Switch to this room
-                            </button>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  ) : !roomSuggestionsLoading && (
-                    <p style={{ margin: '12px 0 0', fontSize: '11px', color: '#4b6352' }}>No other currently available room matches this guest mix. Please contact the resort for help.</p>
-                  )}
-                </section>
-              )}
-              {form.checkIn && form.checkOut && nights > 0 && (
-                <div style={{ marginTop: '14px' }}>
-                  <OccupancyBadge startDate={form.checkIn} endDate={form.checkOut} />
-                </div>
-              )}
-
-              <div style={{ marginTop: '14px' }}>
-                <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Special Requests</label>
-                <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
-                  placeholder="Any special requests or notes..."
-                  rows={3}
-                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', resize: 'vertical' }} />
-              </div>
-              <div style={{ marginTop: '14px' }}>
-                <label htmlFor="cottage-selection" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Optional Cottage</label>
-                <select id="cottage-selection" value={form.cottageId} onChange={e => {
-                  // The option value is only the cottage id; the server looks up the price.
-                  const cottageId = e.target.value;
-                  setForm(previous => ({ ...previous, cottageId }));
-                }}
-                  style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }}>
-                  {COTTAGE_OPTIONS.map(option => (
-                    <option key={option.id || 'none'} value={option.id}>
-                      {option.id ? `${option.label} · ₱${option.price.toLocaleString()}` : option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
+            </>
+            )}
+            {formStep === 2 && (
+            <>
             {/* Payment Method */}
             <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', padding: '24px', marginBottom: '20px' }}>
               <div style={{ fontWeight: '600', fontSize: '14px', color: '#111', marginBottom: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1217,10 +1574,23 @@ export default function BookRoom() {
 
               {form.paymentMethod === 'online' && (
                 <>
+                  {/* Senior / PWD discount is applied at the resort after staff see the ID,
+                      so these guests pay the deposit online and the rest on arrival. */}
+                  <div role="note" style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', background: '#eff6ff', border: '1px solid #bfdbfe', color: '#1e3a8a', borderRadius: '10px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.6, marginBottom: '12px' }}>
+                    <i className="ti ti-discount" aria-hidden="true" style={{ fontSize: '17px', marginTop: '1px' }} />
+                    <span>
+                      <strong>Senior citizen or PWD?</strong> Choose the <strong>{depositPercentage}% deposit</strong> now and pay the rest at the resort.
+                      {' '}Show your Senior citizen or PWD ID at the front desk and the 20% discount is taken off your remaining balance.
+                      {paymentChoice !== 'deposit' && (
+                        <> <button type="button" onClick={() => setSelectedPaymentChoice('deposit')}
+                          style={{ border: 0, background: 'none', padding: 0, color: '#1d4ed8', fontWeight: 700, textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}>Pay the {depositPercentage}% deposit instead</button></>
+                      )}
+                    </span>
+                  </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px', marginBottom: '12px' }}>
                     {[
-                      { value: 'full', label: 'Pay in full', amount: bookingTotal },
-                      { value: 'deposit', label: `${depositPercentage}% deposit`, amount: bookingTotal > 0 ? getOnlinePaymentAmount(bookingTotal, 'deposit') : 0 },
+                      { value: 'full', label: 'Pay in full', amount: grandTotal },
+                      { value: 'deposit', label: `${depositPercentage}% deposit`, amount: grandTotal > 0 ? getOnlinePaymentAmount(grandTotal, 'deposit') : 0 },
                     ].map(option => (
                       <button key={option.value} type="button" onClick={() => setSelectedPaymentChoice(option.value)}
                         style={{
@@ -1237,12 +1607,20 @@ export default function BookRoom() {
                   </div>
                   <div style={{ background: LIGHT, borderRadius: '12px', padding: '16px', fontSize: '12px', color: '#374151', lineHeight: '1.6' }}>
                     You'll be redirected to PayMongo to pay <strong>₱{onlinePaymentAmount.toLocaleString()}</strong> now.
-                    {' '}Reservation total: <strong>₱{bookingTotal.toLocaleString()}</strong>.
-                    {paymentChoice === 'deposit' && <> The remaining balance must be paid before checkout.</>}
+                    {' '}Reservation total: <strong>₱{grandTotal.toLocaleString()}</strong>{extraRooms.length ? ` for ${extraRooms.length + 1} rooms` : ''}.
+                    {paymentChoice === 'deposit' && <> The remaining balance must be paid before checkout, in cash or by QR at the resort.</>}
                     {' '}Card, GCash, Maya, and GrabPay payments are processed securely by PayMongo.
                   </div>
                 </>
               )}
+
+              <div role="note" style={{ marginTop: '12px', display: 'flex', gap: '10px', alignItems: 'flex-start', background: '#fff7ed', border: '1px solid #fed7aa', color: '#9a3412', borderRadius: '10px', padding: '12px 14px', fontSize: '12px', lineHeight: 1.6 }}>
+                <i className="ti ti-info-circle" aria-hidden="true" style={{ fontSize: '17px', marginTop: '1px' }} />
+                <span>
+                  <strong>Paying at the resort? Cash or QR only.</strong> The resort has no card terminal, so credit and debit cards can't be used on-site.
+                  Pay any remaining balance at the front desk in cash or by QR (GCash / QR Ph). Cards work only for online payment on this page.
+                </span>
+              </div>
 
               <p style={{ margin: '12px 0 0', color: '#355a42', fontSize: '12px', lineHeight: 1.6 }}>{RECEIPT_NOTICE}</p>
 
@@ -1376,12 +1754,46 @@ export default function BookRoom() {
               style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError || guestCountViolation ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError || guestCountViolation ? 0.7 : 1 }}>
               {availabilityLoading ? 'Checking resort status…' : availabilityError ? 'Booking status unavailable' : !resortAvailable ? 'Reservations temporarily closed' : submitting ? 'Redirecting to payment...' : guestCountViolation ? 'Choose a room that fits your group' : !termsAccepted ? 'Accept terms to continue' : 'Continue to Payment →'}
             </button>
+            </>
+            )}
+            {formStep < 2 && (
+              <>
+                {errorMsg && (
+                  <div role="alert" style={{ marginBottom: '12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', color: '#b91c1c' }}>
+                    {errorMsg}
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={() => (formStep === 0 ? backToRoomChoice() : goToFormStep(formStep - 1))}
+                    style={{ background: '#fff', color: DARK, border: '1px solid #d1d5db', borderRadius: '14px', padding: '14px 20px', fontSize: '14px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                    ← Back
+                  </button>
+                  <button type="button" onClick={nextFormStep}
+                    style={{ flex: '1 1 220px', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                    {formStep === 0 ? 'Next: your details →' : 'Next: review & pay →'}
+                  </button>
+                </div>
+              </>
+            )}
           </form>
         </div>
 
         {/* Room Summary */}
         <aside>
           <div className="sticky-summary" style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e5e7eb', overflow: 'hidden', position: 'sticky', top: '24px' }}>
+            {extraRoomDocs.length > 0 ? (
+              // Several rooms: a picture of each one, with its name.
+              <div style={{ height: '180px', display: 'grid', gridTemplateColumns: `repeat(${Math.min(extraRoomDocs.length + 1, 2)}, 1fr)`, gap: '2px', background: DARK }}>
+                {[room, ...extraRoomDocs].slice(0, 4).map((item, i, list) => (
+                  <div key={item.id || item.roomNumber} style={{ position: 'relative', overflow: 'hidden', gridColumn: list.length === 3 && i === 0 ? '1 / -1' : undefined }}>
+                    <img src={resolveRoomImage(item) || FALLBACK_ROOM_IMAGES[i % FALLBACK_ROOM_IMAGES.length]} alt={`Room ${item.roomNumber}`}
+                      onError={event => { event.currentTarget.src = FALLBACK_ROOM_IMAGES[i % FALLBACK_ROOM_IMAGES.length]; }}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                    <span style={{ position: 'absolute', left: 6, bottom: 6, background: 'rgba(0,0,0,.6)', color: '#fff', fontSize: '10px', fontWeight: 600, borderRadius: '6px', padding: '2px 7px' }}>Room {item.roomNumber}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
             <div style={{ height: '180px', background: `linear-gradient(135deg, ${DARK}, #2d5a2d)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <img
                 src={resolveRoomImage(room) || FALLBACK_ROOM_IMAGES[0]}
@@ -1394,9 +1806,23 @@ export default function BookRoom() {
               />
               <span style={{ display: 'none' }}><IconBed size={56} /></span>
             </div>
+            )}
             <div style={{ padding: '20px' }}>
               <div style={{ fontSize: '11px', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>{room.type}</div>
-              <div style={{ fontWeight: '700', fontSize: '18px', color: '#111', marginBottom: '12px' }}>Room {room.roomNumber}</div>
+              <div style={{ fontWeight: '700', fontSize: '18px', color: '#111', marginBottom: '8px' }}>
+                {extraRoomDocs.length ? [room, ...extraRoomDocs].map(item => `Room ${item.roomNumber}`).join(' + ') : `Room ${room.roomNumber}`}
+              </div>
+              {(() => {
+                const details = decorateRoom(room, 0);
+                return (
+                  <div style={{ marginBottom: '14px' }}>
+                    {details.location && <div style={{ fontSize: '11px', color: ACCENT, fontWeight: 600, marginBottom: '6px' }}>{details.location}</div>}
+                    {details.tagline && <p style={{ margin: '0 0 4px', fontSize: '12px', fontStyle: 'italic', color: ACCENT }}>{details.tagline}</p>}
+                    <p style={{ margin: 0, fontSize: '12px', lineHeight: 1.65, color: '#4b5563' }}>{details.description}</p>
+                    {details.bedNote && <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#6b7280' }}>{details.bedNote}</p>}
+                  </div>
+                );
+              })()}
 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
                 {(room.amenities || 'AC, TV, WiFi').split(',').map(a => (
@@ -1435,20 +1861,41 @@ export default function BookRoom() {
                   <span>{pricing.extraChildren} extra child{pricing.extraChildren !== 1 ? 'ren' : ''} × ₱{pricing.extraChildRate.toLocaleString()} × {nights} {stayUnit}{nights !== 1 ? 's' : ''}</span>
                   <span>₱{(pricing.extraChildren * pricing.extraChildRate * nights).toLocaleString()}</span>
                 </div>}
+                {pricing?.lateArrivalSurcharge > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#9a3412', marginBottom: '8px' }}>
+                  <span>Late arrival after 9 PM (10% of room rate)</span>
+                  <span>₱{pricing.lateArrivalSurcharge.toLocaleString()}</span>
+                </div>}
+                {pricing?.seasonalSurcharge ? <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: pricing.seasonalSurcharge > 0 ? '#9a3412' : '#15803d', marginBottom: '8px' }}>
+                  <span>{pricing.seasonalSurcharge > 0 ? 'Peak-season rate' : 'Season discount'} · {pricing.seasonalLabel}</span>
+                  <span>{pricing.seasonalSurcharge > 0 ? '' : '−'}₱{Math.abs(pricing.seasonalSurcharge).toLocaleString()}</span>
+                </div> : null}
+                {pricing?.dayVisitorCharge > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                  <span>Day visitors</span>
+                  <span>₱{pricing.dayVisitorCharge.toLocaleString()}</span>
+                </div>}
                 {pricing?.cottageFee > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
                   <span>{getCottageLabel(pricing.cottageId)}</span>
                   <span>₱{pricing.cottageFee.toLocaleString()}</span>
                 </div>}
                 {activePromo && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#15803d', marginBottom: '8px' }}><span>Discount · {activePromo.code}</span><span>−₱{discountAmount.toLocaleString()}</span></div>}
+                {extraRooms.map(item => (
+                  <div key={item.roomId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                    <span>Room {item.roomNumber} · {item.adults} adult{item.adults === 1 ? '' : 's'}{item.children ? `, ${item.children} child${item.children === 1 ? '' : 'ren'}` : ''}</span>
+                    <span>₱{Number(item.price || 0).toLocaleString()}</span>
+                  </div>
+                ))}
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
                   <span>Subtotal</span><span>₱{totalAmount.toLocaleString()}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: '700', color: '#111', borderTop: '1px solid #f3f4f6', paddingTop: '14px' }}>
                   <span>Total</span>
-                  <span style={{ color: ACCENT }}>₱{bookingTotal.toLocaleString()}</span>
+                  <span style={{ color: ACCENT }}>₱{grandTotal.toLocaleString()}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '10px' }}><span>Due today ({depositPercentage}% deposit)</span><span>₱{depositAmount.toLocaleString()}</span></div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginTop: '7px' }}><span>Balance due on arrival</span><span>₱{balanceAmount.toLocaleString()}</span></div>
+                <div style={{ fontSize: '11px', color: ACCENT, marginTop: '10px', lineHeight: 1.5 }}>
+                  ✓ {form.bookingType === 'daytour' ? ROOM_RATE_INCLUDES.daytour : ROOM_RATE_INCLUDES.overnight}.{form.bookingType === 'daytour' ? '' : ` ${EXTRA_PERSON_NOTE}.`}
+                </div>
               </div>
 
               {nights > 0 && (

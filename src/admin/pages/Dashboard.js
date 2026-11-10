@@ -7,6 +7,7 @@ import {
   doc, Timestamp, query, orderBy,
 } from 'firebase/firestore';
 import Layout from '../components/Layout';
+import ShiftHandoverBanner from '../components/ShiftHandoverBanner';
 import { useSettings } from '../components/SettingsContext';
 import {
   PLATFORM_RANGES, RESERVATION_CHART_RANGES, REVENUE_CHART_RANGES,
@@ -20,6 +21,7 @@ import {
   getReservationAverages,
 } from '../../lib/reservationStatus';
 import { getFeedbackSummary, getRevenueBySource } from '../../lib/dashboardMetrics';
+import { FOREST_MEADOW, FOREST_MEADOW_BLOBS } from '../lib/cardGradient';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
@@ -34,21 +36,10 @@ const statusColors = {
   pending:      ['rgba(251,191,36,0.15)', '#fbbf24'],
 };
 
-// Vivid gradients (same look as the Payments page cards)
-const statCardGradients = [
-  'linear-gradient(135deg, #a5b4fc 0%, #c4b5fd 100%)', // New Bookings: periwinkle → lavender
-  'linear-gradient(180deg, #a5b4fc 0%, #fdba74 100%)', // Avg reservations: blue → peach
-  'linear-gradient(135deg, #fdba74 0%, #fb7185 100%)', // Overstays: orange → pink
-  'linear-gradient(135deg, #89D7B7 0%, #67e8f9 100%)', // Total Revenue: mint → aqua
-];
+// Every stat card uses the Forest Meadow gradient.
+const statCardGradients = Array(4).fill(FOREST_MEADOW);
 
-// Soft white/pastel blobs drifting over each gradient
-const statBlobColors = [
-  ['#ffffff', '#e0e7ff', '#ede9fe'],
-  ['#ffffff', '#dbeafe', '#ffedd5'],
-  ['#ffffff', '#ffedd5', '#ffe4e6'],
-  ['#ffffff', '#d1fae5', '#cffafe'],
-];
+const statBlobColors = Array(4).fill(FOREST_MEADOW_BLOBS);
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -154,7 +145,9 @@ export default function AdminDashboard() {
   const TEXT     = dark ? '#f0f0f0' : '#111827';
   const MUTED    = dark ? '#6b7280' : '#9ca3af';
   const LIME     = '#9cb56f';
-  const TEAL     = '#89D7B7';
+  // Chart colours: Forest Meadow shades (matches the stat cards).
+  const TEAL     = '#2E7D7B';
+  const MEADOW   = '#71B280';
 
   const [recent, setRecent]       = useState([]);
   const [searchQ, setSearchQ]     = useState('');
@@ -185,7 +178,7 @@ export default function AdminDashboard() {
       const resSnap   = await getDocs(collection(db, 'reservations'));
       const paySnap   = await getDocs(collection(db, 'payments'));
       const rooms        = roomsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room');
       const paymentRows  = paySnap.docs.map(d => d.data());
       setPayments(paymentRows);
       setRoomList(rooms);
@@ -334,7 +327,7 @@ export default function AdminDashboard() {
       map[key][type]++;
     };
     tasks.forEach(t => add(dateKey(t.date), 'tasks'));
-    recent.forEach(r => add(dateKey(r.checkIn), 'reservations'));
+    recent.filter(r => r.status !== 'cancelled').forEach(r => add(dateKey(r.checkIn), 'reservations'));
     return map;
   }, [tasks, recent]);
 
@@ -354,7 +347,7 @@ export default function AdminDashboard() {
 
   const selectedKey = dateKey(selectedDay);
   const dayTasks = tasks.filter(t => dateKey(t.date) === selectedKey);
-  const dayReservations = recent.filter(r => dateKey(r.checkIn) === selectedKey);
+  const dayReservations = recent.filter(r => r.status !== 'cancelled' && dateKey(r.checkIn) === selectedKey);
 
   // Memoized so their identity stays stable across renders (prevents inputs
   // inside <Card> from losing focus on every keystroke).
@@ -396,6 +389,7 @@ export default function AdminDashboard() {
   return (
     <Layout>
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh' }}>
+        <ShiftHandoverBanner dark={dark} />
 
         {/* ── Analytics period ── */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
@@ -503,9 +497,9 @@ export default function AdminDashboard() {
             <div style={{ display: 'flex', borderRadius: '8px', overflow: 'hidden', height: '36px', marginBottom: '16px', gap: '2px' }}>
               {[
                 { w: pct(occupied),  bg: TEAL,      label: 'Occupied' },
-                { w: pct(reserved),  bg: LIME,      label: 'Reserved' },
-                { w: pct(available), bg: '#e7f7a0', label: 'Available' },
-                { w: pct(notReady),  bg: '#fde68a', label: 'Not Ready' },
+                { w: pct(reserved),  bg: MEADOW,    label: 'Reserved' },
+                { w: pct(available), bg: '#CFE8D4', label: 'Available' },
+                { w: pct(notReady),  bg: '#E6D3A3', label: 'Not Ready' },
               ].filter(s => parseInt(s.w) > 0).map(s => (
                 <div key={s.label} style={{ width: s.w, background: s.bg }} />
               ))}
@@ -513,9 +507,9 @@ export default function AdminDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               {[
                 { label: 'Occupied',  val: occupied,  color: TEAL },
-                { label: 'Reserved',  val: reserved,  color: LIME },
-                { label: 'Available', val: available, color: '#e7f7a0' },
-                { label: 'Not Ready', val: notReady,  color: '#fde68a' },
+                { label: 'Reserved',  val: reserved,  color: MEADOW },
+                { label: 'Available', val: available, color: '#CFE8D4' },
+                { label: 'Not Ready', val: notReady,  color: '#E6D3A3' },
               ].map(s => (
                 <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ width: '10px', height: '10px', borderRadius: '3px', background: s.color, flexShrink: 0 }} />
@@ -578,7 +572,7 @@ export default function AdminDashboard() {
                   <span style={{ fontSize: '11px', fontWeight: '600', color: TEXT }}>{r.count ? r.average.toFixed(1) : '—'}</span>
                 </div>
                 <div style={{ height: '4px', background: dark ? '#1e3a1e' : '#f0f0f0', borderRadius: '2px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${(r.average / 5) * 100}%`, background: LIME, borderRadius: '2px' }} />
+                  <div style={{ height: '100%', width: `${(r.average / 5) * 100}%`, background: MEADOW, borderRadius: '2px' }} />
                 </div>
               </div>
             ))}
@@ -605,7 +599,7 @@ export default function AdminDashboard() {
               </select>
             </div>
             <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
-              {[{ color: TEAL, label: 'Booked' }, { color: LIME, label: 'Cancelled' }].map(l => (
+              {[{ color: TEAL, label: 'Booked' }, { color: MEADOW, label: 'Cancelled' }].map(l => (
                 <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                   <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: l.color }} />
                   <span style={{ fontSize: '10px', color: MUTED }}>{l.label}</span>
@@ -618,7 +612,7 @@ export default function AdminDashboard() {
                 <YAxis tick={{ fontSize: 9, fill: MUTED }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip contentStyle={{ fontSize: '11px', borderRadius: '8px', background: CARD2, border: `1px solid ${BORDER}`, color: TEXT }} />
                 <Bar dataKey="booked"    fill={TEAL} radius={[4, 4, 0, 0]} />
-                <Bar dataKey="cancelled" fill={LIME} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="cancelled" fill={MEADOW} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </Card>
@@ -867,7 +861,7 @@ export default function AdminDashboard() {
                       <span style={{ color: TEXT, fontWeight: '700' }}>{formatAverage(q.perMonth)}<span style={{ color: MUTED, fontWeight: '400' }}> / mo</span></span>
                     </div>
                     <div style={{ height: '6px', borderRadius: '6px', background: dark ? 'rgba(255,255,255,0.06)' : '#eef2ea' }}>
-                      <div style={{ width: `${(q.perMonth / busiest) * 100}%`, height: '100%', borderRadius: '6px', background: q.peak ? LIME : TEAL }} />
+                      <div style={{ width: `${(q.perMonth / busiest) * 100}%`, height: '100%', borderRadius: '6px', background: q.peak ? MEADOW : TEAL }} />
                     </div>
                     <div style={{ fontSize: '9px', color: MUTED, marginTop: '3px' }}>{q.count} reservations over {q.months} month{q.months === 1 ? '' : 's'}</div>
                   </div>
@@ -893,8 +887,8 @@ export default function AdminDashboard() {
             {/* legend */}
             <div style={{ display: 'flex', gap: '14px', marginBottom: '10px' }}>
               {[
-                { color: '#6ee7b7', label: 'Tasks' },
-                { color: LIME, label: 'Reservations' },
+                { color: MEADOW, label: 'Tasks' },
+                { color: TEAL, label: 'Reservations' },
               ].map(l => (
                 <div key={l.label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                   <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: l.color }} />
@@ -942,8 +936,8 @@ export default function AdminDashboard() {
                     </div>
                     {ev && (
                       <div style={{ display: 'flex', justifyContent: 'center', gap: '2px', marginTop: '3px' }}>
-                        {ev.tasks > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: '#6ee7b7' }} />}
-                        {ev.reservations > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: LIME }} />}
+                        {ev.tasks > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: MEADOW }} />}
+                        {ev.reservations > 0 && <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: TEAL }} />}
                       </div>
                     )}
                   </div>
@@ -963,7 +957,7 @@ export default function AdminDashboard() {
 
               {dayTasks.length > 0 && (
                 <div>
-                  <div style={{ fontSize: '10px', fontWeight: '700', color: '#6ee7b7', marginBottom: '6px' }}>TASKS</div>
+                  <div style={{ fontSize: '10px', fontWeight: '700', color: MEADOW, marginBottom: '6px' }}>TASKS</div>
                   {dayTasks.map(t => (
                     <div key={t.id} style={{ fontSize: '11px', color: TEXT, marginBottom: '4px', textDecoration: t.completed ? 'line-through' : 'none' }}>
                       • {t.title}

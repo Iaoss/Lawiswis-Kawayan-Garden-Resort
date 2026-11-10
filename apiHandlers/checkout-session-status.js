@@ -20,8 +20,10 @@ export default async function handler(req, res) {
 
   const { checkoutSessionId } = req.query || {};
 
-  if (!checkoutSessionId) {
-    return res.status(400).json({ error: 'checkoutSessionId is required' });
+  // Only a real PayMongo checkout id ("cs_…") may reach the PayMongo URL
+  // below, so the secret-key request can't be pointed at another endpoint.
+  if (typeof checkoutSessionId !== 'string' || !/^cs_[A-Za-z0-9]{8,64}$/.test(checkoutSessionId)) {
+    return res.status(400).json({ error: 'A valid checkoutSessionId is required' });
   }
 
   const secretKey = process.env.PAYMONGO_SECRET_KEY;
@@ -30,7 +32,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await fetch(`https://api.paymongo.com/v1/checkout_sessions/${checkoutSessionId}`, {
+    const response = await fetch(`https://api.paymongo.com/v1/checkout_sessions/${encodeURIComponent(checkoutSessionId)}`, {
       method: 'GET',
       headers: {
         Authorization: 'Basic ' + Buffer.from(`${secretKey}:`).toString('base64'),
@@ -49,7 +51,7 @@ export default async function handler(req, res) {
     if (!response.ok) {
       console.error('PayMongo error:', json);
       return res.status(response.status).json({
-        error: json.errors?.[0]?.detail || 'PayMongo request failed',
+        error: 'The payment status could not be checked. Please try again.',
       });
     }
 
@@ -95,6 +97,14 @@ export default async function handler(req, res) {
           await sendConfirmationEmailOnce(adminDb, FieldValue, reservationId);
         } catch (emailErr) {
           console.error('Auto-confirmation email failed:', emailErr);
+        }
+      }
+      for (const linked of result.group || []) {
+        try {
+          await sendPaymentReceipt(adminDb, FieldValue, linked.paymentDocumentId);
+          if (linked.autoConfirmed) await sendConfirmationEmailOnce(adminDb, FieldValue, linked.reservationId);
+        } catch (emailErr) {
+          console.error('Linked room email failed:', emailErr);
         }
       }
       try {

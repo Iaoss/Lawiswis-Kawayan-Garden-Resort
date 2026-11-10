@@ -239,7 +239,7 @@ export default function RoomExcelImport({ onImportComplete }) {
 
       {/* Column guide */}
       <div style={{ background: GUIDE_BG, borderRadius: '10px', padding: '12px 16px', marginBottom: '12px', fontSize: '11px' }}>
-        <div style={{ fontWeight: '600', color: dark ? ACCENT : DARKBTN_BG, marginBottom: '6px' }}>📋 Expected Columns</div>
+        <div style={{ fontWeight: '600', color: dark ? ACCENT : DARKBTN_BG, marginBottom: '6px' }}><i className="ti ti-table" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Expected Columns</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           {REQUIRED_COLS.map(c => (
             <span key={c} style={{ background: DARKBTN_BG, color: ACCENT, borderRadius: '6px', padding: '2px 8px', fontWeight: '600' }}>{c} *</span>
@@ -255,7 +255,7 @@ export default function RoomExcelImport({ onImportComplete }) {
 
       {/* Capitalization rules */}
       <div style={{ background: GUIDE_BG, borderRadius: '10px', padding: '12px 16px', marginBottom: '20px', fontSize: '11px' }}>
-        <div style={{ fontWeight: '600', color: dark ? ACCENT : DARKBTN_BG, marginBottom: '6px' }}>🔤 Capitalization Rules</div>
+        <div style={{ fontWeight: '600', color: dark ? ACCENT : DARKBTN_BG, marginBottom: '6px' }}><i className="ti ti-letter-case" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Capitalization Rules</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', color: MUTED }}>
           <div>
             <strong style={{ color: TEXT }}>Type</strong> — capitalization doesn't matter. <em>deluxe</em>, <em>Deluxe</em>, and <em>DELUXE</em> all work and are automatically saved as <strong style={{ color: TEXT }}>Deluxe</strong>. Must match one of: {TYPE_OPTIONS.join(', ')}.
@@ -286,7 +286,7 @@ export default function RoomExcelImport({ onImportComplete }) {
             transition: 'all 0.2s',
           }}
         >
-          <div style={{ fontSize: '40px', marginBottom: '12px' }}>📂</div>
+          <div style={{ fontSize: '40px', marginBottom: '12px' }}><i className="ti ti-folder-open" aria-hidden="true" /></div>
           <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT, marginBottom: '4px' }}>
             Drop your Excel file here
           </div>
@@ -324,7 +324,7 @@ export default function RoomExcelImport({ onImportComplete }) {
               <div style={{ fontSize: '11px', color: MUTED }}>Rows with errors</div>
             </div>
             <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: '10px', padding: '12px 20px', flex: 1, minWidth: '160px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{ fontSize: '20px' }}>📄</div>
+              <div style={{ fontSize: '20px' }}><i className="ti ti-file-spreadsheet" aria-hidden="true" /></div>
               <div>
                 <div style={{ fontSize: '12px', fontWeight: '600', color: TEXT, wordBreak: 'break-all' }}>{fileName}</div>
                 <div style={{ fontSize: '10px', color: MUTED }}>Uploaded file</div>
@@ -360,7 +360,7 @@ export default function RoomExcelImport({ onImportComplete }) {
                         ))}
                         <td style={{ padding: '9px 12px', borderBottom: `1px solid ${CELL_BORDER}` }}>
                           {errs
-                            ? <Badge color={ERROR} bg={ERROR_BG}>⚠ {errs[0]}</Badge>
+                            ? <Badge color={ERROR} bg={ERROR_BG}><i className="ti ti-alert-triangle" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />{errs[0]}</Badge>
                             : <Badge color={SUCCESS} bg={SUCCESS_BG}>✓ Valid</Badge>
                           }
                         </td>
@@ -374,7 +374,7 @@ export default function RoomExcelImport({ onImportComplete }) {
 
           {invalidCount > 0 && (
             <div style={{ background: WARN_BG, border: `1px solid ${WARN_BORDER}`, borderRadius: '10px', padding: '12px 16px', marginBottom: '16px', fontSize: '12px', color: WARN_TEXT }}>
-              ⚠ <strong>{invalidCount} row{invalidCount > 1 ? 's' : ''}</strong> have errors and will be skipped during import. Fix the Excel file and re-upload to include them.
+              <i className="ti ti-alert-triangle" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} /><strong>{invalidCount} row{invalidCount > 1 ? 's' : ''}</strong> have errors and will be skipped during import. Fix the Excel file and re-upload to include them.
             </div>
           )}
 
@@ -407,7 +407,7 @@ export default function RoomExcelImport({ onImportComplete }) {
       {/* STEP: importing */}
       {step === 'importing' && (
         <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-          <div style={{ fontSize: '40px', marginBottom: '16px' }}>⏳</div>
+          <div style={{ fontSize: '40px', marginBottom: '16px' }}><i className="ti ti-hourglass" aria-hidden="true" /></div>
           <div style={{ fontWeight: '700', fontSize: '16px', color: TEXT, marginBottom: '8px' }}>
             Importing rooms...
           </div>
@@ -427,7 +427,7 @@ export default function RoomExcelImport({ onImportComplete }) {
       {/* STEP: done */}
       {step === 'done' && (
         <div style={{ textAlign: 'center', padding: '48px 20px' }}>
-          <div style={{ width: '64px', height: '64px', background: GUIDE_BG, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '28px' }}>✅</div>
+          <div style={{ width: '64px', height: '64px', background: GUIDE_BG, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', fontSize: '28px' }}><i className="ti ti-circle-check" aria-hidden="true" /></div>
           <div style={{ fontWeight: '700', fontSize: '18px', color: TEXT, marginBottom: '6px' }}>Import Complete</div>
           <div style={{ fontSize: '12px', color: MUTED, marginBottom: '28px' }}>Here's a summary of what happened:</div>
 

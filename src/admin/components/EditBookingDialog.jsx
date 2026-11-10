@@ -2,16 +2,25 @@ import React, { useEffect, useState } from 'react';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import { OVERNIGHT_TIME_SLOTS, isCheckInPassed, isTourStartPassed } from '../../lib/bookingPricing';
-import { DATE_CHANGE_NOTICE_DAYS, getDaysBeforeArrival } from '../../lib/cancellationPolicy';
+import { getDaysBeforeArrival } from '../../lib/cancellationPolicy';
+import { useCancellationPolicy } from '../lib/useCancellationPolicy';
 import { staffApi } from '../lib/staffApi';
+import { money } from '../lib/money';
+import { getRoomMaximumGuests } from '../../lib/bookingPricing';
+import { canMoveToRoom } from '../../lib/roomChange';
+import { MAX_ROOMS_PER_BOOKING } from '../../lib/groupBooking';
+import { bookingsOnRoom, isRoomOutOfService, loadRooms } from '../lib/roomOccupancy';
+import { appConfirm } from '../../components/ui/app-dialog';
 
-const peso = value => `₱${Number(value || 0).toLocaleString()}`;
+const peso = value => money(value);
 
 // Staff edit of a booking: switch overnight / day tour / night tour, move
 // dates, or change guest counts. Every change is priced by the server
 // (/api/staff-billing edit-booking, preview first), so the total shown is
 // the total that gets saved.
-export default function EditBookingDialog({ reservation, onClose, onSaved, colors }) {
+// Rooms: move to another free room of the same size or bigger (never a
+// smaller one), or add a room for more guests (a linked booking).
+export default function EditBookingDialog({ reservation, reservations = [], onClose, onSaved, onRoomAdded, colors, isAdmin = false }) {
   const c = colors;
   const [form, setForm] = useState(() => ({
     bookingOption: getBookingOptionId(reservation),
@@ -20,18 +29,32 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
     overnightTimeSlot: OVERNIGHT_TIME_SLOTS.find(slot => slot.checkIn === reservation.checkInTime)?.id || 'morning',
     adults: Number(reservation.adults) || 1,
     children: Number(reservation.children) || 0,
+    roomId: reservation.roomId || '',
   }));
+  const [rooms, setRooms] = useState([]);
+  const [extra, setExtra] = useState({ roomId: '', adults: 1, children: 0, quote: null, error: '', busy: false });
+  useEffect(() => {
+    let active = true;
+    loadRooms().then(list => { if (active) setRooms(list); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   const [quote, setQuote] = useState(null);
   const [quoteError, setQuoteError] = useState('');
   const [quoting, setQuoting] = useState(false);
   const [saving, setSaving] = useState(false);
   const isTour = form.bookingOption !== 'overnight';
-  // Policy: the arrival date can only move 30+ days ahead of it.
+  // Policy: the arrival date can only move the set number of days ahead of it.
+  const noticeDays = useCancellationPolicy().dateChangeDays;
   const daysToArrival = getDaysBeforeArrival(reservation.checkIn);
-  const arrivalLocked = daysToArrival !== null && daysToArrival < DATE_CHANGE_NOTICE_DAYS;
+  const ruleApplies = daysToArrival !== null && daysToArrival < noticeDays;
+  // Admins can waive the rule with a reason (typhoon, resort closure, emergency).
+  const [waive, setWaive] = useState(false);
+  const [waiveReason, setWaiveReason] = useState('');
+  const arrivalLocked = ruleApplies && !waive;
 
   const changes = {
     ...form,
+    roomId: form.roomId !== reservation.roomId ? form.roomId : undefined,
     checkOut: isTour ? form.checkIn : form.checkOut,
     adults: Number(form.adults),
     children: Number(form.children),
@@ -43,19 +66,23 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
     let active = true;
     setQuoting(true);
     const timer = setTimeout(() => {
-      staffApi('staff-billing', { action: 'edit-booking', reservationId: reservation.id, changes: JSON.parse(changesKey), preview: true })
+      staffApi('staff-billing', { action: 'edit-booking', reservationId: reservation.id, changes: JSON.parse(changesKey), preview: true, waivePolicy: waive })
         .then(result => { if (active) { setQuote(result); setQuoteError(''); } })
         .catch(error => { if (active) { setQuote(null); setQuoteError(error.message); } })
         .finally(() => { if (active) setQuoting(false); });
     }, 350);
     return () => { active = false; clearTimeout(timer); };
-  }, [changesKey, reservation.id]);
+  }, [changesKey, reservation.id, waive]);
 
   const save = async () => {
     if (!quote || saving) return;
     setSaving(true);
     try {
-      const result = await staffApi('staff-billing', { action: 'edit-booking', reservationId: reservation.id, changes });
+      if (waive && waiveReason.trim().length < 5) {
+        setQuoteError('Write why the date-change rule is waived (for example "Typhoon, resort closed").');
+        return;
+      }
+      const result = await staffApi('staff-billing', { action: 'edit-booking', reservationId: reservation.id, changes, waivePolicy: waive, waiveReason: waiveReason.trim() });
       onSaved(result);
     } catch (error) {
       setQuoteError(error.message);
@@ -69,6 +96,50 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
     background: c.CARD2, border: `1px solid ${c.BORDER2}`, borderRadius: 10, padding: '9px 12px',
     fontSize: 12, fontFamily: 'inherit', color: c.TEXT, outline: 'none',
   };
+  // Fills its column without pushing past the dialog's edge.
+  const fit = { ...input, width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box' };
+  // Rooms in this booking, and which other rooms are free on the chosen dates.
+  const groupIds = Array.isArray(reservation.groupReservationIds) && reservation.groupReservationIds.length ? reservation.groupReservationIds : [reservation.id];
+  const groupRooms = groupIds.map(id => (id === reservation.id ? reservation : reservations.find(r => r.id === id))).filter(Boolean);
+  const stayOut = isTour ? form.checkIn : form.checkOut;
+  const currentRoom = rooms.find(room => room.id === reservation.roomId) || { id: reservation.roomId, roomNumber: reservation.roomNumber };
+  const freeRooms = form.checkIn && stayOut
+    ? rooms.filter(room => room.id !== reservation.roomId && !isRoomOutOfService(room.status)
+      && !bookingsOnRoom(reservations, room, form.checkIn, stayOut, [reservation.id]).length)
+    : [];
+  const moveChoices = freeRooms.filter(room => canMoveToRoom(currentRoom, room));
+  const addChoices = freeRooms.filter(room => !groupRooms.some(item => item.roomId === room.id));
+  const canAddRoom = reservation.roomId && reservation.type !== 'corporate' && groupIds.length < MAX_ROOMS_PER_BOOKING
+    && ['pending', 'confirmed', 'checked-in'].includes(reservation.status);
+  const roomLabel = room => `Room ${room.roomNumber} · ${room.type || 'room'} · up to ${getRoomMaximumGuests(room) || '?'} guests`;
+
+  const extraKey = `${extra.roomId}|${extra.adults}|${extra.children}`;
+  useEffect(() => {
+    if (!extra.roomId) { setExtra(x => ({ ...x, quote: null, error: '' })); return undefined; }
+    let active = true;
+    const timer = setTimeout(() => {
+      staffApi('staff-billing', { action: 'add-room-to-booking', reservationId: reservation.id, roomId: extra.roomId, adults: Number(extra.adults), children: Number(extra.children), preview: true })
+        .then(result => { if (active) setExtra(x => ({ ...x, quote: result, error: '' })); })
+        .catch(error => { if (active) setExtra(x => ({ ...x, quote: null, error: error.message })); });
+    }, 350);
+    return () => { active = false; clearTimeout(timer); };
+  }, [extraKey, reservation.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const addRoom = async () => {
+    if (!extra.quote || extra.busy) return;
+    const ok = await appConfirm(`Add ${extra.quote.roomNumber ? `Room ${extra.quote.roomNumber}` : 'this room'} to the booking for ${peso(extra.quote.totalAmount)}? It is charged on top of the current booking and can be paid in Billing.`, {
+      title: 'Add a room?', confirmLabel: 'Add room',
+    });
+    if (!ok) return;
+    setExtra(x => ({ ...x, busy: true, error: '' }));
+    try {
+      const result = await staffApi('staff-billing', { action: 'add-room-to-booking', reservationId: reservation.id, roomId: extra.roomId, adults: Number(extra.adults), children: Number(extra.children) });
+      onRoomAdded?.(result);
+    } catch (error) {
+      setExtra(x => ({ ...x, busy: false, error: error.message }));
+    }
+  };
+
   const today = new Date();
   const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
@@ -77,11 +148,23 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
       style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.5)', display: 'grid', placeItems: 'center', padding: 16 }}>
       <form role="dialog" aria-modal="true" aria-labelledby="edit-booking-title"
         onSubmit={event => { event.preventDefault(); save(); }}
-        style={{ width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', background: c.CARD, border: `1px solid ${c.BORDER}`, borderRadius: 14, padding: 20, display: 'grid', gap: 12, fontFamily: "'Poppins', sans-serif" }}>
+        style={{ width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', overflowX: 'hidden', boxSizing: 'border-box', gridTemplateColumns: 'minmax(0, 1fr)', background: c.CARD, border: `1px solid ${c.BORDER}`, borderRadius: 14, padding: 20, display: 'grid', gap: 12, fontFamily: "'Poppins', sans-serif" }}>
         <div>
           <div id="edit-booking-title" style={{ fontWeight: 700, fontSize: 15, color: c.TEXT }}>Edit booking</div>
-          <div style={{ fontSize: 12, color: c.MUTED }}>{reservation.guestName || 'Guest'} · Room {reservation.roomNumber || '—'}</div>
+          <div style={{ fontSize: 12, color: c.MUTED }}>{reservation.guestName || 'Guest'} · Room {groupRooms.map(item => item.roomNumber).join(', ') || reservation.roomNumber || '—'}</div>
         </div>
+
+        {reservation.roomId && (
+          <label style={field}>Room
+            <select value={form.roomId} onChange={e => setForm(f => ({ ...f, roomId: e.target.value }))} style={input}>
+              <option value={reservation.roomId}>{roomLabel(currentRoom)} (booked)</option>
+              {moveChoices.map(room => <option key={room.id} value={room.id}>{roomLabel(room)}</option>)}
+            </select>
+            <span style={{ fontWeight: 400, color: c.MUTED, lineHeight: 1.5 }}>
+              Only free rooms of the same size or bigger are listed. A smaller room isn’t allowed, since the booking was paid for this room size; for more guests, add a room below.
+            </span>
+          </label>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
           <label style={{ ...field, gridColumn: '1 / -1' }}>Booking type
@@ -123,7 +206,18 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
         {arrivalLocked && (
           <div style={{ fontSize: 11, color: '#b45309', lineHeight: 1.5 }}>
             {daysToArrival <= 0 ? 'The stay has started' : `Arrival is ${daysToArrival} day${daysToArrival === 1 ? '' : 's'} away`}, so the {isTour ? 'date' : 'check-in date'} can't be moved under the resort policy.
-            To change it, cancel the booking (with the policy penalty) and make a new one.
+            To change it, cancel the booking (with the policy penalty) and make a new one{isAdmin ? ', or waive the rule below' : ''}.
+          </div>
+        )}
+        {isAdmin && ruleApplies && (
+          <div style={{ display: 'grid', gap: 6, border: `1px solid ${c.BORDER2}`, borderRadius: 10, padding: 10 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: c.TEXT, cursor: 'pointer' }}>
+              <input type="checkbox" checked={waive} onChange={e => setWaive(e.target.checked)} style={{ marginTop: 2 }} />
+              <span><strong>Waive the {noticeDays}-day rule</strong> and move the dates anyway (typhoon, resort closure, emergency). Saved in the Activity Log.</span>
+            </label>
+            {waive && (
+              <input value={waiveReason} maxLength={300} onChange={e => setWaiveReason(e.target.value)} placeholder="Reason (required), e.g. Typhoon Kristine, resort closed" style={input} />
+            )}
           </div>
         )}
 
@@ -154,6 +248,34 @@ export default function EditBookingDialog({ reservation, onClose, onSaved, color
             </div>
           )}
         </div>
+
+        {canAddRoom && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', minWidth: 0, gap: 8, border: `1px solid ${c.BORDER2}`, borderRadius: 10, padding: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: c.TEXT }}>Add a room for more guests</div>
+            <div style={{ fontSize: 11, color: c.MUTED, lineHeight: 1.5 }}>Same dates as this booking. It gets its own price and balance (one payment for all rooms in Billing).</div>
+            <select value={extra.roomId} onChange={e => setExtra(x => ({ ...x, roomId: e.target.value }))} style={fit} aria-label="Room to add">
+              <option value="">{addChoices.length ? 'Choose a free room…' : 'No free rooms on these dates'}</option>
+              {addChoices.map(room => <option key={room.id} value={room.id}>{roomLabel(room)}</option>)}
+            </select>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
+              <label style={{ display: 'grid', gap: 4, minWidth: 0, fontSize: 11, color: c.MUTED }}>
+                Adults
+                <input type="number" min="1" max="60" value={extra.adults} onChange={e => setExtra(x => ({ ...x, adults: e.target.value }))} style={fit} aria-label="Adults in the added room" />
+              </label>
+              <label style={{ display: 'grid', gap: 4, minWidth: 0, fontSize: 11, color: c.MUTED }}>
+                Children
+                <input type="number" min="0" max="60" value={extra.children} onChange={e => setExtra(x => ({ ...x, children: e.target.value }))} style={fit} aria-label="Children in the added room" />
+              </label>
+            </div>
+            {extra.error && <div style={{ fontSize: 11, color: '#dc2626' }}>{extra.error}</div>}
+            {extra.roomId && (
+              <button type="button" onClick={addRoom} disabled={!extra.quote || extra.busy}
+                style={{ ...input, fontWeight: 700, cursor: extra.quote ? 'pointer' : 'not-allowed', opacity: extra.quote ? 1 : 0.6 }}>
+                {extra.busy ? 'Adding…' : extra.quote ? `Add Room ${extra.quote.roomNumber} · ${peso(extra.quote.totalAmount)}` : 'Checking the price…'}
+              </button>
+            )}
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button type="button" onClick={onClose} disabled={saving} style={{ ...input, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>

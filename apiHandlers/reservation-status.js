@@ -15,9 +15,15 @@
 //     getStatusTransitionError.
 //   { action: 'close-expired', reservationId }
 //     Closes a past pending/confirmed booking the guest never arrived for.
+//   { action: 'set-arrived-guests', reservationId, arrivedGuests }
+//     Updates how many of a checked-in booking's guests have arrived (the
+//     rest of a group coming later). Check-in itself can send arrivedGuests.
 //   { action: 'flag-overstay', reservationId, note? }
 //     Marks a checked-in guest who is past check-out as overstayed.
 //   { action: 'add-late-fee', reservationId, amount, note? }
+//   { action: 'extend-checkout', reservationId, hours, amount?, note? }
+//     Gives a checked-in guest more time before check-out (late check-out),
+//     with an optional fee added to their bill.
 //     Adds a late check-out charge to an overstaying guest's bill.
 //
 // Overstay records (flag, late-fee total, minutes late at check-out) are kept
@@ -28,15 +34,23 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { logActivity } from '../lib/activityLog';
 import {
+  MAX_LATE_CHECKOUT_HOURS,
   MAX_LATE_FEE,
   RESERVATION_STATUSES,
+  formatManilaTime,
+  getScheduledCheckOutMs,
   getStatusTransitionError,
+  getEarlyCheckInError,
+  getCheckInPaymentError,
   manilaDateKey,
   formatDuration,
   getOutstandingBalance,
   getOverstay,
-  hasOutstandingBalance,
+  mustPayBeforeCheckout,
 } from '../src/lib/reservationStatus';
+import { normalizeIdCheck } from '../src/lib/checkInId';
+import { arrivedGuestCount, bookedGuestCount, normalizeArrivedGuests } from '../src/lib/guestArrivals';
+import { syncCorporateRoomBlocks } from '../lib/corporateRooms';
 
 // Room status to set after a reservation changes (unchanged from the old
 // browser-side behaviour).
@@ -62,7 +76,7 @@ function paymentStatusFor(total, paid) {
   return paid > 0 ? 'partial' : 'pending';
 }
 
-async function setStatus({ transaction, reservationRef, reservation, staff, status, reason, force = false, closingNoShow = false }) {
+async function setStatus({ transaction, reservationRef, reservation, staff, status, reason, force = false, closingNoShow = false, idCheck = null, arrivedGuests = null }) {
   if (!RESERVATION_STATUSES.includes(status)) throw new StatusError(400, 'Choose a valid reservation status.');
   const current = String(reservation.status || 'pending');
   if (staff.role === 'receptionist' && current === 'cancelled') {
@@ -75,17 +89,23 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   // One step at a time, forwards or back (see getStatusTransitionError).
   const transitionError = closingNoShow ? '' : getStatusTransitionError(current, status);
   if (transitionError) throw new StatusError(409, transitionError);
+  // No check-in before the booked check-in date.
+  const earlyError = status === 'checked-in' ? getEarlyCheckInError(reservation) : '';
+  if (earlyError) throw new StatusError(409, earlyError);
+  // Guests pay in full before entering the resort.
+  const unpaidError = status === 'checked-in' ? getCheckInPaymentError(reservation) : '';
+  if (unpaidError) throw new StatusError(409, unpaidError);
 
   const now = new Date();
   const overstay = getOverstay(reservation, now);
   // An admin can still check a guest out with money owed, but must give a
   // reason, and the unpaid amount is recorded on the booking.
-  const forcedWithBalance = status === 'checked-out' && hasOutstandingBalance(reservation)
+  const forcedWithBalance = status === 'checked-out' && mustPayBeforeCheckout(reservation)
     && force === true && staffCan(staff, 'checkoutOverride');
   if (forcedWithBalance && !reason) {
     throw new StatusError(400, 'Give a reason for checking out a guest who still owes money.');
   }
-  if (status === 'checked-out' && hasOutstandingBalance(reservation) && !forcedWithBalance) {
+  if (status === 'checked-out' && mustPayBeforeCheckout(reservation) && !forcedWithBalance) {
     throw new StatusError(409, overstay
       ? `Cannot check out: the guest overstayed by ${overstay.label} and still owes ₱${getOutstandingBalance(reservation).toLocaleString()}. Add any late check-out charge and collect payment first.`
       : 'The outstanding balance must be paid before checking out this guest.');
@@ -104,6 +124,17 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
     updates.cancellationReason = reason;
   }
   if (status === 'checked-in' && !reservation.checkedInAt) updates.checkedInAt = FieldValue.serverTimestamp();
+  // The ID the guest showed (type and last 4 characters only).
+  const id = status === 'checked-in' ? normalizeIdCheck(idCheck) : null;
+  if (id) updates.checkInId = { ...id, checkedBy: staff.name || staff.email || '', checkedByUid: staff.uid };
+  // How many guests arrived at check-in (the rest can be recorded later).
+  const arrived = status === 'checked-in' ? normalizeArrivedGuests(arrivedGuests, bookedGuestCount(reservation), { allowZero: true }) : null;
+  if (arrived !== null) {
+    updates.arrivedGuests = arrived;
+    updates.guestArrivals = FieldValue.arrayUnion({
+      id: crypto.randomUUID(), added: arrived, total: arrived, at: new Date().toISOString(), byName: staff.name || staff.email || '',
+    });
+  }
   if (status === 'checked-out') {
     updates.checkedOutAt = FieldValue.serverTimestamp();
     if (closingNoShow) updates.closedAsNoShow = true;
@@ -111,15 +142,35 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
     if (forcedWithBalance) {
       updates.checkedOutWithBalance = getOutstandingBalance(reservation);
       updates.checkedOutWithBalanceReason = reason;
+      updates.checkedOutWithBalanceBy = staff.uid;
+      updates.checkedOutWithBalanceByName = staff.name || staff.email || '';
     }
   }
   transaction.update(reservationRef, updates);
+  // A corporate group's assigned rooms follow its status.
+  syncCorporateRoomBlocks(transaction, reservation, status);
   // Closing out a no-show (never checked in) leaves a vacant room as it is.
   const noShowClose = status === 'checked-out' && current !== 'checked-in' && roomSnap?.data()?.status !== 'occupied';
   if (roomSnap?.exists && ROOM_STATUS_AFTER[status] && !noShowClose) {
     transaction.update(roomRef, { status: ROOM_STATUS_AFTER[status] });
   }
   return { status, previousStatus: current, overstayMinutes: overstay?.minutes || 0 };
+}
+
+function setArrivedGuests({ transaction, reservationRef, reservation, staff, arrivedGuests }) {
+  if (reservation.status !== 'checked-in') throw new StatusError(409, 'Only a checked-in booking can record arriving guests.');
+  const booked = bookedGuestCount(reservation);
+  const total = normalizeArrivedGuests(arrivedGuests, booked);
+  if (!total) throw new StatusError(400, `Enter how many guests have arrived (1 to ${booked || 'the booked number'}).`);
+  const previous = arrivedGuestCount(reservation);
+  if (total === previous && Number.isInteger(reservation.arrivedGuests)) return { arrivedGuests: total, booked, unchanged: true };
+  transaction.update(reservationRef, {
+    arrivedGuests: total,
+    guestArrivals: FieldValue.arrayUnion({
+      id: crypto.randomUUID(), added: total - previous, total, at: new Date().toISOString(), byName: staff.name || staff.email || '',
+    }),
+  });
+  return { arrivedGuests: total, previous, booked };
 }
 
 function flagOverstay({ transaction, reservationRef, reservation, staff, note }) {
@@ -135,6 +186,51 @@ function flagOverstay({ transaction, reservationRef, reservation, staff, note })
     },
   });
   return { flagged: true, overstayLabel: formatDuration(overstay.ms) };
+}
+
+function extendCheckout({ transaction, reservationRef, reservation, staff, hours, amount, note }) {
+  if (reservation.status !== 'checked-in') throw new StatusError(409, 'Only a checked-in guest can be given more time.');
+  const extraHours = Number(hours);
+  if (!Number.isInteger(extraHours) || extraHours < 1 || extraHours > MAX_LATE_CHECKOUT_HOURS) {
+    throw new StatusError(400, `Choose between 1 and ${MAX_LATE_CHECKOUT_HOURS} extra hours.`);
+  }
+  const fee = amount === undefined || amount === '' ? 0 : Math.round(Number(amount) * 100) / 100;
+  if (!Number.isFinite(fee) || fee < 0 || fee > MAX_LATE_FEE) {
+    throw new StatusError(400, `Enter a late check-out fee between ₱0 and ₱${MAX_LATE_FEE.toLocaleString()}.`);
+  }
+  const current = getScheduledCheckOutMs(reservation);
+  if (current === null) throw new StatusError(409, 'This booking has no check-out date.');
+  // Extend from the later of now or the current check-out time.
+  const until = Math.max(current, Date.now()) + extraHours * 3600000;
+  const updates = {
+    lateCheckoutUntil: until,
+    lateCheckoutExtensions: FieldValue.arrayUnion({
+      id: crypto.randomUUID(),
+      hours: extraHours,
+      until,
+      fee,
+      note,
+      addedBy: staff.uid,
+      addedByName: staff.name || staff.email || '',
+      addedAt: new Date().toISOString(),
+    }),
+  };
+  if (fee > 0) {
+    const extraCharges = Number(reservation.extraCharges || 0) + fee;
+    updates.extraCharges = FieldValue.increment(fee);
+    updates.lateCheckoutChargeTotal = FieldValue.increment(fee);
+    updates.lateCheckoutCharges = FieldValue.arrayUnion({
+      id: crypto.randomUUID(),
+      amount: fee,
+      note: note || `Late check-out, ${extraHours} extra hour${extraHours === 1 ? '' : 's'}`,
+      addedBy: staff.uid,
+      addedAt: new Date().toISOString(),
+      overstayMinutes: 0,
+    });
+    updates.paymentStatus = paymentStatusFor(Number(reservation.totalAmount || 0) + extraCharges, Number(reservation.amountPaid || 0));
+  }
+  transaction.update(reservationRef, updates);
+  return { extended: true, hours: extraHours, until, untilLabel: formatManilaTime(until), fee };
 }
 
 function addLateFee({ transaction, reservationRef, reservation, staff, amount, note }) {
@@ -194,7 +290,8 @@ export default async function handler(req, res) {
       checkOutDate = reservation.checkOut || '';
       guestName = reservation.guestName || '';
       const context = { transaction, reservationRef, reservation, staff };
-      if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500), force: req.body?.force === true });
+      if (action === 'set-status') return setStatus({ ...context, status, reason: cleanText(reason, 500), force: req.body?.force === true, idCheck: req.body?.idCheck, arrivedGuests: req.body?.arrivedGuests });
+      if (action === 'set-arrived-guests') return setArrivedGuests({ ...context, arrivedGuests: req.body?.arrivedGuests });
       // Closes a past booking the guest never arrived for (pending/confirmed,
       // check-out date already passed, nothing owed). This is the only move
       // allowed to go straight to checked-out.
@@ -207,6 +304,7 @@ export default async function handler(req, res) {
       }
       if (action === 'flag-overstay') return flagOverstay({ ...context, note: cleanText(note, 300) });
       if (action === 'add-late-fee') return addLateFee({ ...context, amount, note: cleanText(note, 300) });
+      if (action === 'extend-checkout') return extendCheckout({ ...context, hours: req.body?.hours, amount, note: cleanText(note, 300) });
       throw new StatusError(400, 'Choose a valid reservation action.');
     });
 
@@ -218,7 +316,11 @@ export default async function handler(req, res) {
     }
     if (!result.unchanged) {
       const ref = `#${reservationId.slice(0, 8).toUpperCase()}`;
-      const entry = action === 'add-late-fee'
+      const entry = action === 'set-arrived-guests'
+        ? { action: 'guests_arrived', summary: `Recorded ${result.arrivedGuests} of ${result.booked} guests arrived on booking ${ref}` }
+        : action === 'extend-checkout'
+        ? { action: 'late_checkout_given', summary: `Gave booking ${ref} ${result.hours} more hour${result.hours === 1 ? '' : 's'} (check-out ${result.untilLabel})${result.fee ? `, ₱${Number(result.fee).toLocaleString()} fee` : ''}` }
+        : action === 'add-late-fee'
         ? { action: 'late_fee_added', summary: `Added ₱${Number(result.lateFeeAdded || 0).toLocaleString()} late check-out charge on booking ${ref}` }
         : action === 'flag-overstay'
           ? { action: 'overstay_flagged', summary: `Flagged an overstay on booking ${ref}` }

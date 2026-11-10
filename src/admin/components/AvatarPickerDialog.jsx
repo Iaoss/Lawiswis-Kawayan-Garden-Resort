@@ -19,9 +19,10 @@ export default function AvatarPickerDialog() {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [name, setName] = useState(null); // null until the person types
 
   useEffect(() => {
-    const show = () => { setError(''); setOpen(true); };
+    const show = () => { setError(''); setName(null); setOpen(true); };
     window.addEventListener(OPEN_EVENT, show);
     return () => window.removeEventListener(OPEN_EVENT, show);
   }, []);
@@ -34,18 +35,24 @@ export default function AvatarPickerDialog() {
   }, [open]);
 
   if (!open) return null;
+  // The name field starts with the saved name until the person types.
+  const shownName = name ?? user?.name ?? '';
 
   const save = async seed => {
     const uid = auth.currentUser?.uid;
     if (!uid) { setError('Your session has ended. Please sign in again.'); return; }
+    const cleanName = shownName.trim().replace(/\s+/g, ' ');
+    if (cleanName.length < 2 || cleanName.length > 80) { setError('Enter a name between 2 and 80 characters.'); return; }
     setSaving(true);
     setError('');
     try {
-      await updateDoc(doc(db, 'users', uid), { avatar: seed });
+      await updateDoc(doc(db, 'users', uid), { avatar: seed, name: cleanName });
       setOpen(false);
     } catch (saveError) {
-      console.error('Could not save avatar:', saveError);
-      setError('Your avatar could not be saved. Please try again.');
+      console.error('Could not save profile:', saveError);
+      setError(saveError?.code === 'permission-denied'
+        ? 'Saving was blocked by the database rules. Ask the admin to publish the latest Firestore rules.'
+        : 'Your profile could not be saved. Please check your connection and try again.');
     } finally {
       setSaving(false);
     }
@@ -59,11 +66,12 @@ export default function AvatarPickerDialog() {
       onMouseDown={event => { if (event.target === event.currentTarget) setOpen(false); }}
       style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(10,15,10,0.55)', display: 'grid', placeItems: 'center', padding: 16, overflowY: 'auto' }}
     >
-      <div role="dialog" aria-modal="true" aria-label="Edit avatar" style={{ width: '100%', maxWidth: 460, fontFamily: "'Poppins', sans-serif" }}>
+      <div role="dialog" aria-modal="true" aria-label="Edit profile" style={{ width: '100%', maxWidth: 460, fontFamily: "'Poppins', sans-serif" }}>
         <AvatarPicker
           value={user?.avatar || ''}
-          name={user?.name || 'Me'}
-          subtitle={user?.avatar ? 'Pick a new avatar' : 'Choose an avatar for your staff profile'}
+          name={shownName}
+          onNameChange={setName}
+          subtitle={user?.avatar ? 'Edit your name or pick a new avatar' : 'Choose an avatar for your staff profile'}
           saving={saving}
           error={error}
           onSave={save}

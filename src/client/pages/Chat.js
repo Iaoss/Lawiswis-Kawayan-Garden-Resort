@@ -5,6 +5,9 @@ import { collection, addDoc, onSnapshot, doc, setDoc, serverTimestamp } from 'fi
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
+import { askForAutoAnswer, loadQuickQuestions, sendQuickQuestion, sortChatMessages } from '../lib/chatAutoAnswer';
+import ChatText from '../components/ChatText';
+import ChatAvailability from '../components/ChatAvailability';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -40,6 +43,11 @@ export default function GuestChat() {
   const [convId, setConvId] = useState(null);
   const [guestUid, setGuestUid] = useState(null);
   const [started, setStarted] = useState(false);
+  // When the chat started; the welcome greeting shows this time.
+  const [welcomeAt, setWelcomeAt] = useState(null);
+  // Quick-reply buttons set by staff in Settings → Quick Replies.
+  const [quickReplies, setQuickReplies] = useState([]);
+  const [quickBusy, setQuickBusy] = useState('');
   const bottomRef = useRef(null);
 
   // Restore session
@@ -66,6 +74,7 @@ export default function GuestChat() {
         if ((saved.guestUid || saved.ownerUid) === user.uid && saved.sessionStarted === true) {
           setConvId(saved.id);
           setStarted(true);
+          setWelcomeAt(Number(saved.startedAt) || Date.now());
         }
       }
     } catch (error) {
@@ -81,20 +90,20 @@ export default function GuestChat() {
   useEffect(() => {
     if (!convId) return;
     const unsub = onSnapshot(collection(db, 'conversations', convId, 'messages'), snap => {
-      const loadedMessages = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (a.timestamp?.seconds || a.createdAt?.seconds || 0) - (b.timestamp?.seconds || b.createdAt?.seconds || 0));
-      setMessages(loadedMessages.length ? loadedMessages : [{
-        id: 'welcome',
-        sender: 'system',
-        text: `Hello ${guestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
-      }]);
+      const loadedMessages = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setMessages(sortChatMessages(loadedMessages));
     }, error => {
       console.error('Unable to load guest chat messages:', error);
       setChatError('We could not load this conversation. Please check your connection and try again.');
     });
     return () => unsub();
-  }, [convId, guestName]);
+  }, [convId]);
+
+  useEffect(() => {
+    let active = true;
+    loadQuickQuestions().then(replies => { if (active) setQuickReplies(replies); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -113,12 +122,9 @@ export default function GuestChat() {
     const normalizedGuestName = joinGuestName(normalizedFirstName, normalizedLastName);
     setFirstName(normalizedFirstName);
     setLastName(normalizedLastName);
-    setMessages([{
-      id: 'welcome',
-      sender: 'system',
-      text: `Hello ${normalizedGuestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
-      timestamp: { seconds: Math.floor(Date.now() / 1000) },
-    }]);
+    const startedAt = Date.now();
+    setMessages([]);
+    setWelcomeAt(startedAt);
     setStarted(true);
     try {
       const profile = JSON.parse(localStorage.getItem('guest_profile') || '{}');
@@ -148,6 +154,7 @@ export default function GuestChat() {
         phone: guestPhone,
         guestUid: user.uid,
         sessionStarted: true,
+        startedAt,
       }));
     } catch (error) {
       console.error('Unable to start guest chat:', error);
@@ -157,6 +164,29 @@ export default function GuestChat() {
       setChatError(guestAuthErrorMessage(error));
     }
   };
+
+  // A quick-reply button posts the question and the resort's saved answer.
+  const sendQuickReply = async reply => {
+    if (!convId || quickBusy) return;
+    setQuickBusy(reply.id);
+    setChatError('');
+    try {
+      await sendQuickQuestion(convId, reply.id);
+    } catch (error) {
+      setChatError(error.message || 'The answer could not be sent. Please type your question instead.');
+    } finally {
+      setQuickBusy('');
+    }
+  };
+
+  // The greeting is shown on this page only and always stays first.
+  const welcomeMessage = welcomeAt ? {
+    id: 'welcome',
+    sender: 'system',
+    text: `Hello ${guestName}. Welcome to Lawiswis Kawayan Garden Resort. How can we help you today?`,
+    timestamp: { seconds: Math.floor(welcomeAt / 1000) },
+  } : null;
+  const shownMessages = welcomeMessage ? [welcomeMessage, ...messages] : messages;
 
   const sendMessage = async () => {
     if (!newMsg.trim() || sendingMessage) return;
@@ -180,6 +210,8 @@ export default function GuestChat() {
         unread: true,
       }, { merge: true });
       setNewMsg('');
+      // Known questions (rates, times, location…) are answered right away.
+      askForAutoAnswer(convId, text);
     } catch (error) {
       console.error('Unable to send guest chat message:', error);
       setChatError('Your message could not be sent. Please check your connection and try again.');
@@ -266,7 +298,7 @@ export default function GuestChat() {
           <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderTop: 'none', borderRadius: '0 0 16px 16px', display: 'flex', flexDirection: 'column', height: '520px' }}>
             {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px', background: '#fafafa' }}>
-              {messages.map(m => (
+              {shownMessages.map(m => (
                 <div key={m.id} style={{ display: 'flex', justifyContent: m.sender === 'guest' ? 'flex-end' : 'flex-start', gap: '8px', alignItems: 'flex-end' }}>
                   {m.sender !== 'guest' && (
                     <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: DARK, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><ResortIcon size={15} /></div>
@@ -277,11 +309,12 @@ export default function GuestChat() {
                       color: m.sender === 'guest' ? '#d4f550' : '#111',
                       border: m.sender === 'guest' ? 'none' : '1px solid #e5e7eb',
                       borderRadius: m.sender === 'guest' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                      padding: '10px 14px', fontSize: '13px', lineHeight: '1.5',
+                      padding: '10px 14px', fontSize: '13px', lineHeight: '1.5', whiteSpace: 'pre-line', overflowWrap: 'anywhere',
                     }}>
-                      {m.text}
+                      <ChatText text={m.text} />
                     </div>
                     <div style={{ fontSize: '10px', color: '#9ca3af', marginTop: '4px', textAlign: m.sender === 'guest' ? 'right' : 'left' }}>
+                      {m.sender === 'bot' && 'Automatic reply · '}
                       {(m.timestamp || m.createdAt)?.seconds ? new Date((m.timestamp || m.createdAt).seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
                     </div>
                   </div>
@@ -293,15 +326,21 @@ export default function GuestChat() {
               <div ref={bottomRef} />
             </div>
 
-            {/* Quick replies */}
-            <div style={{ padding: '8px 16px', display: 'flex', gap: '8px', overflowX: 'auto', borderTop: '1px solid #f3f4f6' }}>
-              {['Room availability?', 'Booking inquiry', 'Cancellation policy', 'Check-in time?'].map(q => (
-                <button key={q} onClick={() => { setNewMsg(q); }}
-                  style={{ background: '#f3f4f6', border: 'none', borderRadius: '20px', padding: '6px 12px', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap', fontFamily: "'Poppins', sans-serif", color: '#374151' }}>
-                  {q}
-                </button>
-              ))}
-            </div>
+            <ChatAvailability convId={convId} onError={setChatError} />
+            {/* Quick replies: tap a question to get the resort's saved answer right away. */}
+            {quickReplies.length > 0 && (
+              <div style={{ padding: '8px 16px', borderTop: '1px solid #f3f4f6' }}>
+                <div style={{ fontSize: '10px', color: '#6b7280', marginBottom: '6px' }}>Instant answers — tap a question, or just type it:</div>
+                <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '2px' }}>
+                  {quickReplies.map(reply => (
+                    <button key={reply.id} type="button" disabled={!convId || Boolean(quickBusy)} onClick={() => sendQuickReply(reply)}
+                      style={{ background: quickBusy === reply.id ? DARK : '#eff6f0', border: `1px solid ${ACCENT}55`, borderRadius: '20px', padding: '6px 12px', fontSize: '11px', cursor: !convId || quickBusy ? 'wait' : 'pointer', whiteSpace: 'nowrap', fontFamily: "'Poppins', sans-serif", color: quickBusy === reply.id ? '#fff' : DARK, fontWeight: 600 }}>
+                      {quickBusy === reply.id ? 'Sending…' : reply.question}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Input */}
             <div style={{ padding: '14px 16px', borderTop: '1px solid #f3f4f6' }}>
