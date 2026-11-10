@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { guardedNavigate } from '../lib/leaveGuard';
 import { Search } from 'lucide-react';
 import { collection, collectionGroup, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
@@ -96,7 +97,9 @@ const searchableCollections = [
 ];
 
 function PortalGlobalSearch({ navItems, portalName }) {
-  const navigate = useNavigate();
+  const routerNavigate = useNavigate();
+  // Asks first when the current page has unsaved work (e.g. a half-filled walk-in).
+  const navigate = useMemo(() => guardedNavigate(routerNavigate), [routerNavigate]);
   const { isMobile, state, setOpen, setOpenMobile } = useAnimatedSidebar();
   const [term, setTerm] = useState('');
   const [records, setRecords] = useState(null);
