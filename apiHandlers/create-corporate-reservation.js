@@ -6,6 +6,7 @@ import { getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
 import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { DEFAULT_PAYMENT_TERMS_DAYS, normalizeAgencyDetails } from '../src/lib/agencyBilling';
+import { staffStamp } from '../src/lib/staffLabel';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -173,7 +174,7 @@ export async function createCorporateReservation(body, staff = null) {
           : { ...agencyDetails.value, poNumber: '', guestPoNumber: agencyDetails.value.poNumber, paymentTermsDays: DEFAULT_PAYMENT_TERMS_DAYS },
       } : {}),
       status: staff ? 'confirmed' : 'pending',
-      ...(staff ? { source: 'walk-in', createdBy: staff.uid, createdByName: staff.name || staff.email || '' } : {}),
+      ...(staff ? { source: 'walk-in', ...staffStamp(staff, 'createdBy') } : {}),
       accommodationInterest: Boolean(accommodationInterest),
       notes: typeof notes === 'string' ? notes.trim() : '',
       createdAt: FieldValue.serverTimestamp(),

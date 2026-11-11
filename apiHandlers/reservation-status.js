@@ -51,6 +51,7 @@ import {
 import { normalizeIdCheck } from '../src/lib/checkInId';
 import { arrivedGuestCount, bookedGuestCount, normalizeArrivedGuests } from '../src/lib/guestArrivals';
 import { syncCorporateRoomBlocks } from '../lib/corporateRooms';
+import { staffStamp } from '../src/lib/staffLabel';
 
 // Room status to set after a reservation changes (unchanged from the old
 // browser-side behaviour).
@@ -117,7 +118,11 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   const updates = {
     status,
     statusUpdatedAt: FieldValue.serverTimestamp(),
-    statusUpdatedBy: staff.uid,
+    ...staffStamp(staff, 'statusUpdatedBy'),
+    // Who confirmed / checked in / checked out / cancelled it.
+    ...(['confirmed', 'checked-in', 'checked-out', 'cancelled'].includes(status)
+      ? staffStamp(staff, { confirmed: 'confirmedBy', 'checked-in': 'checkedInBy', 'checked-out': 'checkedOutBy', cancelled: 'cancelledBy' }[status])
+      : {}),
   };
   if (status === 'cancelled') {
     updates.cancellationRequested = false;

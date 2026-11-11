@@ -56,6 +56,7 @@ import { normalizeAgencyDetails } from '../src/lib/agencyBilling';
 import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms';
 import { bookedGuestCount, splitArrivedGuests } from '../src/lib/guestArrivals';
 import { normalizePhMobile } from '../src/lib/phoneNumber';
+import { staffStamp } from '../src/lib/staffLabel';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -223,7 +224,7 @@ async function assignCorporateRooms({ staff, reservationId, roomIds }) {
         paymentStatus: 'paid',
         paymentMethod: 'corporate',
         notes: `Room for the ${groupName} group (booking #${ref.id.slice(0, 8).toUpperCase()}).`,
-        createdBy: staff.uid,
+        ...staffStamp(staff, 'createdBy'),
         createdAt: FieldValue.serverTimestamp(),
       });
     });
@@ -681,7 +682,7 @@ async function createCottageWalkIn({ staff, booking }) {
       const [here] = date === today ? splitArrivedGuests(booking.guestsHereNow, [Number(booking.adults) + Number(booking.children || 0)]) : [null];
       return here === null ? {} : { arrivedGuests: here };
     })(),
-    createdBy: staff.uid,
+    ...staffStamp(staff, 'createdBy'),
     createdAt: FieldValue.serverTimestamp(),
   });
   return { totalAmount, amountPaid: 0, roomNumber: `${pricing.cottageLabel} (cottage)`, arrivesToday: date === today, checkedIn: false, reservationId: reservationRef.id, receipt: null, receiptError: '' };
@@ -808,7 +809,7 @@ async function createWalkIn({ staff, booking = {} }) {
       // Paid in full and arriving today: the guest goes straight in.
       status: checkedInNow ? 'checked-in' : 'confirmed',
       ...(checkedInNow ? { checkedInAt: FieldValue.serverTimestamp() } : {}),
-      createdBy: staff.uid,
+      ...staffStamp(staff, 'createdBy'),
       createdAt: FieldValue.serverTimestamp(),
     });
     if (amountPaid > 0) {
@@ -863,7 +864,7 @@ async function createWalkIn({ staff, booking = {} }) {
         type: 'walk-in',
         ...groupFields,
         status: 'confirmed',
-        createdBy: staff.uid,
+        ...staffStamp(staff, 'createdBy'),
         createdAt: FieldValue.serverTimestamp(),
       });
       return { reservationId: extra.ref.id, roomNumber: extra.room.roomNumber || '', totalAmount: extraTotal };
@@ -1133,7 +1134,7 @@ async function addRoomToBooking({ staff, reservationId, roomId, adults, children
       ...groupFields,
       status: insideNow ? 'checked-in' : 'confirmed',
       ...(insideNow ? { checkedInAt: FieldValue.serverTimestamp() } : {}),
-      createdBy: staff.uid,
+      ...staffStamp(staff, 'createdBy'),
       createdAt: FieldValue.serverTimestamp(),
     });
     return { added: true, reservationId: newRef.id, totalAmount, roomNumber: room.roomNumber || '', mainRoomNumber: reservation.roomNumber || '' };

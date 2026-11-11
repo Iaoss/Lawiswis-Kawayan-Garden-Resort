@@ -45,6 +45,7 @@ import { askCheckInId } from '../components/CheckInIdDialog';
 import { money } from '../lib/money';
 import { serverNow } from '../../lib/serverClock';
 import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive, splitArrivedGuests } from '../../lib/guestArrivals';
+import { bookedByText, staffLabel } from '../../lib/staffLabel';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -1342,7 +1343,7 @@ export default function Reservations() {
 
         {/* Backup for internet outages: today's arrivals, departures and balances on paper. */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
-          <button type="button" onClick={() => { if (!printDailySheet(reservations)) setToast({ type: 'error', text: 'Allow pop-ups for this site to print the sheet.' }); }}
+          <button type="button" onClick={() => { if (!printDailySheet(reservations, { staffName: staffLabel(access.user?.name || auth.currentUser?.email, access.user?.role) })) setToast({ type: 'error', text: 'Allow pop-ups for this site to print the sheet.' }); }}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${BORDER2}`, background: CARD, color: TEXT, borderRadius: 9, padding: '7px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
             <i className="ti ti-printer" aria-hidden="true" /> Print today's sheet
           </button>
@@ -1590,6 +1591,11 @@ export default function Reservations() {
               </div>
             ))]] : []),
             ['Booking Type', BOOKING_OPTIONS.find(option => option.id === getBookingOptionId(s))?.label || '—'],
+            ['Booked by', bookedByText(s)],
+            ...(s.confirmedByName ? [['Confirmed by', staffLabel(s.confirmedByName, s.confirmedByRole)]] : []),
+            ...(s.checkedInByName ? [['Checked in by', staffLabel(s.checkedInByName, s.checkedInByRole)]] : []),
+            ...(s.checkedOutByName ? [['Checked out by', staffLabel(s.checkedOutByName, s.checkedOutByRole)]] : []),
+            ...(s.status === 'cancelled' && s.cancelledByName ? [['Cancelled by', staffLabel(s.cancelledByName, s.cancelledByRole)]] : []),
             ['Guests', `${Number(s.adults || 0)} adult(s), ${Number(s.children || 0)} child(ren)`],
             ...(Number(s.dayVisitorAdults || 0) + Number(s.dayVisitorChildren || 0) > 0 ? [[
               'Day Visitors (not staying overnight)',
