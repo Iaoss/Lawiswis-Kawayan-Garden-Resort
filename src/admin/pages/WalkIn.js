@@ -10,7 +10,7 @@ import {
   MAX_STAY_NIGHTS, OVERNIGHT_TIME_SLOTS, getRoomBaseRate, getRoomMaximumGuests, isCheckInPassed, isCoupleRoom, isTourStartPassed, isWalkInTourClosed, stayRangesOverlap,
 } from '../../lib/bookingPricing';
 import { BOOKING_OPTIONS, normalizeBookingDetails, priceBookingDetails } from '../../lib/bookingDetails';
-import { COTTAGE_OPTIONS, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES, calculateCottageTourPrice, cottageName, getCottageFee } from '../../lib/bookingPricing';
+import { COTTAGE_OPTIONS, EXTRA_GUEST_MEAL_RATE, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES, calculateCottageTourPrice, cottageName, getCottageFee } from '../../lib/bookingPricing';
 import { groupTooLargeNote, suggestCottage, suggestRooms } from '../../lib/bookingSuggestions';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
@@ -141,6 +141,8 @@ export default function WalkIn() {
     roomId: '', checkIn: '', checkOut: '',
     bookingOption: 'overnight', overnightTimeSlot: 'morning', cottageId: '', cottageOnly: false,
     adults: 1, children: 0,
+    // Day / night tour: the extra guests add a meal (₱350 each).
+    extraGuestMeal: false,
     // How many of the group are here now ('' = everyone); the rest come later.
     guestsHereNow: '',
     paymentMethod: 'cash', paymentStatus: 'pending', notes: '',
@@ -181,6 +183,7 @@ export default function WalkIn() {
       checkOut: isTour ? form.checkIn : form.checkOut,
       adults: Number(form.adults) || 1,
       children: Number(form.children) || 0,
+      extraGuestMeal: form.extraGuestMeal === true,
     }, { walkIn: true })
     : null;
   const stayError = detailsCheck?.error || '';
@@ -253,6 +256,13 @@ export default function WalkIn() {
     : [];
   const groupTotal = groupLines.reduce((sum, item) => sum + item.price, 0);
   const estimatedTotal = extraRooms.length ? groupTotal : totalAmount;
+  // Extra guests on a tour (any room in the booking): they can add a meal.
+  const extraGuestsOf = (room, a, c) => { try { return priceBookingDetails(room, { ...details, adults: a, children: c }).extraGuests; } catch { return 0; } };
+  const tourExtraGuests = isTour && !cottageOnly && details && selectedRoom && selectedRoom.id !== 'cottage-only'
+    ? (roomSplit
+      ? roomSplit.reduce((sum, item, i) => sum + extraGuestsOf(i === 0 ? selectedRoom : extraRooms[i - 1], item.adults, item.children), 0)
+      : extraGuestsOf(selectedRoom, details.adults, details.children))
+    : 0;
   const toggleExtraRoom = room => setExtraRoomIds(current => (current.includes(room.id)
     ? current.filter(id => id !== room.id)
     : current.length >= MAX_ROOMS_PER_BOOKING - 1 ? current : [...current, room.id]));
@@ -882,6 +892,12 @@ export default function WalkIn() {
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{isTour ? bookingOption.label : 'Stay'}</span><span>{isTour ? formatDate(form.checkIn) : `${formatDate(form.checkIn)} → ${formatDate(form.checkOut)}`}</span></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} {stayUnit}{nights !== 1 ? 's' : ''} · est.</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{estimatedTotal.toLocaleString()}</span></div>
                         <div style={{ fontSize: 10.5, color: ACCENT, marginTop: 6 }}>✓ {isTour ? ROOM_RATE_INCLUDES.daytour : `${ROOM_RATE_INCLUDES.overnight}. ${EXTRA_PERSON_NOTE}`}.</div>
+                        {tourExtraGuests > 0 && (
+                          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 7, marginTop: 8, fontSize: 11.5, color: TEXT, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={form.extraGuestMeal === true} onChange={e => setForm(current => ({ ...current, extraGuestMeal: e.target.checked }))} style={{ marginTop: 2, accentColor: ACCENT }} />
+                            <span>Meal for {tourExtraGuests} extra guest{tourExtraGuests !== 1 ? 's' : ''} (+₱{EXTRA_GUEST_MEAL_RATE.toLocaleString()} each{form.extraGuestMeal ? `, ₱${(tourExtraGuests * EXTRA_GUEST_MEAL_RATE).toLocaleString()}` : ''})</span>
+                          </label>
+                        )}
                       </div>
                       {extraRooms.length > 0 && (
                         <div style={{ background: CARD2, borderRadius: 10, padding: 10, marginBottom: 12, fontSize: 11.5, color: TEXT }}>

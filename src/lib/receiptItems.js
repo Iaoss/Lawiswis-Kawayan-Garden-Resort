@@ -58,11 +58,13 @@ export function getReceiptLineItems(reservation = {}) {
     const lateArrival = money(reservation.lateArrivalSurcharge);
     const seasonal = money(reservation.seasonalSurcharge);
     const extraGuests = money(reservation.extraGuestCharge);
+    const extraMeals = money(reservation.extraMealCharge);
     const dayVisitors = money(reservation.dayVisitorCharge);
     const room = reservation.roomName || `Room ${reservation.roomNumber || ''}${reservation.roomType ? ` (${reservation.roomType})` : ''}`.trim();
     if (baseRate > 0) {
       booking.push({ label: `${room} · ₱${baseRate.toLocaleString()} × ${unitLabel(reservation, units)}`, amount: money(baseRate * units) });
       if (extraGuests > 0) booking.push({ label: 'Extra guests', amount: extraGuests });
+      if (extraMeals > 0) booking.push({ label: `Meals for extra guests · ${Number(reservation.extraMealGuests || 0)} × ₱${Number(reservation.extraMealRate || 350).toLocaleString()}`, amount: extraMeals });
       if (dayVisitors > 0) booking.push({ label: dayVisitorLabel(reservation), amount: dayVisitors });
       if (lateArrival > 0) booking.push({ label: 'Late arrival after 9:00 PM (10% of room rate)', amount: lateArrival });
       if (seasonal !== 0) booking.push({ label: `${seasonal > 0 ? 'Peak-season rate' : 'Season discount'}${reservation.seasonalLabel ? ` · ${reservation.seasonalLabel}` : ''}`, amount: seasonal });

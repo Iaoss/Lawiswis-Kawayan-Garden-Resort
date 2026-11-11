@@ -1608,6 +1608,7 @@ export default function Reservations() {
             ['Late Check-out Charges', getLateFeeTotal(s) > 0 ? money(getLateFeeTotal(s)) : 'None'],
             ...(Number(s.lateCheckoutUntil) > 0 ? [['Late Check-out Until', formatManilaTime(Number(s.lateCheckoutUntil))]] : []),
             ...(Number(s.lateArrivalSurcharge) > 0 ? [['Late Arrival Surcharge (after 9 PM)', money(s.lateArrivalSurcharge)]] : []),
+            ...(Number(s.extraMealCharge) > 0 ? [['Meals for Extra Guests', `${Number(s.extraMealGuests || 0)} × ${money(s.extraMealRate || 350)} = ${money(s.extraMealCharge)}`]] : []),
             ...(s.cottageOnly ? [['Booked', `Cottage only (no room) · entrance ${money(s.entranceFee)} + cottage ${money(s.cottageFee)}`]] : []),
             ['Special Requests', s.notes || 'None'],
             ['Payment Status', s.paymentStatus || '—'],

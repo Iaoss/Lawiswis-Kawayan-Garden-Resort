@@ -5,7 +5,7 @@ import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameVali
 import { getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
 import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
-import { normalizeAgencyDetails } from '../src/lib/agencyBilling';
+import { DEFAULT_PAYMENT_TERMS_DAYS, normalizeAgencyDetails } from '../src/lib/agencyBilling';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -170,7 +170,7 @@ export async function createCorporateReservation(body, staff = null) {
         // Billing; only a staff-saved PO lets the group stay on credit.
         agencyBilling: staff
           ? { ...agencyDetails.value, ...(agencyDetails.value.poNumber ? { poSavedAt: FieldValue.serverTimestamp(), poSavedBy: staff.uid } : {}) }
-          : { ...agencyDetails.value, poNumber: '', guestPoNumber: agencyDetails.value.poNumber },
+          : { ...agencyDetails.value, poNumber: '', guestPoNumber: agencyDetails.value.poNumber, paymentTermsDays: DEFAULT_PAYMENT_TERMS_DAYS },
       } : {}),
       status: staff ? 'confirmed' : 'pending',
       ...(staff ? { source: 'walk-in', createdBy: staff.uid, createdByName: staff.name || staff.email || '' } : {}),

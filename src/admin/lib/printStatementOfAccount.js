@@ -3,6 +3,7 @@
 // received and the amount the agency still has to pay.
 import { getReceiptLineItems } from '../../lib/receiptItems';
 import { formatStayDateTime } from '../../lib/stayTimes';
+import { agencyPaymentDue, formatDueDate, PAY_LATER_LABEL } from '../../lib/agencyBilling';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const peso = value => `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -16,6 +17,7 @@ export function printStatementOfAccount(reservation, payments = []) {
   const items = getReceiptLineItems(r);
   const paid = Number(r.amountPaid || 0);
   const due = Math.max(0, items.grandTotal - paid);
+  const terms = agencyPaymentDue(r, { balance: due });
   const issued = new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' });
   const event = r.type === 'corporate'
     ? `${r.packageName || 'Group package'} · ${Number(r.totalGuests || 0)} guests${r.packageRate ? ` × ${peso(r.packageRate)}` : ''}`
@@ -69,6 +71,8 @@ export function printStatementOfAccount(reservation, payments = []) {
         ${row('Event / stay', esc(event))}
         ${row('Date(s)', esc(dates))}
         ${agency.perDiemRate ? row('Per diem (per person/day)', peso(agency.perDiemRate)) : ''}
+        ${terms ? row('Payment terms', `${PAY_LATER_LABEL} · ${terms.termsDays} days after check-out`) : ''}
+        ${terms ? row('Payment due', esc(formatDueDate(terms.dueDate))) : ''}
       </table>
     </div>
   </div>
@@ -90,7 +94,7 @@ export function printStatementOfAccount(reservation, payments = []) {
     ${row('Total received', peso(paid), true)}
   </table>
 
-  <div class="due"><span>Amount due</span><span>${peso(due)}</span></div>
+  <div class="due"><span>Amount due${terms && due > 0 ? ` by ${esc(formatDueDate(terms.dueDate))}` : ''}</span><span>${peso(due)}</span></div>
 
   <footer>
     Please settle this statement with <strong>Lawiswis Kawayan Garden Resort</strong> (cash, GCash or QR Ph), quoting SOA-${esc(ref)} and the PO number.

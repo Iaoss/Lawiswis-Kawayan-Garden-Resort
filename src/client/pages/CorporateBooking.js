@@ -10,7 +10,7 @@ import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError
 import { CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
-import { CLIENT_TYPES, normalizeAgencyDetails, perDiemFit } from '../../lib/agencyBilling';
+import { CLIENT_TYPES, DEFAULT_PAYMENT_TERMS_DAYS, normalizeAgencyDetails, PAY_LATER_LABEL, perDiemFit } from '../../lib/agencyBilling';
 
 const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const addMonths = (date, months) => {
@@ -268,7 +268,8 @@ export default function CorporateBooking() {
               <li>Our team sends your agency a quotation.</li>
               <li>Your agency issues the Purchase Order (PO) and sends it to us.</li>
               <li>We confirm the booking once the PO is received.</li>
-              <li>After the event, we send the Statement of Account and your agency settles it with the resort.</li>
+              <li>Your group enjoys the stay first: nothing to pay at check-in or check-out.</li>
+              <li>After the event, we send the Statement of Account and your agency pays within {DEFAULT_PAYMENT_TERMS_DAYS} days after check-out.</li>
             </ol>
           </section>
         ) : (
@@ -348,9 +349,9 @@ export default function CorporateBooking() {
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '14px', font: `600 15px ${SANS}` }}><span>Total</span><span>₱{selectedPackage.totalAmount.toLocaleString()}</span></div>
               {isGovernment ? (
                 <div style={{ display: 'grid', gap: '8px', color: 'rgba(255,255,255,.82)', font: `12px/1.6 ${SANS}` }}>
-                  <div style={{ color: '#e4d4a7', fontWeight: 600 }}>Charge to agency: no payment now</div>
+                  <div style={{ color: '#e4d4a7', fontWeight: 600 }}>{PAY_LATER_LABEL}: no payment now</div>
                   {fit && <div style={{ color: fit.fits ? '#c8e6a0' : '#fcd9a8' }}>{fit.message}</div>}
-                  <div>We email a quotation. Your agency issues the PO, and pays after the event against our Statement of Account.</div>
+                  <div>We email a quotation. Your agency issues the PO, your group enjoys the stay, and the agency pays within {DEFAULT_PAYMENT_TERMS_DAYS} days after check-out against our Statement of Account.</div>
                 </div>
               ) : (
                 <>

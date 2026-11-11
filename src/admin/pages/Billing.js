@@ -15,7 +15,7 @@ import QRCode from 'qrcode';
 import PhoneDisplayToggle from '../components/PhoneDisplayToggle';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 import AgencyBillingCard from '../components/AgencyBillingCard';
-import { agencyStatusLabel, canStayOnAgencyCredit, isAgencyBilled } from '../../lib/agencyBilling';
+import { agencyDueText, agencyPaymentDue, agencyStatusLabel, canStayOnAgencyCredit, isAgencyBilled, PAY_LATER_LABEL } from '../../lib/agencyBilling';
 
 // Rooms booked together (one reservation, several rooms) share one bill.
 const billKeyOf = r => (Array.isArray(r.groupReservationIds) && r.groupReservationIds.length > 1 ? (r.groupId || r.groupReservationIds[0]) : r.id);
@@ -473,6 +473,27 @@ export default function Billing() {
           </div>
         )}
 
+        {/* Enjoy now, pay later: what government agencies still owe. */}
+        {(() => {
+          const agencyBills = reservations.filter(r => isAgencyBilled(r) && totalBalance(r) > 0);
+          if (!agencyBills.length) return null;
+          const owed = agencyBills.reduce((sum, r) => sum + totalBalance(r), 0);
+          const overdue = agencyBills.filter(r => agencyPaymentDue(r, { balance: totalBalance(r) })?.overdue);
+          return (
+            <div role="status" style={{ ...card, display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 16px' }}>
+              <i className="ti ti-building-bank" aria-hidden="true" style={{ fontSize: 20, color: overdue.length ? RED : GREEN }} />
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>{PAY_LATER_LABEL} · government agencies</div>
+                <div style={{ fontSize: 12, color: SUBTEXT }}>
+                  {agencyBills.length} bill{agencyBills.length === 1 ? '' : 's'} waiting for agency payment
+                  {overdue.length ? <> · <strong style={{ color: RED }}>{overdue.length} overdue</strong></> : ' · none overdue'}
+                </div>
+              </div>
+              <div style={{ ...money, fontSize: 18, fontWeight: 800, color: overdue.length ? RED : TEXT }}>{formatCurrency(owed)}</div>
+            </div>
+          );
+        })()}
+
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 300px) 1fr', gap: 20, alignItems: 'start' }}>
           {/* ── Guests with an open bill ── */}
           <div style={{ ...card, padding: 14, position: 'sticky', top: 76 }}>
@@ -502,6 +523,10 @@ export default function Billing() {
                       <span style={{ color: SUBTEXT }}>{owes > 0 ? (isAgencyBilled(r) ? 'Due from agency' : 'Still owes') : 'Paid in full'}</span>
                       <span style={{ ...money, fontWeight: 700, color: owes > 0 ? RED : GREEN }}>{formatCurrency(Math.max(0, owes))}</span>
                     </div>
+                    {owes > 0 && isAgencyBilled(r) && r.status === 'checked-out' && (() => {
+                      const due = agencyPaymentDue(r, { balance: owes });
+                      return due && <div style={{ fontSize: 10.5, marginTop: 4, fontWeight: 600, color: due.overdue ? RED : SUBTEXT }}>{agencyDueText(due)}</div>;
+                    })()}
                   </button>
                 );
               })}
@@ -539,6 +564,10 @@ export default function Billing() {
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: 11, color: SUBTEXT, textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>{balance > 0 ? (isAgencyBilled(selected) ? 'Due from agency' : 'Balance due') : 'Paid in full'}</div>
                     <div style={{ ...money, fontSize: 28, fontWeight: 800, color: balance > 0 ? RED : GREEN }}>{formatCurrency(Math.max(0, balance))}</div>
+                    {balance > 0 && isAgencyBilled(selected) && (() => {
+                      const due = agencyPaymentDue(selected, { balance });
+                      return due && <div style={{ fontSize: 11.5, fontWeight: 600, color: due.overdue ? RED : SUBTEXT }}>{agencyDueText(due)}</div>;
+                    })()}
                   </div>
                 </div>
 
@@ -579,7 +608,7 @@ export default function Billing() {
                   </div>
 
                   {(selected.type === 'corporate' || isAgencyBilled(selected)) && (
-                    <AgencyBillingCard reservation={selected} onSaved={text => { setSuccess(text); fetchReservations(); }}
+                    <AgencyBillingCard reservation={selected} balance={balance} onSaved={text => { setSuccess(text); fetchReservations(); }}
                       t={{ card, inp, btn, TEXT, SUBTEXT, GREEN, RED, ACCENT_LINK: dark ? '#bef264' : '#2f6b3a' }} />
                   )}
 

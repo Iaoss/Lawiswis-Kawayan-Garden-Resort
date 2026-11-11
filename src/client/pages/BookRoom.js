@@ -25,7 +25,7 @@ import {
   isSingleDayStay,
   describeRoomCapacity,
 } from '../../lib/bookingPricing';
-import { EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES } from '../../lib/bookingPricing';
+import { EXTRA_GUEST_MEAL_RATE, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES } from '../../lib/bookingPricing';
 import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
@@ -354,13 +354,18 @@ export default function BookRoom() {
   // Several rooms (picked on "Choose a room"): the group the guest entered is
   // split across them automatically, cheapest split first.
   const [extraRoomIds] = useState(() => (Array.isArray(location.state?.extraRoomIds) ? location.state.extraRoomIds.slice(0, 2) : []));
+  // Day / night tour: the extra guests can add a meal (₱350 each).
+  const [extraGuestMeal, setExtraGuestMeal] = useState(false);
+  const mealChosen = form.bookingType === 'daytour' && extraGuestMeal;
+  const pricingFor = (target, a, c) => calculateBookingPrice({
+    room: target, bookingType: form.bookingType, nights: Math.max(1, nights || 1), adults: a, children: c,
+    tourPeriod: form.bookingType === 'daytour' ? form.tourPeriod : 'day', cottageId: '', cottageFee: 0,
+    lateArrival: lateArrivalChosen, season: { periods: seasonPeriods, checkIn: form.checkIn, checkOut: form.checkOut },
+    extraGuestMeal: mealChosen,
+  });
   const priceRoomFor = (target, a, c) => {
     try {
-      return calculateBookingPrice({
-        room: target, bookingType: form.bookingType, nights: Math.max(1, nights || 1), adults: a, children: c,
-        tourPeriod: form.bookingType === 'daytour' ? form.tourPeriod : 'day', cottageId: '', cottageFee: 0,
-        lateArrival: lateArrivalChosen, season: { periods: seasonPeriods, checkIn: form.checkIn, checkOut: form.checkOut },
-      }).subtotalAmount;
+      return pricingFor(target, a, c).subtotalAmount;
     } catch { return null; }
   };
   const extraRoomDocs = extraRoomIds.map(id => availableRooms.find(item => item.id === id)).filter(Boolean);
@@ -392,8 +397,15 @@ export default function BookRoom() {
       dayVisitors: dayVisitors,
       lateArrival: lateArrivalChosen,
       season: { periods: seasonPeriods, checkIn: form.checkIn, checkOut: form.checkOut },
+      extraGuestMeal: mealChosen,
     })
-    : null, [room, nights, form.bookingType, mainAdults, mainChildren, form.tourPeriod, form.cottageId, dayVisitors, lateArrivalChosen, seasonPeriods, form.checkIn, form.checkOut]);
+    : null, [room, nights, form.bookingType, mainAdults, mainChildren, form.tourPeriod, form.cottageId, dayVisitors, lateArrivalChosen, seasonPeriods, form.checkIn, form.checkOut, mealChosen]);
+  // Extra guests across every room in the booking (for the meal option).
+  const tourExtraGuests = form.bookingType === 'daytour'
+    ? (pricing?.extraGuests || 0) + extraRooms.reduce((sum, item, i) => {
+      try { return sum + pricingFor(extraRoomDocs[i], item.adults, item.children).extraGuests; } catch { return sum; }
+    }, 0)
+    : 0;
   const totalAmount = pricing?.subtotalAmount || 0;
   const [selectedPaymentChoice, setSelectedPaymentChoice] = useState('');
   const activePromo = appliedPromo?.subtotal === totalAmount ? appliedPromo : null;
@@ -872,6 +884,7 @@ export default function BookRoom() {
           paymentMethod: form.paymentMethod,
           promoCode: activePromo?.code || '',
           additionalRooms: extraRooms.map(item => ({ roomId: item.roomId, adults: Number(item.adults), children: Number(item.children) })),
+          extraGuestMeal: mealChosen && tourExtraGuests > 0,
           website: form.website,
         }),
       });
@@ -1860,6 +1873,16 @@ export default function BookRoom() {
                 {pricing?.extraChildren > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
                   <span>{pricing.extraChildren} extra child{pricing.extraChildren !== 1 ? 'ren' : ''} × ₱{pricing.extraChildRate.toLocaleString()} × {nights} {stayUnit}{nights !== 1 ? 's' : ''}</span>
                   <span>₱{(pricing.extraChildren * pricing.extraChildRate * nights).toLocaleString()}</span>
+                </div>}
+                {tourExtraGuests > 0 && (
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '12px', color: '#374151', margin: '2px 0 10px', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={extraGuestMeal} onChange={event => setExtraGuestMeal(event.target.checked)} style={{ marginTop: '2px', accentColor: ACCENT }} />
+                    <span>Add a meal for the extra guest{tourExtraGuests !== 1 ? 's' : ''} (₱{EXTRA_GUEST_MEAL_RATE.toLocaleString()} each)</span>
+                  </label>
+                )}
+                {pricing?.extraMealCharge > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#6b7280', marginBottom: '8px' }}>
+                  <span>Meal · {pricing.extraMealGuests} extra guest{pricing.extraMealGuests !== 1 ? 's' : ''} × ₱{EXTRA_GUEST_MEAL_RATE.toLocaleString()}</span>
+                  <span>₱{pricing.extraMealCharge.toLocaleString()}</span>
                 </div>}
                 {pricing?.lateArrivalSurcharge > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', color: '#9a3412', marginBottom: '8px' }}>
                   <span>Late arrival after 9 PM (10% of room rate)</span>

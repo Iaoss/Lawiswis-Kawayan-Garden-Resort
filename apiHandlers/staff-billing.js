@@ -38,7 +38,7 @@ import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
-import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, getCottageFee, formatResortClock, getReservationDayVisitors, getRoomMaximumGuests, getWalkInTourCutoffError, isLateArrivalTime, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, extraGuestMealFields, getCottageFee, formatResortClock, getReservationDayVisitors, getRoomMaximumGuests, getWalkInTourCutoffError, isLateArrivalTime, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getCottageAvailabilityFor } from '../lib/cottageStock';
 import { cottageAvailabilityError } from '../src/lib/cottages';
 import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
@@ -550,6 +550,7 @@ function detailsFromForm(form, options) {
     checkOut: form.checkOut,
     adults: Number(form.adults),
     children: Number(form.children || 0),
+    extraGuestMeal: form.extraGuestMeal === true,
   }, options);
   if (result.error) throw new BillingError(400, result.error);
   return result.details;
@@ -736,6 +737,7 @@ async function createWalkIn({ staff, booking = {} }) {
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
+      ...extraGuestMealFields(pricing),
       lateArrival: isLateArrivalTime(details.checkInTime) && details.bookingType === 'overnight',
       lateArrivalSurcharge: pricing.lateArrivalSurcharge || 0,
       seasonalSurcharge: pricing.seasonalSurcharge || 0,
@@ -794,6 +796,7 @@ async function createWalkIn({ staff, booking = {} }) {
         baseRate: extraPricing.baseRate,
         baseCapacity: extraPricing.baseCapacity,
         extraGuestCharge: extraPricing.extraGuestCharge,
+        ...extraGuestMealFields(extraPricing),
         lateArrival: isLateArrivalTime(extra.details.checkInTime) && extra.details.bookingType === 'overnight',
         lateArrivalSurcharge: extraPricing.lateArrivalSurcharge || 0,
         seasonalSurcharge: extraPricing.seasonalSurcharge || 0,
@@ -881,6 +884,7 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
       checkOut: changes.checkOut ?? reservation.checkOut,
       adults: changes.adults ?? reservation.adults,
       children: changes.children ?? reservation.children ?? 0,
+      extraGuestMeal: typeof changes.extraGuestMeal === 'boolean' ? changes.extraGuestMeal : reservation.extraGuestMeal === true,
     }, { room, keepStartDate: reservation.checkIn });
     // Policy: dates can't move inside the rebooking window or once the
     // stay has started (cancel and rebook instead). Extending or shortening
@@ -943,6 +947,7 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
+      ...extraGuestMealFields(pricing),
       seasonalSurcharge: pricing.seasonalSurcharge || 0,
       seasonalLabel: pricing.seasonalLabel || '',
       subtotalAmount: pricing.subtotalAmount,
@@ -1024,6 +1029,7 @@ async function addRoomToBooking({ staff, reservationId, roomId, adults, children
       checkIn: reservation.checkIn,
       checkOut: reservation.checkOut,
       adults, children,
+      extraGuestMeal: reservation.extraGuestMeal === true,
     }, { room, keepStartDate: reservation.checkIn });
     if (blockedRoomStatus(room.status, details.checkIn, manilaDateKey())) throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
     if (await roomIsTaken(transaction, { roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut })) {
@@ -1059,6 +1065,7 @@ async function addRoomToBooking({ staff, reservationId, roomId, adults, children
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
+      ...extraGuestMealFields(pricing),
       lateArrival: isLateArrivalTime(details.checkInTime) && details.bookingType === 'overnight',
       lateArrivalSurcharge: pricing.lateArrivalSurcharge || 0,
       seasonalSurcharge: pricing.seasonalSurcharge || 0,

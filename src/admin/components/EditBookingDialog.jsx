@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
-import { OVERNIGHT_TIME_SLOTS, isCheckInPassed, isTourStartPassed } from '../../lib/bookingPricing';
+import { EXTRA_GUEST_MEAL_RATE, OVERNIGHT_TIME_SLOTS, isCheckInPassed, isTourStartPassed } from '../../lib/bookingPricing';
 import { getDaysBeforeArrival } from '../../lib/cancellationPolicy';
 import { useCancellationPolicy } from '../lib/useCancellationPolicy';
 import { staffApi } from '../lib/staffApi';
@@ -30,6 +30,7 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
     adults: Number(reservation.adults) || 1,
     children: Number(reservation.children) || 0,
     roomId: reservation.roomId || '',
+    extraGuestMeal: reservation.extraGuestMeal === true,
   }));
   const [rooms, setRooms] = useState([]);
   const [extra, setExtra] = useState({ roomId: '', adults: 1, children: 0, quote: null, error: '', busy: false });
@@ -202,6 +203,12 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
             <input type="number" min="0" max="60" required value={form.children} onChange={e => setForm(f => ({ ...f, children: e.target.value }))} style={input} />
           </label>
         </div>
+        {isTour && (
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12, color: c.TEXT, cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.extraGuestMeal} onChange={e => setForm(f => ({ ...f, extraGuestMeal: e.target.checked }))} style={{ marginTop: 2 }} />
+            <span>Meal for the extra guests (+₱{EXTRA_GUEST_MEAL_RATE} each; only guests over the room’s capacity)</span>
+          </label>
+        )}
 
         {arrivalLocked && (
           <div style={{ fontSize: 11, color: '#b45309', lineHeight: 1.5 }}>
