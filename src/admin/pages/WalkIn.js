@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
@@ -24,6 +24,9 @@ import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
 import { PH_MOBILE } from '../../lib/phoneNumber';
+import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
+import PromoCodeForm from '../components/PromoCodeForm';
+import { useLeaveGuard } from '../lib/leaveGuard';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'This room is full for that many guests. Couple rooms take 2 guests; a Couple Room with Extra Bed takes a third adult. For bigger groups, choose a Family Room or Family Suite.';
 
@@ -156,6 +159,19 @@ export default function WalkIn() {
   const [mode, setMode] = useState('guest');
   const [assignFor, setAssignFor] = useState(null);
   const coupleGuestLimit = !extraRoomIds.length && isCoupleRoom(selectedRoom) ? getRoomMaximumGuests(selectedRoom) : null;
+
+  // A walk-in that's being filled in but isn't saved yet: ask before the
+  // sidebar (or closing the tab) throws it away.
+  const walkInInProgress = mode === 'guest' && step < 3 && Boolean(
+    selectedRoom || form.checkIn || form.firstName.trim() || form.lastName.trim()
+    || form.phone.trim() || form.email.trim() || form.address.trim() || form.notes.trim(),
+  );
+  useLeaveGuard(walkInInProgress, {
+    title: 'Discard this walk-in?',
+    message: 'This walk-in booking isn’t saved yet. If you leave now, the details you entered will be lost.',
+    leaveLabel: 'Discard booking',
+    stayLabel: 'Keep editing',
+  });
 
   // Live data: new online bookings show up here immediately, so availability stays current.
   useEffect(() => {
@@ -435,9 +451,28 @@ export default function WalkIn() {
     }
   };
 
+  // Step 3 follows the saved booking live, so a promo or Senior / PWD
+  // discount added here lowers the total straight away.
+  const [createdDoc, setCreatedDoc] = useState(null);
+  const leadStartRef = useRef(null);
+  useEffect(() => {
+    leadStartRef.current = null;
+    setCreatedDoc(null);
+    if (!created?.id || created.isCorporate) return undefined;
+    return onSnapshot(doc(db, 'reservations', created.id),
+      snap => setCreatedDoc(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+      err => console.warn('Walk-in booking could not be followed:', err.message));
+  }, [created?.id, created?.isCorporate]);
+  const leadNow = createdDoc ? Number(createdDoc.totalAmount || 0) + Number(createdDoc.extraCharges || 0) : null;
+  if (leadNow !== null && leadStartRef.current === null) leadStartRef.current = leadNow;
+  // For rooms booked together, only the first room's bill changes here.
+  const walkInTotal = created
+    ? Math.max(0, Math.round((created.total + (leadNow !== null ? leadNow - leadStartRef.current : 0)) * 100) / 100)
+    : 0;
+
   // Step 3: record the walk-in's payment. Paying the full amount for a stay
   // that starts today checks the guest in and marks the room occupied.
-  const owedNow = created ? Math.max(0, Math.round((created.total - created.paid) * 100) / 100) : 0;
+  const owedNow = created ? Math.max(0, Math.round((walkInTotal - created.paid) * 100) / 100) : 0;
   const recordWalkInPayment = async () => {
     if (!created || payment.busy) return;
     const amount = Number(payment.amount);
@@ -453,7 +488,7 @@ export default function WalkIn() {
         checkedIn: Boolean(result.autoCheckedIn) || c.checkedIn,
         notes: [...c.notes, receipt].filter(Boolean),
       }));
-      const left = Math.max(0, Math.round((created.total - Number(result.amountPaid || 0)) * 100) / 100);
+      const left = Math.max(0, Math.round((walkInTotal - Number(result.amountPaid || 0)) * 100) / 100);
       setPayment(p => ({ ...p, busy: false, amount: left > 0 ? String(left) : '' }));
     } catch (error) {
       setPayment(p => ({ ...p, busy: false, error: error.message || 'The payment could not be saved.' }));
@@ -486,6 +521,12 @@ export default function WalkIn() {
     borderRadius: '10px', fontSize: '13px', fontFamily: "'Poppins', sans-serif",
     color: TEXT, outline: 'none', boxSizing: 'border-box',
   };
+  const smallBtn = (kind = 'plain') => ({
+    border: kind === 'plain' ? `1px solid ${BORDER2}` : 'none',
+    background: kind === 'green' ? ACCENT : CARD,
+    color: kind === 'green' ? ACCENT_TEXT : TEXT,
+    borderRadius: 9, padding: '8px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+  });
   const label = { fontSize: '11px', fontWeight: '600', color: MUTED, display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' };
   const card  = { background: CARD, borderRadius: '14px', border: `1px solid ${BORDER}`, padding: '18px' };
   const tag   = { background: CARD2, color: MUTED, borderRadius: '6px', padding: '2px 8px', fontSize: '10px' };
@@ -1085,13 +1126,40 @@ export default function WalkIn() {
                     Booking #{created.id.slice(0, 8).toUpperCase()} · {created.guestName} · {created.isCorporate ? created.roomNumber : `Room ${created.roomNumber}`} · {created.stayLabel}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 16 }}>
-                    {[['Total', created.total], ['Paid', created.paid], ['Still due', owedNow]].map(([lbl, value]) => (
+                    {[['Total', walkInTotal], ['Paid', created.paid], ['Still due', owedNow]].map(([lbl, value]) => (
                       <div key={lbl} style={{ background: CARD2, borderRadius: 10, padding: '10px 12px' }}>
                         <div style={{ fontSize: 10, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{lbl}</div>
                         <div style={{ fontSize: 17, fontWeight: 800, color: lbl === 'Still due' && value > 0 ? '#d97706' : TEXT }}>₱{Number(value).toLocaleString()}</div>
                       </div>
                     ))}
                   </div>
+
+                  {createdDoc && !created.isCorporate && !created.checkedIn && (
+                    <div style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 12, padding: '4px 14px 14px', marginBottom: 14 }}>
+                      <PromoCodeForm
+                        reservation={createdDoc}
+                        colors={{ TEXT, SUBTEXT: TEXT, MUTED, BORDER }}
+                        inp={inp}
+                        btn={smallBtn}
+                        onApplied={result => {
+                          const left = Math.max(0, Math.round((owedNow - Number(result.discount || 0)) * 100) / 100);
+                          setPayment(p => ({ ...p, amount: left > 0 ? String(left) : '', error: '' }));
+                          setCreated(c => ({ ...c, notes: [...c.notes, `Promo ${result.code}: −₱${Number(result.discount).toLocaleString()}.`] }));
+                        }}
+                      />
+                      <SeniorPwdDiscountForm
+                        reservation={createdDoc}
+                        colors={{ TEXT, SUBTEXT: TEXT, MUTED, BORDER }}
+                        inp={inp}
+                        btn={smallBtn}
+                        onApplied={result => {
+                          const left = Math.max(0, Math.round((owedNow - Number(result.discount || 0)) * 100) / 100);
+                          setPayment(p => ({ ...p, amount: left > 0 ? String(left) : '', error: '' }));
+                          setCreated(c => ({ ...c, notes: [...c.notes, `${result.label}: −₱${Number(result.discount).toLocaleString()}.`] }));
+                        }}
+                      />
+                    </div>
+                  )}
 
                   {created.checkedIn ? (
                     <div role="status" style={{ background: SUCCESS_BG, color: SUCCESS_TEXT, borderRadius: 10, padding: '12px 14px', fontSize: 13, fontWeight: 600, marginBottom: 14 }}>

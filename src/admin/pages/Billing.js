@@ -14,6 +14,7 @@ import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import QRCode from 'qrcode';
 import PhoneDisplayToggle from '../components/PhoneDisplayToggle';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
+import PromoCodeForm from '../components/PromoCodeForm';
 import AgencyBillingCard from '../components/AgencyBillingCard';
 import { agencyDueText, agencyPaymentDue, agencyStatusLabel, canStayOnAgencyCredit, isAgencyBilled, PAY_LATER_LABEL } from '../../lib/agencyBilling';
 
@@ -670,6 +671,15 @@ export default function Billing() {
                         </div>
                       );
                     })()}
+                    <PromoCodeForm
+                      reservation={selected}
+                      colors={{ TEXT, SUBTEXT, MUTED, BORDER, RED }}
+                      inp={inp}
+                      btn={btn}
+                      onApplied={result => {
+                        setSuccess(`Promo ${result.code} (${result.label}): −${formatCurrency(result.discount)}.`);
+                      }}
+                    />
                     <SeniorPwdDiscountForm
                       reservation={selected}
                       colors={{ TEXT, SUBTEXT, MUTED, BORDER, RED }}

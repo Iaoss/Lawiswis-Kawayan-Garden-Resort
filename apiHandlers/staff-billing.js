@@ -50,6 +50,7 @@ import { readSeasonPeriods } from '../lib/seasonStore';
 import { MAX_ROOMS_PER_BOOKING, fillBalancesInOrder, getAdditionalRoomsError } from '../src/lib/groupBooking';
 import { getRoomChangeError } from '../src/lib/roomChange';
 import { CHECK_METHODS, DISCOUNT_KINDS, calculateSeniorPwdDiscount, getDiscountIdError, normalizeIdNumber } from '../src/lib/seniorPwdDiscount';
+import { evaluatePromo, normalizePromoCode } from '../lib/promoPolicy';
 import { createCorporateReservation } from './create-corporate-reservation';
 import { normalizeAgencyDetails } from '../src/lib/agencyBilling';
 import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms';
@@ -386,6 +387,57 @@ async function applyDiscount({ staff, reservationId, kind, idNumber, holderName,
       paymentStatus: paymentStatusFor(total, Number(reservation.amountPaid || 0)),
     });
     return { discount: quote.total, label, extraCharges, balance: money(total - Number(reservation.amountPaid || 0)) };
+  });
+}
+
+// Applies a promo code to a booking made at the desk (walk-in, phone) or one
+// that missed it online. Same rules as online: the discount is worked out
+// here from the promo's settings and the booking's own total, never from the
+// browser. One promo per booking; the promo's usage count goes up by one.
+async function applyPromo({ staff, reservationId, code }) {
+  const promoCode = normalizePromoCode(code);
+  if (!/^[A-Z0-9_-]{3,32}$/.test(promoCode)) throw new BillingError(400, 'Enter a valid promo code.');
+  const promoRef = adminDb.collection('promoCodes').doc(promoCode);
+  return adminDb.runTransaction(async transaction => {
+    const { ref, reservation } = await getReservation(transaction, reservationId);
+    const promoSnapshot = await transaction.get(promoRef);
+    if (['cancelled', 'checked-out'].includes(reservation.status)) {
+      throw new BillingError(409, 'Promo codes can only be added to an active booking.');
+    }
+    if (reservation.promoCode) {
+      throw new BillingError(409, `This booking already has promo code ${reservation.promoCode}. Only one promo per booking.`);
+    }
+    const roomTotal = money(Number(reservation.totalAmount || 0));
+    const promo = promoSnapshot.exists ? { code: promoSnapshot.id, ...promoSnapshot.data() } : null;
+    const result = evaluatePromo(promo, roomTotal, manilaDateKey());
+    if (!result.valid) throw new BillingError(422, result.error);
+    const totalAmount = money(result.totalAmount);
+    const paid = Number(reservation.amountPaid || 0);
+    const total = totalAmount + Number(reservation.extraCharges || 0);
+    if (Math.round(paid * 100) > Math.round(total * 100)) {
+      throw new BillingError(409, 'The guest has already paid more than the discounted total. Refund the difference instead.');
+    }
+    transaction.update(ref, {
+      subtotalAmount: Number(reservation.subtotalAmount || 0) || roomTotal,
+      totalAmount,
+      promoCode,
+      promoDiscount: result.discountAmount,
+      promoAppliedBy: staff.uid,
+      promoAppliedByName: staff.name || staff.email || '',
+      promoAppliedAt: new Date().toISOString(),
+      paymentStatus: paymentStatusFor(total, paid),
+    });
+    transaction.update(promoRef, {
+      usageCount: Number(promo.usageCount || 0) + 1,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return {
+      code: promoCode,
+      discount: result.discountAmount,
+      label: result.discountLabel,
+      totalAmount,
+      balance: money(total - paid),
+    };
   });
 }
 
@@ -1142,6 +1194,7 @@ export default async function handler(req, res) {
     else if (body.action === 'create-corporate-walk-in') result = await createCorporateWalkIn({ staff, booking: body.booking });
     else if (body.action === 'add-service') result = await addService({ ...body, staff });
     else if (body.action === 'apply-discount') result = await applyDiscount({ ...body, staff });
+    else if (body.action === 'apply-promo') result = await applyPromo({ ...body, staff });
     else if (body.action === 'cancel-with-policy') result = await cancelWithPolicy({ ...body, staff });
     else if (body.action === 'create-walk-in') result = await createWalkIn({ staff, booking: body.booking });
     else if (body.action === 'edit-booking') result = await editBooking({ ...body, staff });
