@@ -9,7 +9,7 @@ import { SortControls, sortRecords } from '../lib/listSort';
 import { receiptNotice, staffApi } from '../lib/staffApi';
 import { SERVICES, getService, isRoomGuest, priceService } from '../../lib/services';
 import { getVatBreakdown } from '../../lib/bookingPricing';
-import { getScheduledCheckOutMs, formatManilaTime } from '../../lib/reservationStatus';
+import { getScheduledCheckOutMs, formatManilaTime, getUnannouncedOverstayCharge } from '../../lib/reservationStatus';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import QRCode from 'qrcode';
 import PhoneDisplayToggle from '../components/PhoneDisplayToggle';
@@ -342,6 +342,8 @@ export default function Billing() {
         if (!response.ok) throw new Error(`${isGroupBill ? `Room ${room.roomNumber || ''}: ` : ''}${result.error || 'The guest could not be checked out.'}`);
       }
     } catch (checkoutError) {
+      // An overstay charge may have just been added: show the new balance.
+      fetchReservations();
       appAlert(checkoutError.message, { title: 'Couldn’t check out', tone: 'danger' });
       return;
     }
@@ -771,6 +773,14 @@ export default function Billing() {
                     {stepTitle(3, isGroupBill ? 'Check out all rooms' : 'Check out', selected.status === 'checked-in'
                       ? (checkoutBlocked ? 'Collect the balance first.' : onAgencyCredit && balance > 0 ? `The bill stays open as Due from agency (PO ${selected.agencyBilling.poNumber}).` : `When the guest returns the key and leaves${selected.checkOutTime ? ` (check-out time ${selected.checkOutTime})` : ''}.`)
                       : 'Only for guests who are checked in.')}
+                    {selected.status === 'checked-in' && (() => {
+                      const pending = getUnannouncedOverstayCharge(selected);
+                      return pending ? (
+                        <div role="status" style={{ fontSize: 11.5, color: RED, fontWeight: 600, marginTop: 4, maxWidth: 520 }}>
+                          Overstay without notice ({pending.overstay.label} past check-out): ₱{pending.amount.toLocaleString()} (10% of the room rate) is added to the bill at check-out.
+                        </div>
+                      ) : null;
+                    })()}
                   </div>
                   <button type="button" onClick={confirmAndCheckout} disabled={selected.status !== 'checked-in' || checkoutBlocked}
                     style={{ ...btn('primary'), padding: '11px 20px', opacity: selected.status !== 'checked-in' || checkoutBlocked ? 0.5 : 1, cursor: selected.status !== 'checked-in' || checkoutBlocked ? 'not-allowed' : 'pointer' }}>

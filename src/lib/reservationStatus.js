@@ -149,6 +149,39 @@ export function getOverstay(reservation, now = new Date()) {
   return ms > 0 ? { ms, minutes: Math.floor(ms / 60000), label: formatDuration(ms) } : null;
 }
 
+// Overstay without notice: a checked-in guest still at the resort after
+// check-out (and after any late check-out staff agreed to) without telling
+// the front desk pays 10% of the room rate, once per stay. A short grace
+// period covers the time it takes to process the check-out.
+export const UNANNOUNCED_OVERSTAY_RATE = 0.1;
+export const UNANNOUNCED_OVERSTAY_GRACE_MINUTES = 30;
+
+const stayUnitsOf = reservation => {
+  const a = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(reservation?.checkIn || ''));
+  const b = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(reservation?.checkOut || ''));
+  if (!a || !b) return 1;
+  const days = Math.round((Date.UTC(+b[1], +b[2] - 1, +b[3]) - Date.UTC(+a[1], +a[2] - 1, +a[3])) / DAY_MS);
+  return Math.max(1, days);
+};
+
+// The room rate the 10% is taken from: the booked nightly / tour rate, or
+// for bookings without one (group packages) the total per night.
+export function overstayBaseRate(reservation) {
+  const base = Number(reservation?.baseRate);
+  if (Number.isFinite(base) && base > 0) return base;
+  return Math.round((Number(reservation?.totalAmount || 0) / stayUnitsOf(reservation)) * 100) / 100;
+}
+
+// Returns { amount, roomRate, overstay } when the charge is due, else null.
+export function getUnannouncedOverstayCharge(reservation, now = new Date()) {
+  if (reservation?.overstayPenalty) return null; // already charged
+  const overstay = getOverstay(reservation, now);
+  if (!overstay || overstay.minutes < UNANNOUNCED_OVERSTAY_GRACE_MINUTES) return null;
+  const roomRate = overstayBaseRate(reservation);
+  const amount = Math.round(roomRate * UNANNOUNCED_OVERSTAY_RATE * 100) / 100;
+  return amount > 0 ? { amount, roomRate, overstay } : null;
+}
+
 export function getLateFeeTotal(reservation) {
   return Number(reservation?.lateCheckoutChargeTotal || 0);
 }

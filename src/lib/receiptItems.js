@@ -94,7 +94,13 @@ export function getReceiptLineItems(reservation = {}) {
   const lateFees = Array.isArray(reservation.lateCheckoutCharges) ? reservation.lateCheckoutCharges : [];
   lateFees.forEach(fee => {
     const amount = money(fee?.amount);
-    if (amount > 0) extras.push({ label: `Late check-out${fee.note ? ` (${fee.note})` : ''}`, amount, service: false });
+    if (amount > 0) {
+      extras.push({
+        label: fee.kind === 'overstay-penalty' ? 'Overstay without notice (10% of room rate)' : `Late check-out${fee.note ? ` (${fee.note})` : ''}`,
+        amount,
+        service: false,
+      });
+    }
   });
   // Any charge total not covered by the items above (older records).
   const listed = money(extras.reduce((sum, item) => sum + item.amount, 0));

@@ -34,6 +34,8 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { logActivity } from '../lib/activityLog';
 import {
+  getUnannouncedOverstayCharge,
+  UNANNOUNCED_OVERSTAY_RATE,
   MAX_LATE_CHECKOUT_HOURS,
   MAX_LATE_FEE,
   RESERVATION_STATUSES,
@@ -178,6 +180,46 @@ function setArrivedGuests({ transaction, reservationRef, reservation, staff, arr
   return { arrivedGuests: total, previous, booked };
 }
 
+// Adds the 10% "overstay without notice" charge once, in its own step, so
+// it is saved even when the check-out that follows is refused for the
+// unpaid balance. Returns the charge added, or null.
+async function applyUnannouncedOverstayCharge(reservationRef) {
+  return adminDb.runTransaction(async transaction => {
+    const snapshot = await transaction.get(reservationRef);
+    if (!snapshot.exists) return null;
+    const reservation = snapshot.data();
+    const charge = getUnannouncedOverstayCharge(reservation, new Date());
+    if (!charge) return null;
+    const extraCharges = Number(reservation.extraCharges || 0) + charge.amount;
+    const note = `Overstay without notice: 10% of the ₱${charge.roomRate.toLocaleString()} room rate, ${charge.overstay.label} past check-out`;
+    transaction.update(reservationRef, {
+      extraCharges: FieldValue.increment(charge.amount),
+      lateCheckoutChargeTotal: FieldValue.increment(charge.amount),
+      lateCheckoutCharges: FieldValue.arrayUnion({
+        id: crypto.randomUUID(),
+        kind: 'overstay-penalty',
+        amount: charge.amount,
+        note,
+        addedBy: 'system',
+        addedAt: new Date().toISOString(),
+        overstayMinutes: charge.overstay.minutes,
+      }),
+      overstayPenalty: {
+        amount: charge.amount,
+        ratePercent: UNANNOUNCED_OVERSTAY_RATE * 100,
+        roomRate: charge.roomRate,
+        minutes: charge.overstay.minutes,
+        appliedAt: FieldValue.serverTimestamp(),
+      },
+      ...(reservation.overstay?.flaggedAt ? {} : {
+        overstay: { flaggedAt: FieldValue.serverTimestamp(), flaggedBy: 'system', minutesAtFlag: charge.overstay.minutes, note: 'Stayed past check-out without telling the front desk' },
+      }),
+      paymentStatus: paymentStatusFor(Number(reservation.totalAmount || 0) + extraCharges, Number(reservation.amountPaid || 0)),
+    });
+    return { ...charge, guestName: reservation.guestName || '' };
+  });
+}
+
 function flagOverstay({ transaction, reservationRef, reservation, staff, note }) {
   const overstay = getOverstay(reservation, new Date());
   if (!overstay) throw new StatusError(409, 'This guest is not past their check-out time.');
@@ -284,8 +326,25 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'A reservation is required.' });
   }
   const reservationRef = adminDb.collection('reservations').doc(reservationId);
+  let lastChargeNote = '';
 
   try {
+    // Checking out or flagging a guest who stayed past check-out without
+    // telling the front desk first adds the 10% overstay charge.
+    const leaving = (action === 'set-status' && status === 'checked-out') || action === 'flag-overstay';
+    const overstayCharge = leaving ? await applyUnannouncedOverstayCharge(reservationRef) : null;
+    if (overstayCharge) {
+      await logActivity(staff, {
+        action: 'overstay_charge_added',
+        summary: `Added ₱${overstayCharge.amount.toLocaleString()} overstay charge (10% of room rate, no notice) on booking #${reservationId.slice(0, 8).toUpperCase()}`,
+        reservationId,
+        guestName: overstayCharge.guestName,
+      });
+    }
+    const chargeNote = overstayCharge
+      ? `A ₱${overstayCharge.amount.toLocaleString()} overstay charge (10% of the room rate) was added because the guest stayed ${overstayCharge.overstay.label} past check-out without telling the front desk. `
+      : '';
+    lastChargeNote = chargeNote;
     let checkOutDate = '';
     let guestName = '';
     const result = await adminDb.runTransaction(async transaction => {
@@ -334,9 +393,9 @@ export default async function handler(req, res) {
             : { action: 'status_changed', summary: `Changed booking ${ref} from ${result.previousStatus} to ${result.status}` };
       await logActivity(staff, { ...entry, reservationId, guestName: guestName || '' });
     }
-    return res.status(200).json({ ok: true, reservationId, ...result });
+    return res.status(200).json({ ok: true, reservationId, ...result, ...(overstayCharge ? { overstayChargeAdded: overstayCharge.amount, overstayChargeNote: chargeNote.trim() } : {}) });
   } catch (error) {
-    if (error instanceof StatusError) return res.status(error.httpStatus).json({ error: error.message });
+    if (error instanceof StatusError) return res.status(error.httpStatus).json({ error: `${lastChargeNote}${error.message}` });
     console.error('Reservation status update failed:', error);
     return res.status(500).json({ error: 'The reservation could not be updated. Please try again.' });
   }

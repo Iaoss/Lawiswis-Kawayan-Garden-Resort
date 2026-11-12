@@ -885,7 +885,7 @@ export default function Reservations() {
       if (status === 'checked-out') {
         setToast({
           type: 'success',
-          text: `Guest has checked out${result.overstayMinutes ? ' (late check-out recorded)' : ''}. ${linkedRooms.length ? `Rooms ${allRooms.map(r => r.roomNumber).join(', ')} are` : `${reservation.roomName || 'The room'} is`} now under cleaning/maintenance.`,
+          text: `${result.overstayChargeNote ? `${result.overstayChargeNote} ` : ''}Guest has checked out${result.overstayMinutes ? ' (late check-out recorded)' : ''}. ${linkedRooms.length ? `Rooms ${allRooms.map(r => r.roomNumber).join(', ')} are` : `${reservation.roomName || 'The room'} is`} now under cleaning/maintenance.`,
         });
       }
       if (status === 'checked-out' && reservation.status !== 'checked-out') {
@@ -928,8 +928,8 @@ export default function Reservations() {
   const flagOverstay = async (reservation) => {
     setStatusBusyId(reservation.id);
     try {
-      await callReservationStatusApi({ action: 'flag-overstay', reservationId: reservation.id });
-      setToast({ type: 'success', text: `${reservation.guestName || 'Guest'} is flagged as overstayed.` });
+      const result = await callReservationStatusApi({ action: 'flag-overstay', reservationId: reservation.id });
+      setToast({ type: 'success', text: `${reservation.guestName || 'Guest'} is flagged as overstayed.${result.overstayChargeNote ? ` ${result.overstayChargeNote}` : ''}` });
     } catch (error) {
       setToast({ type: 'error', text: error.message });
     } finally {
