@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Timestamp, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { Timestamp, collection, query, where } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import NotificationButton from '../../components/ui/notification-button';
 import { PulsingDot } from './TopbarControls';
@@ -10,6 +10,8 @@ import {
   NEW_BOOKING_DAYS,
   buildBookingNotifications,
   formatNotificationTime,
+  buildChatNotifications,
+  buildPaymentNotifications,
 } from '../lib/bookingNotifications';
 import { roomNotReadyNotifications } from '../lib/roomReadiness';
 import { manilaDateKey } from '../../lib/reservationStatus';
@@ -190,6 +192,50 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   }, [inquiries, emails, feedback, locks, prefix, feedbackPath]);
 }
 
+// Payments from the last week (shared live feed, see liveCollection.js).
+function usePaymentFeed() {
+  const [payments, setPayments] = useState([]);
+  useEffect(() => {
+    const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
+    return subscribeLive('bell:payments', () => query(collection(db, 'payments'), where('createdAt', '>=', since)),
+      snapshot => setPayments(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setPayments([]));
+  }, []);
+  return payments;
+}
+
+// Guest chats with unread messages, and when each first became unread
+// (remembered in this browser so the bot's reply isn't a second alert).
+const CHAT_SINCE_KEY = 'lkgr_bell_chat_since';
+function readChatSince() {
+  try { return JSON.parse(window.localStorage.getItem(CHAT_SINCE_KEY) || '{}') || {}; } catch { return {}; }
+}
+function useUnreadChats() {
+  const [conversations, setConversations] = useState([]);
+  const [unreadSince, setUnreadSince] = useState(readChatSince);
+  useEffect(() => subscribeLive('conversations:unread', () => query(collection(db, 'conversations'), where('unread', '==', true)),
+    snapshot => setConversations(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+    () => setConversations([])), []);
+  useEffect(() => {
+    setUnreadSince(previous => {
+      const next = {};
+      conversations.forEach(c => {
+        const at = c.lastMessageAt?.toMillis ? c.lastMessageAt.toMillis() : 0;
+        // Wait for the server time before remembering it.
+        if (previous[c.id]) next[c.id] = previous[c.id];
+        else if (at) next[c.id] = at;
+      });
+      const same = Object.keys(next).length === Object.keys(previous).length
+        && Object.keys(next).every(id => next[id] === previous[id]);
+      if (same) return previous;
+      try { window.localStorage.setItem(CHAT_SINCE_KEY, JSON.stringify(next)); } catch { /* storage full or blocked */ }
+      return next;
+    });
+  }, [conversations]);
+  // Chats waiting for their server time aren't shown yet.
+  return { conversations: conversations.filter(c => unreadSince[c.id]), unreadSince };
+}
+
 const QUICK_LINKS = {
   '/admin': [
     { label: 'Bookings', icon: 'ti-calendar-event', path: '/admin/reservations', bg: 'rgba(200,240,110,0.1)', color: '#8fb83a' },
@@ -224,13 +270,17 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
   useEffect(() => subscribeCollection('rooms',
     snapshot => setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
     () => setRooms([])), []);
+  const payments = usePaymentFeed();
+  const { conversations, unreadSince } = useUnreadChats();
   const notifications = useMemo(
     () => [
       ...roomNotReadyNotifications(rooms, reservations, { todayKey: manilaDateKey(new Date(now)), prefix, now }),
       ...buildBookingNotifications(reservations, { prefix, now }),
+      ...buildPaymentNotifications(payments, { prefix, now }),
+      ...buildChatNotifications(conversations, unreadSince, { prefix }),
       ...messageItems,
     ].sort((a, b) => (b.timeMs || 0) - (a.timeMs || 0)),
-    [reservations, rooms, prefix, now, messageItems],
+    [reservations, rooms, prefix, now, messageItems, payments, conversations, unreadSince],
   );
   const unread = notifications.filter(n => !readIds.includes(n.id)).length;
 

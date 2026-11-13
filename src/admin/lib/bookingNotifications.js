@@ -172,3 +172,49 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
     .sort((a, b) => b.timeMs - a.timeMs)
     .slice(0, MAX_NOTIFICATIONS);
 }
+
+const PAYMENT_METHODS = { cash: 'cash', gcash: 'GCash', paymaya: 'Maya', maya: 'Maya', grab_pay: 'GrabPay', card: 'card', qrph: 'QR Ph', bank: 'bank transfer', online: 'online' };
+
+// Payments from the last NEW_BOOKING_DAYS days (counter and PayMongo).
+// Rooms paid together show once, on the lead share, with the full amount.
+export function buildPaymentNotifications(payments, { prefix = '/admin', now = Date.now() } = {}) {
+  const since = now - NEW_BOOKING_DAYS * 86400000;
+  return payments
+    .filter(p => toMs(p.createdAt) >= since && Number(p.amount) > 0)
+    .filter(p => !(p.groupPaymentKey && p.groupLead === false))
+    .map(p => {
+      const online = p.provider === 'paymongo';
+      const amount = p.groupPaymentKey ? (p.groupPaymentTotal ?? p.amount) : p.amount;
+      const method = PAYMENT_METHODS[lower(p.method)] || p.method || '';
+      return {
+        id: `payment_${p.groupPaymentKey || p.id}`,
+        icon: online ? 'ti-credit-card' : 'ti-cash',
+        badge: online ? 'Online Payment Received' : 'Payment Recorded',
+        message: `${p.guestName || 'Guest'} · ${peso(amount)}${method ? ` ${method}` : ''}`,
+        details: `Booking ${ref(p.groupId || p.reservationId)}${p.groupPaymentKey ? ' · all rooms' : ''}${p.recordedByName ? ` · by ${p.recordedByName}` : ''}`,
+        timeMs: toMs(p.createdAt),
+        path: `${prefix}/reservations`,
+        bookingId: p.reservationId || '',
+      };
+    });
+}
+
+// Guest chats with an unread message. `unreadSince` maps each chat to the
+// time it first became unread, so the automatic reply (which also updates
+// the chat's last-message time) doesn't count as a second notification.
+export function buildChatNotifications(conversations, unreadSince = {}, { prefix = '/admin' } = {}) {
+  return conversations
+    .filter(c => c.unread === true)
+    .map(c => {
+      const at = unreadSince[c.id] || toMs(c.lastMessageAt);
+      return {
+        id: `chat_${c.id}_${at}`,
+        icon: 'ti-message-circle-2',
+        badge: 'New Guest Message',
+        message: c.guestName || 'A guest',
+        details: String(c.lastMessage || '').slice(0, 110) || 'Open Messages to reply.',
+        timeMs: at,
+        path: `${prefix}/messages`,
+      };
+    });
+}
