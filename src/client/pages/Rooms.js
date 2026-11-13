@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, INK, LINE, MOSS, PAPER, SERIF, SANS } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
@@ -10,6 +8,7 @@ import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 import { GROUPS, OTHER_GROUP, UP, decorateRoom } from '../lib/roomCatalog';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { formatSeasonDates, getCurrentOrNextSeason, seasonalNightlyRate } from '../../lib/seasonalRates';
+import { loadPublicRooms } from '../lib/publicRooms';
 
 const HERO_IMAGE = optimizeImage(`${UP}2020/01/hero192x-scaled.jpg`, IMAGE_WIDTHS.hero);
 
@@ -39,9 +38,9 @@ export default function Rooms() {
   }, [location.search]);
 
   useEffect(() => {
-    getDocs(collection(db, 'rooms'))
-      .then(snapshot => {
-        setRooms(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
+    loadPublicRooms()
+      .then(list => {
+        setRooms(list);
         setLoading(false);
       })
       .catch(() => setLoading(false));

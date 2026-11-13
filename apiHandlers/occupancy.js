@@ -70,6 +70,7 @@ export default async function handler(req, res) {
         + (Number.isInteger(children) && children > 0 ? children : 0);
     }, 0);
 
+    res.setHeader('Cache-Control', 'public, s-maxage=120, stale-while-revalidate=300');
     return res.status(200).json(crowdFromGuestCount(Math.max(0, guestCount)));
   } catch (error) {
     console.error('occupancy error:', error);

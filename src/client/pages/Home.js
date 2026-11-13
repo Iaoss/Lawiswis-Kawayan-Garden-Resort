@@ -13,6 +13,7 @@ import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 import { safeHttpUrl } from '../../lib/safeUrl';
 import RoomCarousel from '../components/RoomCarousel';
 import { decorateRoom } from '../lib/roomCatalog';
+import { loadPublicRooms } from '../lib/publicRooms';
 
 /* ─────────────────────────────────────────────
    BRAND PALETTE — pulled from the Lawiswis Kawayan
@@ -336,8 +337,8 @@ export default function Home() {
 
   useEffect(() => {
     const fetchRooms = async () => {
-      const snap = await getDocs(collection(db, 'rooms'));
-      setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => ['vacant', 'available'].includes(String(r.status || '').toLowerCase())));
+      const list = await loadPublicRooms().catch(() => []);
+      setRooms(list.filter(r => ['vacant', 'available'].includes(String(r.status || '').toLowerCase())));
     };
     fetchRooms();
 

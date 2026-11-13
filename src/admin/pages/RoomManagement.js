@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
-import { onSnapshot, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
+import { onSnapshot, collection, addDoc, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import RoomExcelImport from '../components/RoomExcelImport';
 import { logStaffActivity } from '../lib/activityLog';
@@ -14,6 +14,7 @@ import { formatSeasonDates, getCurrentOrNextSeason, normalizeSeasonPeriods, seas
 import { money } from '../lib/money';
 import { formatClockLabel, getRoomsNotReadyForArrivals } from '../lib/roomReadiness';
 import { manilaDateKey } from '../../lib/reservationStatus';
+import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
 
 // ── Cloudinary config ────────────────────────────────────────
 // Photos upload through the server, so no Cloudinary setting is in the page.
@@ -130,7 +131,7 @@ export default function RoomManagement() {
   const [arrivalsToday, setArrivalsToday] = useState([]);
   useEffect(() => {
     const today = manilaDateKey();
-    return onSnapshot(query(collection(db, 'reservations'), where('checkIn', '>=', today), where('checkIn', '<=', `${today}`)),
+    return subscribeLive(`bell:arrivingToday:${today}`, () => query(collection(db, 'reservations'), where('checkIn', '>=', today), where('checkIn', '<=', `${today}`)),
       snapshot => setArrivalsToday(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setArrivalsToday([]));
   }, []);
@@ -157,12 +158,12 @@ export default function RoomManagement() {
   const [uploading, setUploading]       = useState(false);
   const [uploadError, setUploadError]   = useState('');
 
-  const fetchRooms = useCallback(async () => {
-    const snapshot = await getDocs(collection(db, 'rooms'));
-    setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-  }, []);
-
-  useEffect(() => { fetchRooms(); }, [fetchRooms]);
+  // Shared live list of rooms: updates by itself after any change, and
+  // reopening this page reads nothing again.
+  const fetchRooms = useCallback(async () => {}, []);
+  useEffect(() => subscribeCollection('rooms',
+    snapshot => setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+    error => console.error('Rooms could not be loaded:', error)), []);
 
   useEffect(() => {
     return () => { if (imagePreview) URL.revokeObjectURL(imagePreview); };

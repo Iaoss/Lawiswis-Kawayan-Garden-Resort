@@ -7,6 +7,7 @@ import { pushToast } from '../lib/staffToasts';
 import { isReadyToCheckIn } from '../../lib/reservationStatus';
 import { checkInGuest } from '../lib/checkInGuest';
 import { serverNow } from '../../lib/serverClock';
+import { subscribeLive } from '../lib/liveCollection';
 
 // Reminder for admins and receptionists: a guest's check-in time is 3
 // minutes away (offered until 15 minutes after the time). Shown once per
@@ -56,8 +57,9 @@ export default function CheckInReminder({ prefix = '/admin', soundAlerts = true 
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => onSnapshot(
-    query(collection(db, 'reservations'), where('checkIn', '==', today)),
+  useEffect(() => subscribeLive(
+    `checkins:${today}`,
+    () => query(collection(db, 'reservations'), where('checkIn', '==', today)),
     snapshot => setBookings(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
     error => console.error('Check-in reminders could not load:', error),
   ), [today]);

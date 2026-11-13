@@ -27,6 +27,7 @@ import { PH_MOBILE } from '../../lib/phoneNumber';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 import PromoCodeForm from '../components/PromoCodeForm';
 import { useLeaveGuard } from '../lib/leaveGuard';
+import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'This room is full for that many guests. Couple rooms take 2 guests; a Couple Room with Extra Bed takes a third adult. For bigger groups, choose a Family Room or Family Suite.';
 
@@ -175,11 +176,12 @@ export default function WalkIn() {
 
   // Live data: new online bookings show up here immediately, so availability stays current.
   useEffect(() => {
-    const unsubRooms = onSnapshot(collection(db, 'rooms'),
+    // Shared live feeds (see liveCollection.js): reopening Walk-In reads nothing again.
+    const unsubRooms = subscribeCollection('rooms',
       snap => setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.warn('Rooms could not be loaded:', err.message));
     // Only bookings that can still hold a room (not the whole history).
-    const unsubRes = onSnapshot(query(collection(db, 'reservations'), where('status', 'in', ['pending', 'confirmed', 'checked-in'])),
+    const unsubRes = subscribeLive('reservations:open', () => query(collection(db, 'reservations'), where('status', 'in', ['pending', 'confirmed', 'checked-in'])),
       snap => setReservations(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.warn('Reservations could not be loaded:', err.message));
     return () => { unsubRooms(); unsubRes(); };

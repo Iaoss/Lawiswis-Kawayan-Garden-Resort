@@ -4,6 +4,7 @@ import { db } from '../../firebase/firebase';
 import { staffApi } from '../lib/staffApi';
 import { getRoomMaximumGuests } from '../../lib/bookingPricing';
 import { CORPORATE_FEATURE_ROWS, isCorporateFeatureIncluded } from '../../lib/corporatePackages';
+import { getCollectionSnapshot } from '../lib/liveCollection';
 
 // Picks rooms for a corporate / group booking. Shows the package inclusions,
 // the rooms free on the group's dates and how many guests they hold.
@@ -24,7 +25,7 @@ export default function AssignRoomsDialog({ reservation, colors, onClose, onSave
   useEffect(() => {
     let active = true;
     Promise.all([
-      getDocs(collection(db, 'rooms')),
+      getCollectionSnapshot('rooms'),
       fetch(`/api/room-availability?${new URLSearchParams({ startDate: checkIn, endDate: checkOut })}`).then(r => r.json()),
     ]).then(([snap, availability]) => {
       if (!active) return;

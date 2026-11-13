@@ -8,6 +8,7 @@ import emailSend from '../apiHandlers/email-send';
 import emailSync from '../apiHandlers/email-sync';
 import paymongoWebhook from '../apiHandlers/paymongo-webhook';
 import roomAvailability from '../apiHandlers/room-availability';
+import publicRooms from '../apiHandlers/public-rooms';
 import sendConfirmationEmail from '../apiHandlers/send-confirmation-email';
 import sendPaymentReceipt from '../apiHandlers/send-payment-receipt';
 import sendReservationConfirmation from '../apiHandlers/send-reservation-confirmation';
@@ -52,6 +53,7 @@ const handlers = {
   'email-sync': emailSync,
   'paymongo-webhook': paymongoWebhook,
   'room-availability': roomAvailability,
+  'public-rooms': publicRooms,
   'send-confirmation-email': sendConfirmationEmail,
   'send-payment-receipt': sendPaymentReceipt,
   'send-reservation-confirmation': sendReservationConfirmation,
