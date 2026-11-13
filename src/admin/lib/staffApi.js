@@ -1,4 +1,5 @@
 import { auth } from '../../firebase/firebase';
+import { invalidateCollections } from './cachedCollection';
 
 // Calls a staff-only API route with the signed-in user's token.
 // Throws with the server's message when the request is refused.
@@ -13,6 +14,9 @@ export async function staffApi(path, body, method = 'POST') {
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || 'The change could not be saved. Please try again.');
+  // Something may have changed: pages reload their saved lists. (Plain
+  // lookups and previews change nothing.)
+  if (!(body?.preview || /-get$/.test(String(body?.action || '')))) invalidateCollections();
   return result;
 }
 

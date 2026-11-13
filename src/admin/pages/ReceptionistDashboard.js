@@ -1,10 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
-import {
-  collection, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc,
-  doc, Timestamp, query, orderBy,
-} from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, Timestamp, query, orderBy } from 'firebase/firestore';
 import ReceptionistLayout from '../components/ReceptionistLayout';
 import ShiftHandoverBanner from '../components/ShiftHandoverBanner';
 import { useSettings } from '../components/SettingsContext';
@@ -20,6 +17,7 @@ import { serverNow } from '../../lib/serverClock';
 import { FOREST_MEADOW, FOREST_MEADOW_BLOBS } from '../lib/cardGradient';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { staffLabel } from '../../lib/staffLabel';
+import { loadCollection } from '../lib/cachedCollection';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -108,8 +106,8 @@ export default function ReceptionistDashboard() {
 
   useEffect(() => {
     const fetch = async () => {
-      const roomsSnap = await getDocs(collection(db, 'rooms'));
-      const resSnap = await getDocs(collection(db, 'reservations'));
+      const roomsSnap = await loadCollection('rooms');
+      const resSnap = await loadCollection('reservations');
       const rooms = roomsSnap.docs.map(d => d.data());
       const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room');
       const today = manilaDateKey(); // Philippine date (toISOString would give the UTC date)

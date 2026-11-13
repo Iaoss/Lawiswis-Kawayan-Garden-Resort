@@ -2,10 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { db } from '../../firebase/firebase';
-import {
-  collection, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc,
-  doc, Timestamp, query, orderBy,
-} from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, Timestamp, query, orderBy } from 'firebase/firestore';
 import Layout from '../components/Layout';
 import ShiftHandoverBanner from '../components/ShiftHandoverBanner';
 import { useSettings } from '../components/SettingsContext';
@@ -22,6 +19,7 @@ import {
 } from '../../lib/reservationStatus';
 import { getFeedbackSummary, getRevenueBySource } from '../../lib/dashboardMetrics';
 import { FOREST_MEADOW, FOREST_MEADOW_BLOBS } from '../lib/cardGradient';
+import { loadCollection } from '../lib/cachedCollection';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
@@ -174,9 +172,9 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const fetchData = async () => {
-      const roomsSnap = await getDocs(collection(db, 'rooms'));
-      const resSnap   = await getDocs(collection(db, 'reservations'));
-      const paySnap   = await getDocs(collection(db, 'payments'));
+      const roomsSnap = await loadCollection('rooms');
+      const resSnap   = await loadCollection('reservations');
+      const paySnap   = await loadCollection('payments');
       const rooms        = roomsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room');
       const paymentRows  = paySnap.docs.map(d => d.data());
@@ -185,7 +183,7 @@ export default function AdminDashboard() {
       setRecent([...reservations].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
       // Feedback is loaded on its own so a problem there doesn't blank the dashboard.
       try {
-        const feedbackSnap = await getDocs(collection(db, 'feedback'));
+        const feedbackSnap = await loadCollection('feedback');
         setFeedback(feedbackSnap.docs.map(d => d.data()));
       } catch (feedbackError) {
         console.error('Dashboard feedback load failed:', feedbackError);

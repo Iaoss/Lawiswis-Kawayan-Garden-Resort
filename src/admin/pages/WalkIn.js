@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
-import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
@@ -178,7 +178,8 @@ export default function WalkIn() {
     const unsubRooms = onSnapshot(collection(db, 'rooms'),
       snap => setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.warn('Rooms could not be loaded:', err.message));
-    const unsubRes = onSnapshot(collection(db, 'reservations'),
+    // Only bookings that can still hold a room (not the whole history).
+    const unsubRes = onSnapshot(query(collection(db, 'reservations'), where('status', 'in', ['pending', 'confirmed', 'checked-in'])),
       snap => setReservations(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.warn('Reservations could not be loaded:', err.message));
     return () => { unsubRooms(); unsubRes(); };
@@ -343,7 +344,14 @@ export default function WalkIn() {
     }
   }, [availableRooms, selectedRoom, datesReady]);
 
+  // Clicking the chosen room again unselects it (and any rooms added to it).
   const handleSelectRoom = (room) => {
+    if (selectedRoom?.id === room.id) {
+      setSelectedRoom(null);
+      setExtraRoomIds([]);
+      setForm(f => ({ ...f, roomId: '' }));
+      return;
+    }
     setExtraRoomIds(current => current.filter(id => id !== room.id));
     setSelectedRoom(room);
     setForm(f => ({ ...f, roomId: room.id }));
@@ -802,12 +810,26 @@ export default function WalkIn() {
                                 <strong>{index === 0 ? 'Best fit: ' : ''}{room.roomNumber}</strong> · {normalizeRoomType(room.type) || room.type}
                                 <div style={{ fontSize: 11, color: MUTED }}>{reason} · est. ₱{total.toLocaleString()}</div>
                               </div>
-                              <button type="button" onClick={() => handleSelectRoom(room)}
-                                style={{ background: selectedRoom?.id === room.id ? ACCENT : 'transparent', color: selectedRoom?.id === room.id ? ACCENT_TEXT : TEXT, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                                {selectedRoom?.id === room.id ? 'Selected' : 'Choose'}
-                              </button>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                <button type="button" onClick={() => handleSelectRoom(room)} aria-pressed={selectedRoom?.id === room.id}
+                                  title={selectedRoom?.id === room.id ? 'Click to unselect this room' : 'Choose this room'}
+                                  style={{ background: selectedRoom?.id === room.id ? ACCENT : 'transparent', color: selectedRoom?.id === room.id ? ACCENT_TEXT : TEXT, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                                  {selectedRoom?.id === room.id ? <>Selected <i className="ti ti-x" aria-hidden="true" style={{ marginLeft: 4, verticalAlign: '-1px' }} /></> : 'Choose'}
+                                </button>
+                                {selectedRoom?.id === room.id && (
+                                  <button type="button" disabled={extraRooms.length > 0 && !roomSplit} onClick={() => setStep(2)}
+                                    style={{ background: ACCENT, color: ACCENT_TEXT, border: 0, borderRadius: 8, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: extraRooms.length > 0 && !roomSplit ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
+                                    Continue to guest details
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))}
+                        </div>
+                      )}
+                      {extraRooms.length > 0 && !roomSplit && (
+                        <div role="status" style={{ fontSize: 11, color: '#b45309', marginTop: 8 }}>
+                          Adjust the guest count or remove an added room before continuing. Each room needs at least one adult.
                         </div>
                       )}
                       {cottageSuggestion?.cottage && (

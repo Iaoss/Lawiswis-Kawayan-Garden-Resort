@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { auth } from '../../firebase/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '../../firebase/firebase';
 import { staffApi } from '../lib/staffApi';
 import { checkPayMongoCheckoutStatus } from '../../lib/paymongo';
 import { money } from '../lib/money';
@@ -16,15 +17,35 @@ export default function PhoneDisplay() {
   const [error, setError] = useState('');
   const paidSession = useRef('');
 
-  // Ask the server for the current QR every 3 seconds.
+  // Watch this staff account's display record: the QR appears as soon as
+  // the laptop sends one, and nothing is read while nothing changes. (Asking
+  // the server every 3 seconds used thousands of the free daily reads.) If
+  // the database rules don't allow the live view yet, ask every 6 seconds
+  // while the screen is on.
   useEffect(() => {
     let active = true;
+    let timer = null;
+    const show = data => {
+      // A QR left showing for over 30 minutes is treated as finished.
+      const fresh = data?.url && Date.now() - Number(data.shownAt || 0) < 30 * 60 * 1000;
+      setDisplay(fresh ? { url: data.url, amount: data.amount, guestName: data.guestName, sessionId: data.sessionId, shownAt: data.shownAt } : { url: '' });
+      setError('');
+    };
     const load = () => staffApi('staff-billing', { action: 'phone-display-get' })
-      .then(result => { if (active) { setDisplay(result || { url: '' }); setError(''); } })
+      .then(result => { if (active) show(result); })
       .catch(loadError => { if (active) setError(loadError.message || 'Could not reach the system.'); });
-    load();
-    const timer = setInterval(load, 3000);
-    return () => { active = false; clearInterval(timer); };
+    const startPolling = () => {
+      if (timer) return;
+      load();
+      timer = setInterval(() => { if (!document.hidden) load(); }, 6000);
+    };
+    const uid = auth.currentUser?.uid;
+    const stop = uid
+      ? onSnapshot(doc(db, 'staffDisplays', uid), snap => { if (active) show(snap.exists() ? snap.data() : null); }, () => startPolling())
+      : (startPolling(), () => {});
+    // Hide a QR that has been showing for more than 30 minutes.
+    const expiry = setInterval(() => setDisplay(current => (current.url && Date.now() - Number(current.shownAt || 0) >= 30 * 60 * 1000 ? { url: '' } : current)), 60000);
+    return () => { active = false; stop(); clearInterval(timer); clearInterval(expiry); };
   }, []);
 
   useEffect(() => {

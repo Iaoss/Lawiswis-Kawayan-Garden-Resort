@@ -63,7 +63,7 @@ export default async function handler(req, res) {
       });
     } catch (error) {
       console.error('Resort availability read failed:', error);
-      return res.status(500).json({ error: 'Could not load resort availability.' });
+      return res.status(503).json({ error: 'Resort availability is temporarily unavailable. Please try again later.' });
     }
   }
   if (req.method !== 'POST') {

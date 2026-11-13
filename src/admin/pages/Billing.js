@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../firebase/firebase';
-import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { useLocation, useNavigate } from 'react-router-dom';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
@@ -83,8 +83,15 @@ export default function Billing() {
   const [statusResult, setStatusResult] = useState(''); // '', 'unpaid', 'paid', 'expired'
 
   const fetchReservations = async () => {
-    const snap = await getDocs(collection(db, 'reservations'));
-    setReservations(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    // Open bills only, plus agency groups still owing after check-out.
+    const reservationsRef = collection(db, 'reservations');
+    const [open, agency] = await Promise.all([
+      getDocs(query(reservationsRef, where('status', 'in', ['pending', 'confirmed', 'checked-in']))),
+      getDocs(query(reservationsRef, where('chargeToAgency', '==', true))),
+    ]);
+    const byId = new Map();
+    [...open.docs, ...agency.docs].forEach(d => byId.set(d.id, { id: d.id, ...d.data() }));
+    setReservations([...byId.values()]
       .filter(r => r.status !== 'cancelled' && r.type !== 'corporate-room'
         // Agency groups stay here after check-out until the agency pays.
         && (r.status !== 'checked-out' || (isAgencyBilled(r) && owedOf(r) > 0.004))));

@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 // The live project's web settings (public by design: access is controlled by
@@ -22,7 +22,19 @@ export const IS_TEST_SITE = env.REACT_APP_SITE_MODE === 'test';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+// Keep a local copy of what this browser has already read (shared across
+// tabs). Live lists that restart when another page opens then only fetch
+// what changed, which saves a lot of the daily free reads. Browsers without
+// IndexedDB (and the test runner) fall back to the normal setup.
+function createDb() {
+  if (typeof window === 'undefined' || typeof indexedDB === 'undefined' || process.env.NODE_ENV === 'test') return getFirestore(app);
+  try {
+    return initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
+  } catch {
+    return getFirestore(app);
+  }
+}
+export const db = createDb();
 export const storage = getStorage(app);
 
 // Secondary app: used ONLY for creating accounts, so the admin

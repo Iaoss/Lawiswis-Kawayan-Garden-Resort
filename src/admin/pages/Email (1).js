@@ -10,7 +10,9 @@ const ACCENT = '#9cb56f';
 const DARK   = '#1A312C';
 const MUTED  = '#9ca3af';
 const FONT   = "'Poppins', sans-serif";
-const SYNC_EVERY_MS = 60000;
+// Each Gmail check reads about 80 saved emails, so it runs every 5 minutes
+// (and on "Refresh") instead of every minute.
+const SYNC_EVERY_MS = 5 * 60000;
 
 const FOLDERS = [
   { key: 'inbox', label: 'Inbox', icon: 'ti-inbox' },

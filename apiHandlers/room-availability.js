@@ -1,6 +1,7 @@
 import { adminDb } from '../lib/firebaseAdmin';
 import { stayRangesOverlap } from '../src/lib/bookingPricing';
 import { holdsRoom } from '../src/lib/unpaidBookings';
+import { loadActiveReservations, loadRoomsCached } from '../lib/activeReservations';
 
 function formatDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -53,15 +54,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Choose a valid date range within the next two months.' });
     }
 
-    const [roomsSnapshot, reservationsSnapshot] = await Promise.all([
-      adminDb.collection('rooms').get(),
-      adminDb.collection('reservations').get(),
-    ]);
-    const rooms = roomsSnapshot.docs.map(document => ({ id: document.id, ...document.data() }));
-    const reservations = reservationsSnapshot.docs.map(document => {
-      const data = document.data();
-      return { ...data, checkIn: dateKey(data.checkIn), checkOut: dateKey(data.checkOut) };
-    }).filter(reservation => reservation.roomId && reservation.checkIn && reservation.checkOut);
+    // Only bookings that can still hold a room, shared for a few seconds
+    // between visitors (see lib/activeReservations.js).
+    const [rooms, activeReservations] = await Promise.all([loadRoomsCached(), loadActiveReservations()]);
+    const reservations = activeReservations.map(data => ({ ...data, checkIn: dateKey(data.checkIn), checkOut: dateKey(data.checkOut) })).filter(reservation => reservation.roomId && reservation.checkIn && reservation.checkOut);
 
     const fullyBookedDates = [];
     for (let date = new Date(today); formatDate(date) <= maxDateKey; date.setDate(date.getDate() + 1)) {

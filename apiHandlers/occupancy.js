@@ -1,6 +1,7 @@
 import { adminDb } from '../lib/firebaseAdmin';
 import { stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getDateOccupancy } from '../src/lib/dateOccupancy';
+import { loadActiveReservations } from '../lib/activeReservations';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CONFIRMED_STATUSES = new Set(['confirmed', 'checked-in', 'checked_in', 'checked out', 'checked-out']);
@@ -36,9 +37,10 @@ export default async function handler(req, res) {
     if (queryDate !== undefined) {
       const date = asDateKey(queryDate);
       if (!date) return res.status(400).json({ error: 'Provide a valid date.' });
-      const snapshot = await adminDb.collection('reservations').get();
+      // Bookings that can still be at the resort (not cancelled or checked out).
+      const active = await loadActiveReservations();
       res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json(getDateOccupancy(snapshot.docs.map(doc => doc.data()), date));
+      return res.status(200).json(getDateOccupancy(active, date));
     }
 
     const queryStart = Array.isArray(req.query.startDate) ? req.query.startDate[0] : req.query.startDate;
@@ -54,9 +56,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Provide a valid date range.' });
     }
 
-    const reservations = await adminDb.collection('reservations').get();
-    const guestCount = reservations.docs.reduce((total, snapshot) => {
-      const reservation = snapshot.data();
+    const reservations = await loadActiveReservations();
+    const guestCount = reservations.reduce((total, reservation) => {
       const status = String(reservation.status || '').trim().toLowerCase();
       if (!CONFIRMED_STATUSES.has(status)) return total;
       if (typeof reservation.checkIn !== 'string' || typeof reservation.checkOut !== 'string') return total;

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { auth, db } from '../../firebase/firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { auth } from '../../firebase/firebase';
 import Layout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { getReservationRemarks } from '../../lib/reservationRemarks';
@@ -12,6 +11,7 @@ import { formatManilaTime, getScheduledCheckOutMs } from '../../lib/reservationS
 import { FOREST_MEADOW } from '../lib/cardGradient';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { staffLabel } from '../../lib/staffLabel';
+import { loadCollection } from '../lib/cachedCollection';
 
 const STATUS_OPTIONS = [
   ['pending', 'Pending'], ['confirmed', 'Confirmed'], ['checked-in', 'Checked In'],
@@ -90,8 +90,8 @@ export default function Reports() {
 
   useEffect(() => {
     const fetch = async () => {
-      const resSnap = await getDocs(collection(db, 'reservations'));
-      const roomSnap = await getDocs(collection(db, 'rooms'));
+      const resSnap = await loadCollection('reservations');
+      const roomSnap = await loadCollection('rooms');
       setReservations(resSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room'));
       setRooms(roomSnap.docs.map(d => ({ id: d.id, ...d.data() })));
     };

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, auth } from '../../firebase/firebase';
-import { collection, getDocs, getDoc, setDoc, updateDoc, doc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { collection, getDoc, setDoc, updateDoc, doc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
@@ -25,6 +25,7 @@ import {
   getCheckoutDue,
   formatManilaTime,
   getScheduledCheckOutMs,
+  getHourlyExtensionFee,
   MAX_LATE_CHECKOUT_HOURS,
   isReadyToCheckIn,
   manilaDateKey,
@@ -46,6 +47,7 @@ import { money } from '../lib/money';
 import { serverNow } from '../../lib/serverClock';
 import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive, splitArrivedGuests } from '../../lib/guestArrivals';
 import { bookedByText, staffLabel } from '../../lib/staffLabel';
+import { invalidateCollections } from '../lib/cachedCollection';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -83,6 +85,7 @@ async function callReservationStatusApi(body) {
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || 'The reservation could not be updated.');
+  invalidateCollections();
   return result;
 }
 
@@ -687,18 +690,12 @@ export default function Reservations() {
     return () => clearInterval(t);
   }, []);
 
-  const fetchReservations = useCallback(async () => {
-    const snap = await getDocs(collection(db, 'reservations'));
-    let data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    // No-shows are no longer closed here as "checked out": the daily job
-    // marks them as no-shows (policy fee applies), or staff press
-    // "Mark no-show" on the booking.
-    data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-    setReservations(data);
-  }, []);
+  // The live listener below keeps the list current, so there is nothing
+  // extra to load after an action (a full reload read every booking again).
+  // No-shows are marked by the daily job, or by staff with "Mark no-show".
+  const fetchReservations = useCallback(async () => {}, []);
 
   useEffect(() => {
-    fetchReservations();
     const unsubscribe = onSnapshot(collection(db, 'reservations'), snapshot => {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
@@ -1164,18 +1161,14 @@ export default function Reservations() {
         action: 'extend-checkout',
         reservationId: extendDialog.reservation.id,
         hours: Number(extendDialog.hours),
-        amount: extendDialog.amount === '' ? 0 : Number(extendDialog.amount),
+        extendGroup: Boolean(extendDialog.reservation.groupId && extendDialog.rooms?.length > 1),
         note: extendDialog.note,
       });
-      // Rooms booked together get the same extra time; the fee stays on the first room.
-      for (const room of (extendDialog.rooms || []).filter(x => x.id !== extendDialog.reservation.id && x.status === 'checked-in')) {
-        await callReservationStatusApi({ action: 'extend-checkout', reservationId: room.id, hours: Number(extendDialog.hours), amount: 0, note: extendDialog.note });
-      }
       setExtendDialog(null);
-      setToast({ type: 'success', text: `${extendDialog.reservation.guestName || 'Guest'} can stay until ${result.untilLabel}.${result.fee ? ` ${money(Number(result.fee))} late check-out fee added to the bill.` : ''}` });
+      setToast({ type: 'success', text: `Stay extended until ${formatStayDateTime(result.until)}. ${money(Number(result.fee))} extension fee added${result.roomCount > 1 ? ` across ${result.roomCount} rooms` : ''}.` });
     } catch (error) {
       setExtendDialog(d => (d ? { ...d, busy: false } : d));
-      setToast({ type: 'error', text: error.message || 'More time could not be given.' });
+      setToast({ type: 'error', text: error.message || 'The stay could not be extended.' });
     }
   };
 
@@ -1460,16 +1453,24 @@ export default function Reservations() {
           );
         })()}
 
-        {extendDialog && (
+        {extendDialog && (() => {
+          const extensionRooms = extendDialog.reservation.groupId && extendDialog.rooms?.length > 1
+            ? reservations.filter(room => room.groupId === extendDialog.reservation.groupId && room.status === 'checked-in')
+            : [extendDialog.reservation];
+          const fees = extensionRooms.map(room => getHourlyExtensionFee(room, extendDialog.hours));
+          const totalFee = fees.some(fee => fee === null) ? null : fees.reduce((sum, fee) => sum + fee, 0);
+          const due = getScheduledCheckOutMs(extendDialog.reservation);
+          const until = due === null ? null : due + Number(extendDialog.hours) * 3600000;
+          return (
           <div role="presentation" onClick={event => { if (event.target === event.currentTarget && !extendDialog.busy) setExtendDialog(null); }}
             style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: '16px' }}>
             <form role="dialog" aria-modal="true" aria-labelledby="extend-title"
               onSubmit={event => { event.preventDefault(); submitExtension(); }}
               style={{ width: '100%', maxWidth: '420px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '20px', display: 'grid', gap: '12px' }}>
-              <div id="extend-title" style={{ fontWeight: 700, fontSize: '15px', color: TEXT }}>Give more time to check out</div>
+              <div id="extend-title" style={{ fontWeight: 700, fontSize: '15px', color: TEXT }}>Extend stay by the hour</div>
               <div style={{ fontSize: '12px', color: MUTED }}>
-                {extendDialog.reservation.guestName || 'Guest'} · Room {extendDialog.reservation.roomNumber || '—'} · now due {formatManilaTime(getScheduledCheckOutMs(extendDialog.reservation))}.
-                The new time is counted from now or the current check-out time, whichever is later.
+                {extendDialog.reservation.guestName || 'Guest'} · {roomsLabel(extensionRooms)} · current check-out {due === null ? 'unavailable' : formatStayDateTime(due)}.
+                The extension starts from the current scheduled check-out, even if it has already passed.
               </div>
               <div>
                 <div style={{ fontSize: '11px', fontWeight: 600, color: MUTED, marginBottom: '6px' }}>Extra time</div>
@@ -1482,11 +1483,11 @@ export default function Reservations() {
                   ))}
                 </div>
               </div>
-              <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: MUTED }}>
-                Late check-out fee (₱, optional)
-                <input type="number" min="0" max={MAX_LATE_FEE} step="0.01" value={extendDialog.amount} placeholder="0"
-                  onChange={e => setExtendDialog(d => ({ ...d, amount: e.target.value }))} style={inp} />
-              </label>
+              <div style={{ fontSize: '12px', color: TEXT }}>
+                <strong>Required extension fee: {totalFee === null ? 'Unavailable' : money(totalFee)}</strong>
+                <div style={{ color: MUTED }}>10% of each room’s booked rate per hour. {until !== null && `New check-out: ${formatStayDateTime(until)}.`} {extensionRooms.length > 1 && 'Each room is extended from its own scheduled check-out.'}</div>
+                {totalFee === null && <div role="alert" style={{ color: '#dc2626' }}>A booked rate is missing or the calculated fee is invalid. Check the reservation before extending.</div>}
+              </div>
               <label style={{ display: 'grid', gap: '5px', fontSize: '11px', fontWeight: 600, color: MUTED }}>
                 Note (optional)
                 <input type="text" maxLength={300} value={extendDialog.note} placeholder="e.g. Waiting for their ride"
@@ -1494,14 +1495,15 @@ export default function Reservations() {
               </label>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                 <button type="button" onClick={() => setExtendDialog(null)} disabled={extendDialog.busy} style={{ ...inp, fontWeight: 600 }}>Cancel</button>
-                <button type="submit" disabled={extendDialog.busy}
+                <button type="submit" disabled={extendDialog.busy || totalFee === null || until === null}
                   style={{ background: ACCENT, color: ACCENT_TEXT, border: 'none', borderRadius: '10px', padding: '9px 14px', fontSize: '12px', fontWeight: 700, cursor: extendDialog.busy ? 'wait' : 'pointer' }}>
-                  {extendDialog.busy ? 'Saving…' : `Give ${extendDialog.hours} more hour${Number(extendDialog.hours) === 1 ? '' : 's'}`}
+                  {extendDialog.busy ? 'Saving…' : `Extend by ${extendDialog.hours} hour${Number(extendDialog.hours) === 1 ? '' : 's'}`}
                 </button>
               </div>
             </form>
           </div>
-        )}
+          );
+        })()}
 
         {cancelDialog && (
           <div role="presentation" onClick={event => {
@@ -1671,8 +1673,8 @@ export default function Reservations() {
                       style={{ border: `1px solid ${guestsStillToArrive(s) > 0 ? '#d97706' : BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Guests arrived</button>
                   )}
                   {s.status === 'checked-in' && (
-                    <button type="button" onClick={() => setExtendDialog({ reservation: s, rooms: selectedGroupRooms, hours: 1, amount: '', note: '', busy: false })}
-                      style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Give more time</button>
+                    <button type="button" onClick={() => setExtendDialog({ reservation: s, rooms: selectedGroupRooms, hours: 1, note: '', busy: false })}
+                      style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Extend stay</button>
                   )}
                   {s.type === 'corporate' && ['pending', 'confirmed', 'checked-in'].includes(s.status) && (
                     <button type="button" onClick={() => setAssignTarget(s)}
@@ -1723,7 +1725,7 @@ export default function Reservations() {
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         <button onClick={() => setSelectedId(r.id)} style={btn}>View</button>
                         {owes && <button onClick={() => navigate(billingPath(r.id))} style={{ ...btn, color: '#d97706' }}>Collect {money(owedTotal)}</button>}
-                        <button onClick={() => setExtendDialog({ reservation: r, rooms, hours: 1, amount: '', note: '', busy: false })} style={btn}>Give more time</button>
+                        <button onClick={() => setExtendDialog({ reservation: r, rooms, hours: 1, note: '', busy: false })} style={btn}>Extend stay</button>
                         <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}
                           style={{ ...btn, background: ACCENT, color: ACCENT_TEXT, border: 'none', opacity: statusBusyId === r.id ? 0.6 : 1 }}>Check out</button>
                       </div>
@@ -1837,8 +1839,8 @@ export default function Reservations() {
                         <button onClick={() => flagOverstay(r)} disabled={statusBusyId === r.id}
                           style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Flag overstay</button>
                       )}
-                      <button onClick={() => setExtendDialog({ reservation: r, hours: 1, amount: '', note: '', busy: false })}
-                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Give more time</button>
+                      <button onClick={() => setExtendDialog({ reservation: r, hours: 1, note: '', busy: false })}
+                        style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Extend stay</button>
                       <button onClick={() => setLateFeeDialog({ reservation: r, amount: '', note: `Overstayed ${info.label}` })}
                         style={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>Add late fee</button>
                       <button onClick={() => updateStatus(r.id, 'checked-out')} disabled={statusBusyId === r.id}

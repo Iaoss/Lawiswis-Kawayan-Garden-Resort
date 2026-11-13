@@ -96,7 +96,9 @@ export function getReceiptLineItems(reservation = {}) {
     const amount = money(fee?.amount);
     if (amount > 0) {
       extras.push({
-        label: fee.kind === 'overstay-penalty' ? 'Overstay without notice (10% of room rate)' : `Late check-out${fee.note ? ` (${fee.note})` : ''}`,
+        label: fee.kind === 'overstay-penalty' ? 'Overstay without notice (10% of room rate)'
+          : fee.kind === 'hourly-extension' ? `Stay extension (${fee.hours} hour${fee.hours === 1 ? '' : 's'}, 10% of room rate per hour)${fee.note ? ` — ${fee.note}` : ''}`
+            : `Late check-out${fee.note ? ` (${fee.note})` : ''}`,
         amount,
         service: false,
       });

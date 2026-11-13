@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { db } from '../../firebase/firebase';
-import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
 import { Pagination, usePagination } from '../../components/ui/pagination';
 import { money } from '../lib/money';
 import { FOREST_MEADOW } from '../lib/cardGradient';
+import { loadCollection } from '../lib/cachedCollection';
 
 const paymentDateValue = payment => payment.paidAt || payment.paymentDate || payment.createdAt || payment.date;
 const paymentDateMillis = payment => {
@@ -84,7 +83,7 @@ export default function PaymentTransactions() {
   useEffect(() => {
     const load = async () => {
       try {
-        const snap = await getDocs(collection(db, 'payments'));
+        const snap = await loadCollection('payments');
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         data.sort((a, b) => paymentDateMillis(b) - paymentDateMillis(a));
         setPayments(data);

@@ -172,6 +172,17 @@ export function overstayBaseRate(reservation) {
   return Math.round((Number(reservation?.totalAmount || 0) / stayUnitsOf(reservation)) * 100) / 100;
 }
 
+export const HOURLY_EXTENSION_RATE = 0.1;
+
+// Null means the recorded rate or hours cannot be used to calculate a charge.
+export function getHourlyExtensionFee(reservation, hours) {
+  const rate = Number(reservation?.baseRate);
+  const count = Number(hours);
+  if (!Number.isFinite(rate) || rate <= 0 || !Number.isInteger(count) || count < 1 || count > MAX_LATE_CHECKOUT_HOURS) return null;
+  const fee = Math.round(rate * HOURLY_EXTENSION_RATE * count * 100) / 100;
+  return fee > 0 && fee <= MAX_LATE_FEE ? fee : null;
+}
+
 // Returns { amount, roomRate, overstay } when the charge is due, else null.
 export function getUnannouncedOverstayCharge(reservation, now = new Date()) {
   if (reservation?.overstayPenalty) return null; // already charged
