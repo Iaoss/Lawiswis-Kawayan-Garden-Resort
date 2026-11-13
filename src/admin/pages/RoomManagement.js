@@ -235,6 +235,7 @@ export default function RoomManagement() {
 
   const handleEdit = (room) => {
     if (isReceptionist) return;
+    setOpenId(null); // close the room's details window first
     setEditRoom(room); setForm({ ...emptyForm, ...room }); setShowForm(true); setShowImport(false);
     resetImageState();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -242,6 +243,7 @@ export default function RoomManagement() {
 
   const requestDelete = (id) => {
     if (isReceptionist) return;
+    setOpenId(null); // close the room's details window first
     setConfirmDeleteId(id);
   };
 

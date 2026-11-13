@@ -25,7 +25,7 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendReservationPendingEmail } from '../lib/email';
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
 import { evaluatePromo, normalizePromoCode } from '../lib/promoPolicy';
-import {
+import { extraGuestMealFields,
   getResortNow,
   getStayDurationError,
   calculateBookingPrice,
@@ -97,6 +97,7 @@ export default async function handler(req, res) {
       dayVisitors: submittedDayVisitors,
       contactLink,
       additionalRooms, // more rooms for the same stay: [{ roomId, adults, children }]
+      extraGuestMeal, // day / night tour: extra guests add a ₱350 meal each
       website, // honeypot field — real guests never fill this in
     } = req.body || {};
 
@@ -295,6 +296,7 @@ export default async function handler(req, res) {
       dayVisitors,
       lateArrival: Boolean(timeSlot.lateArrival),
       season: { periods: seasonPeriods, checkIn, checkOut },
+      extraGuestMeal: extraGuestMeal === true,
     });
     const totalAmount = pricing.subtotalAmount;
 
@@ -306,6 +308,7 @@ export default async function handler(req, res) {
         room: extra.room, bookingType, nights, adults: extra.adults, children: extra.children,
         tourPeriod: bookingType === 'daytour' ? tourPeriod : 'day', cottageId: '', cottageFee: 0, dayVisitors: null,
         lateArrival: Boolean(timeSlot.lateArrival), season: { periods: seasonPeriods, checkIn, checkOut },
+        extraGuestMeal: extraGuestMeal === true,
       });
       return { ref: adminDb.collection('reservations').doc(), extra, pricing: extraPricing };
     });
@@ -337,6 +340,7 @@ export default async function handler(req, res) {
       totalGuests: pricing.totalGuests,
       extraGuests: pricing.extraGuests,
       extraGuestCharge: pricing.extraGuestCharge,
+      ...extraGuestMealFields(pricing),
       cottageId: pricing.cottageId,
       cottageFee: pricing.cottageFee,
       dayVisitorAdults: pricing.dayVisitorAdults,
@@ -414,6 +418,7 @@ export default async function handler(req, res) {
           totalGuests: p.totalGuests,
           extraGuests: p.extraGuests,
           extraGuestCharge: p.extraGuestCharge,
+          ...extraGuestMealFields(p),
           cottageId: '',
           cottageFee: 0,
           dayVisitorAdults: 0,

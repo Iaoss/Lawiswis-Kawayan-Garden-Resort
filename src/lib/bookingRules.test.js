@@ -90,6 +90,14 @@ describe('itemized receipts', () => {
     expect(items.extras).toEqual([]);
   });
 
+  test('labels hourly extensions separately from other late fees', () => {
+    const items = getReceiptLineItems({
+      roomNumber: '2', nights: 1, baseRate: 3000, totalAmount: 3000, extraCharges: 600,
+      lateCheckoutCharges: [{ kind: 'hourly-extension', hours: 2, amount: 600 }],
+    });
+    expect(items.extras).toEqual([{ label: 'Stay extension (2 hours, 10% of room rate per hour)', amount: 600, service: false }]);
+  });
+
   test('show group packages as one line', () => {
     const items = getReceiptLineItems({ type: 'corporate', packageName: 'Bamboo Grand', totalGuests: 40, packageRate: 2500, nights: 2, totalAmount: 200000 });
     expect(items.booking).toEqual([{ label: 'Bamboo Grand · 40 guests × ₱2,500 × 2 nights', amount: 200000 }]);

@@ -13,6 +13,7 @@ import { getBookingChanges } from '../../lib/bookingChanges';
 import { BOOKING_OPTIONS, getBookingOptionId } from '../../lib/bookingDetails';
 import { paymentReceiptNumber, printBookingReceipt } from '../lib/printBookingReceipt';
 import { money } from '../lib/money';
+import { loadCollection } from '../lib/cachedCollection';
 
 const peso = value => money(value);
 const METHOD_LABELS = { cash: 'Cash', gcash: 'GCash', qrph: 'QR Ph', bank: 'Bank transfer', card: 'Card', online: 'Online', paymaya: 'Maya', grab_pay: 'GrabPay' };
@@ -47,7 +48,7 @@ export default function ReservationHistory() {
 
   useEffect(() => {
     const fetch = async () => {
-      const snap = await getDocs(collection(db, 'reservations'));
+      const snap = await loadCollection('reservations');
       // Group room blocks (0-peso) are shown under their group booking instead.
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room');
       data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));

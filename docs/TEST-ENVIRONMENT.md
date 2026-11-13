@@ -47,3 +47,14 @@ It uses its own Firebase project, so nothing it does reaches the live data.
 - PayMongo test payments never charge real money.
 - Room data: add a few rooms in the test site's Room Management (or import the
   Excel file), since the test database starts empty.
+
+## Firestore quota and service outages
+
+The public availability API and staff account actions both read Firestore.
+If Firestore returns `RESOURCE_EXHAUSTED` / `Quota exceeded`, availability
+checks and staff verification can fail even when the staff accounts are valid.
+Check the affected project's Firestore usage and Google Cloud quotas and billing.
+Restore capacity by resolving the reported quota or billing issue, or wait for
+the applicable quota to reset. Check server logs and retry both availability
+and staff actions afterward. Do not reopen bookings by bypassing an availability
+check: the current closure settings must still be checked.

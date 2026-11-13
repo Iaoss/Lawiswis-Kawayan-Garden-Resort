@@ -27,10 +27,14 @@ export function ResortAvailabilityProvider({ children }) {
     };
 
     loadAvailability();
-    const interval = window.setInterval(loadAvailability, 60000);
+    // Every 5 minutes while the page is on screen, and when the guest comes back to it.
+    const interval = window.setInterval(() => { if (!document.hidden) loadAvailability(); }, 5 * 60000);
+    const onVisible = () => { if (!document.hidden) loadAvailability(); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       active = false;
       window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
 

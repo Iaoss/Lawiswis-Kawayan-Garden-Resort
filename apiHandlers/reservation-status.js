@@ -21,10 +21,9 @@
 //   { action: 'flag-overstay', reservationId, note? }
 //     Marks a checked-in guest who is past check-out as overstayed.
 //   { action: 'add-late-fee', reservationId, amount, note? }
-//   { action: 'extend-checkout', reservationId, hours, amount?, note? }
-//     Gives a checked-in guest more time before check-out (late check-out),
-//     with an optional fee added to their bill.
 //     Adds a late check-out charge to an overstaying guest's bill.
+//   { action: 'extend-checkout', reservationId, hours, extendGroup?, note? }
+//     Extends the scheduled stay and charges 10% of the booked rate per hour.
 //
 // Overstay records (flag, late-fee total, minutes late at check-out) are kept
 // on the reservation so the dashboard can report on them later.
@@ -34,6 +33,9 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { staffCan, verifyStaff } from '../lib/verifyStaff';
 import { logActivity } from '../lib/activityLog';
 import {
+  getUnannouncedOverstayCharge,
+  getHourlyExtensionFee,
+  UNANNOUNCED_OVERSTAY_RATE,
   MAX_LATE_CHECKOUT_HOURS,
   MAX_LATE_FEE,
   RESERVATION_STATUSES,
@@ -51,6 +53,7 @@ import {
 import { normalizeIdCheck } from '../src/lib/checkInId';
 import { arrivedGuestCount, bookedGuestCount, normalizeArrivedGuests } from '../src/lib/guestArrivals';
 import { syncCorporateRoomBlocks } from '../lib/corporateRooms';
+import { staffStamp } from '../src/lib/staffLabel';
 
 // Room status to set after a reservation changes (unchanged from the old
 // browser-side behaviour).
@@ -117,7 +120,11 @@ async function setStatus({ transaction, reservationRef, reservation, staff, stat
   const updates = {
     status,
     statusUpdatedAt: FieldValue.serverTimestamp(),
-    statusUpdatedBy: staff.uid,
+    ...staffStamp(staff, 'statusUpdatedBy'),
+    // Who confirmed / checked in / checked out / cancelled it.
+    ...(['confirmed', 'checked-in', 'checked-out', 'cancelled'].includes(status)
+      ? staffStamp(staff, { confirmed: 'confirmedBy', 'checked-in': 'checkedInBy', 'checked-out': 'checkedOutBy', cancelled: 'cancelledBy' }[status])
+      : {}),
   };
   if (status === 'cancelled') {
     updates.cancellationRequested = false;
@@ -173,6 +180,46 @@ function setArrivedGuests({ transaction, reservationRef, reservation, staff, arr
   return { arrivedGuests: total, previous, booked };
 }
 
+// Adds the 10% "overstay without notice" charge once, in its own step, so
+// it is saved even when the check-out that follows is refused for the
+// unpaid balance. Returns the charge added, or null.
+async function applyUnannouncedOverstayCharge(reservationRef) {
+  return adminDb.runTransaction(async transaction => {
+    const snapshot = await transaction.get(reservationRef);
+    if (!snapshot.exists) return null;
+    const reservation = snapshot.data();
+    const charge = getUnannouncedOverstayCharge(reservation, new Date());
+    if (!charge) return null;
+    const extraCharges = Number(reservation.extraCharges || 0) + charge.amount;
+    const note = `Overstay without notice: 10% of the ₱${charge.roomRate.toLocaleString()} room rate, ${charge.overstay.label} past check-out`;
+    transaction.update(reservationRef, {
+      extraCharges: FieldValue.increment(charge.amount),
+      lateCheckoutChargeTotal: FieldValue.increment(charge.amount),
+      lateCheckoutCharges: FieldValue.arrayUnion({
+        id: crypto.randomUUID(),
+        kind: 'overstay-penalty',
+        amount: charge.amount,
+        note,
+        addedBy: 'system',
+        addedAt: new Date().toISOString(),
+        overstayMinutes: charge.overstay.minutes,
+      }),
+      overstayPenalty: {
+        amount: charge.amount,
+        ratePercent: UNANNOUNCED_OVERSTAY_RATE * 100,
+        roomRate: charge.roomRate,
+        minutes: charge.overstay.minutes,
+        appliedAt: FieldValue.serverTimestamp(),
+      },
+      ...(reservation.overstay?.flaggedAt ? {} : {
+        overstay: { flaggedAt: FieldValue.serverTimestamp(), flaggedBy: 'system', minutesAtFlag: charge.overstay.minutes, note: 'Stayed past check-out without telling the front desk' },
+      }),
+      paymentStatus: paymentStatusFor(Number(reservation.totalAmount || 0) + extraCharges, Number(reservation.amountPaid || 0)),
+    });
+    return { ...charge, guestName: reservation.guestName || '' };
+  });
+}
+
 function flagOverstay({ transaction, reservationRef, reservation, staff, note }) {
   const overstay = getOverstay(reservation, new Date());
   if (!overstay) throw new StatusError(409, 'This guest is not past their check-out time.');
@@ -188,20 +235,17 @@ function flagOverstay({ transaction, reservationRef, reservation, staff, note })
   return { flagged: true, overstayLabel: formatDuration(overstay.ms) };
 }
 
-function extendCheckout({ transaction, reservationRef, reservation, staff, hours, amount, note }) {
-  if (reservation.status !== 'checked-in') throw new StatusError(409, 'Only a checked-in guest can be given more time.');
+function extendCheckout({ transaction, reservationRef, reservation, staff, hours, note }) {
+  if (reservation.status !== 'checked-in') throw new StatusError(409, 'Only a checked-in guest can extend their stay.');
   const extraHours = Number(hours);
   if (!Number.isInteger(extraHours) || extraHours < 1 || extraHours > MAX_LATE_CHECKOUT_HOURS) {
     throw new StatusError(400, `Choose between 1 and ${MAX_LATE_CHECKOUT_HOURS} extra hours.`);
   }
-  const fee = amount === undefined || amount === '' ? 0 : Math.round(Number(amount) * 100) / 100;
-  if (!Number.isFinite(fee) || fee < 0 || fee > MAX_LATE_FEE) {
-    throw new StatusError(400, `Enter a late check-out fee between ₱0 and ₱${MAX_LATE_FEE.toLocaleString()}.`);
-  }
+  const fee = getHourlyExtensionFee(reservation, extraHours);
+  if (fee === null) throw new StatusError(409, 'The extension fee could not be calculated from the booked rate. Check the reservation rate before extending.');
   const current = getScheduledCheckOutMs(reservation);
   if (current === null) throw new StatusError(409, 'This booking has no check-out date.');
-  // Extend from the later of now or the current check-out time.
-  const until = Math.max(current, Date.now()) + extraHours * 3600000;
+  const until = current + extraHours * 3600000;
   const updates = {
     lateCheckoutUntil: until,
     lateCheckoutExtensions: FieldValue.arrayUnion({
@@ -221,8 +265,10 @@ function extendCheckout({ transaction, reservationRef, reservation, staff, hours
     updates.lateCheckoutChargeTotal = FieldValue.increment(fee);
     updates.lateCheckoutCharges = FieldValue.arrayUnion({
       id: crypto.randomUUID(),
+      kind: 'hourly-extension',
       amount: fee,
-      note: note || `Late check-out, ${extraHours} extra hour${extraHours === 1 ? '' : 's'}`,
+      hours: extraHours,
+      note,
       addedBy: staff.uid,
       addedAt: new Date().toISOString(),
       overstayMinutes: 0,
@@ -279,8 +325,25 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'A reservation is required.' });
   }
   const reservationRef = adminDb.collection('reservations').doc(reservationId);
+  let lastChargeNote = '';
 
   try {
+    // Checking out or flagging a guest who stayed past check-out without
+    // telling the front desk first adds the 10% overstay charge.
+    const leaving = (action === 'set-status' && status === 'checked-out') || action === 'flag-overstay';
+    const overstayCharge = leaving ? await applyUnannouncedOverstayCharge(reservationRef) : null;
+    if (overstayCharge) {
+      await logActivity(staff, {
+        action: 'overstay_charge_added',
+        summary: `Added ₱${overstayCharge.amount.toLocaleString()} overstay charge (10% of room rate, no notice) on booking #${reservationId.slice(0, 8).toUpperCase()}`,
+        reservationId,
+        guestName: overstayCharge.guestName,
+      });
+    }
+    const chargeNote = overstayCharge
+      ? `A ₱${overstayCharge.amount.toLocaleString()} overstay charge (10% of the room rate) was added because the guest stayed ${overstayCharge.overstay.label} past check-out without telling the front desk. `
+      : '';
+    lastChargeNote = chargeNote;
     let checkOutDate = '';
     let guestName = '';
     const result = await adminDb.runTransaction(async transaction => {
@@ -304,7 +367,21 @@ export default async function handler(req, res) {
       }
       if (action === 'flag-overstay') return flagOverstay({ ...context, note: cleanText(note, 300) });
       if (action === 'add-late-fee') return addLateFee({ ...context, amount, note: cleanText(note, 300) });
-      if (action === 'extend-checkout') return extendCheckout({ ...context, hours: req.body?.hours, amount, note: cleanText(note, 300) });
+      if (action === 'extend-checkout') {
+        let members = [{ ref: reservationRef, data: reservation }];
+        if (req.body?.extendGroup === true && reservation.groupId) {
+          const group = await transaction.get(adminDb.collection('reservations').where('groupId', '==', reservation.groupId));
+          members = group.docs.filter(doc => doc.data().status === 'checked-in')
+            .map(doc => ({ ref: doc.ref, data: doc.data() }));
+        }
+        const extensions = members.map(member => extendCheckout({
+          transaction, reservationRef: member.ref, reservation: member.data, staff,
+          hours: req.body?.hours, note: cleanText(note, 300),
+        }));
+        const selected = extensions[members.findIndex(member => member.ref.id === reservationId)];
+        if (!selected) throw new StatusError(409, 'This booking is no longer checked in.');
+        return { ...selected, fee: Math.round(extensions.reduce((sum, item) => sum + item.fee, 0) * 100) / 100, roomCount: extensions.length };
+      }
       throw new StatusError(400, 'Choose a valid reservation action.');
     });
 
@@ -319,7 +396,7 @@ export default async function handler(req, res) {
       const entry = action === 'set-arrived-guests'
         ? { action: 'guests_arrived', summary: `Recorded ${result.arrivedGuests} of ${result.booked} guests arrived on booking ${ref}` }
         : action === 'extend-checkout'
-        ? { action: 'late_checkout_given', summary: `Gave booking ${ref} ${result.hours} more hour${result.hours === 1 ? '' : 's'} (check-out ${result.untilLabel})${result.fee ? `, ₱${Number(result.fee).toLocaleString()} fee` : ''}` }
+        ? { action: 'late_checkout_given', summary: `Extended booking ${ref} by ${result.hours} hour${result.hours === 1 ? '' : 's'} (${result.roomCount} room${result.roomCount === 1 ? '' : 's'}, check-out ${result.untilLabel}), ₱${Number(result.fee).toLocaleString()} extension fee` }
         : action === 'add-late-fee'
         ? { action: 'late_fee_added', summary: `Added ₱${Number(result.lateFeeAdded || 0).toLocaleString()} late check-out charge on booking ${ref}` }
         : action === 'flag-overstay'
@@ -329,9 +406,9 @@ export default async function handler(req, res) {
             : { action: 'status_changed', summary: `Changed booking ${ref} from ${result.previousStatus} to ${result.status}` };
       await logActivity(staff, { ...entry, reservationId, guestName: guestName || '' });
     }
-    return res.status(200).json({ ok: true, reservationId, ...result });
+    return res.status(200).json({ ok: true, reservationId, ...result, ...(overstayCharge ? { overstayChargeAdded: overstayCharge.amount, overstayChargeNote: chargeNote.trim() } : {}) });
   } catch (error) {
-    if (error instanceof StatusError) return res.status(error.httpStatus).json({ error: error.message });
+    if (error instanceof StatusError) return res.status(error.httpStatus).json({ error: `${lastChargeNote}${error.message}` });
     console.error('Reservation status update failed:', error);
     return res.status(500).json({ error: 'The reservation could not be updated. Please try again.' });
   }

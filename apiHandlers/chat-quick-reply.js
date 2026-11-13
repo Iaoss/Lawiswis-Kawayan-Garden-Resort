@@ -26,6 +26,7 @@ import { DEFAULT_QUICK_REPLIES, sortQuickReplies } from '../src/admin/components
 import { AUTO_TOPICS, buildAutoAnswer, detectTopic, handoffMessage, isAutoTopic } from '../src/lib/chatAutoReply';
 import { availabilityQuestion, buildAvailabilityAnswer, normalizeAvailabilityRequest } from '../src/lib/chatAvailability';
 import { readSeasonPeriods } from '../lib/seasonStore';
+import { loadActiveReservations, loadRoomsCached } from '../lib/activeReservations';
 
 const MAX_AUTO_REPLIES_PER_CHAT = 40;
 
@@ -34,8 +35,13 @@ const HANDOFF_EVERY_MS = 30 * 60000;
 const COVERED_DEFAULTS = new Set(DEFAULT_QUICK_REPLIES.map(item => item.id));
 
 // Staff-written questions from Settings → Quick Replies.
+// Kept for a minute so each guest message doesn't re-read every reply.
+let repliesCache = { at: 0, snapshot: null };
 async function loadStaffReplies() {
-  const snapshot = await adminDb.collection('faqs').get();
+  if (!repliesCache.snapshot || Date.now() - repliesCache.at > 60000) {
+    repliesCache = { at: Date.now(), snapshot: await adminDb.collection('faqs').get() };
+  }
+  const { snapshot } = repliesCache;
   return sortQuickReplies(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))
     .filter(item => !COVERED_DEFAULTS.has(item.id)
       && typeof item.question === 'string' && item.question.trim()
@@ -51,10 +57,8 @@ async function loadPolicy() {
   }
 }
 
-async function loadRooms() {
-  const snapshot = await adminDb.collection('rooms').get();
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-}
+// Shared for a few seconds between chats (see lib/activeReservations.js).
+const loadRooms = () => loadRoomsCached();
 
 // { question, answer } for a button id, or null.
 async function answerFor(replyId) {
@@ -83,14 +87,12 @@ async function answerAvailability(res, uid, conversationId, input) {
     if (Number(conversation.data().autoReplyCount || 0) >= MAX_AUTO_REPLIES_PER_CHAT) {
       return res.status(429).json({ error: 'Please type your question and our staff will reply.' });
     }
-    // All bookings, like /api/room-availability (check-in dates are saved in
-    // more than one format, so they can't be filtered in the query).
-    const [rooms, reservationsSnap, seasonPeriods] = await Promise.all([
+    // Bookings that can still hold a room, like /api/room-availability.
+    const [rooms, reservations, seasonPeriods] = await Promise.all([
       loadRooms(),
-      adminDb.collection('reservations').get(),
+      loadActiveReservations(),
       readSeasonPeriods().catch(() => []),
     ]);
-    const reservations = reservationsSnap.docs.map(doc => doc.data());
     const answer = buildAvailabilityAnswer({ rooms, reservations, seasonPeriods, ...request });
 
     const now = Date.now();

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db } from '../../firebase/firebase';
+import { auth, db } from '../../firebase/firebase';
 import { collection, onSnapshot, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 import { DEFAULT_QUICK_REPLIES, sortQuickReplies } from './quickReplyDefaults';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
+import { staffLabel } from '../../lib/staffLabel';
 
 const PANEL_WIDTH = 400;
 
@@ -81,7 +82,10 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
     await addDoc(collection(db, 'conversations', selected.id, 'messages'), {
       sender: 'staff',
       text: newMsg,
-      staffName: me?.name || '',
+      // Who replied (every staff member can answer the same chat).
+      staffUid: auth.currentUser?.uid || '',
+      staffName: me?.name || auth.currentUser?.email || '',
+      staffRole: me?.role || '',
       staffAvatar: me?.avatar || '',
       timestamp: serverTimestamp(),
     });
@@ -206,6 +210,7 @@ export default function ChatPanel({ dark, accent, open, onClose }) {
                   </div>
                   <div style={{ fontSize: 10, color: MUTED, marginTop: 4, display: 'flex', gap: 6, justifyContent: ['staff', 'bot'].includes(m.sender) ? 'flex-end' : 'flex-start' }}>
                     {(m.isBot || m.sender === 'bot') && <span>Auto-reply</span>}
+                    {m.sender === 'staff' && <span>Replied by {staffLabel(m.staffName, m.staffRole)}</span>}
                     <span>{(m.timestamp || m.createdAt)?.seconds ? new Date((m.timestamp || m.createdAt).seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}</span>
                   </div>
                 </div>

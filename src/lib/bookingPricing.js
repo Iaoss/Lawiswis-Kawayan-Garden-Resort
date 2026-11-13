@@ -227,6 +227,18 @@ export const ROOM_RATE_INCLUDES = {
   daytour: 'Entrance and pool access included',
 };
 export const EXTRA_PERSON_NOTE = 'Extra person ₱800 per night, with breakfast';
+// Day and night tours: an extra guest can add a meal for ₱350 each.
+// (Overnight extra guests already get breakfast in the ₱800.)
+export const EXTRA_GUEST_MEAL_RATE = 350;
+export const EXTRA_GUEST_MEAL_NOTE = `Meal for extra guests: ₱${EXTRA_GUEST_MEAL_RATE} each`;
+
+// The meal fields saved on a reservation.
+export const extraGuestMealFields = pricing => ({
+  extraGuestMeal: Boolean(pricing?.extraGuestMeal),
+  extraMealGuests: Number(pricing?.extraMealGuests || 0),
+  extraMealRate: EXTRA_GUEST_MEAL_RATE,
+  extraMealCharge: Number(pricing?.extraMealCharge || 0),
+});
 
 const normalizeText = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -495,6 +507,8 @@ export function calculateBookingPrice({
   // Repricing an existing booking: keep the cottage fee it was booked at,
   // even if the admin has since changed or removed that cottage.
   keepCottageFee = false,
+  // Day / night tour: the extra guests want a meal (₱350 each).
+  extraGuestMeal = false,
 }) {
   const { amount: baseRate, baseCapacity } = getRoomBaseRate(room, bookingType);
   const totalGuests = adults + children;
@@ -508,6 +522,8 @@ export function calculateBookingPrice({
     ? { adult: 800, child: 800 }
     : getSwimmingRate(tourPeriod);
   const extraGuestCharge = (extraAdults * extraRate.adult + extraChildren * extraRate.child) * nights;
+  const extraMealGuests = bookingType !== 'overnight' && extraGuestMeal === true ? extraGuests : 0;
+  const extraMealCharge = extraMealGuests * EXTRA_GUEST_MEAL_RATE * nights;
   const fee = Number(cottageFee);
   // Removed (archived) cottages and older rates are only accepted when an
   // existing booking is repriced; new bookings can't choose them.
@@ -545,6 +561,9 @@ export function calculateBookingPrice({
     extraAdultRate: extraRate.adult,
     extraChildRate: extraRate.child,
     extraGuestCharge,
+    extraGuestMeal: extraMealGuests > 0,
+    extraMealGuests,
+    extraMealCharge,
     cottageId,
     cottageFee: fee,
     dayVisitorAdults: visitors?.adults || 0,
@@ -554,7 +573,7 @@ export function calculateBookingPrice({
     lateArrivalSurcharge,
     seasonalSurcharge: seasonal.amount,
     seasonalLabel: seasonal.label,
-    subtotalAmount: Math.round((baseRate * nights + extraGuestCharge + fee + dayVisitorCharge + lateArrivalSurcharge + seasonal.amount) * 100) / 100,
+    subtotalAmount: Math.round((baseRate * nights + extraGuestCharge + extraMealCharge + fee + dayVisitorCharge + lateArrivalSurcharge + seasonal.amount) * 100) / 100,
   };
 }
 

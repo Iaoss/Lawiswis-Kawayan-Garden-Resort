@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db } from '../../firebase/firebase';
+import { auth, db } from '../../firebase/firebase';
 import {
   collection, onSnapshot,
   addDoc, serverTimestamp, doc, updateDoc, setDoc, getDocs, deleteDoc
@@ -10,6 +10,7 @@ import { pagePalette } from '../lib/pagePalette';
 import { BeamAvatar, StaffAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import { appConfirm } from '../../components/ui/app-dialog';
+import { staffLabel } from '../../lib/staffLabel';
 
 const ACCENT = '#9cb56f';
 const DARK   = '#1A312C';
@@ -110,7 +111,10 @@ export default function Messages() {
     await addDoc(collection(db, 'conversations', selected.id, 'messages'), {
       sender: 'staff',
       text: msg,
-      staffName: me?.name || '',
+      // Who replied (every staff member can answer the same chat).
+      staffUid: auth.currentUser?.uid || '',
+      staffName: me?.name || auth.currentUser?.email || '',
+      staffRole: me?.role || '',
       staffAvatar: me?.avatar || '',
       timestamp: serverTimestamp(),
     });
@@ -384,11 +388,12 @@ export default function Messages() {
                       </div>
                       <div style={{ fontSize: '10px', color: MUTED, marginTop: '4px', textAlign: ['staff', 'bot'].includes(m.sender) ? 'right' : 'left' }}>
                         {m.sender === 'bot' && 'Auto-reply · '}
+                        {m.sender === 'staff' && `Replied by ${staffLabel(m.staffName, m.staffRole)} · `}
                         {(m.timestamp || m.createdAt)?.seconds ? new Date((m.timestamp || m.createdAt).seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Sending...'}
                       </div>
                     </div>
                     {['staff', 'bot'].includes(m.sender) && (
-                      <span title={m.staffName || 'Staff'}>
+                      <span title={m.sender === 'bot' ? 'Auto-reply' : `Replied by ${staffLabel(m.staffName, m.staffRole)}`}>
                         <StaffAvatar seed={m.staffAvatar} name={m.staffName || (m.sender === 'bot' ? 'Auto reply' : 'Staff')} size={28} background={ACCENT} color={DARK} />
                       </span>
                     )}

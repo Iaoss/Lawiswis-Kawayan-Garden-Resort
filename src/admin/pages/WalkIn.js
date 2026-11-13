@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
-import { collection, doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { WALK_IN_CATEGORIES, getRoomsForCategory, normalizeRoomType } from '../utils/roomCatalog';
@@ -10,7 +10,7 @@ import {
   MAX_STAY_NIGHTS, OVERNIGHT_TIME_SLOTS, getRoomBaseRate, getRoomMaximumGuests, isCheckInPassed, isCoupleRoom, isTourStartPassed, isWalkInTourClosed, stayRangesOverlap,
 } from '../../lib/bookingPricing';
 import { BOOKING_OPTIONS, normalizeBookingDetails, priceBookingDetails } from '../../lib/bookingDetails';
-import { COTTAGE_OPTIONS, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES, calculateCottageTourPrice, cottageName, getCottageFee } from '../../lib/bookingPricing';
+import { COTTAGE_OPTIONS, EXTRA_GUEST_MEAL_RATE, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES, calculateCottageTourPrice, cottageName, getCottageFee } from '../../lib/bookingPricing';
 import { groupTooLargeNote, suggestCottage, suggestRooms } from '../../lib/bookingSuggestions';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
@@ -144,6 +144,8 @@ export default function WalkIn() {
     roomId: '', checkIn: '', checkOut: '',
     bookingOption: 'overnight', overnightTimeSlot: 'morning', cottageId: '', cottageOnly: false,
     adults: 1, children: 0,
+    // Day / night tour: the extra guests add a meal (₱350 each).
+    extraGuestMeal: false,
     // How many of the group are here now ('' = everyone); the rest come later.
     guestsHereNow: '',
     paymentMethod: 'cash', paymentStatus: 'pending', notes: '',
@@ -176,7 +178,8 @@ export default function WalkIn() {
     const unsubRooms = onSnapshot(collection(db, 'rooms'),
       snap => setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.warn('Rooms could not be loaded:', err.message));
-    const unsubRes = onSnapshot(collection(db, 'reservations'),
+    // Only bookings that can still hold a room (not the whole history).
+    const unsubRes = onSnapshot(query(collection(db, 'reservations'), where('status', 'in', ['pending', 'confirmed', 'checked-in'])),
       snap => setReservations(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.warn('Reservations could not be loaded:', err.message));
     return () => { unsubRooms(); unsubRes(); };
@@ -197,6 +200,7 @@ export default function WalkIn() {
       checkOut: isTour ? form.checkIn : form.checkOut,
       adults: Number(form.adults) || 1,
       children: Number(form.children) || 0,
+      extraGuestMeal: form.extraGuestMeal === true,
     }, { walkIn: true })
     : null;
   const stayError = detailsCheck?.error || '';
@@ -269,6 +273,13 @@ export default function WalkIn() {
     : [];
   const groupTotal = groupLines.reduce((sum, item) => sum + item.price, 0);
   const estimatedTotal = extraRooms.length ? groupTotal : totalAmount;
+  // Extra guests on a tour (any room in the booking): they can add a meal.
+  const extraGuestsOf = (room, a, c) => { try { return priceBookingDetails(room, { ...details, adults: a, children: c }).extraGuests; } catch { return 0; } };
+  const tourExtraGuests = isTour && !cottageOnly && details && selectedRoom && selectedRoom.id !== 'cottage-only'
+    ? (roomSplit
+      ? roomSplit.reduce((sum, item, i) => sum + extraGuestsOf(i === 0 ? selectedRoom : extraRooms[i - 1], item.adults, item.children), 0)
+      : extraGuestsOf(selectedRoom, details.adults, details.children))
+    : 0;
   const toggleExtraRoom = room => setExtraRoomIds(current => (current.includes(room.id)
     ? current.filter(id => id !== room.id)
     : current.length >= MAX_ROOMS_PER_BOOKING - 1 ? current : [...current, room.id]));
@@ -333,7 +344,14 @@ export default function WalkIn() {
     }
   }, [availableRooms, selectedRoom, datesReady]);
 
+  // Clicking the chosen room again unselects it (and any rooms added to it).
   const handleSelectRoom = (room) => {
+    if (selectedRoom?.id === room.id) {
+      setSelectedRoom(null);
+      setExtraRoomIds([]);
+      setForm(f => ({ ...f, roomId: '' }));
+      return;
+    }
     setExtraRoomIds(current => current.filter(id => id !== room.id));
     setSelectedRoom(room);
     setForm(f => ({ ...f, roomId: room.id }));
@@ -792,12 +810,26 @@ export default function WalkIn() {
                                 <strong>{index === 0 ? 'Best fit: ' : ''}{room.roomNumber}</strong> · {normalizeRoomType(room.type) || room.type}
                                 <div style={{ fontSize: 11, color: MUTED }}>{reason} · est. ₱{total.toLocaleString()}</div>
                               </div>
-                              <button type="button" onClick={() => handleSelectRoom(room)}
-                                style={{ background: selectedRoom?.id === room.id ? ACCENT : 'transparent', color: selectedRoom?.id === room.id ? ACCENT_TEXT : TEXT, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                                {selectedRoom?.id === room.id ? 'Selected' : 'Choose'}
-                              </button>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                <button type="button" onClick={() => handleSelectRoom(room)} aria-pressed={selectedRoom?.id === room.id}
+                                  title={selectedRoom?.id === room.id ? 'Click to unselect this room' : 'Choose this room'}
+                                  style={{ background: selectedRoom?.id === room.id ? ACCENT : 'transparent', color: selectedRoom?.id === room.id ? ACCENT_TEXT : TEXT, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                                  {selectedRoom?.id === room.id ? <>Selected <i className="ti ti-x" aria-hidden="true" style={{ marginLeft: 4, verticalAlign: '-1px' }} /></> : 'Choose'}
+                                </button>
+                                {selectedRoom?.id === room.id && (
+                                  <button type="button" disabled={extraRooms.length > 0 && !roomSplit} onClick={() => setStep(2)}
+                                    style={{ background: ACCENT, color: ACCENT_TEXT, border: 0, borderRadius: 8, padding: '6px 12px', fontSize: 11, fontWeight: 700, cursor: extraRooms.length > 0 && !roomSplit ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
+                                    Continue to guest details
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           ))}
+                        </div>
+                      )}
+                      {extraRooms.length > 0 && !roomSplit && (
+                        <div role="status" style={{ fontSize: 11, color: '#b45309', marginTop: 8 }}>
+                          Adjust the guest count or remove an added room before continuing. Each room needs at least one adult.
                         </div>
                       )}
                       {cottageSuggestion?.cottage && (
@@ -923,6 +955,12 @@ export default function WalkIn() {
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>{isTour ? bookingOption.label : 'Stay'}</span><span>{isTour ? formatDate(form.checkIn) : `${formatDate(form.checkIn)} → ${formatDate(form.checkOut)}`}</span></div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><span>{nights} {stayUnit}{nights !== 1 ? 's' : ''} · est.</span><span style={{ color: TEXT, fontWeight: 700 }}>₱{estimatedTotal.toLocaleString()}</span></div>
                         <div style={{ fontSize: 10.5, color: ACCENT, marginTop: 6 }}>✓ {isTour ? ROOM_RATE_INCLUDES.daytour : `${ROOM_RATE_INCLUDES.overnight}. ${EXTRA_PERSON_NOTE}`}.</div>
+                        {tourExtraGuests > 0 && (
+                          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 7, marginTop: 8, fontSize: 11.5, color: TEXT, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={form.extraGuestMeal === true} onChange={e => setForm(current => ({ ...current, extraGuestMeal: e.target.checked }))} style={{ marginTop: 2, accentColor: ACCENT }} />
+                            <span>Meal for {tourExtraGuests} extra guest{tourExtraGuests !== 1 ? 's' : ''} (+₱{EXTRA_GUEST_MEAL_RATE.toLocaleString()} each{form.extraGuestMeal ? `, ₱${(tourExtraGuests * EXTRA_GUEST_MEAL_RATE).toLocaleString()}` : ''})</span>
+                          </label>
+                        )}
                       </div>
                       {extraRooms.length > 0 && (
                         <div style={{ background: CARD2, borderRadius: 10, padding: 10, marginBottom: 12, fontSize: 11.5, color: TEXT }}>

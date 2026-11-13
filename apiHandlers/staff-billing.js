@@ -38,7 +38,7 @@ import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
 import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
-import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, getCottageFee, formatResortClock, getReservationDayVisitors, getRoomMaximumGuests, getWalkInTourCutoffError, isLateArrivalTime, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, extraGuestMealFields, getCottageFee, formatResortClock, getReservationDayVisitors, getRoomMaximumGuests, getWalkInTourCutoffError, isLateArrivalTime, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getCottageAvailabilityFor } from '../lib/cottageStock';
 import { cottageAvailabilityError } from '../src/lib/cottages';
 import { BOOKING_OPTIONS, getBookingOptionId, normalizeBookingDetails, priceBookingDetails } from '../src/lib/bookingDetails';
@@ -56,6 +56,7 @@ import { normalizeAgencyDetails } from '../src/lib/agencyBilling';
 import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms';
 import { bookedGuestCount, splitArrivedGuests } from '../src/lib/guestArrivals';
 import { normalizePhMobile } from '../src/lib/phoneNumber';
+import { staffStamp } from '../src/lib/staffLabel';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -223,7 +224,7 @@ async function assignCorporateRooms({ staff, reservationId, roomIds }) {
         paymentStatus: 'paid',
         paymentMethod: 'corporate',
         notes: `Room for the ${groupName} group (booking #${ref.id.slice(0, 8).toUpperCase()}).`,
-        createdBy: staff.uid,
+        ...staffStamp(staff, 'createdBy'),
         createdAt: FieldValue.serverTimestamp(),
       });
     });
@@ -602,6 +603,7 @@ function detailsFromForm(form, options) {
     checkOut: form.checkOut,
     adults: Number(form.adults),
     children: Number(form.children || 0),
+    extraGuestMeal: form.extraGuestMeal === true,
   }, options);
   if (result.error) throw new BillingError(400, result.error);
   return result.details;
@@ -680,7 +682,7 @@ async function createCottageWalkIn({ staff, booking }) {
       const [here] = date === today ? splitArrivedGuests(booking.guestsHereNow, [Number(booking.adults) + Number(booking.children || 0)]) : [null];
       return here === null ? {} : { arrivedGuests: here };
     })(),
-    createdBy: staff.uid,
+    ...staffStamp(staff, 'createdBy'),
     createdAt: FieldValue.serverTimestamp(),
   });
   return { totalAmount, amountPaid: 0, roomNumber: `${pricing.cottageLabel} (cottage)`, arrivesToday: date === today, checkedIn: false, reservationId: reservationRef.id, receipt: null, receiptError: '' };
@@ -788,6 +790,7 @@ async function createWalkIn({ staff, booking = {} }) {
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
+      ...extraGuestMealFields(pricing),
       lateArrival: isLateArrivalTime(details.checkInTime) && details.bookingType === 'overnight',
       lateArrivalSurcharge: pricing.lateArrivalSurcharge || 0,
       seasonalSurcharge: pricing.seasonalSurcharge || 0,
@@ -806,7 +809,7 @@ async function createWalkIn({ staff, booking = {} }) {
       // Paid in full and arriving today: the guest goes straight in.
       status: checkedInNow ? 'checked-in' : 'confirmed',
       ...(checkedInNow ? { checkedInAt: FieldValue.serverTimestamp() } : {}),
-      createdBy: staff.uid,
+      ...staffStamp(staff, 'createdBy'),
       createdAt: FieldValue.serverTimestamp(),
     });
     if (amountPaid > 0) {
@@ -846,6 +849,7 @@ async function createWalkIn({ staff, booking = {} }) {
         baseRate: extraPricing.baseRate,
         baseCapacity: extraPricing.baseCapacity,
         extraGuestCharge: extraPricing.extraGuestCharge,
+        ...extraGuestMealFields(extraPricing),
         lateArrival: isLateArrivalTime(extra.details.checkInTime) && extra.details.bookingType === 'overnight',
         lateArrivalSurcharge: extraPricing.lateArrivalSurcharge || 0,
         seasonalSurcharge: extraPricing.seasonalSurcharge || 0,
@@ -860,7 +864,7 @@ async function createWalkIn({ staff, booking = {} }) {
         type: 'walk-in',
         ...groupFields,
         status: 'confirmed',
-        createdBy: staff.uid,
+        ...staffStamp(staff, 'createdBy'),
         createdAt: FieldValue.serverTimestamp(),
       });
       return { reservationId: extra.ref.id, roomNumber: extra.room.roomNumber || '', totalAmount: extraTotal };
@@ -933,6 +937,7 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
       checkOut: changes.checkOut ?? reservation.checkOut,
       adults: changes.adults ?? reservation.adults,
       children: changes.children ?? reservation.children ?? 0,
+      extraGuestMeal: typeof changes.extraGuestMeal === 'boolean' ? changes.extraGuestMeal : reservation.extraGuestMeal === true,
     }, { room, keepStartDate: reservation.checkIn });
     // Policy: dates can't move inside the rebooking window or once the
     // stay has started (cancel and rebook instead). Extending or shortening
@@ -995,6 +1000,7 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
+      ...extraGuestMealFields(pricing),
       seasonalSurcharge: pricing.seasonalSurcharge || 0,
       seasonalLabel: pricing.seasonalLabel || '',
       subtotalAmount: pricing.subtotalAmount,
@@ -1076,6 +1082,7 @@ async function addRoomToBooking({ staff, reservationId, roomId, adults, children
       checkIn: reservation.checkIn,
       checkOut: reservation.checkOut,
       adults, children,
+      extraGuestMeal: reservation.extraGuestMeal === true,
     }, { room, keepStartDate: reservation.checkIn });
     if (blockedRoomStatus(room.status, details.checkIn, manilaDateKey())) throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
     if (await roomIsTaken(transaction, { roomId, roomNumber: room.roomNumber, checkIn: details.checkIn, checkOut: details.checkOut })) {
@@ -1111,6 +1118,7 @@ async function addRoomToBooking({ staff, reservationId, roomId, adults, children
       baseRate: pricing.baseRate,
       baseCapacity: pricing.baseCapacity,
       extraGuestCharge: pricing.extraGuestCharge,
+      ...extraGuestMealFields(pricing),
       lateArrival: isLateArrivalTime(details.checkInTime) && details.bookingType === 'overnight',
       lateArrivalSurcharge: pricing.lateArrivalSurcharge || 0,
       seasonalSurcharge: pricing.seasonalSurcharge || 0,
@@ -1126,7 +1134,7 @@ async function addRoomToBooking({ staff, reservationId, roomId, adults, children
       ...groupFields,
       status: insideNow ? 'checked-in' : 'confirmed',
       ...(insideNow ? { checkedInAt: FieldValue.serverTimestamp() } : {}),
-      createdBy: staff.uid,
+      ...staffStamp(staff, 'createdBy'),
       createdAt: FieldValue.serverTimestamp(),
     });
     return { added: true, reservationId: newRef.id, totalAmount, roomNumber: room.roomNumber || '', mainRoomNumber: reservation.roomNumber || '' };

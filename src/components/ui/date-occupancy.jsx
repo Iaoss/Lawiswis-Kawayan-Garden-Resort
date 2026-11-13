@@ -19,7 +19,7 @@ const formatDay = date => new Date(`${date}T00:00:00`).toLocaleDateString('en-PH
 // Live count of bookings and guests already on `date`, per time slot.
 // `focus` ('day' | 'night' | 'overnight') highlights the slot being booked.
 // Refreshes every `refreshMs` while shown, and when the tab regains focus.
-export default function DateOccupancy({ date, focus = '', refreshMs = 30000, colors, style }) {
+export default function DateOccupancy({ date, focus = '', refreshMs = 120000, colors, style }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(false);
   const c = { ...DEFAULT_COLORS, ...colors };
@@ -39,7 +39,7 @@ export default function DateOccupancy({ date, focus = '', refreshMs = 30000, col
       .catch(() => { if (active) setError(true); });
     setData(null);
     load();
-    const timer = setInterval(load, refreshMs);
+    const timer = setInterval(() => { if (!document.hidden) load(); }, refreshMs);
     const onFocus = () => load();
     window.addEventListener('focus', onFocus);
     return () => {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../firebase/firebase';
-import { collection, getDocs, doc, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { useLocation, useNavigate } from 'react-router-dom';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
@@ -9,14 +9,14 @@ import { SortControls, sortRecords } from '../lib/listSort';
 import { receiptNotice, staffApi } from '../lib/staffApi';
 import { SERVICES, getService, isRoomGuest, priceService } from '../../lib/services';
 import { getVatBreakdown } from '../../lib/bookingPricing';
-import { getScheduledCheckOutMs, formatManilaTime } from '../../lib/reservationStatus';
+import { getScheduledCheckOutMs, formatManilaTime, getUnannouncedOverstayCharge } from '../../lib/reservationStatus';
 import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import QRCode from 'qrcode';
 import PhoneDisplayToggle from '../components/PhoneDisplayToggle';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 import PromoCodeForm from '../components/PromoCodeForm';
 import AgencyBillingCard from '../components/AgencyBillingCard';
-import { agencyStatusLabel, canStayOnAgencyCredit, isAgencyBilled } from '../../lib/agencyBilling';
+import { agencyDueText, agencyPaymentDue, agencyStatusLabel, canStayOnAgencyCredit, isAgencyBilled, PAY_LATER_LABEL } from '../../lib/agencyBilling';
 
 // Rooms booked together (one reservation, several rooms) share one bill.
 const billKeyOf = r => (Array.isArray(r.groupReservationIds) && r.groupReservationIds.length > 1 ? (r.groupId || r.groupReservationIds[0]) : r.id);
@@ -83,8 +83,15 @@ export default function Billing() {
   const [statusResult, setStatusResult] = useState(''); // '', 'unpaid', 'paid', 'expired'
 
   const fetchReservations = async () => {
-    const snap = await getDocs(collection(db, 'reservations'));
-    setReservations(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    // Open bills only, plus agency groups still owing after check-out.
+    const reservationsRef = collection(db, 'reservations');
+    const [open, agency] = await Promise.all([
+      getDocs(query(reservationsRef, where('status', 'in', ['pending', 'confirmed', 'checked-in']))),
+      getDocs(query(reservationsRef, where('chargeToAgency', '==', true))),
+    ]);
+    const byId = new Map();
+    [...open.docs, ...agency.docs].forEach(d => byId.set(d.id, { id: d.id, ...d.data() }));
+    setReservations([...byId.values()]
       .filter(r => r.status !== 'cancelled' && r.type !== 'corporate-room'
         // Agency groups stay here after check-out until the agency pays.
         && (r.status !== 'checked-out' || (isAgencyBilled(r) && owedOf(r) > 0.004))));
@@ -342,6 +349,8 @@ export default function Billing() {
         if (!response.ok) throw new Error(`${isGroupBill ? `Room ${room.roomNumber || ''}: ` : ''}${result.error || 'The guest could not be checked out.'}`);
       }
     } catch (checkoutError) {
+      // An overstay charge may have just been added: show the new balance.
+      fetchReservations();
       appAlert(checkoutError.message, { title: 'Couldn’t check out', tone: 'danger' });
       return;
     }
@@ -474,6 +483,27 @@ export default function Billing() {
           </div>
         )}
 
+        {/* Enjoy now, pay later: what government agencies still owe. */}
+        {(() => {
+          const agencyBills = reservations.filter(r => isAgencyBilled(r) && totalBalance(r) > 0);
+          if (!agencyBills.length) return null;
+          const owed = agencyBills.reduce((sum, r) => sum + totalBalance(r), 0);
+          const overdue = agencyBills.filter(r => agencyPaymentDue(r, { balance: totalBalance(r) })?.overdue);
+          return (
+            <div role="status" style={{ ...card, display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 16px' }}>
+              <i className="ti ti-building-bank" aria-hidden="true" style={{ fontSize: 20, color: overdue.length ? RED : GREEN }} />
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>{PAY_LATER_LABEL} · government agencies</div>
+                <div style={{ fontSize: 12, color: SUBTEXT }}>
+                  {agencyBills.length} bill{agencyBills.length === 1 ? '' : 's'} waiting for agency payment
+                  {overdue.length ? <> · <strong style={{ color: RED }}>{overdue.length} overdue</strong></> : ' · none overdue'}
+                </div>
+              </div>
+              <div style={{ ...money, fontSize: 18, fontWeight: 800, color: overdue.length ? RED : TEXT }}>{formatCurrency(owed)}</div>
+            </div>
+          );
+        })()}
+
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 300px) 1fr', gap: 20, alignItems: 'start' }}>
           {/* ── Guests with an open bill ── */}
           <div style={{ ...card, padding: 14, position: 'sticky', top: 76 }}>
@@ -503,6 +533,10 @@ export default function Billing() {
                       <span style={{ color: SUBTEXT }}>{owes > 0 ? (isAgencyBilled(r) ? 'Due from agency' : 'Still owes') : 'Paid in full'}</span>
                       <span style={{ ...money, fontWeight: 700, color: owes > 0 ? RED : GREEN }}>{formatCurrency(Math.max(0, owes))}</span>
                     </div>
+                    {owes > 0 && isAgencyBilled(r) && r.status === 'checked-out' && (() => {
+                      const due = agencyPaymentDue(r, { balance: owes });
+                      return due && <div style={{ fontSize: 10.5, marginTop: 4, fontWeight: 600, color: due.overdue ? RED : SUBTEXT }}>{agencyDueText(due)}</div>;
+                    })()}
                   </button>
                 );
               })}
@@ -540,6 +574,10 @@ export default function Billing() {
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: 11, color: SUBTEXT, textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>{balance > 0 ? (isAgencyBilled(selected) ? 'Due from agency' : 'Balance due') : 'Paid in full'}</div>
                     <div style={{ ...money, fontSize: 28, fontWeight: 800, color: balance > 0 ? RED : GREEN }}>{formatCurrency(Math.max(0, balance))}</div>
+                    {balance > 0 && isAgencyBilled(selected) && (() => {
+                      const due = agencyPaymentDue(selected, { balance });
+                      return due && <div style={{ fontSize: 11.5, fontWeight: 600, color: due.overdue ? RED : SUBTEXT }}>{agencyDueText(due)}</div>;
+                    })()}
                   </div>
                 </div>
 
@@ -580,7 +618,7 @@ export default function Billing() {
                   </div>
 
                   {(selected.type === 'corporate' || isAgencyBilled(selected)) && (
-                    <AgencyBillingCard reservation={selected} onSaved={text => { setSuccess(text); fetchReservations(); }}
+                    <AgencyBillingCard reservation={selected} balance={balance} onSaved={text => { setSuccess(text); fetchReservations(); }}
                       t={{ card, inp, btn, TEXT, SUBTEXT, GREEN, RED, ACCENT_LINK: dark ? '#bef264' : '#2f6b3a' }} />
                   )}
 
@@ -742,6 +780,14 @@ export default function Billing() {
                     {stepTitle(3, isGroupBill ? 'Check out all rooms' : 'Check out', selected.status === 'checked-in'
                       ? (checkoutBlocked ? 'Collect the balance first.' : onAgencyCredit && balance > 0 ? `The bill stays open as Due from agency (PO ${selected.agencyBilling.poNumber}).` : `When the guest returns the key and leaves${selected.checkOutTime ? ` (check-out time ${selected.checkOutTime})` : ''}.`)
                       : 'Only for guests who are checked in.')}
+                    {selected.status === 'checked-in' && (() => {
+                      const pending = getUnannouncedOverstayCharge(selected);
+                      return pending ? (
+                        <div role="status" style={{ fontSize: 11.5, color: RED, fontWeight: 600, marginTop: 4, maxWidth: 520 }}>
+                          Overstay without notice ({pending.overstay.label} past check-out): ₱{pending.amount.toLocaleString()} (10% of the room rate) is added to the bill at check-out.
+                        </div>
+                      ) : null;
+                    })()}
                   </div>
                   <button type="button" onClick={confirmAndCheckout} disabled={selected.status !== 'checked-in' || checkoutBlocked}
                     style={{ ...btn('primary'), padding: '11px 20px', opacity: selected.status !== 'checked-in' || checkoutBlocked ? 0.5 : 1, cursor: selected.status !== 'checked-in' || checkoutBlocked ? 'not-allowed' : 'pointer' }}>

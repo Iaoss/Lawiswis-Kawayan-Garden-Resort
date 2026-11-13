@@ -99,6 +99,8 @@ export function normalizeBookingDetails(input = {}, { room = null, now = new Dat
       adults,
       children,
       nights: getStayUnits(checkIn, checkOut),
+      // Day / night tour extra guests can add a ₱350 meal each.
+      extraGuestMeal: isTour && input.extraGuestMeal === true,
     },
   };
 }
@@ -118,6 +120,7 @@ export function priceBookingDetails(room, details, { cottageId = '', cottageFee 
     lateArrival: details.bookingType === 'overnight' && isLateArrivalTime(details.checkInTime),
     season: seasonPeriods?.length ? { periods: seasonPeriods, checkIn: details.checkIn, checkOut: details.checkOut } : null,
     keepCottageFee,
+    extraGuestMeal: details.extraGuestMeal === true,
   });
 }
 

@@ -17,7 +17,13 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed.' });
   if (!adminDb) return res.status(500).json({ error: 'Service is not configured.' });
 
-  const staff = await verifyStaff(req);
+  let staff;
+  try {
+    staff = await verifyStaff(req);
+  } catch (error) {
+    console.error('Staff verification failed:', error);
+    return res.status(503).json({ error: 'Staff verification is temporarily unavailable. Please try again later.' });
+  }
   if (!staff) return res.status(401).json({ error: 'Please sign in again.' });
   if (staff.role !== 'admin') return res.status(403).json({ error: 'Only admins can manage staff accounts.' });
 

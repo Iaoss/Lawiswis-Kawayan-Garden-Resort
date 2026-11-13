@@ -40,6 +40,13 @@ service cloud.firestore {
     }
 
     // ── Users ───────────────────────────────────────────────
+    // Phone payment screen: each staff member reads only their own record.
+    // Only the server writes it (staff-billing phone-display-set).
+    match /staffDisplays/{userId} {
+      allow read: if isStaff() && request.auth.uid == userId;
+      allow write: if false;
+    }
+
     match /users/{userId} {
       allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
       allow create: if isAdmin();

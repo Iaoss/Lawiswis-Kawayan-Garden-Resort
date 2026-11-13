@@ -1,4 +1,5 @@
 import {
+  getUnannouncedOverstayCharge,
   getOverstay,
   getOverstayStats,
   getPeriodRange,
@@ -148,4 +149,34 @@ test('ID shown at check-in keeps only the type and last 4', () => {
   expect(normalizeIdCheck({ type: 'Passport', last4: '1234567' })).toBeNull();
   expect(normalizeIdCheck({ type: 'Library card', last4: '1234' })).toBeNull();
   expect(normalizeIdCheck(null)).toBeNull();
+});
+
+describe('overstay without notice (10% of the room rate)', () => {
+  // Check-out 12:00 PM Manila on Nov 12 = 04:00 UTC.
+  const guest = { status: 'checked-in', checkIn: '2026-11-11', checkOut: '2026-11-12', checkOutTime: '12:00 PM', baseRate: 4600, totalAmount: 4600 };
+  const at = utc => new Date(`2026-11-12T${utc}Z`);
+
+  it('is not charged within the grace period', () => {
+    expect(getUnannouncedOverstayCharge(guest, at('04:20:00'))).toBeNull();
+  });
+
+  it('charges 10% of the room rate once the guest is past check-out without notice', () => {
+    expect(getUnannouncedOverstayCharge(guest, at('05:00:00'))).toMatchObject({ amount: 460, roomRate: 4600 });
+  });
+
+  it('waits for an agreed late check-out to run out', () => {
+    const extended = { ...guest, lateCheckoutUntil: Date.parse('2026-11-12T07:00:00Z') };
+    expect(getUnannouncedOverstayCharge(extended, at('06:00:00'))).toBeNull();
+    expect(getUnannouncedOverstayCharge(extended, at('08:00:00'))).toMatchObject({ amount: 460 });
+  });
+
+  it('is charged only once, and only for checked-in guests', () => {
+    expect(getUnannouncedOverstayCharge({ ...guest, overstayPenalty: { amount: 460 } }, at('05:00:00'))).toBeNull();
+    expect(getUnannouncedOverstayCharge({ ...guest, status: 'checked-out' }, at('05:00:00'))).toBeNull();
+  });
+
+  it('uses the total per night for group packages without a room rate', () => {
+    const group = { ...guest, baseRate: 0, checkIn: '2026-11-10', totalAmount: 60000 };
+    expect(getUnannouncedOverstayCharge(group, at('05:00:00'))).toMatchObject({ roomRate: 30000, amount: 3000 });
+  });
 });

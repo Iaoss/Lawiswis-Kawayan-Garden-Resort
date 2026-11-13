@@ -177,6 +177,16 @@ describe('booking pricing', () => {
     });
   });
 
+  it('adds a ₱350 meal per extra guest on tours only, when chosen', () => {
+    const tour = { room: { name: 'Hiwaga', type: 'JuniorSuite4', price: 8000 }, bookingType: 'daytour', nights: 1, adults: 4, children: 2, tourPeriod: 'night' };
+    expect(calculateBookingPrice(tour)).toMatchObject({ extraGuestMeal: false, extraMealGuests: 0, extraMealCharge: 0, subtotalAmount: 7450 });
+    expect(calculateBookingPrice({ ...tour, extraGuestMeal: true })).toMatchObject({ extraGuestMeal: true, extraMealGuests: 2, extraMealCharge: 700, subtotalAmount: 8150 });
+    // No extra guests: nothing to add.
+    expect(calculateBookingPrice({ ...tour, adults: 4, children: 0, extraGuestMeal: true })).toMatchObject({ extraMealGuests: 0, extraMealCharge: 0 });
+    // Overnight extra guests already get breakfast in the ₱800.
+    expect(calculateBookingPrice({ ...tour, bookingType: 'overnight', extraGuestMeal: true })).toMatchObject({ extraMealCharge: 0 });
+  });
+
   it('multiplies daytour extra-adult and extra-child charges by the number of booked days', () => {
     expect(calculateBookingPrice({
       room: { name: 'Couple Room', price: 3000 },

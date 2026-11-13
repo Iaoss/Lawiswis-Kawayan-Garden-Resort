@@ -1,10 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db } from '../../firebase/firebase';
-import {
-  collection, getDocs, onSnapshot, addDoc, updateDoc, deleteDoc,
-  doc, Timestamp, query, orderBy,
-} from 'firebase/firestore';
+import { auth, db } from '../../firebase/firebase';
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, Timestamp, query, orderBy } from 'firebase/firestore';
 import ReceptionistLayout from '../components/ReceptionistLayout';
 import ShiftHandoverBanner from '../components/ShiftHandoverBanner';
 import { useSettings } from '../components/SettingsContext';
@@ -18,6 +15,9 @@ import { getReceptionistSections } from '../../lib/receptionistDashboard';
 import { money } from '../lib/money';
 import { serverNow } from '../../lib/serverClock';
 import { FOREST_MEADOW, FOREST_MEADOW_BLOBS } from '../lib/cardGradient';
+import { useStaffAccess } from '../lib/useStaffAccess';
+import { staffLabel } from '../../lib/staffLabel';
+import { loadCollection } from '../lib/cachedCollection';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -46,6 +46,7 @@ function sameDay(a, b) {
 export default function ReceptionistDashboard() {
   const navigate = useNavigate();
   const { settings } = useSettings();
+  const { user: me } = useStaffAccess();
   const dark = settings?.darkMode;
 
   // ── Theme tokens (mirrors Reservations.js / PageLayout palette) ──
@@ -105,8 +106,8 @@ export default function ReceptionistDashboard() {
 
   useEffect(() => {
     const fetch = async () => {
-      const roomsSnap = await getDocs(collection(db, 'rooms'));
-      const resSnap = await getDocs(collection(db, 'reservations'));
+      const roomsSnap = await loadCollection('rooms');
+      const resSnap = await loadCollection('reservations');
       const rooms = roomsSnap.docs.map(d => d.data());
       const reservations = resSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => r.type !== 'corporate-room');
       const today = manilaDateKey(); // Philippine date (toISOString would give the UTC date)
@@ -309,7 +310,7 @@ export default function ReceptionistDashboard() {
           <div style={S.card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div style={{ fontWeight: '600', fontSize: '14px', color: TEXT }}>Today's Arrivals</div>
-              <button type="button" onClick={() => { if (!printDailySheet(allReservations)) appAlert('Allow pop-ups for this site to print the sheet.', { title: 'Pop-up blocked', tone: 'warning' }); }}
+              <button type="button" onClick={() => { if (!printDailySheet(allReservations, { staffName: staffLabel(me?.name || auth.currentUser?.email, me?.role) })) appAlert('Allow pop-ups for this site to print the sheet.', { title: 'Pop-up blocked', tone: 'warning' }); }}
                 title="Print today's arrivals, departures and balances, in case the internet goes down"
                 style={{ marginLeft: 'auto', marginRight: 8, background: 'transparent', border: `1px solid ${ACCENT}`, borderRadius: '8px', padding: '6px 12px', fontSize: '11px', fontWeight: '600', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: TEXT }}>
                 <i className="ti ti-printer" aria-hidden="true" /> Print today's sheet

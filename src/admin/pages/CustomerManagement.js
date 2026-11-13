@@ -1,6 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../../firebase/firebase';
-import { collection, getDocs } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
@@ -8,6 +6,7 @@ import { getReservationRemarks } from '../../lib/reservationRemarks';
 import { splitGuestName } from '../../lib/nameValidation';
 import { staffApi } from '../lib/staffApi';
 import { money } from '../lib/money';
+import { loadCollection } from '../lib/cachedCollection';
 
 const normalizeStatus = status => String(status || 'pending').toLowerCase().trim().replace(/[\s_]+/g, '-');
 const dateKey = value => {
@@ -86,7 +85,7 @@ export default function CustomerManagement() {
 
   useEffect(() => {
     const fetch = async () => {
-      const snap = await getDocs(collection(db, 'reservations'));
+      const snap = await loadCollection('reservations');
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       // Group by guest name + phone
       const map = {};

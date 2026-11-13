@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../../firebase/firebase';
-import { collection, getDocs, doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { useStaffAccess } from '../lib/useStaffAccess';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
@@ -8,6 +8,7 @@ import { SortControls, sortRecords } from '../lib/listSort';
 import { staffApi } from '../lib/staffApi';
 import { DEFAULT_CANCELLATION_POLICY, describePolicyTiers, getStaffCancellationFee, normalizeCancellationPolicy } from '../../lib/cancellationPolicy';
 import ResortClosurePanel from '../components/ResortClosurePanel';
+import { loadCollection } from '../lib/cachedCollection';
 
 // `embedded` is used when this renders inside the Settings page tab,
 // so it does not wrap itself in a second PageLayout.
@@ -64,7 +65,7 @@ export default function CancellationPolicy({ embedded = false }) {
   const [showPolicyEdit, setShowPolicyEdit] = useState(false);
 
   const fetchReservations = async () => {
-    const resSnap = await getDocs(collection(db, 'reservations'));
+    const resSnap = await loadCollection('reservations');
     const data = resSnap.docs.map(d => ({ id: d.id, ...d.data() }))
       .filter(r => r.status !== 'cancelled' && r.status !== 'checked-out' && r.type !== 'corporate-room');
     data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));

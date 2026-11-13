@@ -3,21 +3,21 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { staffApi } from '../lib/staffApi';
 import { appAlert } from '../../components/ui/app-dialog';
-import { canStayOnAgencyCredit, isAgencyBilled, perDiemFit } from '../../lib/agencyBilling';
+import { agencyDueText, agencyPaymentDue, canStayOnAgencyCredit, DEFAULT_PAYMENT_TERMS_DAYS, isAgencyBilled, MAX_PAYMENT_TERMS_DAYS, PAY_LATER_LABEL, perDiemFit } from '../../lib/agencyBilling';
 import { printStatementOfAccount } from '../lib/printStatementOfAccount';
 
-// Billing: government agency / per diem groups that pay after the event.
+// Billing: "Enjoy now, pay later" for government agency / per diem groups.
 // Staff save the agency's PO number (this confirms the booking and lets the
 // group check in and out with the bill open) and print the Statement of
 // Account to send to the agency.
-export default function AgencyBillingCard({ reservation, t, onSaved }) {
+export default function AgencyBillingCard({ reservation, balance = null, t, onSaved }) {
   const r = reservation;
   const agency = r.agencyBilling || {};
   const [form, setForm] = useState(() => fromReservation(r));
   const [busy, setBusy] = useState(false);
   const [printing, setPrinting] = useState(false);
 
-  useEffect(() => { setForm(fromReservation(r)); }, [r.id, r.chargeToAgency, agency.poNumber, agency.tin, agency.office, agency.perDiemRate]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setForm(fromReservation(r)); }, [r.id, r.chargeToAgency, agency.poNumber, agency.tin, agency.office, agency.perDiemRate, agency.paymentTermsDays]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (key, value) => setForm(current => ({ ...current, [key]: value }));
   const save = async () => {
@@ -27,7 +27,7 @@ export default function AgencyBillingCard({ reservation, t, onSaved }) {
         action: 'set-agency-billing',
         reservationId: r.id,
         chargeToAgency: form.on,
-        agency: { office: form.office, tin: form.tin, poNumber: form.poNumber, perDiemRate: form.perDiemRate },
+        agency: { office: form.office, tin: form.tin, poNumber: form.poNumber, perDiemRate: form.perDiemRate, paymentTermsDays: form.paymentTermsDays },
       });
       onSaved?.(result.chargeToAgency
         ? (result.poNumber ? `Saved: billed to the agency, PO ${result.poNumber}.${result.confirmed ? ' The booking is now confirmed.' : ''}` : 'Saved: billed to the agency. Add the PO number when the agency sends it.')
@@ -54,20 +54,22 @@ export default function AgencyBillingCard({ reservation, t, onSaved }) {
   };
 
   const fit = perDiemFit(r.packageRate, form.perDiemRate);
+  // Due date as saved on the booking (changes show after Save).
+  const due = isAgencyBilled(r) ? agencyPaymentDue(r, { balance }) : null;
   const label = { display: 'grid', gap: 4, fontSize: 11, fontWeight: 600, color: t.SUBTEXT, minWidth: 0 };
   const input = { ...t.inp, width: '100%', minWidth: 0 };
 
   return (
     <div style={t.card}>
       <div style={{ fontWeight: 700, fontSize: 14, color: t.TEXT, marginBottom: 4 }}>
-        <i className="ti ti-building-bank" aria-hidden="true" /> Government agency billing
+        <i className="ti ti-building-bank" aria-hidden="true" /> {PAY_LATER_LABEL} · government agency
       </div>
       <div style={{ fontSize: 11.5, color: t.SUBTEXT, marginBottom: 12 }}>
-        For agencies that pay after the event (per diem, Purchase Order). With a PO saved, the group can check in and out while the agency’s payment is pending.
+        The group stays first and the agency pays after the event (per diem, Purchase Order). With a PO saved, the group can check in and out while the agency’s payment is pending, and the agency pays within the payment terms after check-out.
       </div>
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: t.TEXT, marginBottom: 10 }}>
         <input type="checkbox" checked={form.on} onChange={e => set('on', e.target.checked)} />
-        Charge to agency (pay after the event)
+        {PAY_LATER_LABEL}: charge to the agency
       </label>
       {form.on && (
         <div style={{ display: 'grid', gap: 8 }}>
@@ -76,7 +78,9 @@ export default function AgencyBillingCard({ reservation, t, onSaved }) {
             <label style={label}>Agency TIN<input value={form.tin} maxLength={20} onChange={e => set('tin', e.target.value)} placeholder="123-456-789-000" style={input} /></label>
             <label style={label}>Office / unit<input value={form.office} maxLength={120} onChange={e => set('office', e.target.value)} placeholder="e.g. DepEd Region III" style={input} /></label>
             <label style={label}>Per diem (₱ per person/day)<input type="number" min="0" value={form.perDiemRate} onChange={e => set('perDiemRate', e.target.value)} style={input} /></label>
+            <label style={label}>Pay within (days after check-out)<input type="number" min="0" max={MAX_PAYMENT_TERMS_DAYS} step="1" value={form.paymentTermsDays} onChange={e => set('paymentTermsDays', e.target.value)} style={input} /></label>
           </div>
+          {due && <div style={{ fontSize: 11.5, fontWeight: 600, color: due.overdue ? t.RED : t.SUBTEXT }}>Agency payment: {agencyDueText(due)}{due.overdue ? '. Follow up with the agency and send the Statement of Account again.' : ''}</div>}
           {agency.guestPoNumber && !agency.poNumber && (
             <div style={{ fontSize: 11.5, color: t.SUBTEXT }}>
               The guest wrote PO <strong>{agency.guestPoNumber}</strong> on the website. Check it against the agency’s PO, then save it above.
@@ -112,5 +116,6 @@ function fromReservation(r) {
     tin: agency.tin || '',
     office: agency.office || '',
     perDiemRate: agency.perDiemRate ? String(agency.perDiemRate) : '',
+    paymentTermsDays: String(Number.isInteger(agency.paymentTermsDays) ? agency.paymentTermsDays : DEFAULT_PAYMENT_TERMS_DAYS),
   };
 }
