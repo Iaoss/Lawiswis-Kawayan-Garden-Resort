@@ -13,6 +13,7 @@ import {
 } from '../lib/bookingNotifications';
 import { roomNotReadyNotifications } from '../lib/roomReadiness';
 import { manilaDateKey } from '../../lib/reservationStatus';
+import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
 
 // Bell in the staff top bar (admin and receptionist). Each notification card
 // is one button: clicking anywhere on it opens that booking.
@@ -71,7 +72,10 @@ function useNotificationReservations() {
       arrivingToday: query(reservations, where('checkIn', '>=', manilaDateKey()), where('checkIn', '<=', `${manilaDateKey()}`)),
     };
     const loaded = new Set();
-    const stops = Object.entries(queries).map(([key, q]) => onSnapshot(q, snapshot => {
+    // Shared live feeds: switching staff pages reuses them instead of
+    // reading every matching booking again.
+    const day = manilaDateKey();
+    const stops = Object.entries(queries).map(([key, q]) => subscribeLive(`bell:${key}${key === 'arrivingToday' ? `:${day}` : ''}`, () => q, snapshot => {
       setSources(current => ({ ...current, [key]: snapshot.docs.map(d => ({ id: d.id, ...d.data() })) }));
       loaded.add(key);
       if (loaded.size === Object.keys(queries).length) setReady(true);
@@ -107,7 +111,7 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   // Staff accounts locked after too many wrong passwords (admins only).
   useEffect(() => {
     if (prefix !== '/admin') { setLocks([]); return undefined; }
-    return onSnapshot(query(collection(db, 'notifications'), where('type', '==', 'login-locked')),
+    return subscribeLive('bell:locks', () => query(collection(db, 'notifications'), where('type', '==', 'login-locked')),
       snapshot => setLocks(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setLocks([]));
   }, [prefix]);
@@ -116,7 +120,7 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   // ratings (1–2★) show as "Unhappy Guest" so staff can follow up quickly.
   useEffect(() => {
     const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
-    return onSnapshot(query(collection(db, 'feedback'), where('createdAt', '>=', since)),
+    return subscribeLive('bell:feedback', () => query(collection(db, 'feedback'), where('createdAt', '>=', since)),
       snapshot => setFeedback(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setFeedback([]));
   }, []);
@@ -124,14 +128,14 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   useEffect(() => {
     if (!showInquiries) { setInquiries([]); return undefined; }
     const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
-    return onSnapshot(query(collection(db, 'contacts'), where('createdAt', '>=', since)),
+    return subscribeLive('bell:contacts', () => query(collection(db, 'contacts'), where('createdAt', '>=', since)),
       snapshot => setInquiries(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setInquiries([]));
   }, [showInquiries]);
 
   useEffect(() => {
     if (!showEmails) { setEmails([]); return undefined; }
-    return onSnapshot(query(collection(db, 'emails'), where('folder', '==', 'inbox'), where('read', '==', false)),
+    return subscribeLive('emails:inbox-unread', () => query(collection(db, 'emails'), where('folder', '==', 'inbox'), where('read', '==', false)),
       snapshot => setEmails(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setEmails([]));
   }, [showEmails]);
@@ -217,7 +221,7 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
   const messageItems = useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPath });
   // Room status, to warn when a room is still being cleaned on arrival day.
   const [rooms, setRooms] = useState([]);
-  useEffect(() => onSnapshot(collection(db, 'rooms'),
+  useEffect(() => subscribeCollection('rooms',
     snapshot => setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
     () => setRooms([])), []);
   const notifications = useMemo(

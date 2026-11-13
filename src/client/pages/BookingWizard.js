@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, FOREST_DEEP, INK, LINE, MOSS, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import BookingSteps from '../components/BookingSteps';
@@ -16,6 +14,7 @@ import { MIN_GROUP_GUESTS } from '../../lib/corporatePackages';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { closedPeriodMessage, findClosedPeriod, formatClosedRange } from '../../lib/closedDates';
 import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
+import { loadPublicRooms } from '../lib/publicRooms';
 
 // Step-by-step start of a booking: 1 Type (personal or group), 2 When (stay
 // type, dates, guests), 3 Choose a room (only rooms free on those dates,
@@ -81,8 +80,8 @@ export default function BookingWizard() {
   const guests = Number(adults) + Number(children);
 
   useEffect(() => {
-    getDocs(collection(db, 'rooms'))
-      .then(snapshot => setRooms(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).map(decorateRoom)))
+    loadPublicRooms()
+      .then(list => setRooms(list.map(decorateRoom)))
       .catch(() => setRooms([]))
       .finally(() => setRoomsLoading(false));
   }, []);

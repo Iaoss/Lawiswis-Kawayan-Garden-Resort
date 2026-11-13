@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { guardedNavigate } from '../lib/leaveGuard';
 import { auth, db } from '../../firebase/firebase';
-import { doc, getDoc, collection, query, onSnapshot, where } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { useSettings } from './SettingsContext';
 import ChatPanel from './ChatPanel';
@@ -26,6 +26,7 @@ import ShiftSummaryDialog from './ShiftSummaryDialog';
 import { useIdleLogout } from '../lib/staffSession';
 import { CheckInIdHost } from './CheckInIdDialog';
 import { loadCottageCatalogOnce } from '../../lib/useCottageCatalog';
+import { subscribeLive } from '../lib/liveCollection';
 
 // Start loading the admin's cottage list as soon as the site opens.
 loadCottageCatalogOnce();
@@ -111,8 +112,9 @@ export default function ReceptionistLayout({ children }) {
       }
     });
 
-    const msgsQuery = query(collection(db, 'conversations'), where('unread', '==', true));
-    const unsubMsgs = onSnapshot(msgsQuery, snap => setUnreadCount(snap.size));
+    // Shared live feeds (kept across page changes, see liveCollection.js).
+    const unsubMsgs = subscribeLive('conversations:unread', () => query(collection(db, 'conversations'), where('unread', '==', true)),
+      snap => setUnreadCount(snap.size));
 
     return () => {
       unsubscribe();
