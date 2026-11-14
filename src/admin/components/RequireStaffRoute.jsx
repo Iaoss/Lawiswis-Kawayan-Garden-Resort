@@ -3,6 +3,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { Navigate, useLocation } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
+import { withTimeout } from '../../lib/withTimeout';
 
 // The staff check needs Firebase to restore the login and read the user's
 // role, which takes a moment on every page load. The last confirmed result is
@@ -52,16 +53,23 @@ export default function RequireStaffRoute({ children, allowedRoles = ['admin', '
       }
 
       try {
-        const userSnapshot = await getDoc(doc(db, 'users', user.uid));
+        // Never wait forever: after 15 seconds the page shows a retry message.
+        const userSnapshot = await withTimeout(getDoc(doc(db, 'users', user.uid)), 15000);
         const data = userSnapshot.exists() ? userSnapshot.data() : {};
         const role = String(data.role || '').trim().toLowerCase();
         const status = String(data.status || 'active').trim().toLowerCase();
         const confirmedRole = status === 'inactive' || !['admin', 'receptionist'].includes(role) ? null : role;
         rememberAccess(user.uid, confirmedRole);
         if (active && authCheck === latestAuthCheck) setAccess({ loading: false, role: confirmedRole });
-      } catch {
-        rememberAccess(null, null);
-        if (active && authCheck === latestAuthCheck) setAccess({ loading: false, role: null });
+      } catch (error) {
+        console.error('Staff access check failed:', error);
+        // A connection problem isn't "no access": keep a role this tab
+        // already confirmed, otherwise show a retry message instead of
+        // sending a signed-in staff member back to the login page.
+        if (!active || authCheck !== latestAuthCheck) return;
+        const remembered = readRememberedRole();
+        if (remembered) setAccess({ loading: false, role: remembered });
+        else setAccess({ loading: false, role: null, failed: true });
       }
     });
 
@@ -75,6 +83,23 @@ export default function RequireStaffRoute({ children, allowedRoles = ['admin', '
   // plain background, no loading skeleton.
   if (access.loading) {
     return <main aria-busy="true" style={{ minHeight: '100vh', background: 'var(--admin-bg, #f4f6f4)' }} />;
+  }
+
+  if (access.failed) {
+    return (
+      <main role="alert" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--admin-bg, #f4f6f4)', padding: 24, fontFamily: "'Poppins', sans-serif" }}>
+        <div style={{ maxWidth: 420, textAlign: 'center', background: '#fff', borderRadius: 16, padding: '28px 24px', boxShadow: '0 8px 30px rgba(0,0,0,0.08)' }}>
+          <div style={{ fontSize: 17, fontWeight: 700, color: '#163c2b', marginBottom: 8 }}>The system isn’t answering</div>
+          <p style={{ fontSize: 13.5, color: '#4b5563', lineHeight: 1.6, margin: '0 0 18px' }}>
+            You’re signed in, but your staff details couldn’t be loaded. Check your internet connection and try again.
+          </p>
+          <button type="button" onClick={() => window.location.reload()}
+            style={{ background: '#163c2b', color: '#fff', border: 0, borderRadius: 10, padding: '10px 20px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+            Try again
+          </button>
+        </div>
+      </main>
+    );
   }
 
   if (!access.role) {
