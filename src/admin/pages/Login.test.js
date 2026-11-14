@@ -21,9 +21,18 @@ jest.mock('framer-motion', () => {
   return { motion: new Proxy({}, { get: (_, name) => tag(name) }), AnimatePresence: ({ children }) => children };
 });
 
+let guardCalls;
+let guardAnswer;
 beforeEach(() => {
   mockNavigate.mockReset();
-  global.fetch = () => Promise.resolve({ status: 200, json: () => Promise.resolve({}) });
+  guardCalls = [];
+  guardAnswer = () => ({ status: 200, body: {} });
+  global.fetch = (url, options) => {
+    const body = JSON.parse(options.body);
+    guardCalls.push(body.action);
+    const answer = guardAnswer(body);
+    return Promise.resolve({ status: answer.status, json: () => Promise.resolve(answer.body) });
+  };
 });
 
 const signIn = async () => {
@@ -35,7 +44,7 @@ const signIn = async () => {
 };
 
 test('logs in staff and opens their dashboard', async () => {
-  mockSignIn = () => Promise.resolve({ user: { uid: 'u1' } });
+  mockSignIn = () => Promise.resolve({ user: { uid: 'u1', getIdToken: () => Promise.resolve('t') } });
   mockGetDoc = () => Promise.resolve({ exists: () => true, data: () => ({ role: 'admin' }) });
   render(<Login />);
   await signIn();
@@ -67,4 +76,42 @@ test('a wrong password still says so', async () => {
   render(<Login />);
   await signIn();
   expect(await screen.findByText('Invalid email or password.')).toBeInTheDocument();
+});
+
+test('a locked account is refused before signing in, without blocking anyone else', async () => {
+  mockSignIn = jest.fn();
+  guardAnswer = () => ({ status: 423, body: { error: 'Too many wrong attempts. This account is locked for 12 more minutes.' } });
+  render(<Login />);
+  await signIn();
+  expect(await screen.findByText(/locked for 12 more minutes/)).toBeInTheDocument();
+  expect(guardCalls).toEqual(['check']);
+});
+
+test('a wrong password is counted on the server and shows attempts left', async () => {
+  mockSignIn = () => Promise.reject(Object.assign(new Error('bad'), { code: 'auth/invalid-credential' }));
+  guardAnswer = body => (body.action === 'failed'
+    ? { status: 200, body: { error: 'Invalid email or password. 2 attempts left before this account is locked for 15 minutes.' } }
+    : { status: 200, body: {} });
+  render(<Login />);
+  await signIn();
+  expect(await screen.findByText(/2 attempts left/)).toBeInTheDocument();
+  expect(guardCalls).toEqual(['check', 'failed']);
+});
+
+test('signing in still works when the server check is down', async () => {
+  mockSignIn = () => Promise.resolve({ user: { uid: 'u1', getIdToken: () => Promise.resolve('t') } });
+  mockGetDoc = () => Promise.resolve({ exists: () => true, data: () => ({ role: 'receptionist' }) });
+  guardAnswer = () => ({ status: 503, body: { error: 'Sign-in check is unavailable.' } });
+  render(<Login />);
+  await signIn();
+  await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/receptionist/dashboard', { replace: true }));
+});
+
+test('an account still locked on its staff record cannot get in', async () => {
+  mockSignIn = () => Promise.resolve({ user: { uid: 'u1', getIdToken: () => Promise.resolve('t') } });
+  mockGetDoc = () => Promise.resolve({ exists: () => true, data: () => ({ role: 'admin', loginLockedUntil: Date.now() + 5 * 60000 }) });
+  render(<Login />);
+  await signIn();
+  expect(await screen.findByText(/locked for 5 more minutes/)).toBeInTheDocument();
+  expect(mockNavigate).not.toHaveBeenCalled();
 });

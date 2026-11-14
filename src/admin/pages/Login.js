@@ -32,34 +32,70 @@ export default function Login() {
   const [resetSent, setResetSent] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
 
+  // Talks to the sign-in check on the server (wrong-password count and
+  // locks). Gives up after a few seconds: the check never blocks signing in
+  // just because it is slow or down.
+  const loginGuard = async (body, { token = '', ms = 8000 } = {}) => {
+    const controller = new AbortController();
+    const stop = setTimeout(() => controller.abort(), ms);
+    try {
+      const response = await fetch('/api/login-guard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      return { status: response.status, data: await response.json().catch(() => ({})) };
+    } catch {
+      return { status: 0, data: {} };
+    } finally {
+      clearTimeout(stop);
+    }
+  };
+
+  const WRONG_PASSWORD_CODES = ['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-email', 'auth/invalid-login-credentials'];
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    // Wrong passwords are counted on the server; too many lock the account.
-    try {
-      // Give up on the check after 10 seconds and sign in normally.
-      const controller = new AbortController();
-      const stop = setTimeout(() => controller.abort(), 10000);
-      const response = await fetch('/api/login-guard', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'sign-in', email, password }),
-        signal: controller.signal,
-      }).finally(() => clearTimeout(stop));
-      const result = await response.json().catch(() => ({}));
-      // A refusal (wrong password, locked, disabled) stops here. If the check
-      // itself is down, sign-in still works through Firebase's own limits.
-      if ([400, 401, 403, 423, 429].includes(response.status)) {
-        setError(result.error || 'Invalid email or password.');
-        setLoading(false);
-        return;
-      }
-    } catch {
-      // Network problem reaching the check: fall through to the normal sign-in.
+    const cleanEmail = email.trim();
+
+    // 1. Is this account locked? (Locks are per account: one locked
+    //    account never stops anyone else from signing in.)
+    const check = await loginGuard({ action: 'check', email: cleanEmail });
+    if (check.status === 423) {
+      setError(check.data.error || 'This account is locked for a few minutes. Try again later or use Forgot password.');
+      setLoading(false);
+      return;
     }
+
+    // 2. The password is checked by Firebase from this browser.
+    let userCredential;
     try {
-      const userCredential = await withTimeout(signInWithEmailAndPassword(auth, email, password), 20000);
+      userCredential = await withTimeout(signInWithEmailAndPassword(auth, cleanEmail, password), 20000);
+    } catch (err) {
+      console.error('Login error:', err);
+      const code = err?.code || '';
+      if (WRONG_PASSWORD_CODES.includes(code)) {
+        // Count the wrong password on the server (may lock the account).
+        const counted = await loginGuard({ action: 'failed', email: cleanEmail });
+        setError(counted.data.error || 'Invalid email or password.');
+      } else {
+        setError(code === 'auth/too-many-requests'
+          ? 'Too many sign-in attempts from this device. Please wait a few minutes, or use Forgot password.'
+          : code === 'auth/network-request-failed' || code === 'timeout'
+            ? 'Couldn’t reach the system. Check your internet connection and try again.'
+            : code === 'auth/user-disabled'
+              ? 'This account has been disabled. Please contact the resort admin.'
+              : 'Sign-in failed. Please try again.');
+      }
+      setLoading(false);
+      return;
+    }
+
+    // 3. Read the staff record (role, status, lock).
+    try {
       const uid = userCredential.user.uid;
       let userDoc;
       try {
@@ -77,41 +113,40 @@ export default function Login() {
         setLoading(false);
         return;
       }
-      if (userDoc.exists()) {
-        const userData = userDoc.data();
-        const role = String(userData.role || '').trim().toLowerCase();
-        const status = String(userData.status || 'active').trim().toLowerCase();
-        if (status === 'inactive' || !['admin', 'receptionist'].includes(role)) {
-          await signOut(auth);
-          setError(status === 'inactive'
-            ? 'This account has been deactivated. Please contact the resort admin.'
-            : 'This account does not have staff access.');
-        } else {
-          const requestedPath = location.state?.from?.pathname || '';
-          const permittedPrefix = role === 'admin' ? '/admin/' : '/receptionist/';
-          const destination = requestedPath.startsWith(permittedPrefix)
-            ? requestedPath
-            : role === 'admin' ? '/admin/dashboard' : '/receptionist/dashboard';
-          startShift(uid);
-          navigate(destination, { replace: true });
-        }
-
-      } else {
+      if (!userDoc.exists()) {
         await signOut(auth);
         setError('User not found in system.');
+        setLoading(false);
+        return;
+      }
+      const userData = userDoc.data();
+      const role = String(userData.role || '').trim().toLowerCase();
+      const status = String(userData.status || 'active').trim().toLowerCase();
+      const lockedFor = Math.ceil((Number(userData.loginLockedUntil || 0) - Date.now()) / 60000);
+      if (lockedFor > 0) {
+        await signOut(auth);
+        setError(`Too many wrong attempts. This account is locked for ${lockedFor} more minute${lockedFor === 1 ? '' : 's'}. Try again later, ask the admin to unlock it, or use Forgot password.`);
+      } else if (status === 'inactive' || !['admin', 'receptionist'].includes(role)) {
+        await signOut(auth);
+        setError(status === 'inactive'
+          ? 'This account has been deactivated. Please contact the resort admin.'
+          : 'This account does not have staff access.');
+      } else {
+        // Clear this account's wrong-password count (doesn't hold up login).
+        userCredential.user.getIdToken()
+          .then(token => loginGuard({ action: 'succeeded' }, { token, ms: 5000 }))
+          .catch(() => {});
+        const requestedPath = location.state?.from?.pathname || '';
+        const permittedPrefix = role === 'admin' ? '/admin/' : '/receptionist/';
+        const destination = requestedPath.startsWith(permittedPrefix)
+          ? requestedPath
+          : role === 'admin' ? '/admin/dashboard' : '/receptionist/dashboard';
+        startShift(uid);
+        navigate(destination, { replace: true });
       }
     } catch (err) {
       console.error('Login error:', err);
-      const code = err?.code || '';
-      setError(code === 'auth/too-many-requests'
-        ? 'Too many sign-in attempts. Please wait a few minutes, or use Forgot password.'
-        : code === 'auth/network-request-failed' || code === 'timeout'
-          ? 'Couldn’t reach the system. Check your internet connection and try again.'
-          : code === 'auth/user-disabled'
-            ? 'This account has been disabled. Please contact the resort admin.'
-            : ['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-email'].includes(code)
-              ? 'Invalid email or password.'
-              : 'Sign-in failed. Please try again.');
+      setError('Sign-in failed. Please try again.');
     }
     setLoading(false);
   };
