@@ -10,6 +10,7 @@ import { RESORT_IMAGES } from '../../client/components/clientTheme';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 import StaffPortalIntro from '../components/StaffPortalIntro';
 import { startShift } from '../lib/staffSession';
+import { withTimeout } from '../../lib/withTimeout';
 
 const RESORT_SLIDES = [
   RESORT_IMAGES.hero,
@@ -37,11 +38,15 @@ export default function Login() {
     setLoading(true);
     // Wrong passwords are counted on the server; too many lock the account.
     try {
+      // Give up on the check after 10 seconds and sign in normally.
+      const controller = new AbortController();
+      const stop = setTimeout(() => controller.abort(), 10000);
       const response = await fetch('/api/login-guard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'sign-in', email, password }),
-      });
+        signal: controller.signal,
+      }).finally(() => clearTimeout(stop));
       const result = await response.json().catch(() => ({}));
       // A refusal (wrong password, locked, disabled) stops here. If the check
       // itself is down, sign-in still works through Firebase's own limits.
@@ -54,9 +59,24 @@ export default function Login() {
       // Network problem reaching the check: fall through to the normal sign-in.
     }
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const userCredential = await withTimeout(signInWithEmailAndPassword(auth, email, password), 20000);
       const uid = userCredential.user.uid;
-      const userDoc = await getDoc(doc(db, 'users', uid));
+      let userDoc;
+      try {
+        userDoc = await withTimeout(getDoc(doc(db, 'users', uid)), 15000);
+      } catch (roleError) {
+        // Signed in, but the staff record couldn't be read (connection or
+        // database problem): say so instead of "wrong password".
+        console.error('Login: staff record could not be read:', roleError);
+        await signOut(auth).catch(() => {});
+        setError(roleError?.code === 'timeout' || roleError?.code === 'unavailable'
+          ? 'Signed in, but the system isn’t answering. Check your internet connection and try again.'
+          : roleError?.code === 'resource-exhausted'
+            ? 'The system has reached its daily database limit. Please try again later or contact the admin.'
+            : 'Signed in, but your staff details couldn’t be loaded. Please try again.');
+        setLoading(false);
+        return;
+      }
       if (userDoc.exists()) {
         const userData = userDoc.data();
         const role = String(userData.role || '').trim().toLowerCase();
@@ -82,9 +102,16 @@ export default function Login() {
       }
     } catch (err) {
       console.error('Login error:', err);
-      setError(err?.code === 'auth/too-many-requests'
+      const code = err?.code || '';
+      setError(code === 'auth/too-many-requests'
         ? 'Too many sign-in attempts. Please wait a few minutes, or use Forgot password.'
-        : 'Invalid email or password.');
+        : code === 'auth/network-request-failed' || code === 'timeout'
+          ? 'Couldn’t reach the system. Check your internet connection and try again.'
+          : code === 'auth/user-disabled'
+            ? 'This account has been disabled. Please contact the resort admin.'
+            : ['auth/invalid-credential', 'auth/wrong-password', 'auth/user-not-found', 'auth/invalid-email'].includes(code)
+              ? 'Invalid email or password.'
+              : 'Sign-in failed. Please try again.');
     }
     setLoading(false);
   };
