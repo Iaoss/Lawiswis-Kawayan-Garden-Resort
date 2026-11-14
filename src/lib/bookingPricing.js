@@ -452,6 +452,20 @@ export function getRoomBaseRate(room, bookingType) {
   };
 }
 
+// The room prices guests are actually charged, for display: overnight and
+// day tour, and whether they come from the resort's official rate list
+// (matched by room type) or from the price staff typed for the room. Rooms
+// on the rate list always use it; the typed price only applies to other
+// room types.
+export function getRoomDisplayRates(room) {
+  const rate = getRoomRate(room);
+  if (rate) return { overnight: rate.overnight, daytour: rate.daytour, baseCapacity: rate.baseCapacity, fromRateList: true };
+  const price = Number(room?.price);
+  const amount = Number.isFinite(price) && price > 0 ? price : 0;
+  const capacity = Number(room?.baseCapacity || room?.capacity);
+  return { overnight: amount, daytour: amount, baseCapacity: Number.isInteger(capacity) && capacity > 0 ? capacity : 2, fromRateList: false };
+}
+
 // Swimming rate per person for a day tour or night tour.
 export function getSwimmingRate(tourPeriod = 'day') {
   // Per person; children pay the same as adults.
