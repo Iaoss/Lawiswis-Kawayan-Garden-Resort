@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
 import { onSnapshot, collection, addDoc, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
@@ -234,12 +234,34 @@ export default function RoomManagement() {
     }
   };
 
+  // Scrolling to the form happens after it has appeared (see the effect
+  // below). Scrolling right away in the click used to stop short while the
+  // form was still opening, so Edit had to be clicked twice.
+  const formRef = useRef(null);
+  const [scrollToForm, setScrollToForm] = useState(0);
+  useEffect(() => {
+    if (!scrollToForm) return undefined;
+    const goToForm = () => {
+      const el = formRef.current;
+      if (!el) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      el.querySelector('input, select, textarea')?.focus({ preventScroll: true });
+    };
+    const frame = requestAnimationFrame(goToForm);
+    // Once the opening animation has finished, make sure the form is in view.
+    const settle = setTimeout(() => {
+      const top = formRef.current?.getBoundingClientRect().top;
+      if (top === undefined || top < 0 || top > window.innerHeight * 0.4) goToForm();
+    }, 350);
+    return () => { cancelAnimationFrame(frame); clearTimeout(settle); };
+  }, [scrollToForm]);
+
   const handleEdit = (room) => {
     if (isReceptionist) return;
     setOpenId(null); // close the room's details window first
     setEditRoom(room); setForm({ ...emptyForm, ...room }); setShowForm(true); setShowImport(false);
     resetImageState();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setScrollToForm(n => n + 1);
   };
 
   const requestDelete = (id) => {
@@ -524,7 +546,7 @@ export default function RoomManagement() {
         {/* ── Add/Edit Form ── */}
         <AnimatePresence initial={false}>
           {showForm && (
-            <motion.div variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden' }}>
+            <motion.div ref={formRef} variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden', scrollMarginTop: 80 }}>
               <div style={{ background: CARD, borderRadius: 18, padding: '20px 22px', border: `1px solid ${BORDER}`, marginBottom: 16, boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : '0 2px 12px rgba(0,0,0,0.04)' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 16 }}>
                   {editRoom ? <><i className="ti ti-pencil" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit Room</> : <><i className="ti ti-plus" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Add New Room</>}
