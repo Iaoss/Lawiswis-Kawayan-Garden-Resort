@@ -11,7 +11,9 @@ jest.mock('firebase/firestore', () => {
     },
     __listeners: listeners,
   };
-});
+  // Same style as the other test files (a stand-in that always replaces the
+  // real library); without it the real Firebase was sometimes loaded.
+}, { virtual: true });
 
 const snap = docs => ({ docs: docs.map(id => ({ id, data: () => ({}) })) });
 

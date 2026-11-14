@@ -58,7 +58,9 @@ export default function RequireStaffRoute({ children, allowedRoles = ['admin', '
         const data = userSnapshot.exists() ? userSnapshot.data() : {};
         const role = String(data.role || '').trim().toLowerCase();
         const status = String(data.status || 'active').trim().toLowerCase();
-        const confirmedRole = status === 'inactive' || !['admin', 'receptionist'].includes(role) ? null : role;
+        // Locked after too many wrong passwords: no staff pages until it ends.
+        const locked = Number(data.loginLockedUntil || 0) > Date.now();
+        const confirmedRole = locked || status === 'inactive' || !['admin', 'receptionist'].includes(role) ? null : role;
         rememberAccess(user.uid, confirmedRole);
         if (active && authCheck === latestAuthCheck) setAccess({ loading: false, role: confirmedRole });
       } catch (error) {

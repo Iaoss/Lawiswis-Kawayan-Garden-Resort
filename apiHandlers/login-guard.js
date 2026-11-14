@@ -1,15 +1,24 @@
 // POST /api/login-guard
 //
-// Staff sign-in goes through here first, so wrong passwords are counted on
-// the server (the browser can't skip it):
-//   { action: 'sign-in', email, password }
-//     Checks the password with Firebase. 5 wrong passwords within 15 minutes
-//     lock the account for 15 minutes; the admin gets an alert and the lock
-//     is saved in the Activity Log. On success the count is cleared and the
-//     browser then signs in as usual.
+// Counts wrong staff passwords and locks an account after too many.
+//
+// The password itself is checked by Firebase in the staff member's own
+// browser. (It used to be checked here, but then every sign-in came from
+// this server's one address, and after a burst of wrong passwords Google
+// blocked that address for everyone, so no account could sign in.)
+//
+//   { action: 'check', email }
+//     Before signing in: refuses (423) while the account is locked.
+//   { action: 'failed', email }
+//     After a wrong password: counts it. 5 within 15 minutes lock the
+//     account for 15 minutes; the admin gets an alert and it goes in the
+//     Activity Log. Returns attemptsLeft, or 423 when locked.
+//   { action: 'succeeded' }  with the staff member's ID token
+//     After signing in: clears the count.
 //   { action: 'unlock', uid }   (admin only)
 //     Ends a lock early.
-// A locked account also can't use any staff API (see lib/verifyStaff.js).
+// A locked account also can't use any staff API (see lib/verifyStaff.js)
+// or open staff pages (RequireStaffRoute checks loginLockedUntil).
 
 import { getAuth } from 'firebase-admin/auth';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
@@ -19,21 +28,7 @@ import { clearAttempts, lockMinutes, recordFailure } from '../lib/attemptLimiter
 import { LOGIN_LIMIT } from '../src/lib/loginLock';
 
 const COLLECTION = 'loginAttempts';
-// The Firebase web API key is public (it is also in the browser app).
-const API_KEY = process.env.REACT_APP_FIREBASE_API_KEY || process.env.FIREBASE_WEB_API_KEY || 'AIzaSyBT7gsygZ1N8i61mVxRyRSYLMd0c8NbwJ0';
-const WRONG = ['INVALID_LOGIN_CREDENTIALS', 'INVALID_PASSWORD', 'EMAIL_NOT_FOUND', 'INVALID_EMAIL'];
 const lockedMessage = minutes => `Too many wrong attempts. This account is locked for ${minutes} more minute${minutes === 1 ? '' : 's'}. Try again later, ask the admin to unlock it, or use Forgot password.`;
-
-async function checkPassword(email, password) {
-  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${API_KEY}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, returnSecureToken: false }),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (response.ok) return { ok: true, uid: data.localId };
-  return { ok: false, code: String(data?.error?.message || '').split(' ')[0] };
-}
 
 // Saves the lock on the staff account and tells the admins.
 async function onLocked(email, lockedUntil) {
@@ -82,44 +77,47 @@ export default async function handler(req, res) {
     return res.status(200).json({ unlocked: true });
   }
 
-  if (action !== 'sign-in') return res.status(400).json({ error: 'Choose a valid action.' });
-  const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 254);
-  const password = String(req.body?.password || '');
-  if (!email || !password) return res.status(400).json({ error: 'Enter your email and password.' });
+  // 'sign-in' is what older open pages still send: treat it as 'check'.
+  if (!['check', 'sign-in', 'failed', 'succeeded'].includes(action)) return res.status(400).json({ error: 'Choose a valid action.' });
 
   try {
-    const minutes = await lockMinutes(COLLECTION, email);
-    if (minutes) return res.status(423).json({ error: lockedMessage(minutes), locked: true, minutesLeft: minutes });
-
-    const result = await checkPassword(email, password);
-    if (result.ok) {
-      await clearAttempts(COLLECTION, email);
-      const userRef = adminDb.collection('users').doc(result.uid);
+    if (action === 'succeeded') {
+      const header = String(req.headers.authorization || '');
+      const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+      let decoded;
+      try { decoded = token ? await getAuth().verifyIdToken(token) : null; } catch { decoded = null; }
+      if (!decoded) return res.status(401).json({ error: 'Not signed in.' });
+      const email = String(decoded.email || '').trim().toLowerCase();
+      // Still locked (signed in without the check): keep the lock.
+      if (email && await lockMinutes(COLLECTION, email)) return res.status(423).json({ error: lockedMessage(await lockMinutes(COLLECTION, email)), locked: true });
+      if (email) await clearAttempts(COLLECTION, email);
+      const userRef = adminDb.collection('users').doc(decoded.uid);
       const snap = await userRef.get();
       if (snap.exists && snap.data().loginLockedUntil) await userRef.update({ loginLockedUntil: FieldValue.delete() });
       return res.status(200).json({ ok: true });
     }
-    if (result.code === 'USER_DISABLED') return res.status(403).json({ error: 'This account has been disabled. Please contact the resort admin.' });
-    if (result.code === 'TOO_MANY_ATTEMPTS_TRY_LATER') {
-      return res.status(429).json({ error: 'Too many sign-in attempts from this device. Please wait a few minutes and try again.' });
-    }
-    if (!WRONG.includes(result.code)) {
-      console.error('login-guard: unexpected sign-in answer', result.code);
-      return res.status(502).json({ error: 'Sign-in check is unavailable.' });
-    }
+
+    const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 254);
+    if (!email) return res.status(400).json({ error: 'Enter your email.' });
+
+    const minutes = await lockMinutes(COLLECTION, email);
+    if (minutes) return res.status(423).json({ error: lockedMessage(minutes), locked: true, minutesLeft: minutes });
+    if (action === 'check' || action === 'sign-in') return res.status(200).json({ ok: true });
+
+    // action === 'failed'
     const next = await recordFailure(COLLECTION, email, LOGIN_LIMIT);
     if (next.justLocked) {
       await onLocked(email, next.lockedUntil).catch(error => console.error('login-guard lock alert failed:', error));
       return res.status(423).json({ error: lockedMessage(Math.round(LOGIN_LIMIT.lockMs / 60000)), locked: true });
     }
-    return res.status(401).json({
+    return res.status(200).json({
+      attemptsLeft: next.attemptsLeft,
       error: next.attemptsLeft <= 2
         ? `Invalid email or password. ${next.attemptsLeft} attempt${next.attemptsLeft === 1 ? '' : 's'} left before this account is locked for 15 minutes.`
         : 'Invalid email or password.',
-      attemptsLeft: next.attemptsLeft,
     });
   } catch (error) {
     console.error('login-guard failed:', error);
-    return res.status(500).json({ error: 'Sign-in check is unavailable.' });
+    return res.status(503).json({ error: 'Sign-in check is unavailable.' });
   }
 }
