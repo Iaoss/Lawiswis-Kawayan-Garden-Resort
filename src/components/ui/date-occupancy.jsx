@@ -79,6 +79,18 @@ export default function DateOccupancy({ date, focus = '', refreshMs = 120000, co
           })}
         </div>
       )}
+      {data?.capacity && (() => {
+        // The resort holds up to 250 guests at a time (busiest moment).
+        const cap = data.capacity;
+        const color = cap.full ? '#b91c1c' : cap.nearFull ? '#b45309' : c.muted;
+        return (
+          <div style={{ marginTop: 8, fontWeight: cap.full || cap.nearFull ? 700 : 500, color }}>
+            {cap.full
+              ? `Resort full: ${cap.peak} of ${cap.max} guests. No more bookings can be added for this date.`
+              : `${cap.peak} of ${cap.max} guests at the busiest time · ${cap.remaining} place${cap.remaining === 1 ? '' : 's'} left${cap.nearFull ? ' (nearly full)' : ''}`}
+          </div>
+        );
+      })()}
     </div>
   );
 }

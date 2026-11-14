@@ -21,6 +21,7 @@ const LEVELS = {
   low:      { tint: 'rgba(24, 74, 42, 0.62)',  dot: '#6ee7a0', label: 'Low crowd' },
   moderate: { tint: 'rgba(110, 76, 8, 0.6)',   dot: '#fcd34d', label: 'Moderate crowd' },
   busy:     { tint: 'rgba(122, 28, 28, 0.62)', dot: '#fca5a5', label: 'High crowd' },
+  full:     { tint: 'rgba(127, 29, 29, 0.85)', dot: '#fecaca', label: 'Fully booked' },
   neutral:  { tint: 'rgba(16, 26, 20, 0.45)',  dot: 'rgba(255,255,255,0.7)', label: '' },
 };
 

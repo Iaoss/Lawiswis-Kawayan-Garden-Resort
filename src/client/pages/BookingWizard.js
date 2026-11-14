@@ -155,11 +155,17 @@ export default function BookingWizard() {
       .then(({ ok, data }) => {
         if (!active) return;
         if (!ok) throw new Error(data.error || 'Availability could not be checked.');
+        // The resort holds up to 250 guests at a time.
+        if (data.resortFull) throw new Error(data.resortFull.message);
+        const group = Number(adults) + Number(children);
+        if (Number.isFinite(data.placesLeft) && data.placesLeft !== null && group > data.placesLeft) {
+          throw new Error(`The resort can host up to ${data.maxGuests || 250} guests at a time. On your dates there is room for only ${data.placesLeft} more guest${data.placesLeft === 1 ? '' : 's'}. Please choose other dates or fewer guests.`);
+        }
         setAvailableIds(data.availableRoomIds || []);
       })
       .catch(error => { if (active) { setAvailableIds([]); setAvailabilityError(error.message || 'Availability could not be checked.'); } });
     return () => { active = false; };
-  }, [step, checkIn, stayEnd, closedDates]);
+  }, [step, checkIn, stayEnd, closedDates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const nights = isTour ? 1 : getStayUnits(checkIn, checkOut);
   const priceFor = room => {
