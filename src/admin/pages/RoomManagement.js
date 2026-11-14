@@ -93,7 +93,7 @@ const CAPACITY_OPTIONS = {
   MainVilla: [20],
 };
 
-const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
+const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', dayTourPrice: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
 
 // Activity Log line for a room save; price and status changes are spelled out.
 function describeRoomSave(before, after) {
@@ -220,7 +220,8 @@ export default function RoomManagement() {
         imageUrl = '';
       }
 
-      const payload = { ...form, baseCapacity: Number(form.baseCapacity) || '', imageUrl };
+      // Blank day-tour price: the day tour uses the rate list (capped at the nightly price).
+      const payload = { ...form, baseCapacity: Number(form.baseCapacity) || '', dayTourPrice: Number(form.dayTourPrice) > 0 ? Number(form.dayTourPrice) : '', imageUrl };
       if (editRoom) await updateDoc(doc(db, 'rooms', editRoom.id), payload);
       else await addDoc(collection(db, 'rooms'), payload);
       logStaffActivity(editRoom ? 'room_updated' : 'room_created', describeRoomSave(editRoom, payload));
@@ -564,7 +565,8 @@ export default function RoomManagement() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   {[
                     { label: 'Room Name / Number', key: 'roomNumber', placeholder: 'e.g. Panaginip, 101' },
-                    { label: 'Price per night (₱) · used if not on the rate list', key: 'price', type: 'number', placeholder: 'e.g. 3000' },
+                    { label: 'Room price per night (₱)', key: 'price', type: 'number', placeholder: 'e.g. 4000' },
+                    { label: 'Day tour price (₱, optional)', key: 'dayTourPrice', type: 'number', placeholder: 'Blank = rate list' },
                     { label: 'Amenities', key: 'amenities', placeholder: 'AC, TV, WiFi' },
                     { label: 'Description', key: 'description', placeholder: 'Short description' },
                   ].map(f => (
@@ -645,11 +647,9 @@ export default function RoomManagement() {
                     return (
                       <div role="note" style={{ gridColumn: '1 / -1', fontSize: 12, lineHeight: 1.5, color: TEXT, background: dark ? '#1f2a1a' : '#f3f8ec', border: `1px solid ${dark ? '#3f5a2a' : '#c9dfa8'}`, borderRadius: 10, padding: '10px 12px' }}>
                         <i className="ti ti-receipt" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                        {rates.fromRateList ? (
-                          <>Guests are charged the <strong>official rate list</strong> for this room type: <strong>{money(rates.overnight)}</strong> overnight · <strong>{money(rates.daytour)}</strong> day tour, for up to {rates.baseCapacity} guests (extra guests pay more). The price per night above isn’t used for this room type.</>
-                        ) : (
-                          <>Guests are charged the price per night above (<strong>{money(rates.overnight)}</strong>) for overnight stays and day tours, for up to {rates.baseCapacity} guests.</>
-                        )}
+                        Guests pay <strong>{money(rates.overnight)}</strong> per night and <strong>{money(rates.daytour)}</strong> for a day tour, for up to <strong>{rates.baseCapacity} guest{rates.baseCapacity === 1 ? '' : 's'}</strong>.
+                        {' '}Each extra person adds ₱800 per night (₱375 day tour, ₱475 night tour), shown on the receipt.
+                        {rates.fromRateList && <> No room price is set, so these come from the resort’s rate list.</>}
                       </div>
                     );
                   })()}

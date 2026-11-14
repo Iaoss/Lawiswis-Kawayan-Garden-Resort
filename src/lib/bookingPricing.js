@@ -437,33 +437,44 @@ function getRoomRate(room = {}) {
   return null;
 }
 
-export function getRoomBaseRate(room, bookingType) {
-  const rate = getRoomRate(room);
-  if (rate) return { amount: rate[bookingType], baseCapacity: rate.baseCapacity };
+// The room's price covers up to its base number of guests; each guest above
+// that pays the extra-person rate (see calculateBookingPrice).
+//
+// Which price applies:
+//   - Overnight: the price staff set for the room ("price"). The resort's
+//     built-in rate list (by room type) is only used if no price is set.
+//   - Day tour: the room's "dayTourPrice" if set; otherwise the rate-list
+//     day-tour price for its type, but never more than the nightly price;
+//     otherwise the nightly price.
+//   - Base guests: the room's baseCapacity, else the rate list's, else its
+//     capacity, else 2.
+const positive = value => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
 
-  const price = Number(room?.price);
-  if (!Number.isFinite(price) || price < 0) {
-    throw new Error('The selected room does not have a valid booking rate.');
-  }
-  const capacity = Number(room?.baseCapacity || room?.capacity);
-  return {
-    amount: price,
-    baseCapacity: Number.isInteger(capacity) && capacity > 0 ? capacity : 2,
-  };
+export function getRoomDisplayRates(room) {
+  const card = getRoomRate(room);
+  const price = positive(room?.price);
+  const dayPrice = positive(room?.dayTourPrice);
+  // "capacity" can be the most guests allowed (e.g. with an extra bed), so
+  // it only counts when neither the room nor the rate list says otherwise.
+  const wholePositive = value => (Number.isInteger(Number(value)) && Number(value) > 0 ? Number(value) : 0);
+  const baseCapacity = wholePositive(room?.baseCapacity) || card?.baseCapacity || wholePositive(room?.capacity) || 2;
+  const overnight = price || card?.overnight || 0;
+  const daytour = dayPrice || (card ? Math.min(card.daytour, overnight || card.daytour) : overnight);
+  return { overnight, daytour, baseCapacity, fromRateList: !price && Boolean(card) };
 }
 
-// The room prices guests are actually charged, for display: overnight and
-// day tour, and whether they come from the resort's official rate list
-// (matched by room type) or from the price staff typed for the room. Rooms
-// on the rate list always use it; the typed price only applies to other
-// room types.
-export function getRoomDisplayRates(room) {
-  const rate = getRoomRate(room);
-  if (rate) return { overnight: rate.overnight, daytour: rate.daytour, baseCapacity: rate.baseCapacity, fromRateList: true };
-  const price = Number(room?.price);
-  const amount = Number.isFinite(price) && price > 0 ? price : 0;
-  const capacity = Number(room?.baseCapacity || room?.capacity);
-  return { overnight: amount, daytour: amount, baseCapacity: Number.isInteger(capacity) && capacity > 0 ? capacity : 2, fromRateList: false };
+export function getRoomBaseRate(room, bookingType) {
+  const rates = getRoomDisplayRates(room);
+  const amount = bookingType === 'daytour' ? rates.daytour : rates.overnight;
+  if (!(amount > 0)) {
+    // A room with a price of 0 (e.g. complimentary) is still allowed.
+    if (Number(room?.price) === 0 && !rates.fromRateList) return { amount: 0, baseCapacity: rates.baseCapacity };
+    throw new Error('The selected room does not have a valid booking rate.');
+  }
+  return { amount, baseCapacity: rates.baseCapacity };
 }
 
 // Swimming rate per person for a day tour or night tour.
