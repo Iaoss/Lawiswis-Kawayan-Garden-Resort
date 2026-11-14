@@ -70,6 +70,8 @@ function useNotificationReservations() {
       replies: query(reservations, where('unpaidFollowUp.guestReply', 'in', ['yes', 'no'])),
       checkedIn: query(reservations, where('status', '==', 'checked-in')),
       holdConflicts: query(reservations, where('holdConflict', '==', true)),
+      // Government "pay later" bills, for payment-due reminders.
+      agency: query(reservations, where('chargeToAgency', '==', true)),
       // Today's arrivals, to warn when their room is still being cleaned.
       arrivingToday: query(reservations, where('checkIn', '>=', manilaDateKey()), where('checkIn', '<=', `${manilaDateKey()}`)),
     };

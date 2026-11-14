@@ -117,3 +117,54 @@ export function agencyDueText(due) {
   if (due.daysLeft === 0) return `Due today (${formatDueDate(due.dueDate)})`;
   return `Due ${formatDueDate(due.dueDate)} (${due.daysLeft} day${due.daysLeft === 1 ? '' : 's'} left)`;
 }
+
+// "30 days (about 4 weeks)", "14 days (2 weeks)", "on check-out".
+export function formatTermsLength(days) {
+  const n = Number(days) || 0;
+  if (n <= 0) return 'on check-out';
+  const dayText = `${n} day${n === 1 ? '' : 's'}`;
+  if (n < 7) return dayText;
+  const weeks = n / 7;
+  if (Number.isInteger(weeks)) return `${dayText} (${weeks} week${weeks === 1 ? '' : 's'})`;
+  const rounded = Math.round(weeks);
+  return `${dayText} (about ${rounded} week${rounded === 1 ? '' : 's'})`;
+}
+
+// The agency's payment promise, for staff screens and receipts:
+// "Department of Education promised to pay within 30 days (about 4 weeks)
+//  after check-out, by Dec 10, 2026."
+export function agencyPromiseText(reservation, { balance = null, now = new Date() } = {}) {
+  if (!isAgencyBilled(reservation)) return '';
+  const due = agencyPaymentDue(reservation, { balance, now });
+  const who = reservation.companyName || reservation.agencyBilling?.office || 'The agency';
+  const terms = paymentTermsOf(reservation);
+  const when = terms > 0 ? `within ${formatTermsLength(terms)} after check-out` : 'on check-out';
+  return `${who} promised to pay ${when}${due ? `, by ${formatDueDate(due.dueDate)}` : ''}.`;
+}
+
+// Pay-later bills grouped by agency (for the "Pay later by agency" view).
+// balanceOf(reservation) gives what is still owed on a bill.
+export function groupBillsByAgency(reservations, balanceOf, { now = new Date() } = {}) {
+  const groups = new Map();
+  reservations.filter(isAgencyBilled).forEach(r => {
+    const name = String(r.companyName || r.agencyBilling?.office || 'Agency (no name)').trim();
+    const key = name.toLowerCase();
+    const owed = Math.max(0, Number(balanceOf(r)) || 0);
+    const due = agencyPaymentDue(r, { balance: owed, now });
+    const group = groups.get(key) || { agency: name, bills: [], owed: 0, overdueCount: 0, overdueAmount: 0, waitingPo: 0, nextDue: '' };
+    group.bills.push({ reservation: r, owed, due });
+    group.owed += owed;
+    if (due?.overdue) { group.overdueCount += 1; group.overdueAmount += owed; }
+    if (!hasAgencyPo(r)) group.waitingPo += 1;
+    if (owed > 0 && due?.dueDate && (!group.nextDue || due.dueDate < group.nextDue)) group.nextDue = due.dueDate;
+    groups.set(key, group);
+  });
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      owed: Math.round(group.owed * 100) / 100,
+      overdueAmount: Math.round(group.overdueAmount * 100) / 100,
+      bills: group.bills.sort((a, b) => String(a.due?.dueDate || '').localeCompare(String(b.due?.dueDate || ''))),
+    }))
+    .sort((a, b) => b.overdueAmount - a.overdueAmount || b.owed - a.owed || a.agency.localeCompare(b.agency));
+}

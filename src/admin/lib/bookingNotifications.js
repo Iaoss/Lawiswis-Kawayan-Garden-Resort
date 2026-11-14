@@ -8,6 +8,7 @@
 // online payment, never showed up.
 
 import { GUEST_REPLY_LABELS, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
+import { agencyDueText, agencyPaymentDue, formatTermsLength, isAgencyBilled, paymentTermsOf } from '../../lib/agencyBilling';
 import { formatManilaTime, getCheckoutDue, getOutstandingBalance, getOverstay } from '../../lib/reservationStatus';
 import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive } from '../../lib/guestArrivals';
 
@@ -60,7 +61,19 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
       const group = lower(r.type) === 'corporate';
       const unpaid = isUnpaidOnlineBooking(r);
       const paid = lower(r.paymentStatus) === 'paid' ? 'Paid' : lower(r.paymentStatus) === 'partial' ? 'Part paid' : 'Not paid yet';
-      items.push({
+      // Government "pay later": goes straight to Billing, with the promise.
+      if (isAgencyBilled(r)) {
+        items.push({
+          id: `new-booking_${r.id}`,
+          icon: 'ti-building-bank',
+          badge: 'New Pay-Later Booking · Agency',
+          message: `${r.companyName || guest} · ${ref(r.id)}`,
+          details: `${r.checkIn || '—'}${r.checkOut && r.checkOut !== r.checkIn ? ` → ${r.checkOut}` : ''} · ${peso(r.totalAmount)} · pays within ${formatTermsLength(paymentTermsOf(r))} after check-out${r.agencyBilling?.poNumber ? ` · PO ${r.agencyBilling.poNumber}` : ' · waiting for PO'}`,
+          timeMs: createdMs,
+          bookingId: r.id,
+          path: `${prefix}/billing`,
+        });
+      } else items.push({
         id: `new-booking_${r.id}`,
         icon: group ? 'ti-users-group' : unpaid ? 'ti-alert-triangle' : 'ti-calendar-plus',
         badge: group ? 'New Group Booking' : unpaid ? 'New Booking · Unpaid' : 'New Booking',
@@ -70,6 +83,26 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
         bookingId: r.id,
         path,
       });
+    }
+
+    // Government "pay later": remind staff when the agency's payment is due
+    // within 3 days, and when it is overdue.
+    if (isAgencyBilled(r) && !extraRoom && status !== 'cancelled') {
+      const owed = Math.max(0, getOutstandingBalance(r));
+      const agencyDue = owed > 0 ? agencyPaymentDue(r, { balance: owed, now: new Date(now) }) : null;
+      if (agencyDue && (agencyDue.overdue || agencyDue.daysLeft <= 3)) {
+        items.push({
+          id: `${agencyDue.overdue ? 'agency-overdue' : 'agency-due'}_${r.id}_${agencyDue.dueDate}`,
+          icon: agencyDue.overdue ? 'ti-alert-triangle' : 'ti-calendar-dollar',
+          badge: agencyDue.overdue ? 'Agency Payment Overdue' : 'Agency Payment Due Soon',
+          message: `${r.companyName || guest} · ${peso(owed)}`,
+          details: `${agencyDueText(agencyDue)} · booking ${ref(r.id)}${r.agencyBilling?.poNumber ? ` · PO ${r.agencyBilling.poNumber}` : ''}`,
+          // Shown from the day it becomes due soon / overdue.
+          timeMs: Date.parse(`${agencyDue.dueDate}T00:00:00+08:00`) - (agencyDue.overdue ? -86400000 : 3 * 86400000),
+          bookingId: r.id,
+          path: `${prefix}/billing`,
+        });
+      }
     }
 
     // Checked-in guests whose check-out time is close, or already past.
