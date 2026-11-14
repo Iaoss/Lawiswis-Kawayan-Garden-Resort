@@ -15,6 +15,7 @@ import { money } from '../lib/money';
 import { formatClockLabel, getRoomsNotReadyForArrivals } from '../lib/roomReadiness';
 import { manilaDateKey } from '../../lib/reservationStatus';
 import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
+import { getRoomDisplayRates } from '../../lib/bookingPricing';
 
 // ── Cloudinary config ────────────────────────────────────────
 // Photos upload through the server, so no Cloudinary setting is in the page.
@@ -328,9 +329,13 @@ export default function RoomManagement() {
     return matchesSearch && matchesType && matchesStatus;
   });
 
+  // The prices guests are actually charged (official rate list for its room
+  // types, otherwise the price typed for the room).
+  const chargedRates = room => getRoomDisplayRates(room);
+
   const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === 'price-asc') return Number(a.price) - Number(b.price);
-    if (sortBy === 'price-desc') return Number(b.price) - Number(a.price);
+    if (sortBy === 'price-asc') return chargedRates(a).overnight - chargedRates(b).overnight;
+    if (sortBy === 'price-desc') return chargedRates(b).overnight - chargedRates(a).overnight;
     return String(a.roomNumber).localeCompare(String(b.roomNumber), undefined, { numeric: true });
   });
 
@@ -406,17 +411,20 @@ export default function RoomManagement() {
           <div style={{ height: 1, background: BORDER, margin: '10px 0' }} />
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 17, fontWeight: 800, color: dark ? LIME : '#111' }}>
-              {money(Number(room.price))}<span style={{ fontSize: 10, fontWeight: 400, color: MUTED }}>/night</span>
+              {money(chargedRates(room).overnight)}<span style={{ fontSize: 10, fontWeight: 400, color: MUTED }}>/night</span>
+              <span style={{ display: 'block', fontSize: 10.5, fontWeight: 600, color: SUBTEXT }}>
+                {money(chargedRates(room).daytour)} day tour{chargedRates(room).fromRateList ? ' · rate list' : ''}
+              </span>
             </span>
             <span style={{ fontSize: 10, color: SUBTEXT, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               Details <i className="ti ti-arrow-up-right" style={{ fontSize: 12 }} />
             </span>
           </div>
-          {season && Number(room.price) > 0 && (
+          {season && chargedRates(room).overnight > 0 && (
             <div title={`${season.name}: ${season.percent > 0 ? '+' : ''}${season.percent}% on nights from ${season.from} to ${season.to}`}
               style={{ marginTop: 6, fontSize: 10.5, fontWeight: 600, color: season.percent > 0 ? '#b45309' : '#15803d', display: 'flex', alignItems: 'center', gap: 4 }}>
               <i className="ti ti-calendar-dollar" aria-hidden="true" />
-              {money(seasonalNightlyRate(room.price, season))}/night on {formatSeasonDates(season)} ({season.percent > 0 ? '+' : ''}{season.percent}%)
+              {money(seasonalNightlyRate(chargedRates(room).overnight, season))}/night on {formatSeasonDates(season)} ({season.percent > 0 ? '+' : ''}{season.percent}%)
             </div>
           )}
         </div>
@@ -453,10 +461,12 @@ export default function RoomManagement() {
               <div style={{ fontSize: 11, color: MUTED }}>#{room.id.slice(0, 6).toUpperCase()} · {room.type}{m.bed ? ` · ${m.bed}` : ''}{m.size ? ` · ${m.size}` : ''}</div>
             </div>
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 19, fontWeight: 800, color: dark ? LIME : '#111' }}>{money(Number(room.price))}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/night</span></div>
-              {season && Number(room.price) > 0 && (
+              <div style={{ fontSize: 19, fontWeight: 800, color: dark ? LIME : '#111' }}>{money(chargedRates(room).overnight)}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/night</span></div>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: SUBTEXT }}>{money(chargedRates(room).daytour)} day tour</div>
+              {chargedRates(room).fromRateList && <div style={{ fontSize: 10.5, color: MUTED }}>From the official rate list</div>}
+              {season && chargedRates(room).overnight > 0 && (
                 <div style={{ fontSize: 11, fontWeight: 600, color: season.percent > 0 ? '#b45309' : '#15803d' }}>
-                  {money(seasonalNightlyRate(room.price, season))} on {formatSeasonDates(season)} · {season.name}
+                  {money(seasonalNightlyRate(chargedRates(room).overnight, season))} on {formatSeasonDates(season)} · {season.name}
                 </div>
               )}
             </div>
@@ -554,7 +564,7 @@ export default function RoomManagement() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   {[
                     { label: 'Room Name / Number', key: 'roomNumber', placeholder: 'e.g. Panaginip, 101' },
-                    { label: 'Price per night (₱)', key: 'price', type: 'number', placeholder: 'e.g. 3000' },
+                    { label: 'Price per night (₱) · used if not on the rate list', key: 'price', type: 'number', placeholder: 'e.g. 3000' },
                     { label: 'Amenities', key: 'amenities', placeholder: 'AC, TV, WiFi' },
                     { label: 'Description', key: 'description', placeholder: 'Short description' },
                   ].map(f => (
@@ -628,6 +638,21 @@ export default function RoomManagement() {
                       </div>
                     </div>
                   </div>
+
+                  {form.type && (() => {
+                    // What guests will actually be charged for this room.
+                    const rates = getRoomDisplayRates(form);
+                    return (
+                      <div role="note" style={{ gridColumn: '1 / -1', fontSize: 12, lineHeight: 1.5, color: TEXT, background: dark ? '#1f2a1a' : '#f3f8ec', border: `1px solid ${dark ? '#3f5a2a' : '#c9dfa8'}`, borderRadius: 10, padding: '10px 12px' }}>
+                        <i className="ti ti-receipt" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                        {rates.fromRateList ? (
+                          <>Guests are charged the <strong>official rate list</strong> for this room type: <strong>{money(rates.overnight)}</strong> overnight · <strong>{money(rates.daytour)}</strong> day tour, for up to {rates.baseCapacity} guests (extra guests pay more). The price per night above isn’t used for this room type.</>
+                        ) : (
+                          <>Guests are charged the price per night above (<strong>{money(rates.overnight)}</strong>) for overnight stays and day tours, for up to {rates.baseCapacity} guests.</>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
                     <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={uploading}

@@ -324,6 +324,11 @@ export default function Rooms() {
                   {peso(selectedRoom.price)}
                   <small style={{ color: '#8d8877', font: `12px ${SANS}` }}> / night</small>
                   {seasonNote(selectedRoom.price, 12)}
+                  {selectedRoom.dayTourPrice > 0 && selectedRoom.dayTourPrice !== selectedRoom.price && (
+                    <span style={{ display: 'block', color: '#5f5b4c', font: `500 12px ${SANS}`, marginTop: 4 }}>
+                      Day tour: {peso(selectedRoom.dayTourPrice)} per room
+                    </span>
+                  )}
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse', margin: '16px 0 22px', font: `13px ${SANS}` }}>
                   <tbody>
