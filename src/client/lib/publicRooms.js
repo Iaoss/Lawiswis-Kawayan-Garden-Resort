@@ -1,7 +1,7 @@
 // The room list for the guest pages, from /api/public-rooms.
 //
 // That route is cached on Vercel's CDN, so all visitors share one database
-// read every few minutes instead of each visitor reading every room. The list
+// read about once a minute instead of each visitor reading every room. The list
 // is also kept in memory while the guest moves between pages. If the route
 // can't be reached (e.g. running `npm start` locally), it falls back to
 // reading Firestore directly.
