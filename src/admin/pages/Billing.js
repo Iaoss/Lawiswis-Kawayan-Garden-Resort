@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../firebase/firebase';
-import { collection, getDocs, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { useLocation, useNavigate } from 'react-router-dom';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
@@ -16,7 +16,9 @@ import PhoneDisplayToggle from '../components/PhoneDisplayToggle';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 import PromoCodeForm from '../components/PromoCodeForm';
 import AgencyBillingCard from '../components/AgencyBillingCard';
-import { agencyDueText, agencyPaymentDue, agencyStatusLabel, canStayOnAgencyCredit, isAgencyBilled, PAY_LATER_LABEL } from '../../lib/agencyBilling';
+import { agencyDueText, agencyPaymentDue, agencyPromiseText, agencyStatusLabel, canStayOnAgencyCredit, formatDueDate, groupBillsByAgency, hasAgencyPo, isAgencyBilled, PAY_LATER_LABEL } from '../../lib/agencyBilling';
+import { printBookingReceipt } from '../lib/printBookingReceipt';
+import { subscribeLive } from '../lib/liveCollection';
 
 // Rooms booked together (one reservation, several rooms) share one bill.
 const billKeyOf = r => (Array.isArray(r.groupReservationIds) && r.groupReservationIds.length > 1 ? (r.groupId || r.groupReservationIds[0]) : r.id);
@@ -60,6 +62,9 @@ export default function Billing() {
   const MONO = "'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace";
 
   const [reservations, setReservations] = useState([]);
+  // "Pay later by agency" view (government bills grouped per agency).
+  const [showAgencies, setShowAgencies] = useState(false);
+  const [printingId, setPrintingId] = useState('');
   const [sortBy, setSortBy] = useState('booked');
   const [sortDir, setSortDir] = useState('desc');
   const [selected, setSelected] = useState(null);
@@ -82,22 +87,31 @@ export default function Billing() {
   const [statusChecking, setStatusChecking] = useState(false);
   const [statusResult, setStatusResult] = useState(''); // '', 'unpaid', 'paid', 'expired'
 
-  const fetchReservations = async () => {
-    // Open bills only, plus agency groups still owing after check-out.
+  // Open bills only, plus agency groups still owing after check-out. Both
+  // lists are live (shared feeds, see liveCollection.js): a booking that
+  // arrives while Billing is open (e.g. a government "pay later" request)
+  // shows up straight away, and nothing is re-read after each action.
+  const [openDocs, setOpenDocs] = useState([]);
+  const [agencyDocs, setAgencyDocs] = useState([]);
+  useEffect(() => {
     const reservationsRef = collection(db, 'reservations');
-    const [open, agency] = await Promise.all([
-      getDocs(query(reservationsRef, where('status', 'in', ['pending', 'confirmed', 'checked-in']))),
-      getDocs(query(reservationsRef, where('chargeToAgency', '==', true))),
-    ]);
+    const toList = snapshot => snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    const stopOpen = subscribeLive('reservations:open', () => query(reservationsRef, where('status', 'in', ['pending', 'confirmed', 'checked-in'])),
+      snapshot => setOpenDocs(toList(snapshot)), error => console.error('Open bills could not be loaded:', error));
+    const stopAgency = subscribeLive('reservations:agency', () => query(reservationsRef, where('chargeToAgency', '==', true)),
+      snapshot => setAgencyDocs(toList(snapshot)), error => console.error('Agency bills could not be loaded:', error));
+    return () => { stopOpen(); stopAgency(); };
+  }, []);
+  useEffect(() => {
     const byId = new Map();
-    [...open.docs, ...agency.docs].forEach(d => byId.set(d.id, { id: d.id, ...d.data() }));
+    [...openDocs, ...agencyDocs].forEach(r => byId.set(r.id, r));
     setReservations([...byId.values()]
       .filter(r => r.status !== 'cancelled' && r.type !== 'corporate-room'
         // Agency groups stay here after check-out until the agency pays.
         && (r.status !== 'checked-out' || (isAgencyBilled(r) && owedOf(r) > 0.004))));
-  };
-
-  useEffect(() => { fetchReservations(); }, []);
+  }, [openDocs, agencyDocs]);
+  // The lists above update by themselves; kept for the callers below.
+  const fetchReservations = async () => {};
 
   // Opened from a booking (?booking=<id>): select it and fill in the balance.
   const [preselectDone, setPreselectDone] = useState(false);
@@ -454,6 +468,21 @@ export default function Billing() {
     borderRadius: 9, padding: '9px 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: SANS, whiteSpace: 'nowrap',
   });
 
+  // Paper receipt for one booking (each room of a group bill has its own).
+  const printReceipt = async room => {
+    setPrintingId(room.id);
+    try {
+      const snap = await getDocs(query(collection(db, 'payments'), where('reservationId', '==', room.id)));
+      const payments = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+      if (!printBookingReceipt(room, payments)) appAlert('Allow pop-ups for this site to print the receipt.', { title: 'Pop-up blocked', tone: 'warning' });
+    } catch (error) {
+      appAlert(error.message || 'Payments could not be loaded.', { title: 'Couldn’t print the receipt', tone: 'danger' });
+    } finally {
+      setPrintingId('');
+    }
+  };
+
   const balance = selected ? totalBalance(selected) : 0;
   // Agency groups with a PO leave with the bill open.
   const onAgencyCredit = Boolean(selected) && billRooms.every(canStayOnAgencyCredit);
@@ -483,23 +512,69 @@ export default function Billing() {
           </div>
         )}
 
-        {/* Enjoy now, pay later: what government agencies still owe. */}
+        {/* Enjoy now, pay later: what government agencies still owe, and a
+            view of every pay-later bill separated by agency. */}
         {(() => {
-          const agencyBills = reservations.filter(r => isAgencyBilled(r) && totalBalance(r) > 0);
-          if (!agencyBills.length) return null;
-          const owed = agencyBills.reduce((sum, r) => sum + totalBalance(r), 0);
-          const overdue = agencyBills.filter(r => agencyPaymentDue(r, { balance: totalBalance(r) })?.overdue);
+          const groups = groupBillsByAgency(reservations, totalBalance);
+          if (!groups.length) return null;
+          const owing = groups.reduce((sum, g) => sum + g.bills.filter(b => b.owed > 0).length, 0);
+          const owed = groups.reduce((sum, g) => sum + g.owed, 0);
+          const overdue = groups.reduce((sum, g) => sum + g.overdueCount, 0);
+          const pill = (text, color, bg) => <span style={{ background: bg, color, borderRadius: 999, padding: '2px 8px', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{text}</span>;
           return (
-            <div role="status" style={{ ...card, display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', marginBottom: 16, padding: '12px 16px' }}>
-              <i className="ti ti-building-bank" aria-hidden="true" style={{ fontSize: 20, color: overdue.length ? RED : GREEN }} />
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>{PAY_LATER_LABEL} · government agencies</div>
-                <div style={{ fontSize: 12, color: SUBTEXT }}>
-                  {agencyBills.length} bill{agencyBills.length === 1 ? '' : 's'} waiting for agency payment
-                  {overdue.length ? <> · <strong style={{ color: RED }}>{overdue.length} overdue</strong></> : ' · none overdue'}
+            <div style={{ ...card, marginBottom: 16, padding: 0, overflow: 'hidden' }}>
+              <button type="button" onClick={() => setShowAgencies(v => !v)} aria-expanded={showAgencies}
+                style={{ width: '100%', display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', padding: '12px 16px', border: 0, background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: SANS }}>
+                <i className="ti ti-building-bank" aria-hidden="true" style={{ fontSize: 20, color: overdue ? RED : GREEN }} />
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>{PAY_LATER_LABEL} · government agencies</div>
+                  <div style={{ fontSize: 12, color: SUBTEXT }}>
+                    {groups.length} agenc{groups.length === 1 ? 'y' : 'ies'} · {owing} bill{owing === 1 ? '' : 's'} waiting for payment
+                    {overdue ? <> · <strong style={{ color: RED }}>{overdue} overdue</strong></> : ' · none overdue'}
+                  </div>
                 </div>
-              </div>
-              <div style={{ ...money, fontSize: 18, fontWeight: 800, color: overdue.length ? RED : TEXT }}>{formatCurrency(owed)}</div>
+                <div style={{ ...money, fontSize: 18, fontWeight: 800, color: overdue ? RED : TEXT }}>{formatCurrency(owed)}</div>
+                <span style={{ fontSize: 12, fontWeight: 700, color: TEXT }}>{showAgencies ? 'Hide' : 'View by agency'} <i className={`ti ${showAgencies ? 'ti-chevron-up' : 'ti-chevron-down'}`} aria-hidden="true" /></span>
+              </button>
+              {showAgencies && (
+                <div style={{ borderTop: `1px solid ${BORDER}`, padding: 12, display: 'grid', gap: 12 }}>
+                  {groups.map(group => (
+                    <div key={group.agency} style={{ border: `1px solid ${group.overdueCount ? RED : BORDER}`, borderRadius: 12, padding: 12, background: CARD2 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 800, fontSize: 14, color: TEXT }}>{group.agency}</div>
+                          <div style={{ fontSize: 11.5, color: SUBTEXT, display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 3 }}>
+                            <span>{group.bills.length} booking{group.bills.length === 1 ? '' : 's'}</span>
+                            {group.nextDue && <span>· next payment due {formatDueDate(group.nextDue)}</span>}
+                            {group.overdueCount > 0 && pill(`${group.overdueCount} overdue`, '#fff', RED)}
+                            {group.waitingPo > 0 && pill(`${group.waitingPo} waiting for PO`, dark ? '#fde68a' : '#92400e', dark ? '#422006' : '#fef3c7')}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontSize: 10.5, color: SUBTEXT, textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>Agency owes</div>
+                          <div style={{ ...money, fontSize: 16, fontWeight: 800, color: group.overdueCount ? RED : TEXT }}>{formatCurrency(group.owed)}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        {group.bills.map(({ reservation: r, owed: billOwed, due }) => (
+                          <button type="button" key={r.id} onClick={() => selectReservation(r)}
+                            style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8, alignItems: 'center', textAlign: 'left', border: `1px solid ${selected?.id === r.id ? ACCENT : BORDER}`, background: CARD, borderRadius: 9, padding: '8px 10px', cursor: 'pointer', fontFamily: SANS }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 12.5, fontWeight: 700, color: TEXT }}>
+                                #{r.id.slice(0, 8).toUpperCase()} · {r.guestName || 'Contact'} · {formatDate(r.checkIn)}{r.checkOut && r.checkOut !== r.checkIn ? ` → ${formatDate(r.checkOut)}` : ''}
+                              </div>
+                              <div style={{ fontSize: 11, color: due?.overdue ? RED : SUBTEXT, fontWeight: due?.overdue ? 700 : 400 }}>
+                                {hasAgencyPo(r) ? `PO ${r.agencyBilling.poNumber}` : 'No PO yet'} · {billOwed > 0 ? agencyDueText(due) : 'Paid'}
+                              </div>
+                            </div>
+                            <span style={{ ...money, fontWeight: 800, fontSize: 13, color: billOwed > 0 ? (due?.overdue ? RED : TEXT) : GREEN }}>{billOwed > 0 ? formatCurrency(billOwed) : 'Paid'}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })()}
@@ -533,7 +608,7 @@ export default function Billing() {
                       <span style={{ color: SUBTEXT }}>{owes > 0 ? (isAgencyBilled(r) ? 'Due from agency' : 'Still owes') : 'Paid in full'}</span>
                       <span style={{ ...money, fontWeight: 700, color: owes > 0 ? RED : GREEN }}>{formatCurrency(Math.max(0, owes))}</span>
                     </div>
-                    {owes > 0 && isAgencyBilled(r) && r.status === 'checked-out' && (() => {
+                    {owes > 0 && isAgencyBilled(r) && (() => {
                       const due = agencyPaymentDue(r, { balance: owes });
                       return due && <div style={{ fontSize: 10.5, marginTop: 4, fontWeight: 600, color: due.overdue ? RED : SUBTEXT }}>{agencyDueText(due)}</div>;
                     })()}
@@ -570,6 +645,14 @@ export default function Billing() {
                       {selected.checkOut && selected.checkOut !== selected.checkIn ? ` → ${formatDate(selected.checkOut)}` : ''}{selected.checkOutTime ? ` (out ${selected.checkOutTime})` : ''}
                     </div>
                     <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>Booking #{selected.id.slice(0, 8).toUpperCase()}{selected.phone ? ` · ${selected.phone}` : ''}</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                      {(isGroupBill ? billRooms : [selected]).map(room => (
+                        <button type="button" key={room.id} onClick={() => printReceipt(room)} disabled={printingId === room.id}
+                          style={{ ...btn(), padding: '6px 11px', fontSize: 12, opacity: printingId === room.id ? 0.6 : 1 }}>
+                          <i className="ti ti-printer" aria-hidden="true" /> {printingId === room.id ? 'Opening…' : isGroupBill ? `Print receipt · Room ${room.roomNumber || '—'}` : 'Print receipt'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: 11, color: SUBTEXT, textTransform: 'uppercase', letterSpacing: '.06em', fontWeight: 700 }}>{balance > 0 ? (isAgencyBilled(selected) ? 'Due from agency' : 'Balance due') : 'Paid in full'}</div>
@@ -580,6 +663,23 @@ export default function Billing() {
                     })()}
                   </div>
                 </div>
+
+                {isAgencyBilled(selected) && (() => {
+                  const due = agencyPaymentDue(selected, { balance });
+                  const overdueNow = Boolean(due?.overdue);
+                  return (
+                    <div role="note" style={{ ...card, display: 'flex', gap: 12, alignItems: 'flex-start', padding: '12px 16px', borderColor: overdueNow ? RED : (dark ? '#4338ca' : '#a5b4fc'), background: overdueNow ? (dark ? '#3b1212' : '#fef2f2') : (dark ? '#1e1b4b' : '#eef2ff') }}>
+                      <i className={`ti ${overdueNow ? 'ti-alert-triangle' : 'ti-calendar-dollar'}`} aria-hidden="true" style={{ fontSize: 20, color: overdueNow ? RED : (dark ? '#c7d2fe' : '#3730a3'), marginTop: 2 }} />
+                      <div style={{ fontSize: 12.5, color: TEXT, lineHeight: 1.55 }}>
+                        <strong>{PAY_LATER_LABEL}: payment promise</strong><br />
+                        {agencyPromiseText(selected, { balance })}
+                        {balance > 0 && due ? <> <strong style={{ color: overdueNow ? RED : TEXT }}>{agencyDueText(due)}.</strong></> : balance <= 0 ? ' Paid in full.' : ''}
+                        {!hasAgencyPo(selected) && <><br /><span style={{ color: RED }}>Waiting for the agency’s Purchase Order (PO). Save it below once it arrives.</span></>}
+                        <br /><span style={{ color: SUBTEXT, fontSize: 11.5 }}>Change the number of days under “{PAY_LATER_LABEL}” below. The receipt and Statement of Account print this promise.</span>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, alignItems: 'start' }}>
                   {/* The bill */}
