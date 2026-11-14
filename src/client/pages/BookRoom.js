@@ -271,6 +271,8 @@ export default function BookRoom() {
       const response = await fetch(`/api/room-availability?${new URLSearchParams({ startDate: checkIn, endDate: checkOut })}`);
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Availability could not be checked.');
+      // The resort holds up to 250 guests at a time.
+      if (result.resortFull) return fail(result.resortFull.message);
       if (!(result.availableRoomIds || []).includes(roomId)) {
         return fail(`${room?.roomNumber ? `Room ${room.roomNumber}` : 'This room'} is already booked for those dates. Try other dates.`);
       }

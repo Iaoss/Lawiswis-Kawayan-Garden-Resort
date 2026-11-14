@@ -48,6 +48,7 @@ import { holdsRoom } from '../src/lib/unpaidBookings';
 import { readSeasonPeriods } from '../lib/seasonStore';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { getAdditionalRoomsError } from '../src/lib/groupBooking';
+import { checkResortCapacity } from '../lib/resortCapacity';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -280,6 +281,20 @@ export default async function handler(req, res) {
       const cottageError = cottageAvailabilityError(cottageAvailability, cottageId);
       if (cottageError) return res.status(409).json({ error: cottageError });
     }
+
+    // ---- 5c. The resort's guest limit (250 at a time) ---------------------
+    const capacityProblem = await checkResortCapacity({
+      checkIn,
+      checkOut,
+      bookingType,
+      tourPeriod: bookingType === 'daytour' ? tourPeriod : '',
+      adults: adults + extraRooms.reduce((sum, item) => sum + Number(item.adults || 0), 0),
+      children: children + extraRooms.reduce((sum, item) => sum + Number(item.children || 0), 0),
+      dayVisitorAdults: dayVisitors?.adults || 0,
+      dayVisitorChildren: dayVisitors?.children || 0,
+      dayVisitorPeriod: dayVisitors?.tourPeriod || '',
+    });
+    if (capacityProblem) return res.status(409).json({ error: capacityProblem.message, code: 'RESORT_FULL', remaining: capacityProblem.remaining, date: capacityProblem.date });
 
     // ---- 6. Create the reservation ---------------------------------------
     const nights = getStayUnits(checkIn, checkOut);

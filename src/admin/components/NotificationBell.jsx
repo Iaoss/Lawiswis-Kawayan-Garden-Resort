@@ -238,6 +238,40 @@ function useUnreadChats() {
   return { conversations: conversations.filter(c => unreadSince[c.id]), unreadSince };
 }
 
+// Upcoming dates where the resort is full or nearly full (250 guests at a
+// time). Checked every 5 minutes while the portal is open.
+function useCapacityAlerts(prefix) {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    let active = true;
+    const load = () => fetch('/api/occupancy?alerts=1')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => {
+        if (!active || !data) return;
+        const seenAt = Date.now();
+        setItems((data.dates || []).map(day => {
+          const when = new Date(`${day.date}T00:00:00`).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' });
+          return {
+            id: day.full ? `resort-full_${day.date}` : `resort-near-full_${day.date}`,
+            icon: day.full ? 'ti-ban' : 'ti-users',
+            badge: day.full ? 'Resort Full' : 'Resort Nearly Full',
+            message: `${when} · ${day.peak} of ${day.max} guests`,
+            details: day.full
+              ? 'The 250-guest limit is reached: new bookings for this date are blocked.'
+              : `Only ${day.remaining} place${day.remaining === 1 ? '' : 's'} left before the 250-guest limit.`,
+            timeMs: seenAt,
+            path: `${prefix}/reservations`,
+          };
+        }));
+      })
+      .catch(() => {});
+    load();
+    const timer = setInterval(() => { if (!document.hidden) load(); }, 5 * 60000);
+    return () => { active = false; clearInterval(timer); };
+  }, [prefix]);
+  return items;
+}
+
 const QUICK_LINKS = {
   '/admin': [
     { label: 'Bookings', icon: 'ti-calendar-event', path: '/admin/reservations', bg: 'rgba(200,240,110,0.1)', color: '#8fb83a' },
@@ -273,6 +307,7 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
     snapshot => setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
     () => setRooms([])), []);
   const payments = usePaymentFeed();
+  const capacityItems = useCapacityAlerts(prefix);
   const { conversations, unreadSince } = useUnreadChats();
   const notifications = useMemo(
     () => [
@@ -280,9 +315,10 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
       ...buildBookingNotifications(reservations, { prefix, now }),
       ...buildPaymentNotifications(payments, { prefix, now }),
       ...buildChatNotifications(conversations, unreadSince, { prefix }),
+      ...capacityItems,
       ...messageItems,
     ].sort((a, b) => (b.timeMs || 0) - (a.timeMs || 0)),
-    [reservations, rooms, prefix, now, messageItems, payments, conversations, unreadSince],
+    [reservations, rooms, prefix, now, messageItems, payments, conversations, unreadSince, capacityItems],
   );
   const unread = notifications.filter(n => !readIds.includes(n.id)).length;
 
