@@ -34,7 +34,11 @@ export function seniorPwdSummary(reservation = {}) {
   const applied = appliedSenior + appliedPwd;
   return {
     senior, pwd, applied, toCheck,
-    text: toCheck > 0
+    text: reservation.discountReview?.status === 'pending'
+      ? `${who} · ID waiting for staff review`
+      : reservation.discountReview?.status === 'uploading'
+        ? `${who} · ID upload not finished`
+        : toCheck > 0
       ? `${who} · check ID${toCheck === 1 ? '' : 's'} and apply the discount`
       : `${who} · discount applied`,
   };

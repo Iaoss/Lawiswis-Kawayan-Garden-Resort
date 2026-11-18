@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { loadPublicRooms } from '../lib/publicRooms';
-import { getRoomMaximumGuests } from '../../lib/bookingPricing';
+import { getRoomMaximumGuests, getStayDurationError } from '../../lib/bookingPricing';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
@@ -8,12 +8,17 @@ import {
   CORPORATE_FEATURE_ROWS, CORPORATE_PACKAGES, GROUP_ADVANCE_DAYS, MAX_GROUP_GUESTS, MIN_GROUP_GUESTS, isCorporateFeatureIncluded,
 } from '../../lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
-import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError } from '../../lib/preferredContactMethods';
+import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactFieldErrors, getContactLinkError } from '../../lib/preferredContactMethods';
 import { CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
 import { CLIENT_TYPES, DEFAULT_PAYMENT_TERMS_DAYS, normalizeAgencyDetails, PAY_LATER_LABEL, perDiemFit } from '../../lib/agencyBilling';
+import BookingSteps from '../components/BookingSteps';
+import { decorateRoom } from '../lib/roomCatalog';
+import { roomHasStairs } from '../../lib/roomAccess';
+import { closedPeriodMessage, findClosedPeriod } from '../../lib/closedDates';
 
+const GROUP_STEPS = ['Your group', 'Dates', 'Rooms', 'Review & pay'];
 const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const addMonths = (date, months) => {
   const result = new Date(date.getFullYear(), date.getMonth() + months, 1);
@@ -22,7 +27,7 @@ const addMonths = (date, months) => {
 };
 
 export default function CorporateBooking() {
-  const { available, error: availabilityError, loading: availabilityLoading } = useResortAvailability();
+  const { available, error: availabilityError, loading: availabilityLoading, closedDates = [] } = useResortAvailability();
   const maxDate = formatDate(addMonths(new Date(), 2));
   // Groups book at least a week ahead (Philippine date).
   const earliestDate = getEarliestGroupDate();
@@ -69,6 +74,46 @@ export default function CorporateBooking() {
   const guestError = form.totalGuests === '' ? '' : getGroupGuestError(totalGuests);
   const noticeError = form.checkIn ? getGroupAdvanceNoticeError(form.checkIn) : '';
 
+  // The form goes step by step, like a personal booking.
+  const [groupStep, setGroupStep] = useState(0);
+  const [touched, setTouched] = useState({});
+  const [stepFree, setStepFree] = useState(false);
+  const closedPeriod = form.checkIn ? findClosedPeriod(closedDates, form.checkIn, form.bookingType === 'daytour' ? form.checkIn : form.checkOut || form.checkIn) : null;
+  const contactErrors = getContactFieldErrors(form);
+  const fieldErrors = {
+    companyName: isFamily || form.companyName.trim() ? '' : isGovernment ? 'Enter the agency name.' : 'Enter the company or organization name.',
+    totalGuests: form.totalGuests === '' ? 'Enter the number of guests.' : guestError,
+    firstName: NAME_PATTERN.test(form.firstName.trim()) ? '' : 'Enter a first name (2-35 letters).',
+    lastName: NAME_PATTERN.test(form.lastName.trim()) ? '' : 'Enter a last name (2-35 letters).',
+    ...contactErrors,
+    checkIn: !form.checkIn ? 'Choose a date.' : noticeError
+      || (form.checkIn > maxDate ? `Choose a date up to ${formatLongDate(maxDate)}.` : '')
+      || (closedPeriod ? closedPeriodMessage(closedPeriod) : ''),
+    checkOut: form.bookingType === 'daytour' ? '' : !form.checkOut ? 'Choose a check-out date.'
+      : form.checkIn && form.checkOut <= form.checkIn ? 'Check-out must be after check-in.'
+        : form.checkOut > maxDate ? `Choose a date up to ${formatLongDate(maxDate)}.`
+          : (form.checkIn && getStayDurationError(form.checkIn, form.checkOut)) || '',
+  };
+  const touch = event => { const { name } = event.target; setTouched(previous => ({ ...previous, [name]: true })); };
+  const visibleError = name => (touched[name] ? fieldErrors[name] : '');
+  const fieldError = name => (visibleError(name)
+    ? <span role="alert" style={{ color: '#b42318', font: `500 11px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none' }}>{visibleError(name)}</span>
+    : null);
+  const STEP_FIELDS = [['companyName', 'totalGuests', 'firstName', 'lastName', 'email', 'phone', 'preferredContactMethod', 'contactLink'], ['checkIn', 'checkOut'], [], []];
+  const scrollToForm = () => document.getElementById('group-booking-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const goToGroupStep = step => { setErrorMessage(''); setGroupStep(step); setTimeout(scrollToForm, 0); };
+  const nextGroupStep = () => {
+    const names = STEP_FIELDS[groupStep];
+    setTouched(previous => ({ ...previous, ...Object.fromEntries(names.map(name => [name, true])) }));
+    const problem = names.map(name => fieldErrors[name]).find(Boolean);
+    if (problem) return; // each problem is shown beside its field
+    if (groupStep === 0 && isGovernment) {
+      const agencyCheck = normalizeAgencyDetails(form);
+      if (agencyCheck.error) { setErrorMessage(agencyCheck.error); return; }
+    }
+    goToGroupStep(groupStep + 1);
+  };
+
   const fit = isGovernment && selectedPackage ? perDiemFit(selectedPackage.ratePerGuest, form.perDiemRate) : null;
 
   // Rooms the group can pick (optional): free on the chosen dates.
@@ -78,7 +123,7 @@ export default function CorporateBooking() {
   const stayEnd = form.bookingType === 'daytour' ? form.checkIn : form.checkOut;
   useEffect(() => {
     loadPublicRooms()
-      .then(rooms => setAllRooms([...rooms].sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || '')))))
+      .then(rooms => setAllRooms(rooms.map(decorateRoom).sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || '')))))
       .catch(() => setAllRooms([]));
   }, []);
   useEffect(() => {
@@ -96,7 +141,10 @@ export default function CorporateBooking() {
       .catch(() => { if (active) setFreeRoomIds([]); });
     return () => { active = false; };
   }, [form.checkIn, stayEnd, dateValid, noticeError]);
-  const freeRooms = freeRoomIds ? allRooms.filter(room => freeRoomIds.includes(room.id)) : [];
+  const freeRooms = freeRoomIds ? allRooms.filter(room => freeRoomIds.includes(room.id) && (!stepFree || !roomHasStairs(room) || roomIds.includes(room.id))) : [];
+  const stairRoomsHidden = stepFree && freeRoomIds ? allRooms.filter(room => freeRoomIds.includes(room.id) && roomHasStairs(room) && !roomIds.includes(room.id)).length : 0;
+  const [photoIndex, setPhotoIndex] = useState({});
+  const movePhoto = (room, by) => setPhotoIndex(current => ({ ...current, [room.id]: ((current[room.id] || 0) + by + room.gallery.length) % room.gallery.length }));
   const pickedRooms = allRooms.filter(room => roomIds.includes(room.id));
   const pickedBeds = pickedRooms.reduce((sum, room) => sum + (getRoomMaximumGuests(room) || 0), 0);
   const toggleRoom = id => setRoomIds(current => (current.includes(id) ? current.filter(x => x !== id) : [...current, id]));
@@ -107,6 +155,10 @@ export default function CorporateBooking() {
 
   const changeField = event => {
     const { name, value, type, checked } = event.target;
+    // Dates and choices are checked straight away; typed fields when left.
+    if (['checkIn', 'checkOut', 'totalGuests', 'preferredContactMethod'].includes(name)) {
+      setTouched(previous => ({ ...previous, [name]: true, ...(name === 'preferredContactMethod' ? { email: true, phone: true } : {}) }));
+    }
     setForm(previous => ({
       ...previous,
       [name]: type === 'checkbox' ? checked : value,
@@ -127,6 +179,7 @@ export default function CorporateBooking() {
 
   const submit = async event => {
     event.preventDefault();
+    if (groupStep < GROUP_STEPS.length - 1) { nextGroupStep(); return; }
     setErrorMessage('');
     if (availabilityLoading || !available) {
       setErrorMessage(availabilityError || 'Reservations are temporarily closed.');
@@ -148,9 +201,10 @@ export default function CorporateBooking() {
       setErrorMessage('Enter a valid first and last name (2–35 letters each).');
       return;
     }
-    const contactLinkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
-    if (contactLinkError) {
-      setErrorMessage(contactLinkError);
+    const contactProblem = STEP_FIELDS[0].map(name => fieldErrors[name]).find(Boolean);
+    if (contactProblem) {
+      setErrorMessage(contactProblem);
+      setGroupStep(0);
       return;
     }
     const agency = isGovernment ? normalizeAgencyDetails(form) : { value: null };
@@ -301,7 +355,7 @@ export default function CorporateBooking() {
         {sentRequest ? (
           <section role="status" style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '28px' }}>
             <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 10px' }}>Request sent: #{sentRequest.reference}</h2>
-            <p style={{ color: INK, font: `14px/1.7 ${SANS}`, margin: '0 0 10px' }}>Thank you. We emailed a copy to <strong>{sentRequest.email}</strong>.</p>
+            <p style={{ color: INK, font: `14px/1.7 ${SANS}`, margin: '0 0 10px' }}>Thank you. {sentRequest.email ? <>We emailed a copy to <strong>{sentRequest.email}</strong>.</> : 'The resort will contact you using your preferred contact method.'}</p>
             <ol style={{ color: '#4b4d42', font: `13px/1.8 ${SANS}`, paddingLeft: '20px', margin: 0 }}>
               <li>Our team sends your agency a quotation.</li>
               <li>Your agency issues the Purchase Order (PO) and sends it to us.</li>
@@ -311,12 +365,14 @@ export default function CorporateBooking() {
             </ol>
           </section>
         ) : (
-        <form onSubmit={submit} style={{ display: 'grid', gap: '22px' }}>
+        <form id="group-booking-form" noValidate onSubmit={submit} style={{ display: 'grid', gap: '22px', scrollMarginTop: '100px', minWidth: 0 }}>
+          <BookingSteps steps={GROUP_STEPS} current={groupStep} onStep={goToGroupStep} style={{ marginBottom: 0 }} />
+          {groupStep === 0 && (
           <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px' }}>
             <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 18px' }}>Your group</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px' }}>
               <label style={labelStyle}>Who is booking?<select name="clientType" value={form.clientType} onChange={changeField} style={inputStyle}>{CLIENT_TYPES.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}</select></label>
-              <label style={labelStyle}>{isGovernment ? 'Agency name' : isFamily ? 'Group name (optional)' : 'Company / organization'}<input required={!isFamily} maxLength={120} name="companyName" value={form.companyName} onChange={changeField} placeholder={isGovernment ? 'e.g. Department of Education' : isFamily ? 'e.g. Santos family reunion' : ''} style={inputStyle} /></label>
+              <label style={labelStyle}>{isGovernment ? 'Agency name' : isFamily ? 'Group name (optional)' : 'Company / organization'}<input required={!isFamily} maxLength={120} name="companyName" value={form.companyName} onChange={changeField} placeholder={isGovernment ? 'e.g. Department of Education' : isFamily ? 'e.g. Santos family reunion' : ''} onBlur={touch} aria-invalid={Boolean(visibleError('companyName'))} style={inputStyle} />{fieldError('companyName')}</label>
               {isGovernment && (
                 <>
                   <label style={labelStyle}>Office / unit (optional)<input maxLength={120} name="office" value={form.office} onChange={changeField} placeholder="e.g. Region III, HR Division" style={inputStyle} /></label>
@@ -325,12 +381,12 @@ export default function CorporateBooking() {
                   <label style={labelStyle}>Purchase Order no. (if you have it)<input maxLength={40} name="poNumber" value={form.poNumber} onChange={changeField} placeholder="Can be sent later" style={inputStyle} /></label>
                 </>
               )}
-              <label style={labelStyle}>Number of guests ({MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS})<input required type="number" min={MIN_GROUP_GUESTS} max={MAX_GROUP_GUESTS} step="1" name="totalGuests" value={form.totalGuests} onChange={changeField} aria-invalid={Boolean(guestError)} style={inputStyle} />{guestError && <span role="alert" style={{ color: '#b42318', font: `500 11px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none' }}>{guestError}</span>}</label>
-              <label style={labelStyle}>Contact first name<input required minLength="2" maxLength="35" name="firstName" value={form.firstName} onChange={changeField} style={inputStyle} /></label>
-              <label style={labelStyle}>Contact last name<input required minLength="2" maxLength="35" name="lastName" value={form.lastName} onChange={changeField} style={inputStyle} /></label>
-              <label style={labelStyle}>Email address<input required type="email" maxLength="254" name="email" value={form.email} onChange={changeField} style={inputStyle} /></label>
-              <label style={labelStyle}>Mobile number<input required type="tel" inputMode="numeric" pattern="09[0-9]{9}" maxLength="11" placeholder="09XXXXXXXXX" name="phone" value={form.phone} onChange={changeField} style={inputStyle} /></label>
-              <label style={labelStyle}>Preferred Contact Method<select required name="preferredContactMethod" value={form.preferredContactMethod} onChange={changeField} style={inputStyle}><option value="">Select a method</option>{PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select>
+              <label style={labelStyle}>Number of guests ({MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS})<input required type="number" min={MIN_GROUP_GUESTS} max={MAX_GROUP_GUESTS} step="1" name="totalGuests" value={form.totalGuests} onChange={changeField} aria-invalid={Boolean(guestError)} style={inputStyle} />{fieldError('totalGuests')}</label>
+              <label style={labelStyle}>Contact first name<input required minLength="2" maxLength="35" name="firstName" value={form.firstName} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('firstName'))} style={inputStyle} />{fieldError('firstName')}</label>
+              <label style={labelStyle}>Contact last name<input required minLength="2" maxLength="35" name="lastName" value={form.lastName} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('lastName'))} style={inputStyle} />{fieldError('lastName')}</label>
+              <label style={labelStyle}>{form.preferredContactMethod === 'Email' ? 'Email address' : 'Email address (optional)'}<input type="email" maxLength="254" name="email" value={form.email} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('email'))} style={inputStyle} />{fieldError('email')}</label>
+              <label style={labelStyle}>{form.preferredContactMethod === 'Phone' ? 'Mobile number' : 'Mobile number (optional)'}<input type="tel" inputMode="numeric" maxLength="11" placeholder="09XXXXXXXXX" name="phone" value={form.phone} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('phone'))} style={inputStyle} />{fieldError('phone')}</label>
+              <label style={labelStyle}>Preferred Contact Method<select name="preferredContactMethod" value={form.preferredContactMethod} onChange={changeField} style={inputStyle}><option value="">Select a method</option>{PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}</select>{fieldError('preferredContactMethod')}
                 {['Email', 'Phone'].includes(form.preferredContactMethod) && (
                   <span style={{ font: `500 12px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none', color: FOREST_DEEP }}>
                     {(form.preferredContactMethod === 'Email' ? form.email : form.phone).trim()
@@ -341,7 +397,7 @@ export default function CorporateBooking() {
               </label>
               {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
                 <label style={labelStyle}>Facebook profile link
-                  <input required type="url" maxLength="200" name="contactLink" value={form.contactLink} onChange={changeField} placeholder="https://www.facebook.com/your.name" style={inputStyle} />
+                  <input type="url" maxLength="200" name="contactLink" value={form.contactLink} onChange={changeField} onBlur={touch} placeholder="https://www.facebook.com/your.name" style={inputStyle} />
                   <span style={{ font: `500 11px/1.5 ${SANS}`, letterSpacing: 0, textTransform: 'none', color: form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink) ? '#b42318' : '#6b7280' }}>
                     {(form.contactLink && getContactLinkError(form.preferredContactMethod, form.contactLink)) || 'Copy the link from your Facebook profile and paste it here.'}
                   </span>
@@ -349,57 +405,98 @@ export default function CorporateBooking() {
               )}
             </div>
           </section>
+          )}
 
+          {groupStep === 1 && (
           <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px' }}>
             <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 18px' }}>Dates and stay</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px' }}>
               <label style={labelStyle}>Booking format<select name="bookingType" value={form.bookingType} onChange={changeField} style={inputStyle}><option value="overnight">Overnight stay</option><option value="daytour">Day tour</option></select></label>
-              <label style={labelStyle}>{form.bookingType === 'daytour' ? 'Event date' : 'Check-in'}<input required type="date" name="checkIn" min={earliestDate} max={maxDate} value={form.checkIn} onChange={changeField} aria-invalid={Boolean(noticeError)} style={inputStyle} /></label>
-              {form.bookingType === 'overnight' && <label style={labelStyle}>Check-out<input required type="date" name="checkOut" min={form.checkIn || earliestDate} max={maxDate} value={form.checkOut} onChange={changeField} style={inputStyle} /></label>}
+              <label style={labelStyle}>{form.bookingType === 'daytour' ? 'Event date' : 'Check-in'}<input type="date" name="checkIn" min={earliestDate} max={maxDate} value={form.checkIn} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('checkIn'))} style={inputStyle} />{fieldError('checkIn')}</label>
+              {form.bookingType === 'overnight' && <label style={labelStyle}>Check-out<input type="date" name="checkOut" min={form.checkIn || earliestDate} max={maxDate} value={form.checkOut} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('checkOut'))} style={inputStyle} />{fieldError('checkOut')}</label>}
             </div>
-            <p role={noticeError ? 'alert' : undefined} style={{ margin: '14px 0 0', padding: '10px 12px', background: noticeError ? '#fef3f2' : CREAM, color: noticeError ? '#b42318' : '#626355', font: `12px/1.6 ${SANS}` }}>
-              {noticeError || `Group and corporate bookings must be made at least ${GROUP_ADVANCE_DAYS} days before check-in, so the resort can inspect and prepare the areas. The earliest date you can choose is ${formatLongDate(earliestDate)}.`}
+            <p style={{ margin: '14px 0 0', padding: '10px 12px', background: CREAM, color: '#626355', font: `12px/1.6 ${SANS}` }}>
+              {`Group and corporate bookings must be made at least ${GROUP_ADVANCE_DAYS} days before check-in, so the resort can inspect and prepare the areas. The earliest date you can choose is ${formatLongDate(earliestDate)}.`}
             </p>
-            <div style={{ marginTop: '18px' }}>
-              <div style={{ ...labelStyle, display: 'block', marginBottom: '6px' }}>Rooms for your group (optional)</div>
-              {!dateValid || noticeError ? (
-                <p style={{ margin: 0, color: '#626355', font: `12px/1.6 ${SANS}` }}>Pick your dates first to see the free rooms.</p>
-              ) : freeRoomIds === null ? (
-                <p role="status" style={{ margin: 0, color: '#626355', font: `12px/1.6 ${SANS}` }}>Checking free rooms…</p>
-              ) : freeRooms.length === 0 ? (
-                <p style={{ margin: 0, color: '#626355', font: `12px/1.6 ${SANS}` }}>No rooms are free on these dates. You can still book the package; the resort will contact you about rooms.</p>
-              ) : (
-                <>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: '8px' }}>
-                    {freeRooms.map(room => {
-                      const on = roomIds.includes(room.id);
-                      return (
-                        <label key={room.id} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '10px 12px', border: `1px solid ${on ? FOREST : LINE}`, background: on ? CREAM : '#fff', cursor: 'pointer', font: `12px/1.45 ${SANS}`, color: INK }}>
-                          <input type="checkbox" checked={on} onChange={() => toggleRoom(room.id)} style={{ marginTop: '2px' }} />
-                          <span><strong>{room.roomNumber}</strong><br /><span style={{ color: '#626355' }}>{room.type || 'Room'} · up to {getRoomMaximumGuests(room) || '?'} guests</span></span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  <p style={{ margin: '8px 0 0', color: '#626355', font: `12px/1.6 ${SANS}` }}>
-                    {roomIds.length
-                      ? `${roomIds.length} room${roomIds.length === 1 ? '' : 's'} picked, sleeping up to ${pickedBeds} of your ${totalGuests || 0} guests. They are held for your group once you book.`
-                      : 'Pick the rooms you want, or leave this empty and the resort will assign rooms for your group.'}
-                  </p>
-                </>
-              )}
-            </div>
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '18px', color: '#626355', font: `12px/1.6 ${SANS}` }}>
               <input type="checkbox" name="accommodationInterest" checked={form.accommodationInterest} onChange={changeField} style={{ marginTop: '3px' }} />
               Please include optional accommodation and meal package options (without meals, plated meals, or managed buffet meals) in our follow-up.
             </label>
             <label style={{ ...labelStyle, marginTop: '18px' }}>Additional details (optional)<textarea name="notes" maxLength="1000" rows="4" value={form.notes} onChange={changeField} placeholder="Tell us about your retreat, seminar, or event needs." style={{ ...inputStyle, resize: 'vertical' }} /></label>
           </section>
+          )}
+
+          {groupStep === 2 && (
+          <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px', minWidth: 0 }}>
+            <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 6px' }}>Choose your rooms</h2>
+            <p style={{ margin: '0 0 14px', color: '#626355', font: `13px/1.6 ${SANS}` }}>Optional. Pick the rooms you want, or continue and the resort will assign rooms for your group.</p>
+            <label style={{ display: 'flex', gap: '9px', alignItems: 'flex-start', margin: '0 0 14px', color: INK, font: `13px/1.5 ${SANS}`, cursor: 'pointer' }}>
+              <input type="checkbox" checked={stepFree} onChange={event => setStepFree(event.target.checked)} style={{ marginTop: '3px' }} />
+              <span>A senior citizen or guest with limited mobility is in our group <span style={{ color: '#6b6a5c' }}>(hide rooms with stairs{stairRoomsHidden ? `: ${stairRoomsHidden} hidden` : ''})</span></span>
+            </label>
+            {freeRoomIds === null ? (
+              <p role="status" style={{ margin: 0, color: '#626355', font: `13px/1.6 ${SANS}` }}>Checking free rooms…</p>
+            ) : freeRooms.length === 0 ? (
+              <p style={{ margin: 0, color: '#626355', font: `13px/1.6 ${SANS}` }}>No matching rooms are free on these dates. You can still book the package; the resort will contact you about rooms.</p>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 220px), 1fr))', gap: '12px' }}>
+                {freeRooms.map(room => {
+                  const on = roomIds.includes(room.id);
+                  const photo = room.gallery[(photoIndex[room.id] || 0) % room.gallery.length] || room.cover;
+                  const arrow = side => ({ position: 'absolute', top: '50%', [side]: 6, transform: 'translateY(-50%)', width: 28, height: 28, borderRadius: '50%', border: 0, background: 'rgba(255,255,255,.9)', color: FOREST_DEEP, cursor: 'pointer' });
+                  return (
+                    <article key={room.id} style={{ border: `2px solid ${on ? FOREST : LINE}`, background: on ? CREAM : '#fff', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                      <div style={{ position: 'relative', height: 140, background: '#000' }}>
+                        <img src={photo} alt={`${room.title}, view ${(photoIndex[room.id] || 0) + 1}`} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                        {room.gallery.length > 1 && (
+                          <>
+                            <button type="button" aria-label={`Previous photo of ${room.title}`} onClick={() => movePhoto(room, -1)} style={arrow('left')}>‹</button>
+                            <button type="button" aria-label={`Next photo of ${room.title}`} onClick={() => movePhoto(room, 1)} style={arrow('right')}>›</button>
+                          </>
+                        )}
+                      </div>
+                      <div style={{ padding: '12px', display: 'grid', gap: '4px', flex: 1, font: `12px/1.5 ${SANS}`, color: '#626355' }}>
+                        <strong style={{ font: `500 18px ${SERIF}`, color: INK }}>{room.title}</strong>
+                        <span>{room.groupTitle} · up to {getRoomMaximumGuests(room) || '?'} guests</span>
+                        {room.location && <span>{room.location}</span>}
+                        <button type="button" aria-pressed={on} onClick={() => toggleRoom(room.id)} style={{ marginTop: '8px', border: `1px solid ${FOREST}`, background: on ? FOREST : '#fff', color: on ? '#fff' : FOREST, padding: '9px', font: `600 12px ${SANS}`, cursor: 'pointer' }}>{on ? '✓ Selected' : 'Select room'}</button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+            {roomIds.length > 0 && <p style={{ margin: '12px 0 0', color: FOREST, font: `600 13px/1.6 ${SANS}` }}>{roomIds.length} room{roomIds.length === 1 ? '' : 's'} selected, sleeping up to {pickedBeds} of your {totalGuests || 0} guests. They are held for your group once you book.</p>}
+          </section>
+          )}
+
+          {groupStep === 3 && (
+          <section style={{ background: '#fff', border: `1px solid ${LINE}`, padding: '24px', minWidth: 0 }}>
+            <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 14px' }}>Review your booking</h2>
+            <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', margin: 0, font: `13px/1.5 ${SANS}`, color: INK }}>
+              {[
+                ['Group', form.companyName.trim() || `${form.lastName.trim()} family`],
+                ['Guests', totalGuests],
+                ['Contact', guestName],
+                ['Preferred contact', form.preferredContactMethod === 'Email' ? form.email.trim() : form.preferredContactMethod === 'Phone' ? form.phone.trim() : form.contactLink.trim()],
+                [form.bookingType === 'daytour' ? 'Event date' : 'Stay', form.bookingType === 'daytour' ? formatLongDate(form.checkIn) : `${formatLongDate(form.checkIn)} to ${formatLongDate(form.checkOut)}`],
+                ['Rooms', pickedRooms.length ? pickedRooms.map(room => room.title).join(', ') : 'Assigned by the resort'],
+              ].map(([term, value]) => <div key={term} style={{ minWidth: 0 }}><dt style={{ color: '#6b6a5c', fontSize: '11px' }}>{term}</dt><dd style={{ margin: 0, fontWeight: 600, overflowWrap: 'anywhere' }}>{value}</dd></div>)}
+            </dl>
+          </section>
+          )}
 
           {errorMessage && <div role="alert" style={{ background: '#fff1f0', border: '1px solid #efc2bf', color: '#9b2c24', padding: '14px', font: `12px/1.6 ${SANS}` }}>{errorMessage}</div>}
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+            {groupStep > 0 ? <button type="button" onClick={() => goToGroupStep(groupStep - 1)} style={{ border: `1px solid ${LINE}`, background: '#fff', color: FOREST, padding: '15px 20px', cursor: 'pointer', font: `600 12px ${SANS}` }}>← BACK</button> : <span />}
+            {groupStep < GROUP_STEPS.length - 1
+              ? <button type="button" onClick={nextGroupStep} style={{ flex: '1 1 220px', border: 0, background: FOREST, color: '#fff', padding: '16px 20px', cursor: 'pointer', font: `600 12px ${SANS}`, letterSpacing: '.06em' }}>NEXT: {GROUP_STEPS[groupStep + 1].toUpperCase()} →</button>
+              : (
           <button type="submit" disabled={submitting || availabilityLoading || !available || !selectedPackage} style={{ border: 0, background: FOREST, color: '#fff', padding: '16px 20px', cursor: submitting || !available ? 'not-allowed' : 'pointer', opacity: submitting || !available ? .65 : 1, font: `600 12px ${SANS}`, letterSpacing: '.06em' }}>
             {isGovernment ? (submitting ? 'SENDING REQUEST…' : 'SEND BOOKING REQUEST · NO PAYMENT NOW') : submitting ? 'STARTING SECURE CHECKOUT…' : savedReservationId ? `RETRY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT PAYMENT` : `CONTINUE · PAY ${RESERVATION_DEPOSIT_PERCENTAGE}% DEPOSIT${selectedPackage ? ` (₱${depositAmount.toLocaleString()})` : ''}`}
           </button>
+              )}
+          </div>
         </form>
         )}
 

@@ -69,6 +69,7 @@ export async function staffApi(path, body, method = 'POST') {
 
 // Short note about the payment receipt email, for success messages.
 export function receiptNotice({ receipt, receiptError } = {}) {
+  if (/email address is missing/i.test(receiptError || '')) return ' No email on file, so no receipt was emailed.';
   if (receiptError) return ` Receipt email failed: ${receiptError}`;
   if (receipt?.sent) return ` Receipt ${receipt.receiptNumber || ''} emailed.`.replace('  ', ' ');
   if (receipt?.alreadySent) return ' Receipt email was already sent.';

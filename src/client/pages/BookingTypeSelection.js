@@ -24,8 +24,8 @@ export function BookingTypeSelectionModal({ open, onClose, onSelectPersonal, onS
           {onSelectCottage && (
             <button type="button" onClick={onSelectCottage} style={{ textAlign: 'left', border: `1px solid ${LINE}`, background: PAPER, padding: '23px', cursor: 'pointer', color: FOREST_DEEP, fontFamily: SANS }}>
               <span style={{ display: 'block', color: FOREST, font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: '12px' }}>Cottage · Day / Night Tour</span>
-              <strong style={{ display: 'block', font: `500 25px ${SERIF}`, marginBottom: '8px' }}>No room needed</strong>
-              <span style={{ color: '#6b6a5c', font: `13px/1.6 ${SANS}` }}>Swim for the day (8 AM–5 PM) or the evening (5–10 PM) with your own cottage.</span>
+              <strong style={{ display: 'block', font: `500 25px ${SERIF}`, marginBottom: '8px' }}>Cottage-only booking</strong>
+              <span style={{ color: '#6b6a5c', font: `13px/1.6 ${SANS}` }}>Day tour (8 AM–5 PM) or night tour (5–10 PM) access with a private cottage. Room accommodation not included.</span>
             </button>
           )}
           <button type="button" onClick={onSelectCorporate} style={{ textAlign: 'left', border: `1px solid ${FOREST}`, background: FOREST, padding: '23px', cursor: 'pointer', color: '#fff', fontFamily: SANS }}>

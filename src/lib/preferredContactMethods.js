@@ -28,3 +28,28 @@ export function getContactLinkError(method, link) {
   if (!isFacebookLink(link)) return 'Enter a Facebook profile link, like https://www.facebook.com/your.name';
   return '';
 }
+
+const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MOBILE_FORMAT = /^09\d{9}$/;
+
+// Email and mobile number are optional, but the method the guest prefers must
+// be filled in, and anything entered must be valid. Returns one message per
+// field ('' when fine).
+export function getContactFieldErrors({ preferredContactMethod, email, phone, contactLink } = {}) {
+  const cleanEmail = String(email || '').trim();
+  const cleanPhone = String(phone || '').trim();
+  const errors = { preferredContactMethod: '', email: '', phone: '', contactLink: '' };
+  if (!isPreferredContactMethod(preferredContactMethod)) errors.preferredContactMethod = 'Choose how we should contact you.';
+  if (cleanEmail && (!EMAIL_FORMAT.test(cleanEmail) || cleanEmail.length > 254)) errors.email = 'Enter a valid email address, like juan@email.com.';
+  else if (!cleanEmail && preferredContactMethod === 'Email') errors.email = 'Enter your email address, since you chose Email.';
+  if (cleanPhone && !MOBILE_FORMAT.test(cleanPhone)) errors.phone = 'Enter an 11-digit mobile number starting with 09.';
+  else if (!cleanPhone && preferredContactMethod === 'Phone') errors.phone = 'Enter your mobile number, since you chose Phone.';
+  errors.contactLink = getContactLinkError(preferredContactMethod, contactLink);
+  return errors;
+}
+
+// The first contact problem, or ''.
+export function getContactDetailsError(fields) {
+  const errors = getContactFieldErrors(fields);
+  return errors.preferredContactMethod || errors.email || errors.phone || errors.contactLink;
+}

@@ -41,7 +41,7 @@ import { extraGuestMealFields,
   normalizeDayVisitors,
   stayRangesOverlap,
 } from '../src/lib/bookingPricing';
-import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { getContactDetailsError } from '../src/lib/preferredContactMethods';
 import { getCottageAvailabilityFor } from '../lib/cottageStock';
 import { cottageAvailabilityError } from '../src/lib/cottages';
 import { holdsRoom } from '../src/lib/unpaidBookings';
@@ -50,6 +50,8 @@ import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { getAdditionalRoomsError } from '../src/lib/groupBooking';
 import { normalizeSeniorPwdDeclared } from '../src/lib/seniorPwdGuests';
 import { checkResortCapacity } from '../lib/resortCapacity';
+import crypto from 'crypto';
+import { discountKindsFor, MAX_DISCOUNT_IDS } from '../src/lib/discountReview';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -101,6 +103,7 @@ export default async function handler(req, res) {
       additionalRooms, // more rooms for the same stay: [{ roomId, adults, children }]
       extraGuestMeal, // day / night tour: extra guests add a ₱350 meal each
       seniorPwd, // { senior, pwd }: how many in the group (discount applied at the desk)
+      discountRequest, // true: the guest will upload their IDs and pay after staff approve
       website, // honeypot field — real guests never fill this in
     } = req.body || {};
 
@@ -131,18 +134,20 @@ export default async function handler(req, res) {
     if (closedPeriod) return res.status(409).json({ error: closedPeriodMessage(closedPeriod) });
 
     // ---- 2. Basic validation -------------------------------------------
-    if (typeof roomId !== 'string' || typeof email !== 'string'
-      || typeof phone !== 'string' || typeof checkIn !== 'string' || typeof checkOut !== 'string'
-      || !roomId || !email.trim() || !phone || !checkIn || !checkOut || !paymentMethod) {
+    if (typeof roomId !== 'string' || (email !== undefined && typeof email !== 'string')
+      || (phone !== undefined && typeof phone !== 'string') || typeof checkIn !== 'string' || typeof checkOut !== 'string'
+      || !roomId || !checkIn || !checkOut || !paymentMethod) {
       return res.status(400).json({ error: 'Please fill in all required fields.' });
     }
     if ((address !== undefined && typeof address !== 'string')
       || (notes !== undefined && typeof notes !== 'string')) {
       return res.status(400).json({ error: 'Address and special requests must be text.' });
     }
-    if (!isPreferredContactMethod(preferredContactMethod)) {
-      return res.status(400).json({ error: 'Please choose a preferred contact method.' });
-    }
+    // Email and mobile are optional, but the preferred method must be filled in.
+    const contactError = getContactDetailsError({ preferredContactMethod, email, phone, contactLink });
+    if (contactError) return res.status(400).json({ error: contactError });
+    const cleanEmail = String(email || '').trim();
+    const cleanPhone = String(phone || '').trim();
     const legacyNameParts = typeof guestName === 'string' ? splitGuestName(guestName) : {};
     const normalizedFirstName = String(firstName ?? legacyNameParts.firstName ?? '').trim();
     const normalizedLastName = String(lastName ?? legacyNameParts.lastName ?? '').trim();
@@ -150,9 +155,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Enter a valid first and last name (2-35 letters each).' });
     }
     const normalizedGuestName = joinGuestName(normalizedFirstName, normalizedLastName);
-    if (!/^09\d{9}$/.test(phone)) {
-      return res.status(400).json({ error: 'Please enter a valid 11-digit mobile number.' });
-    }
     if (!Number.isInteger(adults) || adults < 1 || !Number.isInteger(children) || children < 0) {
       return res.status(400).json({ error: 'Guest counts must be whole numbers.' });
     }
@@ -202,9 +204,6 @@ export default async function handler(req, res) {
     } catch (visitorError) {
       return res.status(400).json({ error: visitorError.message });
     }
-    const contactLinkError = getContactLinkError(preferredContactMethod, contactLink);
-    if (contactLinkError) return res.status(400).json({ error: contactLinkError });
-
     const stayError = getStayDurationError(checkIn, checkOut, { allowSingleDay: singleDay });
     if (stayError) return res.status(400).json({ error: stayError });
     // A booking for today can't start after its check-in time has passed.
@@ -221,7 +220,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: `Choose check-in and check-out dates from today through ${maxBookingDate}.` });
     }
 
-    const emailLower = String(email).trim().toLowerCase();
+    const emailLower = cleanEmail.toLowerCase();
     // ---- 4. Confirm the room exists and get its price -------------------
     const roomSnap = await adminDb.collection('rooms').doc(roomId).get();
     if (!roomSnap.exists) {
@@ -289,6 +288,19 @@ export default async function handler(req, res) {
     const seniorPwdCheck = normalizeSeniorPwdDeclared(seniorPwd || {}, groupGuests);
     if (seniorPwdCheck.error) return res.status(400).json({ error: seniorPwdCheck.error });
     const seniorPwdDeclared = seniorPwdCheck.value;
+    // Discount requested online: the guest sends their IDs, staff check them,
+    // and only then is a payment link issued. One room per request.
+    const reviewKinds = discountRequest === true ? discountKindsFor(seniorPwdDeclared) : [];
+    if (discountRequest === true && !reviewKinds.length) {
+      return res.status(400).json({ error: 'Enter how many senior citizens or PWDs are in your group.' });
+    }
+    if (reviewKinds.length > MAX_DISCOUNT_IDS) {
+      return res.status(400).json({ error: `Up to ${MAX_DISCOUNT_IDS} IDs can be sent online. Please present the others at the front desk.` });
+    }
+    if (reviewKinds.length && extraRooms.length) {
+      return res.status(400).json({ error: 'For bookings with several rooms, the discount is applied at the front desk.' });
+    }
+    const discountUploadToken = reviewKinds.length ? crypto.randomBytes(24).toString('hex') : '';
     // ---- 5c. The resort's guest limit (250 at a time) ---------------------
     const capacityProblem = await checkResortCapacity({
       checkIn,
@@ -345,9 +357,18 @@ export default async function handler(req, res) {
       guestName: normalizedGuestName,
       firstName: normalizedFirstName,
       lastName: normalizedLastName,
-      email,
+      email: cleanEmail,
       emailLower,
-      phone,
+      phone: cleanPhone,
+      ...(reviewKinds.length ? {
+        discountReview: {
+          status: 'uploading',
+          kinds: reviewKinds,
+          uploaded: [],
+          tokenHash: crypto.createHash('sha256').update(discountUploadToken).digest('hex'),
+          requestedAt: new Date().toISOString(),
+        },
+      } : {}),
       address: address || '',
       checkIn,
       checkOut,
@@ -475,10 +496,11 @@ export default async function handler(req, res) {
     // logged so you can spot delivery problems in Vercel's function logs.
     try {
       const bookingRef = docRef.id.slice(0, 8).toUpperCase();
-      await sendReservationPendingEmail(
+      if (cleanEmail) await sendReservationPendingEmail(
         {
           guestName: normalizedGuestName,
-          email,
+          email: cleanEmail,
+          discountReview: reviewKinds.length > 0,
           roomNumber: extraDocs.length ? [room.roomNumber, ...extraDocs.map(item => item.extra.room.roomNumber)].join(', ') : room.roomNumber,
           roomType: extraDocs.length ? `${extraDocs.length + 1} rooms` : room.type,
           checkIn,
@@ -495,6 +517,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       reservationId: docRef.id,
+      ...(discountUploadToken ? { discountUploadToken } : {}),
       subtotalAmount: totalAmount,
       discountAmount,
       totalAmount: discountedTotal,

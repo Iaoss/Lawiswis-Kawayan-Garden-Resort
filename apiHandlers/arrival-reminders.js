@@ -19,6 +19,7 @@ import { cancelBooking, canMarkNoShow } from '../lib/cancelBooking';
 import { logActivity } from '../lib/activityLog';
 import { getHoldExpiresMs } from '../src/lib/unpaidBookings';
 import { isPromoExpired } from '../lib/promoPolicy';
+import { ID_PHOTO_COLLECTION } from '../src/lib/discountReview';
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 const SYSTEM = { uid: 'system', name: 'Automatic daily check', email: '', role: 'system' };
@@ -113,6 +114,18 @@ async function emailBackup() {
   return { sizeKb: Math.round(content.length / 1024), counts };
 }
 
+// ID photos are deleted when staff decide. Any left behind (for example the
+// guest never finished, or the booking was cancelled) go after 14 days.
+async function deleteOldDiscountIds() {
+  const cutoff = new Date(Date.now() - 14 * 86400000);
+  const snapshot = await adminDb.collection(ID_PHOTO_COLLECTION).where('createdAt', '<', cutoff).limit(200).get();
+  if (snapshot.empty) return { deleted: 0 };
+  const batch = adminDb.batch();
+  snapshot.docs.forEach(document => batch.delete(document.ref));
+  await batch.commit();
+  return { deleted: snapshot.size };
+}
+
 // Promo codes past their end date are switched off (Promo Codes shows them
 // as Expired). Guests already can't use them; this keeps the list accurate.
 async function deactivateExpiredPromos() {
@@ -149,7 +162,7 @@ export default async function handler(req, res) {
   const morning = manilaHour < 12;
   const report = {};
   // Each job runs on its own, so one failing doesn't stop the others.
-  const jobs = [['reminders', sendReminders], ['expiredPromos', deactivateExpiredPromos]];
+  const jobs = [['reminders', sendReminders], ['expiredPromos', deactivateExpiredPromos], ['oldDiscountIds', deleteOldDiscountIds]];
   if (morning) jobs.push(['missedBookings', closeMissedBookings], ['backup', emailBackup]);
   for (const [name, job] of jobs) {
     try {

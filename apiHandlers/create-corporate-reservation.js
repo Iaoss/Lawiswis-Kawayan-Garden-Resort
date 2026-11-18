@@ -3,7 +3,7 @@ import { sendReservationPendingEmail } from '../lib/email';
 import { getCorporateNights, getCorporatePackage, getGroupAdvanceNoticeError, getGroupGuestError } from '../src/lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
 import { getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
-import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { getContactDetailsError } from '../src/lib/preferredContactMethods';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { DEFAULT_PAYMENT_TERMS_DAYS, normalizeAgencyDetails } from '../src/lib/agencyBilling';
 import { staffStamp } from '../src/lib/staffLabel';
@@ -97,10 +97,8 @@ export async function createCorporateReservation(body, staff = null) {
     // Families don't need a company name.
     if ((!isFamily && (typeof companyName !== 'string' || !companyName.trim()))
       || (companyName !== undefined && typeof companyName !== 'string') || String(companyName || '').trim().length > 120
-      || typeof email !== 'string' || !email.trim() || email.length > 254
-      || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
-      || typeof phone !== 'string' || !/^09\d{9}$/.test(phone)
-      || !isPreferredContactMethod(preferredContactMethod)
+      || (email !== undefined && typeof email !== 'string')
+      || (phone !== undefined && typeof phone !== 'string')
       || !Number.isSafeInteger(totalGuests) || !getCorporatePackage(totalGuests)
       || !['daytour', 'overnight'].includes(bookingType)
       || typeof checkIn !== 'string' || typeof checkOut !== 'string'
@@ -109,8 +107,11 @@ export async function createCorporateReservation(body, staff = null) {
       return reply(400, { error: 'Please provide valid group, contact, and stay details.' });
     }
 
-    const contactLinkError = getContactLinkError(preferredContactMethod, contactLink);
-    if (contactLinkError) return reply(400, { error: contactLinkError });
+    // Email and mobile are optional, but the preferred method must be filled in.
+    const contactError = getContactDetailsError({ preferredContactMethod, email, phone, contactLink });
+    if (contactError) return reply(400, { error: contactError });
+    const cleanEmail = String(email || '').trim();
+    const cleanPhone = String(phone || '').trim();
 
     const nameParts = typeof guestName === 'string' ? splitGuestName(guestName) : {};
     const contactFirstName = String(firstName ?? nameParts.firstName ?? '').trim();
@@ -177,9 +178,9 @@ export async function createCorporateReservation(body, staff = null) {
       guestName: normalizedGuestName,
       firstName: contactFirstName,
       lastName: contactLastName,
-      email: email.trim(),
-      emailLower: email.trim().toLowerCase(),
-      phone,
+      email: cleanEmail,
+      emailLower: cleanEmail.toLowerCase(),
+      phone: cleanPhone,
       preferredContactMethod,
       contactLink: preferredContactMethod === 'Facebook Messenger' ? String(contactLink).trim() : '',
       checkIn,
@@ -274,9 +275,9 @@ export async function createCorporateReservation(body, staff = null) {
     }
 
     try {
-      await sendReservationPendingEmail({
+      if (cleanEmail) await sendReservationPendingEmail({
         guestName: normalizedGuestName,
-        email: email.trim(),
+        email: cleanEmail,
         roomNumber: packageDetails.name,
         roomType: `${totalGuests}-guest group package`,
         checkIn,

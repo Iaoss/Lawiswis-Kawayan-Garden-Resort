@@ -7,7 +7,7 @@ import {
   getResortNow, getSwimmingRate, getTourCutoffError,
 } from '../../lib/bookingPricing';
 import { NAME_PATTERN } from '../../lib/nameValidation';
-import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError } from '../../lib/preferredContactMethods';
+import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactDetailsError, getContactFieldErrors } from '../../lib/preferredContactMethods';
 import { RESERVATION_DEPOSIT_PERCENTAGE, getOnlinePaymentAmount } from '../../lib/paymentPolicy';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
@@ -56,6 +56,18 @@ export default function CottageBooking() {
   const [error, setError] = useState('');
 
   const set = (key, value) => setForm(previous => ({ ...previous, [key]: value }));
+  // Errors appear beside a field once it has been left (or on Submit).
+  const [touched, setTouched] = useState({});
+  const touch = key => setTouched(previous => ({ ...previous, [key]: true }));
+  const contactErrors = getContactFieldErrors(form);
+  const detailErrors = {
+    firstName: NAME_PATTERN.test(form.firstName.trim()) ? '' : 'Enter your first name (2-35 letters).',
+    lastName: NAME_PATTERN.test(form.lastName.trim()) ? '' : 'Enter your last name (2-35 letters).',
+    ...contactErrors,
+  };
+  const fieldError = key => (touched[key] && detailErrors[key]
+    ? <span role="alert" style={{ color: '#b42318', font: `500 11px/1.4 ${SANS}`, textTransform: 'none', letterSpacing: 0 }}>{detailErrors[key]}</span>
+    : null);
   const dayClosed = Boolean(getTourCutoffError(form.date, 'day'));
   const nightClosed = Boolean(getTourCutoffError(form.date, 'night'));
   const cutoffError = getTourCutoffError(form.date, form.tourPeriod);
@@ -97,11 +109,10 @@ export default function CottageBooking() {
     if (cutoffError) return setError(cutoffError);
     if (!form.cottageId) return setError('Choose a cottage for your tour.');
     if (pricing?.error) return setError(pricing.error);
-    if (!NAME_PATTERN.test(form.firstName.trim()) || !NAME_PATTERN.test(form.lastName.trim())) return setError('Enter a valid first and last name (2-35 letters each).');
-    if (!/^09\d{9}$/.test(form.phone)) return setError('Enter a valid 11-digit mobile number, like 09171234567.');
-    if (!form.preferredContactMethod) return setError('Choose how we should contact you.');
-    const linkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
-    if (linkError) return setError(linkError);
+    setTouched({ firstName: true, lastName: true, email: true, phone: true, preferredContactMethod: true, contactLink: true });
+    if (detailErrors.firstName || detailErrors.lastName) return setError(detailErrors.firstName || detailErrors.lastName);
+    const contactError = getContactDetailsError(form);
+    if (contactError) return setError(contactError);
     if (!agreed) return setError('Please agree to the Terms of Service and the Cancellation Policy.');
     setSubmitting(true);
     try {
@@ -146,9 +157,9 @@ export default function CottageBooking() {
       <div style={{ maxWidth: 1080, margin: '0 auto' }}>
         <button type="button" onClick={() => navigate(`/book?${new URLSearchParams({ type: 'personal', stay: form.tourPeriod, checkIn: form.date, adults: String(form.adults), children: String(form.children), step: 'room' })}`)} style={{ border: 0, background: 'none', color: FOREST, cursor: 'pointer', padding: 0, font: `600 12px ${SANS}`, marginBottom: 14 }}>← Back to room choice</button>
         <div style={{ color: BRASS, font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: 10 }}>Day tour · Night tour</div>
-        <h1 style={{ color: FOREST_DEEP, font: `500 clamp(30px, 5vw, 44px)/1.1 ${SERIF}`, margin: '0 0 10px' }}>Book a cottage for the day</h1>
+        <h1 style={{ color: FOREST_DEEP, font: `500 clamp(30px, 5vw, 44px)/1.1 ${SERIF}`, margin: '0 0 10px' }}>Cottage-only booking</h1>
         <p style={{ color: '#6b6a5c', font: `14px/1.7 ${SANS}`, margin: '0 0 26px', maxWidth: 640 }}>
-          No room needed. Swim and relax for the day or the evening with your own cottage. To book a room for your tour (cottage optional) or to stay overnight, <Link to="/rooms" style={{ color: FOREST }}>book a room</Link>.
+          Day or night tour access with a private cottage. Room accommodation not included. To add a room to your tour or to stay overnight, <Link to="/rooms" style={{ color: FOREST }}>book a room</Link>.
         </p>
 
         <form onSubmit={submit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18, alignItems: 'start' }}>
@@ -213,22 +224,23 @@ export default function CottageBooking() {
             <section style={card}>
               <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 14px' }}>Your details</h2>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-                <label style={label}>First name<input required maxLength={35} value={form.firstName} onChange={e => set('firstName', e.target.value)} style={input} autoComplete="given-name" /></label>
-                <label style={label}>Last name<input required maxLength={35} value={form.lastName} onChange={e => set('lastName', e.target.value)} style={input} autoComplete="family-name" /></label>
-                <label style={label}>Mobile number<input required inputMode="numeric" maxLength={11} placeholder="09XXXXXXXXX" value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} style={input} autoComplete="tel" /></label>
-                <label style={label}>Email<input required type="email" maxLength={254} value={form.email} onChange={e => set('email', e.target.value)} style={input} autoComplete="email" /></label>
+                <label style={label}>First name<input required maxLength={35} value={form.firstName} onBlur={() => touch('firstName')} onChange={e => set('firstName', e.target.value)} style={input} autoComplete="given-name" />{fieldError('firstName')}</label>
+                <label style={label}>Last name<input required maxLength={35} value={form.lastName} onBlur={() => touch('lastName')} onChange={e => set('lastName', e.target.value)} style={input} autoComplete="family-name" />{fieldError('lastName')}</label>
+                <label style={label}>{form.preferredContactMethod === 'Phone' ? 'Mobile number' : 'Mobile number (optional)'}<input onBlur={() => touch('phone')} inputMode="numeric" maxLength={11} placeholder="09XXXXXXXXX" value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} style={input} autoComplete="tel" />{fieldError('phone')}</label>
+                <label style={label}>{form.preferredContactMethod === 'Email' ? 'Email' : 'Email (optional)'}<input type="email" maxLength={254} value={form.email} onBlur={() => touch('email')} onChange={e => set('email', e.target.value)} style={input} autoComplete="email" />{fieldError('email')}</label>
                 <label style={label}>Preferred contact method
-                  <select required value={form.preferredContactMethod} onChange={e => set('preferredContactMethod', e.target.value)} style={input}>
+                  <select required value={form.preferredContactMethod} onChange={e => { set('preferredContactMethod', e.target.value); setTouched(previous => ({ ...previous, preferredContactMethod: true, email: true, phone: true })); }} style={input}>
                     <option value="">Select a method</option>
                     {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
                   </select>
+                  {fieldError('preferredContactMethod')}
                   {['Email', 'Phone'].includes(form.preferredContactMethod) && (form.preferredContactMethod === 'Email' ? form.email : form.phone).trim() && (
                     <span style={{ font: `500 12px ${SANS}`, textTransform: 'none', letterSpacing: 0, color: FOREST }}>We'll contact you at {(form.preferredContactMethod === 'Email' ? form.email : form.phone).trim()}</span>
                   )}
                 </label>
                 {form.preferredContactMethod === FACEBOOK_CONTACT_METHOD && (
                   <label style={label}>Facebook profile link
-                    <input required type="url" maxLength={200} placeholder="https://www.facebook.com/your.name" value={form.contactLink} onChange={e => set('contactLink', e.target.value)} style={input} />
+                    <input required type="url" maxLength={200} placeholder="https://www.facebook.com/your.name" value={form.contactLink} onBlur={() => touch('contactLink')} onChange={e => set('contactLink', e.target.value)} style={input} />{fieldError('contactLink')}
                   </label>
                 )}
               </div>

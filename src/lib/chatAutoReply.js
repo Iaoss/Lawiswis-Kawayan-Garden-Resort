@@ -101,7 +101,7 @@ export function buildAutoAnswer(topicId, { rooms = [], policy = DEFAULT_CANCELLA
         'Swimming entrance per person:',
         `• Day tour (${DAYTOUR_TIME_SLOT.checkIn}–${DAYTOUR_TIME_SLOT.checkOut}): ${peso(day.adult)} per person (adults and children)`,
         `• Night tour (${NIGHTTOUR_TIME_SLOT.checkIn}–${NIGHTTOUR_TIME_SLOT.checkOut}): ${peso(night.adult)} per person (adults and children)`,
-        'For a tour you can book a room or just a cottage. Tap "Cottage rates" for cottage prices.',
+        'For a tour you can book a room or make a cottage-only booking. Tap "Cottage rates" for cottage prices.',
       ].join('\n');
     case 'auto-times':
       return [

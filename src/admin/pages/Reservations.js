@@ -51,6 +51,8 @@ import { invalidateCollections } from '../lib/cachedCollection';
 import RoomSchedule from '../components/RoomSchedule';
 import { seniorPwdSummary } from '../../lib/seniorPwdGuests';
 import { subscribeCollection } from '../lib/liveCollection';
+import DiscountReviewDialog from '../components/DiscountReviewDialog';
+import { isAwaitingDiscountReview, isDiscountReviewQueued } from '../../lib/discountReview';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -684,6 +686,7 @@ export default function Reservations() {
   const [manualRefunds, setManualRefunds] = useState({});
   const [filter, setFilter]             = useState(QUICK_VIEWS[initialView]?.status || 'all');
   const [quickView, setQuickView]       = useState(initialView);
+  const [discountReviewTarget, setDiscountReviewTarget] = useState(null);
   const [tab, setTab] = useState(() => (initialView ? 'bookings' : readTab()));
   const chooseTab = id => {
     setTab(id);
@@ -1345,7 +1348,9 @@ export default function Reservations() {
   const pendingCancellations = reservations.filter(r => r.cancellationRequested && r.status !== 'cancelled');
   const pendingRefunds = reservations.filter(r =>
     ['eligible', 'needs_review'].includes(String(r.refundRequestStatus || '').toLowerCase()));
-  const unpaidOnline = reservations.filter(isUnpaidOnlineBooking);
+  // Bookings waiting for a Senior / PWD ID check have their own list.
+  const discountReviews = reservations.filter(isDiscountReviewQueued);
+  const unpaidOnline = reservations.filter(r => isUnpaidOnlineBooking(r) && !isAwaitingDiscountReview(r));
   const followUpTime = value => {
     const ms = value?.toMillis ? value.toMillis() : value?.seconds ? value.seconds * 1000 : 0;
     return ms ? new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'just now';
@@ -1357,7 +1362,7 @@ export default function Reservations() {
     ['requested', 'needs_review'].includes(String(r.modificationRequest?.status || '').toLowerCase()));
 
 
-  const attentionCount = stillArriving.length + dueToCheckOut.length + lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length;
+  const attentionCount = discountReviews.length + stillArriving.length + dueToCheckOut.length + lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length;
 
   return (
     <PageLayout>
@@ -1397,6 +1402,12 @@ export default function Reservations() {
             style={{ position: 'fixed', top: '18px', right: '18px', zIndex: 1000, maxWidth: '360px', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', background: toast.type === 'error' ? '#fee2e2' : '#dcfce7', color: toast.type === 'error' ? '#991b1b' : '#166534', border: `1px solid ${toast.type === 'error' ? '#fecaca' : '#bbf7d0'}`, boxShadow: '0 4px 14px rgba(0,0,0,0.12)', fontSize: '12px' }}>
             {toast.text}
           </div>
+        )}
+
+        {discountReviewTarget && (
+          <DiscountReviewDialog reservation={discountReviewTarget}
+            colors={{ CARD, CARD2, BORDER, BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+            onClose={() => setDiscountReviewTarget(null)} />
         )}
 
         {assignTarget && (
@@ -1793,7 +1804,7 @@ export default function Reservations() {
 
         {tab === 'attention' && (
           <section aria-label="Needs attention" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '14px 16px', display: 'grid', gap: '8px', alignContent: 'start', minWidth: 0, marginBottom: 20 }}>
-            {stillArriving.length + dueToCheckOut.length + lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length === 0 && (
+            {attentionCount === 0 && (
               <div style={{ fontSize: '12px', color: MUTED }}>All clear — nothing needs action right now.</div>
             )}
 
@@ -1823,6 +1834,20 @@ export default function Reservations() {
                     </div>
                   );
                 })}
+              </NotificationGroup>
+            )}
+
+            {discountReviews.length > 0 && (
+              <NotificationGroup title="Senior / PWD ID checks" detail="IDs sent online. Approve or reject, and the guest gets a payment link" count={discountReviews.length} color="#2563eb" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {discountReviews.map(r => (
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 0', borderTop: `1px solid ${BORDER}` }}>
+                    <div style={{ fontSize: '12px', color: TEXT }}>
+                      <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'} · #{r.id.slice(0, 8).toUpperCase()}
+                      <div style={{ fontSize: '10px', color: MUTED }}>{seniorPwdSummary(r)?.text} · {formatDate(r.checkIn)} · {money(r.totalAmount)}</div>
+                    </div>
+                    <button type="button" onClick={() => setDiscountReviewTarget(r)} style={{ background: ACCENT, color: ACCENT_TEXT, border: 0, borderRadius: '8px', padding: '7px 12px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Review IDs</button>
+                  </div>
+                ))}
               </NotificationGroup>
             )}
 

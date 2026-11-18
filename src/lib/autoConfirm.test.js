@@ -10,10 +10,22 @@ describe('auto-confirm after a verified online payment', () => {
     expect(shouldAutoConfirm(pending, booking, 2999)).toBe(false);
   });
 
+  test('confirms a big group booking once its deposit is paid', () => {
+    expect(shouldAutoConfirm({ ...pending, type: 'corporate' }, booking, 3000)).toBe(true);
+    expect(shouldAutoConfirm({ ...pending, type: 'corporate' }, booking, 2999)).toBe(false);
+  });
+
+  test('uses the discounted total after an approved Senior / PWD discount', () => {
+    const discounted = { ...pending, extraCharges: -2000, discountReview: { status: 'approved' } };
+    expect(shouldAutoConfirm(discounted, booking, 2000)).toBe(true);
+    expect(shouldAutoConfirm(discounted, booking, 1999)).toBe(false);
+  });
+
   test('leaves other bookings and payments alone', () => {
     expect(shouldAutoConfirm({ ...pending, status: 'cancelled' }, booking, 6000)).toBe(false);
     expect(shouldAutoConfirm({ ...pending, status: 'confirmed' }, booking, 6000)).toBe(false);
-    expect(shouldAutoConfirm({ ...pending, type: 'corporate' }, booking, 6000)).toBe(false);
+    expect(shouldAutoConfirm({ ...pending, chargeToAgency: true }, booking, 6000)).toBe(false);
+    expect(shouldAutoConfirm({ ...pending, discountReview: { status: 'pending' } }, booking, 6000)).toBe(false);
     expect(shouldAutoConfirm(pending, { paymentType: 'billing' }, 6000)).toBe(false);
     expect(shouldAutoConfirm(pending, { paymentType: 'booking', modificationRequestId: 'm1' }, 6000)).toBe(false);
   });

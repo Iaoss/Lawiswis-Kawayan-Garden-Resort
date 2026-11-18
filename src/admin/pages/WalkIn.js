@@ -13,7 +13,7 @@ import { BOOKING_OPTIONS, normalizeBookingDetails, priceBookingDetails } from '.
 import { COTTAGE_OPTIONS, EXTRA_GUEST_MEAL_RATE, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES, calculateCottageTourPrice, cottageName, getCottageFee } from '../../lib/bookingPricing';
 import { groupTooLargeNote, suggestCottage, suggestRooms } from '../../lib/bookingSuggestions';
 import DateOccupancy from '../../components/ui/date-occupancy';
-import { PREFERRED_CONTACT_METHODS, isPreferredContactMethod } from '../../lib/preferredContactMethods';
+import { PREFERRED_CONTACT_METHODS, getContactFieldErrors } from '../../lib/preferredContactMethods';
 import { staffApi } from '../lib/staffApi';
 import OnlinePaymentQr from '../components/OnlinePaymentQr';
 import CorporateWalkInForm from '../components/CorporateWalkInForm';
@@ -23,11 +23,12 @@ import { appAlert } from '../../components/ui/app-dialog';
 import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
-import { PH_MOBILE } from '../../lib/phoneNumber';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 import PromoCodeForm from '../components/PromoCodeForm';
 import { useLeaveGuard } from '../lib/leaveGuard';
 import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
+import { roomHasStairs } from '../../lib/roomAccess';
+import { decorateRoom } from '../../client/lib/roomCatalog';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'This room is full for that many guests. Couple rooms take 2 guests; a Couple Room with Extra Bed takes a third adult. For bigger groups, choose a Family Room or Family Suite.';
 
@@ -141,7 +142,7 @@ export default function WalkIn() {
   const [upsellOpen, setUpsellOpen] = useState(false);
   const [nameErrors, setNameErrors] = useState({});
   const [form, setForm] = useState({
-    firstName: '', lastName: '', email: '', phone: '', address: '', preferredContactMethod: '',
+    firstName: '', lastName: '', email: '', phone: '', address: '', preferredContactMethod: '', contactLink: '',
     roomId: '', checkIn: '', checkOut: '',
     bookingOption: 'overnight', overnightTimeSlot: 'morning', cottageId: '', cottageOnly: false,
     adults: 1, children: 0,
@@ -319,7 +320,9 @@ export default function WalkIn() {
 
   // ── Smart suggestion: best-fitting free rooms and cottage for the group ──
   const guestTotal = (Number(form.adults) || 0) + (Number(form.children) || 0);
-  const roomSuggestions = useMemo(() => suggestRooms(availableRooms, details), [availableRooms, details]);
+  const [stepFree, setStepFree] = useState(false);
+  const stepFreeRooms = useMemo(() => (stepFree ? availableRooms.filter(room => !roomHasStairs(decorateRoom(room, 0))) : availableRooms), [availableRooms, stepFree]);
+  const roomSuggestions = useMemo(() => suggestRooms(stepFreeRooms, details), [stepFreeRooms, details]);
   const cottageSuggestion = guestTotal > 0 ? suggestCottage(guestTotal) : null;
 
   const categoryOf = (room) => WALK_IN_CATEGORIES.find(c => getRoomsForCategory([room], c).length > 0);
@@ -382,7 +385,6 @@ export default function WalkIn() {
     if (saving) return;
     if (!selectedRoom) return appAlert('Choose a room for this guest first.', { title: 'No room selected', tone: 'warning' });
     if (stayError || !details) return appAlert(stayError || 'Choose the booking date first.', { title: 'Check the dates', tone: 'warning' });
-    if (!isPreferredContactMethod(form.preferredContactMethod)) return appAlert('Choose how the guest prefers to be contacted.', { title: 'Contact method needed', tone: 'warning' });
     if (cottageOnly && !form.cottageId) return appAlert('Choose a cottage for this cottage-only tour.', { title: 'Cottage needed', tone: 'warning' });
     if (coupleGuestLimit !== null && (Number(form.adults) || 0) + (Number(form.children) || 0) > coupleGuestLimit) {
       setUpsellOpen(true);
@@ -392,7 +394,7 @@ export default function WalkIn() {
     const errors = {
       firstName: NAME_PATTERN.test(form.firstName.trim()) ? '' : 'Enter 2-35 valid letters.',
       lastName: NAME_PATTERN.test(form.lastName.trim()) ? '' : 'Enter 2-35 valid letters.',
-      phone: PH_MOBILE.test(form.phone) ? '' : 'Enter a valid 11-digit mobile number starting with 09 (e.g. 09171234567).',
+      ...getContactFieldErrors(form),
     };
     setNameErrors(errors);
     if (Object.values(errors).some(Boolean)) return;
@@ -432,12 +434,13 @@ export default function WalkIn() {
       try {
         // Offline: the booking (and its confirmation email) is sent later.
         if (created.offline) throw Object.assign(new Error(''), { offline: true });
+        if (!form.email.trim()) throw Object.assign(new Error(''), { noEmail: true });
         const result = await staffApi('send-reservation-confirmation', { reservationId: created.reservationId });
         confirmationMessage = result.sent
           ? ' Confirmation email sent.'
           : result.alreadySent ? ' Confirmation email was already sent.' : ' Confirmation email is being sent.';
       } catch (confirmationError) {
-        confirmationMessage = confirmationError.offline
+        confirmationMessage = confirmationError.noEmail ? ' No email on file, so no confirmation was sent.' : confirmationError.offline
           ? ' Saved on this computer (no internet). It will be sent to the system automatically when the internet is back. The price shown is an estimate until then.'
           : ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
       }
@@ -523,7 +526,7 @@ export default function WalkIn() {
       setSuccess(`Reservation created for ${created.guestName}. ${state} ${created.notes.join(' ')}`.trim());
     }
     setCreated(null);
-    setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', cottageId:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'pending', notes:'' });
+    setForm({ firstName:'', lastName:'', email:'', phone:'', address:'', preferredContactMethod:'', contactLink:'', roomId:'', checkIn:'', checkOut:'', bookingOption:'overnight', overnightTimeSlot:'morning', cottageId:'', adults:1, children:0, paymentMethod:'cash', paymentStatus:'pending', notes:'' });
     setNameErrors({});
     setExtraRoomIds([]);
     setSelectedRoom(null);
@@ -808,8 +811,11 @@ export default function WalkIn() {
                     <div style={{ ...card, marginBottom: 16, border: `1px solid ${ACCENT}` }}>
                       <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 4 }}><i className="ti ti-sparkles" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Suggested for {guestTotal} guest{guestTotal === 1 ? '' : 's'}</div>
                       <div style={{ fontSize: 11, color: MUTED, marginBottom: 12 }}>Free rooms that fit the whole group, cheapest first for this {isTour ? bookingOption.label.toLowerCase() : 'stay'} (estimate).</div>
+                      <label style={{ display: 'flex', gap: 7, alignItems: 'center', fontSize: 11.5, color: TEXT, marginBottom: 10, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={stepFree} onChange={e => setStepFree(e.target.checked)} /> Senior or guest with limited mobility: no rooms with stairs
+                      </label>
                       {roomSuggestions.length === 0 ? (
-                        <div style={{ fontSize: 12, color: '#b45309' }}>{groupTooLargeNote(availableRooms, details)}</div>
+                        <div style={{ fontSize: 12, color: '#b45309' }}>{groupTooLargeNote(stepFreeRooms, details)}</div>
                       ) : (
                         <div style={{ display: 'grid', gap: 8 }}>
                           {roomSuggestions.map(({ room, total, reason }, index) => (
@@ -1015,8 +1021,8 @@ export default function WalkIn() {
                         {[
                           { lbl: 'First Name', key: 'firstName', ph: 'Juan', req: true },
                           { lbl: 'Last Name',  key: 'lastName',  ph: 'dela Cruz', req: true },
-                          { lbl: 'Mobile Number', key: 'phone', ph: '09XXXXXXXXX', req: true },
-                          { lbl: 'Email',        key: 'email',     ph: 'juan@email.com', type: 'email' },
+                          { lbl: form.preferredContactMethod === 'Phone' ? 'Mobile Number' : 'Mobile Number (optional)', key: 'phone', ph: '09XXXXXXXXX' },
+                          { lbl: form.preferredContactMethod === 'Email' ? 'Email' : 'Email (optional)', key: 'email', ph: 'juan@email.com', type: 'email' },
                           { lbl: 'Address',      key: 'address',   ph: 'City, Province' },
                         ].map(f => (
                           <div key={f.key}>
@@ -1043,6 +1049,7 @@ export default function WalkIn() {
                                 }
                               }}
                               placeholder={f.ph} style={inp} />
+                            {f.key === 'email' && nameErrors.email && <div role="alert" style={{ color: '#b91c1c', fontSize: 10, marginTop: 4 }}>{nameErrors.email}</div>}
                             {f.key === 'phone' && (
                               <div role={nameErrors.phone ? 'alert' : undefined} style={{ color: nameErrors.phone ? '#b91c1c' : MUTED, fontSize: 10, marginTop: 4 }}>
                                 {nameErrors.phone || '11-digit Philippine mobile number starting with 09.'}
@@ -1058,11 +1065,23 @@ export default function WalkIn() {
                         <div>
                           <label style={label}>Preferred Contact Method</label>
                           <select required value={form.preferredContactMethod}
-                            onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))} style={inp}>
+                            onChange={e => {
+                              const preferredContactMethod = e.target.value;
+                              setForm(previous => ({ ...previous, preferredContactMethod }));
+                              setNameErrors(previous => ({ ...previous, ...getContactFieldErrors({ ...form, preferredContactMethod }) }));
+                            }} style={inp}>
                             <option value="">Select contact method</option>
                             {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
                           </select>
+                          {nameErrors.preferredContactMethod && <div role="alert" style={{ color: '#b91c1c', fontSize: 10, marginTop: 4 }}>{nameErrors.preferredContactMethod}</div>}
                         </div>
+                        {form.preferredContactMethod === 'Facebook Messenger' && (
+                          <div>
+                            <label style={label}>Facebook profile link</label>
+                            <input type="url" maxLength={200} value={form.contactLink} placeholder="https://www.facebook.com/guest.name" onChange={e => setForm(previous => ({ ...previous, contactLink: e.target.value }))} style={inp} />
+                            {nameErrors.contactLink && <div role="alert" style={{ color: '#b91c1c', fontSize: 10, marginTop: 4 }}>{nameErrors.contactLink}</div>}
+                          </div>
+                        )}
                       </div>
                     </div>
 
