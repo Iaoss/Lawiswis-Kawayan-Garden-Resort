@@ -1,7 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase/firebase';
 import { BRASS, CREAM, FOREST, FOREST_DEEP, INK, LINE, MOSS, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import BookingSteps from '../components/BookingSteps';
@@ -16,6 +14,7 @@ import { MIN_GROUP_GUESTS } from '../../lib/corporatePackages';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { closedPeriodMessage, findClosedPeriod, formatClosedRange } from '../../lib/closedDates';
 import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
+import { loadPublicRooms } from '../lib/publicRooms';
 
 // Step-by-step start of a booking: 1 Type (personal or group), 2 When (stay
 // type, dates, guests), 3 Choose a room (only rooms free on those dates,
@@ -81,8 +80,8 @@ export default function BookingWizard() {
   const guests = Number(adults) + Number(children);
 
   useEffect(() => {
-    getDocs(collection(db, 'rooms'))
-      .then(snapshot => setRooms(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).map(decorateRoom)))
+    loadPublicRooms()
+      .then(list => setRooms(list.map(decorateRoom)))
       .catch(() => setRooms([]))
       .finally(() => setRoomsLoading(false));
   }, []);
@@ -156,11 +155,17 @@ export default function BookingWizard() {
       .then(({ ok, data }) => {
         if (!active) return;
         if (!ok) throw new Error(data.error || 'Availability could not be checked.');
+        // The resort holds up to 250 guests at a time.
+        if (data.resortFull) throw new Error(data.resortFull.message);
+        const group = Number(adults) + Number(children);
+        if (Number.isFinite(data.placesLeft) && data.placesLeft !== null && group > data.placesLeft) {
+          throw new Error(`The resort can host up to ${data.maxGuests || 250} guests at a time. On your dates there is room for only ${data.placesLeft} more guest${data.placesLeft === 1 ? '' : 's'}. Please choose other dates or fewer guests.`);
+        }
         setAvailableIds(data.availableRoomIds || []);
       })
       .catch(error => { if (active) { setAvailableIds([]); setAvailabilityError(error.message || 'Availability could not be checked.'); } });
     return () => { active = false; };
-  }, [step, checkIn, stayEnd, closedDates]);
+  }, [step, checkIn, stayEnd, closedDates]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const nights = isTour ? 1 : getStayUnits(checkIn, checkOut);
   const priceFor = room => {

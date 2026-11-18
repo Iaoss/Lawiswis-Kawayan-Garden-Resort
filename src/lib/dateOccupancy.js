@@ -2,6 +2,8 @@
 // overnight. Used by /api/occupancy?date=YYYY-MM-DD for the live indicator
 // shown when a date is picked (guest site, walk-in and staff edits).
 
+import { holdsRoom } from './unpaidBookings';
+
 const NOT_COUNTED = ['cancelled', 'rejected'];
 
 const emptySlot = () => ({ bookings: 0, guests: 0 });
@@ -31,9 +33,12 @@ export function getSlotOnDate(reservation, date) {
   return date >= checkIn && date < checkOut ? 'overnight' : '';
 }
 
-export function getDateOccupancy(reservations, date) {
+export function getDateOccupancy(reservations, date, now = Date.now()) {
   const slots = { day: emptySlot(), night: emptySlot(), overnight: emptySlot() };
   reservations.forEach(reservation => {
+    // Same bookings as the resort's guest limit counts: not group room
+    // blocks, and not unpaid holds that have run out.
+    if (reservation.type === 'corporate-room' || !holdsRoom(reservation, now)) return;
     const slot = getSlotOnDate(reservation, date);
     if (!slot) return;
     slots[slot].bookings += 1;

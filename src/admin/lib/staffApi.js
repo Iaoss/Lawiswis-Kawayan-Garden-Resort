@@ -30,7 +30,7 @@ export async function sendStaffRequest(path, body, method = 'POST') {
 
 // What a page gets back when an action was saved for later.
 function queued(path, body, method) {
-  const item = enqueue(path, body, method);
+  const item = enqueue(path, body, method, auth.currentUser?.uid || '');
   return {
     offline: true,
     queuedId: item.id,

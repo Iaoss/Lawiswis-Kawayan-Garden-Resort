@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { db } from '../../firebase/firebase';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
@@ -40,6 +40,7 @@ import { decorateRoom } from '../lib/roomCatalog';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
 import { normalizeSeniorPwdDeclared } from '../../lib/seniorPwdGuests';
+import { loadPublicRooms } from '../lib/publicRooms';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -271,6 +272,8 @@ export default function BookRoom() {
       const response = await fetch(`/api/room-availability?${new URLSearchParams({ startDate: checkIn, endDate: checkOut })}`);
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || 'Availability could not be checked.');
+      // The resort holds up to 250 guests at a time.
+      if (result.resortFull) return fail(result.resortFull.message);
       if (!(result.availableRoomIds || []).includes(roomId)) {
         return fail(`${room?.roomNumber ? `Room ${room.roomNumber}` : 'This room'} is already booked for those dates. Try other dates.`);
       }
@@ -547,8 +550,8 @@ export default function BookRoom() {
     const fetchRooms = async () => {
       setRoomSuggestionsLoading(true);
       try {
-        const snap = await getDocs(collection(db, 'rooms'));
-        if (active) setAvailableRooms(snap.docs.map(item => ({ id: item.id, ...item.data() })));
+        const list = await loadPublicRooms();
+        if (active) setAvailableRooms(list);
       } catch (error) {
         console.error('Unable to load room recommendations:', error);
       } finally {

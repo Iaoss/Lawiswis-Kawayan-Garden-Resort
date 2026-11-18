@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { dismissItem, flushOutbox, getOutbox, subscribeOutbox } from '../lib/offlineOutbox';
 import { sendStaffRequest } from '../lib/staffApi';
+import { auth } from '../../firebase/firebase';
 
 // Connection banner for the staff portal.
 //   Offline: shows that the lists are the copy saved on this computer (and
@@ -34,7 +35,7 @@ export default function OfflineStatus({ dark = false }) {
       if (navigator.onLine === false || !getOutbox().some(item => item.status === 'pending')) return;
       setSyncing(true);
       try {
-        const { sent, failed } = await flushOutbox(sendStaffRequest);
+        const { sent, failed } = await flushOutbox(sendStaffRequest, { uid: auth.currentUser?.uid || '' });
         if (!active) return;
         if (sent || failed) {
           setNotice(`Back online: ${sent} change${sent === 1 ? '' : 's'} saved${failed ? `, ${failed} need${failed === 1 ? 's' : ''} attention` : ''}.`);
@@ -58,8 +59,11 @@ export default function OfflineStatus({ dark = false }) {
     };
   }, []);
 
-  const pending = items.filter(item => item.status === 'pending');
-  const failed = items.filter(item => item.status === 'failed');
+  // Each staff member sees and sends only their own saved changes.
+  const uid = auth.currentUser?.uid;
+  const mine = items.filter(item => !item.uid || !uid || item.uid === uid);
+  const pending = mine.filter(item => item.status === 'pending');
+  const failed = mine.filter(item => item.status === 'failed');
   if (online && !pending.length && !failed.length && !notice) return null;
 
   const bar = (bg, color, border) => ({ background: bg, color, border: `1px solid ${border}`, borderRadius: 12, padding: '10px 14px', fontSize: 12.5, lineHeight: 1.55, marginBottom: 12 });

@@ -67,9 +67,10 @@ export function describeAction(path, body = {}) {
 }
 
 // Save an action for later. Returns the queued item.
-export function enqueue(path, body, method = 'POST') {
+export function enqueue(path, body, method = 'POST', uid = '') {
   const item = {
     id: newId(),
+    uid, // sent only under the staff member who made it
     path,
     method,
     body: { ...body },
@@ -108,13 +109,14 @@ let flushing = null;
 
 // Send waiting actions in order. `send(path, body, method)` performs the real
 // request and throws { status, message } on a server refusal.
-export function flushOutbox(send) {
+export function flushOutbox(send, { uid = '' } = {}) {
   if (flushing) return flushing;
   flushing = (async () => {
     let sent = 0;
     let failed = 0;
     for (const item of getOutbox()) {
       if (item.status !== 'pending') continue;
+      if (uid && item.uid && item.uid !== uid) continue;
       if (typeof navigator !== 'undefined' && navigator.onLine === false) break;
       const ids = read(IDS_KEY, {});
       const { body, missing } = resolvePlaceholders(item.body, ids);
@@ -141,7 +143,7 @@ export function flushOutbox(send) {
         failed += 1;
       }
     }
-    return { sent, failed, pending: getOutbox().filter(item => item.status === 'pending').length };
+    return { sent, failed, pending: getOutbox().filter(item => item.status === 'pending' && (!uid || !item.uid || item.uid === uid)).length };
   })().finally(() => { flushing = null; });
   return flushing;
 }

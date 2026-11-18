@@ -4,6 +4,7 @@ import { appConfirm } from '../../components/ui/app-dialog';
 import { db } from '../../firebase/firebase';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
+import { getPromoStatus, isPromoExpired, manilaToday } from '../../lib/promoPolicy';
 
 const emptyForm = {
   code: '', discountType: 'percentage', discountValue: '', validFrom: '', validUntil: '',
@@ -30,8 +31,18 @@ export default function PromoCodes() {
   const fetchPromos = useCallback(async () => {
     try {
       const snapshot = await getDocs(collection(db, 'promoCodes'));
-      setPromos(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))
-        .sort((a, b) => a.code.localeCompare(b.code)));
+      const list = snapshot.docs.map(item => ({ id: item.id, ...item.data() }));
+      // Codes past their end date are switched off straight away (the daily
+      // job does the same). Only admins may change codes, so for others this
+      // quietly does nothing and the list still shows "Expired".
+      const today = manilaToday();
+      const expired = list.filter(promo => promo.active && isPromoExpired(promo, today));
+      await Promise.all(expired.map(promo => updateDoc(doc(db, 'promoCodes', promo.id), {
+        active: false,
+        autoDeactivatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }).then(() => { promo.active = false; }).catch(() => {})));
+      setPromos(list.sort((a, b) => String(a.code || a.id).localeCompare(String(b.code || b.id))));
     } catch (error) {
       setNotice({ type: 'error', text: error.message || 'Could not load promo codes.' });
     } finally {
@@ -85,6 +96,9 @@ export default function PromoCodes() {
       return;
     }
 
+    // An end date in the past means the code is expired: save it switched off.
+    const expiredNow = form.validUntil < manilaToday();
+
     setSaving(true);
     setNotice(null);
     try {
@@ -97,7 +111,7 @@ export default function PromoCodes() {
         validUntil: form.validUntil,
         usageLimit,
         minimumSpend,
-        active: Boolean(form.active),
+        active: Boolean(form.active) && !expiredNow,
         updatedAt: new Date().toISOString(),
       };
       if (editingCode) {
@@ -108,7 +122,7 @@ export default function PromoCodes() {
       }
       await fetchPromos();
       resetForm();
-      setNotice({ type: 'success', text: `${code} saved.` });
+      setNotice({ type: 'success', text: expiredNow ? `${code} saved as inactive: its end date (${form.validUntil}) has already passed.` : `${code} saved.` });
     } catch (error) {
       setNotice({ type: 'error', text: error.message || 'Could not save promo code.' });
     } finally {
@@ -117,6 +131,10 @@ export default function PromoCodes() {
   };
 
   const toggleActive = async promo => {
+    if (!promo.active && isPromoExpired(promo)) {
+      setNotice({ type: 'error', text: `${promo.code || promo.id} expired on ${promo.validUntil}. Edit it and set a new end date to use it again.` });
+      return;
+    }
     try {
       await updateDoc(doc(db, 'promoCodes', promo.id), { active: !promo.active, updatedAt: new Date().toISOString() });
       await fetchPromos();
@@ -204,10 +222,14 @@ export default function PromoCodes() {
                     <td style={{ padding: '12px', borderBottom: `1px solid ${BORDER}`, fontSize: '11px' }}>{promo.validFrom} – {promo.validUntil}</td>
                     <td style={{ padding: '12px', borderBottom: `1px solid ${BORDER}` }}>{Number(promo.usageCount || 0)} / {promo.usageLimit || '∞'}</td>
                     <td style={{ padding: '12px', borderBottom: `1px solid ${BORDER}` }}>₱{Number(promo.minimumSpend || 0).toLocaleString()}</td>
-                    <td style={{ padding: '12px', borderBottom: `1px solid ${BORDER}`, color: promo.active ? '#15803d' : '#b91c1c' }}>{promo.active ? 'Active' : 'Inactive'}</td>
+                    {(() => {
+                      const status = getPromoStatus(promo);
+                      const color = status.key === 'active' ? '#15803d' : status.key === 'scheduled' ? '#b45309' : '#b91c1c';
+                      return <td style={{ padding: '12px', borderBottom: `1px solid ${BORDER}`, color }} title={status.key === 'expired' ? `Ended ${promo.validUntil}. Switched off automatically.` : undefined}>{status.label}</td>;
+                    })()}
                     <td style={{ padding: '12px', borderBottom: `1px solid ${BORDER}`, whiteSpace: 'nowrap' }}>
                       <button type="button" onClick={() => editPromo(promo)} style={{ background: 'transparent', color: TEXT, border: `1px solid ${BORDER}`, borderRadius: '5px', padding: '6px 9px', cursor: 'pointer', marginRight: '6px' }}>Edit</button>
-                      <button type="button" onClick={() => toggleActive(promo)} style={{ background: 'transparent', color: promo.active ? '#b91c1c' : '#15803d', border: `1px solid ${BORDER}`, borderRadius: '5px', padding: '6px 9px', cursor: 'pointer' }}>{promo.active ? 'Deactivate' : 'Activate'}</button>
+                      <button type="button" onClick={() => toggleActive(promo)} style={{ background: 'transparent', color: promo.active ? '#b91c1c' : '#15803d', border: `1px solid ${BORDER}`, borderRadius: '5px', padding: '6px 9px', cursor: 'pointer' }}>{promo.active ? 'Deactivate' : isPromoExpired(promo) ? 'Expired' : 'Activate'}</button>
                       <button type="button" onClick={() => deletePromo(promo)} style={{ background: 'transparent', color: '#b91c1c', border: `1px solid ${BORDER}`, borderRadius: '5px', padding: '6px 9px', cursor: 'pointer', marginLeft: '6px' }}>Delete</button>
                     </td>
                   </tr>)}

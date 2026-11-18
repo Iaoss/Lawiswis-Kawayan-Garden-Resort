@@ -19,6 +19,7 @@ import {
 } from '../src/lib/bookingPricing';
 import { cottageAvailabilityError } from '../src/lib/cottages';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
+import { checkResortCapacity } from '../lib/resortCapacity';
 
 const addMonthsKey = (dateKey, months) => {
   const [y, m, d] = dateKey.split('-').map(Number);
@@ -93,6 +94,10 @@ export default async function handler(req, res) {
     const availability = await getCottageAvailabilityFor(date, tourPeriod);
     const fullError = cottageAvailabilityError(availability, cottageId);
     if (fullError) return res.status(409).json({ error: fullError });
+
+    // The resort's guest limit (250 at a time).
+    const capacityProblem = await checkResortCapacity({ checkIn: date, checkOut: date, bookingType: 'daytour', tourPeriod, adults, children });
+    if (capacityProblem) return res.status(409).json({ error: capacityProblem.message, code: 'RESORT_FULL', remaining: capacityProblem.remaining, date: capacityProblem.date });
 
     const slot = tourPeriod === 'night' ? NIGHTTOUR_TIME_SLOT : DAYTOUR_TIME_SLOT;
     const guestName = joinGuestName(first, last);

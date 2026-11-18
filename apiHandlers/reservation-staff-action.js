@@ -15,6 +15,7 @@ import { holdsRoom } from '../src/lib/unpaidBookings';
 import { getSamePriceSuggestions } from '../src/lib/closureReschedule';
 import { getRoomChangeError } from '../src/lib/roomChange';
 import { readSeasonPeriods } from '../lib/seasonStore';
+import { checkResortCapacity } from '../lib/resortCapacity';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
 
@@ -402,6 +403,14 @@ async function decideModification({ reservationRef, reservationId, requestId, st
           && stayRangesOverlap(requestedCheckIn, requestedCheckOut, other.checkIn.slice(0, 10), other.checkOut.slice(0, 10));
       });
       if (conflict) throw new Error(newRoomId ? `Room ${movedRoom.roomNumber} is booked on those dates too. Choose another room.` : 'The requested dates are no longer available.');
+      // The new dates must still fit the resort's guest limit (250 at a time).
+      const capacityProblem = await checkResortCapacity({
+        ...reservation,
+        ...getRequestedBookingFields(request),
+        checkIn: requestedCheckIn,
+        checkOut: requestedCheckOut,
+      }, { ignoreIds: [reservationId] });
+      if (capacityProblem) throw new Error(capacityProblem.message);
       const policySnapshot = await transaction.get(adminDb.doc('settings/cancellationPolicy'));
       change = closureMove ? {
         outcome: 'eligible', reason: 'Moved because the resort was closed: same price, no fee.',

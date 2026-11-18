@@ -1,7 +1,8 @@
 // Daily jobs (Vercel cron, see vercel.json: 9 AM and 6 PM Philippine time).
 //
 // Every run: emails guests whose check-in is tomorrow (once each; the
-// evening run catches bookings made after the morning run).
+// evening run catches bookings made after the morning run), and switches
+// off promo codes whose end date has passed.
 // Morning run only:
 //   - no-shows: confirmed/pending bookings whose check-in date has passed
 //     without a check-in are cancelled as no-shows (the policy fee applies);
@@ -17,6 +18,7 @@ import { sendArrivalReminderEmail, sendBackupEmail } from '../lib/email';
 import { cancelBooking, canMarkNoShow } from '../lib/cancelBooking';
 import { logActivity } from '../lib/activityLog';
 import { getHoldExpiresMs } from '../src/lib/unpaidBookings';
+import { isPromoExpired } from '../lib/promoPolicy';
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 const SYSTEM = { uid: 'system', name: 'Automatic daily check', email: '', role: 'system' };
@@ -111,6 +113,27 @@ async function emailBackup() {
   return { sizeKb: Math.round(content.length / 1024), counts };
 }
 
+// Promo codes past their end date are switched off (Promo Codes shows them
+// as Expired). Guests already can't use them; this keeps the list accurate.
+async function deactivateExpiredPromos() {
+  const today = manilaKey(0);
+  const snapshot = await adminDb.collection('promoCodes').where('active', '==', true).get();
+  const expired = snapshot.docs.filter(document => isPromoExpired(document.data(), today));
+  if (!expired.length) return { deactivated: 0 };
+  const batch = adminDb.batch();
+  expired.forEach(document => batch.update(document.ref, {
+    active: false,
+    autoDeactivatedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }));
+  await batch.commit();
+  await logActivity(SYSTEM, {
+    action: 'promo_expired',
+    summary: `Switched off expired promo code${expired.length === 1 ? '' : 's'}: ${expired.map(document => document.id).join(', ').slice(0, 200)}`,
+  });
+  return { deactivated: expired.length };
+}
+
 export default async function handler(req, res) {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
@@ -126,7 +149,7 @@ export default async function handler(req, res) {
   const morning = manilaHour < 12;
   const report = {};
   // Each job runs on its own, so one failing doesn't stop the others.
-  const jobs = [['reminders', sendReminders]];
+  const jobs = [['reminders', sendReminders], ['expiredPromos', deactivateExpiredPromos]];
   if (morning) jobs.push(['missedBookings', closeMissedBookings], ['backup', emailBackup]);
   for (const [name, job] of jobs) {
     try {

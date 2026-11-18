@@ -1,12 +1,11 @@
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase/firebase';
 import { stayRangesOverlap } from '../../lib/bookingPricing';
 import { holdsRoom } from '../../lib/unpaidBookings';
+import { getCollectionSnapshot } from './liveCollection';
 
 // Rooms, loaded once per page visit.
 let roomsCache = null;
 export const loadRooms = () => {
-  roomsCache = roomsCache || getDocs(collection(db, 'rooms'))
+  roomsCache = roomsCache || getCollectionSnapshot('rooms')
     .then(snap => snap.docs.map(d => ({ id: d.id, ...d.data() })))
     .catch(error => { roomsCache = null; throw error; });
   return roomsCache;

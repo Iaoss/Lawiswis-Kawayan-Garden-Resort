@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, auth } from '../../firebase/firebase';
-import { collection, getDoc, setDoc, updateDoc, doc, serverTimestamp, onSnapshot } from 'firebase/firestore';
+import { getDoc, setDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
@@ -50,6 +50,7 @@ import { bookedByText, staffLabel } from '../../lib/staffLabel';
 import { invalidateCollections } from '../lib/cachedCollection';
 import RoomSchedule from '../components/RoomSchedule';
 import { seniorPwdSummary } from '../../lib/seniorPwdGuests';
+import { subscribeCollection } from '../lib/liveCollection';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -712,7 +713,8 @@ export default function Reservations() {
   const fetchReservations = useCallback(async () => {}, []);
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'reservations'), snapshot => {
+    // Shared live list: coming back to this page reads nothing again.
+    const unsubscribe = subscribeCollection('reservations', snapshot => {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       data.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setReservations(data);

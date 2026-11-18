@@ -7,6 +7,7 @@ import { getContactLinkError, isPreferredContactMethod } from '../src/lib/prefer
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { DEFAULT_PAYMENT_TERMS_DAYS, normalizeAgencyDetails } from '../src/lib/agencyBilling';
 import { staffStamp } from '../src/lib/staffLabel';
+import { checkResortCapacity } from '../lib/resortCapacity';
 import { getRoomMaximumGuests, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { holdsRoom } from '../src/lib/unpaidBookings';
 import { ROOM_BLOCK_TYPE } from '../lib/corporateRooms';
@@ -152,6 +153,16 @@ export async function createCorporateReservation(body, staff = null) {
     if (!Number.isSafeInteger(totalAmount) || totalAmount <= 0) {
       return reply(400, { error: 'The group total is outside the supported booking range.' });
     }
+
+    // The resort's guest limit (250 at a time), for website and desk groups.
+    const capacityProblem = await checkResortCapacity({
+      type: 'corporate',
+      checkIn,
+      checkOut: isDayTour ? checkIn : checkOut,
+      bookingType: isDayTour ? 'daytour' : 'overnight',
+      totalGuests,
+    });
+    if (capacityProblem) return reply(409, { error: capacityProblem.message, code: 'RESORT_FULL', remaining: capacityProblem.remaining, date: capacityProblem.date });
 
     const reservationRef = adminDb.collection('reservations').doc();
     const reservation = {

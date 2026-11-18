@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
-import { onSnapshot, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
+import { onSnapshot, collection, addDoc, updateDoc, deleteDoc, doc, query, where } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import RoomExcelImport from '../components/RoomExcelImport';
 import { logStaffActivity } from '../lib/activityLog';
@@ -14,6 +14,8 @@ import { formatSeasonDates, getCurrentOrNextSeason, normalizeSeasonPeriods, seas
 import { money } from '../lib/money';
 import { formatClockLabel, getRoomsNotReadyForArrivals } from '../lib/roomReadiness';
 import { manilaDateKey } from '../../lib/reservationStatus';
+import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
+import { getRoomDisplayRates } from '../../lib/bookingPricing';
 
 // ── Cloudinary config ────────────────────────────────────────
 // Photos upload through the server, so no Cloudinary setting is in the page.
@@ -91,7 +93,7 @@ const CAPACITY_OPTIONS = {
   MainVilla: [20],
 };
 
-const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
+const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', dayTourPrice: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
 
 // Activity Log line for a room save; price and status changes are spelled out.
 function describeRoomSave(before, after) {
@@ -130,7 +132,7 @@ export default function RoomManagement() {
   const [arrivalsToday, setArrivalsToday] = useState([]);
   useEffect(() => {
     const today = manilaDateKey();
-    return onSnapshot(query(collection(db, 'reservations'), where('checkIn', '>=', today), where('checkIn', '<=', `${today}`)),
+    return subscribeLive(`bell:arrivingToday:${today}`, () => query(collection(db, 'reservations'), where('checkIn', '>=', today), where('checkIn', '<=', `${today}`)),
       snapshot => setArrivalsToday(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setArrivalsToday([]));
   }, []);
@@ -157,12 +159,12 @@ export default function RoomManagement() {
   const [uploading, setUploading]       = useState(false);
   const [uploadError, setUploadError]   = useState('');
 
-  const fetchRooms = useCallback(async () => {
-    const snapshot = await getDocs(collection(db, 'rooms'));
-    setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-  }, []);
-
-  useEffect(() => { fetchRooms(); }, [fetchRooms]);
+  // Shared live list of rooms: updates by itself after any change, and
+  // reopening this page reads nothing again.
+  const fetchRooms = useCallback(async () => {}, []);
+  useEffect(() => subscribeCollection('rooms',
+    snapshot => setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+    error => console.error('Rooms could not be loaded:', error)), []);
 
   useEffect(() => {
     return () => { if (imagePreview) URL.revokeObjectURL(imagePreview); };
@@ -218,7 +220,8 @@ export default function RoomManagement() {
         imageUrl = '';
       }
 
-      const payload = { ...form, baseCapacity: Number(form.baseCapacity) || '', imageUrl };
+      // Blank day-tour price: the day tour uses the rate list (capped at the nightly price).
+      const payload = { ...form, baseCapacity: Number(form.baseCapacity) || '', dayTourPrice: Number(form.dayTourPrice) > 0 ? Number(form.dayTourPrice) : '', imageUrl };
       if (editRoom) await updateDoc(doc(db, 'rooms', editRoom.id), payload);
       else await addDoc(collection(db, 'rooms'), payload);
       logStaffActivity(editRoom ? 'room_updated' : 'room_created', describeRoomSave(editRoom, payload));
@@ -233,12 +236,34 @@ export default function RoomManagement() {
     }
   };
 
+  // Scrolling to the form happens after it has appeared (see the effect
+  // below). Scrolling right away in the click used to stop short while the
+  // form was still opening, so Edit had to be clicked twice.
+  const formRef = useRef(null);
+  const [scrollToForm, setScrollToForm] = useState(0);
+  useEffect(() => {
+    if (!scrollToForm) return undefined;
+    const goToForm = () => {
+      const el = formRef.current;
+      if (!el) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      el.querySelector('input, select, textarea')?.focus({ preventScroll: true });
+    };
+    const frame = requestAnimationFrame(goToForm);
+    // Once the opening animation has finished, make sure the form is in view.
+    const settle = setTimeout(() => {
+      const top = formRef.current?.getBoundingClientRect().top;
+      if (top === undefined || top < 0 || top > window.innerHeight * 0.4) goToForm();
+    }, 350);
+    return () => { cancelAnimationFrame(frame); clearTimeout(settle); };
+  }, [scrollToForm]);
+
   const handleEdit = (room) => {
     if (isReceptionist) return;
     setOpenId(null); // close the room's details window first
     setEditRoom(room); setForm({ ...emptyForm, ...room }); setShowForm(true); setShowImport(false);
     resetImageState();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setScrollToForm(n => n + 1);
   };
 
   const requestDelete = (id) => {
@@ -305,9 +330,13 @@ export default function RoomManagement() {
     return matchesSearch && matchesType && matchesStatus;
   });
 
+  // The prices guests are actually charged (official rate list for its room
+  // types, otherwise the price typed for the room).
+  const chargedRates = room => getRoomDisplayRates(room);
+
   const sorted = [...filtered].sort((a, b) => {
-    if (sortBy === 'price-asc') return Number(a.price) - Number(b.price);
-    if (sortBy === 'price-desc') return Number(b.price) - Number(a.price);
+    if (sortBy === 'price-asc') return chargedRates(a).overnight - chargedRates(b).overnight;
+    if (sortBy === 'price-desc') return chargedRates(b).overnight - chargedRates(a).overnight;
     return String(a.roomNumber).localeCompare(String(b.roomNumber), undefined, { numeric: true });
   });
 
@@ -383,17 +412,20 @@ export default function RoomManagement() {
           <div style={{ height: 1, background: BORDER, margin: '10px 0' }} />
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 17, fontWeight: 800, color: dark ? LIME : '#111' }}>
-              {money(Number(room.price))}<span style={{ fontSize: 10, fontWeight: 400, color: MUTED }}>/night</span>
+              {money(chargedRates(room).overnight)}<span style={{ fontSize: 10, fontWeight: 400, color: MUTED }}>/night</span>
+              <span style={{ display: 'block', fontSize: 10.5, fontWeight: 600, color: SUBTEXT }}>
+                {money(chargedRates(room).daytour)} day tour{chargedRates(room).fromRateList ? ' · rate list' : ''}
+              </span>
             </span>
             <span style={{ fontSize: 10, color: SUBTEXT, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               Details <i className="ti ti-arrow-up-right" style={{ fontSize: 12 }} />
             </span>
           </div>
-          {season && Number(room.price) > 0 && (
+          {season && chargedRates(room).overnight > 0 && (
             <div title={`${season.name}: ${season.percent > 0 ? '+' : ''}${season.percent}% on nights from ${season.from} to ${season.to}`}
               style={{ marginTop: 6, fontSize: 10.5, fontWeight: 600, color: season.percent > 0 ? '#b45309' : '#15803d', display: 'flex', alignItems: 'center', gap: 4 }}>
               <i className="ti ti-calendar-dollar" aria-hidden="true" />
-              {money(seasonalNightlyRate(room.price, season))}/night on {formatSeasonDates(season)} ({season.percent > 0 ? '+' : ''}{season.percent}%)
+              {money(seasonalNightlyRate(chargedRates(room).overnight, season))}/night on {formatSeasonDates(season)} ({season.percent > 0 ? '+' : ''}{season.percent}%)
             </div>
           )}
         </div>
@@ -430,10 +462,12 @@ export default function RoomManagement() {
               <div style={{ fontSize: 11, color: MUTED }}>#{room.id.slice(0, 6).toUpperCase()} · {room.type}{m.bed ? ` · ${m.bed}` : ''}{m.size ? ` · ${m.size}` : ''}</div>
             </div>
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: 19, fontWeight: 800, color: dark ? LIME : '#111' }}>{money(Number(room.price))}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/night</span></div>
-              {season && Number(room.price) > 0 && (
+              <div style={{ fontSize: 19, fontWeight: 800, color: dark ? LIME : '#111' }}>{money(chargedRates(room).overnight)}<span style={{ fontSize: 11, fontWeight: 400, color: MUTED }}>/night</span></div>
+              <div style={{ fontSize: 11.5, fontWeight: 600, color: SUBTEXT }}>{money(chargedRates(room).daytour)} day tour</div>
+              {chargedRates(room).fromRateList && <div style={{ fontSize: 10.5, color: MUTED }}>From the official rate list</div>}
+              {season && chargedRates(room).overnight > 0 && (
                 <div style={{ fontSize: 11, fontWeight: 600, color: season.percent > 0 ? '#b45309' : '#15803d' }}>
-                  {money(seasonalNightlyRate(room.price, season))} on {formatSeasonDates(season)} · {season.name}
+                  {money(seasonalNightlyRate(chargedRates(room).overnight, season))} on {formatSeasonDates(season)} · {season.name}
                 </div>
               )}
             </div>
@@ -523,7 +557,7 @@ export default function RoomManagement() {
         {/* ── Add/Edit Form ── */}
         <AnimatePresence initial={false}>
           {showForm && (
-            <motion.div variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden' }}>
+            <motion.div ref={formRef} variants={panelVariants} initial="hidden" animate="visible" exit="exit" style={{ overflow: 'hidden', scrollMarginTop: 80 }}>
               <div style={{ background: CARD, borderRadius: 18, padding: '20px 22px', border: `1px solid ${BORDER}`, marginBottom: 16, boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : '0 2px 12px rgba(0,0,0,0.04)' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 16 }}>
                   {editRoom ? <><i className="ti ti-pencil" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Edit Room</> : <><i className="ti ti-plus" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Add New Room</>}
@@ -531,7 +565,8 @@ export default function RoomManagement() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                   {[
                     { label: 'Room Name / Number', key: 'roomNumber', placeholder: 'e.g. Panaginip, 101' },
-                    { label: 'Price per night (₱)', key: 'price', type: 'number', placeholder: 'e.g. 3000' },
+                    { label: 'Room price per night (₱)', key: 'price', type: 'number', placeholder: 'e.g. 4000' },
+                    { label: 'Day tour price (₱, optional)', key: 'dayTourPrice', type: 'number', placeholder: 'Blank = rate list' },
                     { label: 'Amenities', key: 'amenities', placeholder: 'AC, TV, WiFi' },
                     { label: 'Description', key: 'description', placeholder: 'Short description' },
                   ].map(f => (
@@ -605,6 +640,19 @@ export default function RoomManagement() {
                       </div>
                     </div>
                   </div>
+
+                  {form.type && (() => {
+                    // What guests will actually be charged for this room.
+                    const rates = getRoomDisplayRates(form);
+                    return (
+                      <div role="note" style={{ gridColumn: '1 / -1', fontSize: 12, lineHeight: 1.5, color: TEXT, background: dark ? '#1f2a1a' : '#f3f8ec', border: `1px solid ${dark ? '#3f5a2a' : '#c9dfa8'}`, borderRadius: 10, padding: '10px 12px' }}>
+                        <i className="ti ti-receipt" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                        Guests pay <strong>{money(rates.overnight)}</strong> per night and <strong>{money(rates.daytour)}</strong> for a day tour, for up to <strong>{rates.baseCapacity} guest{rates.baseCapacity === 1 ? '' : 's'}</strong>.
+                        {' '}Each extra person adds ₱800 per night (₱375 day tour, ₱475 night tour), shown on the receipt.
+                        {rates.fromRateList && <> No room price is set, so these come from the resort’s rate list.</>}
+                      </div>
+                    );
+                  })()}
 
                   <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
                     <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={uploading}

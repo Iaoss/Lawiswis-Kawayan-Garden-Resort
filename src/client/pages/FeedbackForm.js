@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { db } from '../../firebase/firebase';
-import { collection, getDocs } from 'firebase/firestore';
 import { splitGuestName } from '../../lib/nameValidation';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
+import { loadPublicRooms } from '../lib/publicRooms';
 
 const HERO_IMAGE = optimizeImage(
   'https://lawiswiskawayanresort.com/wp-content/uploads/2024/09/About-Lawiswis-Kawayan-scaled-1.jpeg',
@@ -78,10 +77,10 @@ export default function FeedbackForm() {
     let active = true;
     const fetchRoomNames = async () => {
       try {
-        const snapshot = await getDocs(collection(db, 'rooms'));
+        const list = await loadPublicRooms();
         if (!active) return;
-        const names = [...new Set(snapshot.docs
-          .map(item => item.data().roomName || item.data().name || item.data().roomNumber)
+        const names = [...new Set(list
+          .map(item => item.roomName || item.name || item.roomNumber)
           .filter(name => typeof name === 'string' && name.trim())
           .map(name => name.trim()))]
           .sort((left, right) => left.localeCompare(right));

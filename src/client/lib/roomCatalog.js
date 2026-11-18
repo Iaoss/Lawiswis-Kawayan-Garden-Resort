@@ -1,6 +1,7 @@
 // Room catalog shared by the Rooms page and the home page carousel.
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
+import { getRoomDisplayRates } from '../../lib/bookingPricing';
 
 /* ------------------------------------------------------------------ */
 /* Room catalog from lawiswiskawayanresort.com/our-rooms               */
@@ -177,7 +178,10 @@ export function decorateRoom(room, index) {
     capacity: group?.capacity || '',
     cover,
     gallery,
-    price: Number(room.price) || group?.price || 0,
+    // What guests are charged: the resort's rate list for its room types,
+    // otherwise the price staff set (see getRoomDisplayRates).
+    price: getRoomDisplayRates(room).overnight || group?.price || 0,
+    dayTourPrice: getRoomDisplayRates(room).daytour || 0,
     // The resort website's description comes first; a different short text
     // saved in Room Management is shown as a tagline under the name.
     description: entry?.description || room.description || 'A comfortable stay surrounded by the quiet rhythm of the garden.',

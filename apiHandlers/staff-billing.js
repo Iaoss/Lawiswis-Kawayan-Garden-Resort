@@ -58,6 +58,7 @@ import { bookedGuestCount, splitArrivedGuests } from '../src/lib/guestArrivals';
 import { normalizePhMobile } from '../src/lib/phoneNumber';
 import { staffStamp } from '../src/lib/staffLabel';
 import { runOnce } from '../lib/offlineRequests';
+import { checkResortCapacity } from '../lib/resortCapacity';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -79,6 +80,12 @@ const owed = r => money(Number(r.totalAmount || 0) + Number(r.extraCharges || 0)
 function paymentStatusFor(total, paid) {
   if (Math.round(paid * 100) >= Math.round(total * 100)) return 'paid';
   return paid > 0 ? 'partial' : 'pending';
+}
+
+// Refuses a booking that would take the resort over its guest limit.
+async function assertCapacity(booking, options) {
+  const problem = await checkResortCapacity(booking, options);
+  if (problem) throw new BillingError(409, problem.message);
 }
 
 async function getReservation(transaction, reservationId) {
@@ -630,6 +637,8 @@ async function createCottageWalkIn({ staff, booking }) {
   const cutoff = getWalkInTourCutoffError(date, tourPeriod);
   if (cutoff) throw new BillingError(400, cutoff);
   await assertResortOpen(date, date);
+  // The resort's guest limit (250 at a time) applies at the desk too.
+  await assertCapacity({ checkIn: date, checkOut: date, bookingType: 'daytour', tourPeriod, adults: Number(booking.adults), children: Number(booking.children || 0) });
   let pricing;
   try {
     pricing = calculateCottageTourPrice({ adults: Number(booking.adults), children: Number(booking.children || 0), tourPeriod, cottageId: booking.cottageId });
@@ -722,6 +731,22 @@ async function createWalkIn({ staff, booking = {} }) {
   }
   const today = manilaDateKey();
   await assertResortOpen(String(booking.checkIn || '').slice(0, 10), String(booking.checkOut || booking.checkIn || '').slice(0, 10));
+  // The resort's guest limit (250 at a time) applies at the desk too.
+  {
+    const tour = ['day', 'night'].includes(booking.bookingOption);
+    const checkIn = String(booking.checkIn || '').slice(0, 10);
+    await assertCapacity({
+      checkIn,
+      checkOut: tour ? checkIn : String(booking.checkOut || checkIn).slice(0, 10),
+      bookingType: tour ? 'daytour' : 'overnight',
+      tourPeriod: tour ? booking.bookingOption : '',
+      adults: Number(booking.adults || 0) + additionalRooms.reduce((sum, item) => sum + Number(item.adults || 0), 0),
+      children: Number(booking.children || 0) + additionalRooms.reduce((sum, item) => sum + Number(item.children || 0), 0),
+      dayVisitorAdults: Number(booking.dayVisitors?.adults || 0),
+      dayVisitorChildren: Number(booking.dayVisitors?.children || 0),
+      dayVisitorPeriod: booking.dayVisitors?.tourPeriod || '',
+    });
+  }
 
   const roomRef = adminDb.collection('rooms').doc(roomId);
   const reservationRef = adminDb.collection('reservations').doc();
@@ -951,6 +976,25 @@ async function editBooking({ staff, reservationId, changes = {}, preview = false
     })) {
       throw new BillingError(409, `Room ${room.roomNumber} is already booked for those dates.`);
     }
+    // New dates or more guests: the resort's guest limit must still hold.
+    const guestsBefore = Number(reservation.adults || 0) + Number(reservation.children || 0);
+    const guestsAfter = Number(details.adults || 0) + Number(details.children || 0);
+    const datesChanged = details.checkIn !== String(reservation.checkIn || '').slice(0, 10)
+      || details.checkOut !== String(reservation.checkOut || '').slice(0, 10)
+      || details.bookingType !== reservation.bookingType;
+    if (!preview && (datesChanged || guestsAfter > guestsBefore)) {
+      await assertCapacity({
+        checkIn: details.checkIn,
+        checkOut: details.checkOut,
+        bookingType: details.bookingType,
+        tourPeriod: details.tourPeriod,
+        adults: details.adults,
+        children: details.children,
+        dayVisitorAdults: reservation.dayVisitorAdults,
+        dayVisitorChildren: reservation.dayVisitorChildren,
+        dayVisitorPeriod: reservation.dayVisitorPeriod,
+      }, { ignoreIds: [reservationId] });
+    }
 
     let pricing;
     try {
@@ -1097,6 +1141,8 @@ async function addRoomToBooking({ staff, reservationId, roomId, adults, children
     }
     const totalAmount = money(pricing.subtotalAmount);
     if (preview) return { preview: true, totalAmount, roomNumber: room.roomNumber || '' };
+    // The added room's guests count toward the resort's guest limit.
+    await assertCapacity({ checkIn: details.checkIn, checkOut: details.checkOut, bookingType: details.bookingType, tourPeriod: details.tourPeriod, adults: details.adults, children: details.children });
 
     const newRef = adminDb.collection('reservations').doc();
     const groupId = reservation.groupId || reservationId;

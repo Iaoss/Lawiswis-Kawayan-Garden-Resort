@@ -70,6 +70,12 @@ export function variantForNotification(id = '') {
   if (/^(checkout-due|cancellation-requested|refund-requested|date-change)/.test(id)) return 'warning';
   if (id.startsWith('guests-arriving')) return 'warning';
   if (id.startsWith('feedback_')) return 'success';
+  if (id.startsWith('resort-full')) return 'error';
+  if (id.startsWith('resort-near-full')) return 'warning';
+  if (id.startsWith('agency-overdue')) return 'error';
+  if (id.startsWith('agency-due')) return 'warning';
+  if (id.startsWith('payment_')) return 'success';
+  if (id.startsWith('chat_')) return 'info';
   if (id.startsWith('new-booking') || id.startsWith('guest-reply')) return 'info';
   return 'info';
 }

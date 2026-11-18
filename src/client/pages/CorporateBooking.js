@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase/firebase';
+import { loadPublicRooms } from '../lib/publicRooms';
 import { getRoomMaximumGuests } from '../../lib/bookingPricing';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
@@ -78,9 +77,8 @@ export default function CorporateBooking() {
   const [roomIds, setRoomIds] = useState([]);
   const stayEnd = form.bookingType === 'daytour' ? form.checkIn : form.checkOut;
   useEffect(() => {
-    getDocs(collection(db, 'rooms'))
-      .then(snap => setAllRooms(snap.docs.map(d => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || '')))))
+    loadPublicRooms()
+      .then(rooms => setAllRooms([...rooms].sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || '')))))
       .catch(() => setAllRooms([]));
   }, []);
   useEffect(() => {

@@ -63,7 +63,18 @@ export function getReceiptLineItems(reservation = {}) {
     const room = reservation.roomName || `Room ${reservation.roomNumber || ''}${reservation.roomType ? ` (${reservation.roomType})` : ''}`.trim();
     if (baseRate > 0) {
       booking.push({ label: `${room} · ₱${baseRate.toLocaleString()} × ${unitLabel(reservation, units)}`, amount: money(baseRate * units) });
-      if (extraGuests > 0) booking.push({ label: 'Extra guests', amount: extraGuests });
+      if (extraGuests > 0) {
+        // "Extra persons · 2 × ₱800 × 1 night (room is for 4)"
+        const count = Number(reservation.extraGuests) || 0;
+        const perPerson = count ? money(extraGuests / (count * units)) : 0;
+        const forGuests = Number(reservation.baseCapacity) > 0 ? ` (room is for ${Number(reservation.baseCapacity)})` : '';
+        booking.push({
+          label: count && perPerson
+            ? `Extra person${count === 1 ? '' : 's'} · ${count} × ₱${perPerson.toLocaleString()} × ${unitLabel(reservation, units)}${forGuests}`
+            : 'Extra persons',
+          amount: extraGuests,
+        });
+      }
       if (extraMeals > 0) booking.push({ label: `Meals for extra guests · ${Number(reservation.extraMealGuests || 0)} × ₱${Number(reservation.extraMealRate || 350).toLocaleString()}`, amount: extraMeals });
       if (dayVisitors > 0) booking.push({ label: dayVisitorLabel(reservation), amount: dayVisitors });
       if (lateArrival > 0) booking.push({ label: 'Late arrival after 9:00 PM (10% of room rate)', amount: lateArrival });

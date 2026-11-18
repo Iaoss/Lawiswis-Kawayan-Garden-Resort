@@ -8,6 +8,7 @@
 // online payment, never showed up.
 
 import { GUEST_REPLY_LABELS, isUnpaidOnlineBooking } from '../../lib/unpaidBookings';
+import { agencyDueText, agencyPaymentDue, formatTermsLength, isAgencyBilled, paymentTermsOf } from '../../lib/agencyBilling';
 import { formatManilaTime, getCheckoutDue, getOutstandingBalance, getOverstay } from '../../lib/reservationStatus';
 import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive } from '../../lib/guestArrivals';
 
@@ -60,7 +61,19 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
       const group = lower(r.type) === 'corporate';
       const unpaid = isUnpaidOnlineBooking(r);
       const paid = lower(r.paymentStatus) === 'paid' ? 'Paid' : lower(r.paymentStatus) === 'partial' ? 'Part paid' : 'Not paid yet';
-      items.push({
+      // Government "pay later": goes straight to Billing, with the promise.
+      if (isAgencyBilled(r)) {
+        items.push({
+          id: `new-booking_${r.id}`,
+          icon: 'ti-building-bank',
+          badge: 'New Pay-Later Booking · Agency',
+          message: `${r.companyName || guest} · ${ref(r.id)}`,
+          details: `${r.checkIn || '—'}${r.checkOut && r.checkOut !== r.checkIn ? ` → ${r.checkOut}` : ''} · ${peso(r.totalAmount)} · pays within ${formatTermsLength(paymentTermsOf(r))} after check-out${r.agencyBilling?.poNumber ? ` · PO ${r.agencyBilling.poNumber}` : ' · waiting for PO'}`,
+          timeMs: createdMs,
+          bookingId: r.id,
+          path: `${prefix}/billing`,
+        });
+      } else items.push({
         id: `new-booking_${r.id}`,
         icon: group ? 'ti-users-group' : unpaid ? 'ti-alert-triangle' : 'ti-calendar-plus',
         badge: group ? 'New Group Booking' : unpaid ? 'New Booking · Unpaid' : 'New Booking',
@@ -70,6 +83,26 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
         bookingId: r.id,
         path,
       });
+    }
+
+    // Government "pay later": remind staff when the agency's payment is due
+    // within 3 days, and when it is overdue.
+    if (isAgencyBilled(r) && !extraRoom && status !== 'cancelled') {
+      const owed = Math.max(0, getOutstandingBalance(r));
+      const agencyDue = owed > 0 ? agencyPaymentDue(r, { balance: owed, now: new Date(now) }) : null;
+      if (agencyDue && (agencyDue.overdue || agencyDue.daysLeft <= 3)) {
+        items.push({
+          id: `${agencyDue.overdue ? 'agency-overdue' : 'agency-due'}_${r.id}_${agencyDue.dueDate}`,
+          icon: agencyDue.overdue ? 'ti-alert-triangle' : 'ti-calendar-dollar',
+          badge: agencyDue.overdue ? 'Agency Payment Overdue' : 'Agency Payment Due Soon',
+          message: `${r.companyName || guest} · ${peso(owed)}`,
+          details: `${agencyDueText(agencyDue)} · booking ${ref(r.id)}${r.agencyBilling?.poNumber ? ` · PO ${r.agencyBilling.poNumber}` : ''}`,
+          // Shown from the day it becomes due soon / overdue.
+          timeMs: Date.parse(`${agencyDue.dueDate}T00:00:00+08:00`) - (agencyDue.overdue ? -86400000 : 3 * 86400000),
+          bookingId: r.id,
+          path: `${prefix}/billing`,
+        });
+      }
     }
 
     // Checked-in guests whose check-out time is close, or already past.
@@ -171,4 +204,50 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
   return items
     .sort((a, b) => b.timeMs - a.timeMs)
     .slice(0, MAX_NOTIFICATIONS);
+}
+
+const PAYMENT_METHODS = { cash: 'cash', gcash: 'GCash', paymaya: 'Maya', maya: 'Maya', grab_pay: 'GrabPay', card: 'card', qrph: 'QR Ph', bank: 'bank transfer', online: 'online' };
+
+// Payments from the last NEW_BOOKING_DAYS days (counter and PayMongo).
+// Rooms paid together show once, on the lead share, with the full amount.
+export function buildPaymentNotifications(payments, { prefix = '/admin', now = Date.now() } = {}) {
+  const since = now - NEW_BOOKING_DAYS * 86400000;
+  return payments
+    .filter(p => toMs(p.createdAt) >= since && Number(p.amount) > 0)
+    .filter(p => !(p.groupPaymentKey && p.groupLead === false))
+    .map(p => {
+      const online = p.provider === 'paymongo';
+      const amount = p.groupPaymentKey ? (p.groupPaymentTotal ?? p.amount) : p.amount;
+      const method = PAYMENT_METHODS[lower(p.method)] || p.method || '';
+      return {
+        id: `payment_${p.groupPaymentKey || p.id}`,
+        icon: online ? 'ti-credit-card' : 'ti-cash',
+        badge: online ? 'Online Payment Received' : 'Payment Recorded',
+        message: `${p.guestName || 'Guest'} · ${peso(amount)}${method ? ` ${method}` : ''}`,
+        details: `Booking ${ref(p.groupId || p.reservationId)}${p.groupPaymentKey ? ' · all rooms' : ''}${p.recordedByName ? ` · by ${p.recordedByName}` : ''}`,
+        timeMs: toMs(p.createdAt),
+        path: `${prefix}/reservations`,
+        bookingId: p.reservationId || '',
+      };
+    });
+}
+
+// Guest chats with an unread message. `unreadSince` maps each chat to the
+// time it first became unread, so the automatic reply (which also updates
+// the chat's last-message time) doesn't count as a second notification.
+export function buildChatNotifications(conversations, unreadSince = {}, { prefix = '/admin' } = {}) {
+  return conversations
+    .filter(c => c.unread === true)
+    .map(c => {
+      const at = unreadSince[c.id] || toMs(c.lastMessageAt);
+      return {
+        id: `chat_${c.id}_${at}`,
+        icon: 'ti-message-circle-2',
+        badge: 'New Guest Message',
+        message: c.guestName || 'A guest',
+        details: String(c.lastMessage || '').slice(0, 110) || 'Open Messages to reply.',
+        timeMs: at,
+        path: `${prefix}/messages`,
+      };
+    });
 }

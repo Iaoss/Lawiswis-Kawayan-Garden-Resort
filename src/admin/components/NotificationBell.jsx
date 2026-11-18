@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Timestamp, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { Timestamp, collection, query, where } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import NotificationButton from '../../components/ui/notification-button';
 import { PulsingDot } from './TopbarControls';
@@ -10,9 +10,12 @@ import {
   NEW_BOOKING_DAYS,
   buildBookingNotifications,
   formatNotificationTime,
+  buildChatNotifications,
+  buildPaymentNotifications,
 } from '../lib/bookingNotifications';
 import { roomNotReadyNotifications } from '../lib/roomReadiness';
 import { manilaDateKey } from '../../lib/reservationStatus';
+import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
 
 // Bell in the staff top bar (admin and receptionist). Each notification card
 // is one button: clicking anywhere on it opens that booking.
@@ -67,11 +70,16 @@ function useNotificationReservations() {
       replies: query(reservations, where('unpaidFollowUp.guestReply', 'in', ['yes', 'no'])),
       checkedIn: query(reservations, where('status', '==', 'checked-in')),
       holdConflicts: query(reservations, where('holdConflict', '==', true)),
+      // Government "pay later" bills, for payment-due reminders.
+      agency: query(reservations, where('chargeToAgency', '==', true)),
       // Today's arrivals, to warn when their room is still being cleaned.
       arrivingToday: query(reservations, where('checkIn', '>=', manilaDateKey()), where('checkIn', '<=', `${manilaDateKey()}`)),
     };
     const loaded = new Set();
-    const stops = Object.entries(queries).map(([key, q]) => onSnapshot(q, snapshot => {
+    // Shared live feeds: switching staff pages reuses them instead of
+    // reading every matching booking again.
+    const day = manilaDateKey();
+    const stops = Object.entries(queries).map(([key, q]) => subscribeLive(`bell:${key}${key === 'arrivingToday' ? `:${day}` : ''}`, () => q, snapshot => {
       setSources(current => ({ ...current, [key]: snapshot.docs.map(d => ({ id: d.id, ...d.data() })) }));
       loaded.add(key);
       if (loaded.size === Object.keys(queries).length) setReady(true);
@@ -107,7 +115,7 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   // Staff accounts locked after too many wrong passwords (admins only).
   useEffect(() => {
     if (prefix !== '/admin') { setLocks([]); return undefined; }
-    return onSnapshot(query(collection(db, 'notifications'), where('type', '==', 'login-locked')),
+    return subscribeLive('bell:locks', () => query(collection(db, 'notifications'), where('type', '==', 'login-locked')),
       snapshot => setLocks(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setLocks([]));
   }, [prefix]);
@@ -116,7 +124,7 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   // ratings (1–2★) show as "Unhappy Guest" so staff can follow up quickly.
   useEffect(() => {
     const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
-    return onSnapshot(query(collection(db, 'feedback'), where('createdAt', '>=', since)),
+    return subscribeLive('bell:feedback', () => query(collection(db, 'feedback'), where('createdAt', '>=', since)),
       snapshot => setFeedback(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setFeedback([]));
   }, []);
@@ -124,14 +132,14 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   useEffect(() => {
     if (!showInquiries) { setInquiries([]); return undefined; }
     const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
-    return onSnapshot(query(collection(db, 'contacts'), where('createdAt', '>=', since)),
+    return subscribeLive('bell:contacts', () => query(collection(db, 'contacts'), where('createdAt', '>=', since)),
       snapshot => setInquiries(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setInquiries([]));
   }, [showInquiries]);
 
   useEffect(() => {
     if (!showEmails) { setEmails([]); return undefined; }
-    return onSnapshot(query(collection(db, 'emails'), where('folder', '==', 'inbox'), where('read', '==', false)),
+    return subscribeLive('emails:inbox-unread', () => query(collection(db, 'emails'), where('folder', '==', 'inbox'), where('read', '==', false)),
       snapshot => setEmails(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setEmails([]));
   }, [showEmails]);
@@ -186,6 +194,84 @@ function useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPa
   }, [inquiries, emails, feedback, locks, prefix, feedbackPath]);
 }
 
+// Payments from the last week (shared live feed, see liveCollection.js).
+function usePaymentFeed() {
+  const [payments, setPayments] = useState([]);
+  useEffect(() => {
+    const since = Timestamp.fromMillis(Date.now() - NEW_BOOKING_DAYS * 86400000);
+    return subscribeLive('bell:payments', () => query(collection(db, 'payments'), where('createdAt', '>=', since)),
+      snapshot => setPayments(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setPayments([]));
+  }, []);
+  return payments;
+}
+
+// Guest chats with unread messages, and when each first became unread
+// (remembered in this browser so the bot's reply isn't a second alert).
+const CHAT_SINCE_KEY = 'lkgr_bell_chat_since';
+function readChatSince() {
+  try { return JSON.parse(window.localStorage.getItem(CHAT_SINCE_KEY) || '{}') || {}; } catch { return {}; }
+}
+function useUnreadChats() {
+  const [conversations, setConversations] = useState([]);
+  const [unreadSince, setUnreadSince] = useState(readChatSince);
+  useEffect(() => subscribeLive('conversations:unread', () => query(collection(db, 'conversations'), where('unread', '==', true)),
+    snapshot => setConversations(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
+    () => setConversations([])), []);
+  useEffect(() => {
+    setUnreadSince(previous => {
+      const next = {};
+      conversations.forEach(c => {
+        const at = c.lastMessageAt?.toMillis ? c.lastMessageAt.toMillis() : 0;
+        // Wait for the server time before remembering it.
+        if (previous[c.id]) next[c.id] = previous[c.id];
+        else if (at) next[c.id] = at;
+      });
+      const same = Object.keys(next).length === Object.keys(previous).length
+        && Object.keys(next).every(id => next[id] === previous[id]);
+      if (same) return previous;
+      try { window.localStorage.setItem(CHAT_SINCE_KEY, JSON.stringify(next)); } catch { /* storage full or blocked */ }
+      return next;
+    });
+  }, [conversations]);
+  // Chats waiting for their server time aren't shown yet.
+  return { conversations: conversations.filter(c => unreadSince[c.id]), unreadSince };
+}
+
+// Upcoming dates where the resort is full or nearly full (250 guests at a
+// time). Checked every 5 minutes while the portal is open.
+function useCapacityAlerts(prefix) {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    let active = true;
+    const load = () => fetch('/api/occupancy?alerts=1')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => {
+        if (!active || !data) return;
+        const seenAt = Date.now();
+        setItems((data.dates || []).map(day => {
+          const when = new Date(`${day.date}T00:00:00`).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' });
+          return {
+            id: day.full ? `resort-full_${day.date}` : `resort-near-full_${day.date}`,
+            icon: day.full ? 'ti-ban' : 'ti-users',
+            badge: day.full ? 'Resort Full' : 'Resort Nearly Full',
+            message: `${when} · ${day.peak} of ${day.max} guests`,
+            details: day.full
+              ? 'The 250-guest limit is reached: new bookings for this date are blocked.'
+              : `Only ${day.remaining} place${day.remaining === 1 ? '' : 's'} left before the 250-guest limit.`,
+            timeMs: seenAt,
+            path: `${prefix}/reservations`,
+          };
+        }));
+      })
+      .catch(() => {});
+    load();
+    const timer = setInterval(() => { if (!document.hidden) load(); }, 5 * 60000);
+    return () => { active = false; clearInterval(timer); };
+  }, [prefix]);
+  return items;
+}
+
 const QUICK_LINKS = {
   '/admin': [
     { label: 'Bookings', icon: 'ti-calendar-event', path: '/admin/reservations', bg: 'rgba(200,240,110,0.1)', color: '#8fb83a' },
@@ -217,16 +303,22 @@ export default function NotificationBell({ dark, accent, soundAlerts, prefix = '
   const messageItems = useMessageNotifications({ prefix, showInquiries, showEmails, feedbackPath });
   // Room status, to warn when a room is still being cleaned on arrival day.
   const [rooms, setRooms] = useState([]);
-  useEffect(() => onSnapshot(collection(db, 'rooms'),
+  useEffect(() => subscribeCollection('rooms',
     snapshot => setRooms(snapshot.docs.map(d => ({ id: d.id, ...d.data() }))),
     () => setRooms([])), []);
+  const payments = usePaymentFeed();
+  const capacityItems = useCapacityAlerts(prefix);
+  const { conversations, unreadSince } = useUnreadChats();
   const notifications = useMemo(
     () => [
       ...roomNotReadyNotifications(rooms, reservations, { todayKey: manilaDateKey(new Date(now)), prefix, now }),
       ...buildBookingNotifications(reservations, { prefix, now }),
+      ...buildPaymentNotifications(payments, { prefix, now }),
+      ...buildChatNotifications(conversations, unreadSince, { prefix }),
+      ...capacityItems,
       ...messageItems,
     ].sort((a, b) => (b.timeMs || 0) - (a.timeMs || 0)),
-    [reservations, rooms, prefix, now, messageItems],
+    [reservations, rooms, prefix, now, messageItems, payments, conversations, unreadSince, capacityItems],
   );
   const unread = notifications.filter(n => !readIds.includes(n.id)).length;
 
