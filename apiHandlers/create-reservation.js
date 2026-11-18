@@ -48,6 +48,7 @@ import { holdsRoom } from '../src/lib/unpaidBookings';
 import { readSeasonPeriods } from '../lib/seasonStore';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { getAdditionalRoomsError } from '../src/lib/groupBooking';
+import { normalizeSeniorPwdDeclared } from '../src/lib/seniorPwdGuests';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -98,6 +99,7 @@ export default async function handler(req, res) {
       contactLink,
       additionalRooms, // more rooms for the same stay: [{ roomId, adults, children }]
       extraGuestMeal, // day / night tour: extra guests add a ₱350 meal each
+      seniorPwd, // { senior, pwd }: how many in the group (discount applied at the desk)
       website, // honeypot field — real guests never fill this in
     } = req.body || {};
 
@@ -281,6 +283,12 @@ export default async function handler(req, res) {
       if (cottageError) return res.status(409).json({ error: cottageError });
     }
 
+    // Senior citizens / PWDs the guest says are coming (whole group, all rooms).
+    const groupGuests = adults + children + extraRooms.reduce((sum, extra) => sum + extra.adults + extra.children, 0);
+    const seniorPwdCheck = normalizeSeniorPwdDeclared(seniorPwd || {}, groupGuests);
+    if (seniorPwdCheck.error) return res.status(400).json({ error: seniorPwdCheck.error });
+    const seniorPwdDeclared = seniorPwdCheck.value;
+
     // ---- 6. Create the reservation ---------------------------------------
     const nights = getStayUnits(checkIn, checkOut);
     const seasonPeriods = await readSeasonPeriods();
@@ -341,6 +349,7 @@ export default async function handler(req, res) {
       extraGuests: pricing.extraGuests,
       extraGuestCharge: pricing.extraGuestCharge,
       ...extraGuestMealFields(pricing),
+      ...(seniorPwdDeclared.senior + seniorPwdDeclared.pwd > 0 ? { seniorPwdDeclared } : {}),
       cottageId: pricing.cottageId,
       cottageFee: pricing.cottageFee,
       dayVisitorAdults: pricing.dayVisitorAdults,

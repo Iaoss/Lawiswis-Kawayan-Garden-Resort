@@ -17,7 +17,8 @@
 import { getResortNow } from './bookingPricing';
 
 export const CLIENT_TYPES = [
-  { id: 'private', label: 'Private company / organization' },
+  { id: 'family', label: 'Family / friends (reunion, celebration)' },
+  { id: 'private', label: 'Company / organization' },
   { id: 'government', label: 'Government agency (enjoy now, pay later)' },
 ];
 

@@ -57,6 +57,7 @@ import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms'
 import { bookedGuestCount, splitArrivedGuests } from '../src/lib/guestArrivals';
 import { normalizePhMobile } from '../src/lib/phoneNumber';
 import { staffStamp } from '../src/lib/staffLabel';
+import { runOnce } from '../lib/offlineRequests';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -1187,25 +1188,31 @@ export default async function handler(req, res) {
 
   const body = req.body || {};
   try {
-    let result;
-    if (body.action === 'record-payment') result = await recordPayment({ ...body, staff });
-    else if (body.action === 'add-charge') result = await addCharge({ ...body, staff });
-    else if (body.action === 'record-group-payment') result = await recordGroupPayment({ ...body, staff });
-    else if (body.action === 'assign-corporate-rooms') result = await assignCorporateRooms({ ...body, staff });
-    else if (body.action === 'create-corporate-walk-in') result = await createCorporateWalkIn({ staff, booking: body.booking });
-    else if (body.action === 'add-service') result = await addService({ ...body, staff });
-    else if (body.action === 'apply-discount') result = await applyDiscount({ ...body, staff });
-    else if (body.action === 'apply-promo') result = await applyPromo({ ...body, staff });
-    else if (body.action === 'cancel-with-policy') result = await cancelWithPolicy({ ...body, staff });
-    else if (body.action === 'create-walk-in') result = await createWalkIn({ staff, booking: body.booking });
-    else if (body.action === 'edit-booking') result = await editBooking({ ...body, staff });
-    else if (body.action === 'add-room-to-booking') result = await addRoomToBooking({ ...body, staff });
-    else if (body.action === 'phone-display-set') result = await setPhoneDisplay({ ...body, staff });
-    else if (body.action === 'phone-display-get') result = await getPhoneDisplay({ staff });
-    else if (body.action === 'closure-notice') result = await sendClosureNotices({ ...body, staff });
-    else if (body.action === 'update-guest') result = await updateGuest({ ...body, staff });
-    else if (body.action === 'set-agency-billing') result = await setAgencyBilling({ ...body, staff });
-    else return res.status(400).json({ error: 'Choose a valid billing action.' });
+    // Offline changes carry an id so a resend is never saved twice.
+    const INVALID_ACTION = Symbol('invalid');
+    const dispatch = async () => {
+      if (body.action === 'record-payment') return recordPayment({ ...body, staff });
+      else if (body.action === 'add-charge') return addCharge({ ...body, staff });
+      else if (body.action === 'record-group-payment') return recordGroupPayment({ ...body, staff });
+      else if (body.action === 'assign-corporate-rooms') return assignCorporateRooms({ ...body, staff });
+      else if (body.action === 'create-corporate-walk-in') return createCorporateWalkIn({ staff, booking: body.booking });
+      else if (body.action === 'add-service') return addService({ ...body, staff });
+      else if (body.action === 'apply-discount') return applyDiscount({ ...body, staff });
+      else if (body.action === 'apply-promo') return applyPromo({ ...body, staff });
+      else if (body.action === 'cancel-with-policy') return cancelWithPolicy({ ...body, staff });
+      else if (body.action === 'create-walk-in') return createWalkIn({ staff, booking: body.booking });
+      else if (body.action === 'edit-booking') return editBooking({ ...body, staff });
+      else if (body.action === 'add-room-to-booking') return addRoomToBooking({ ...body, staff });
+      else if (body.action === 'phone-display-set') return setPhoneDisplay({ ...body, staff });
+      else if (body.action === 'phone-display-get') return getPhoneDisplay({ staff });
+      else if (body.action === 'closure-notice') return sendClosureNotices({ ...body, staff });
+      else if (body.action === 'update-guest') return updateGuest({ ...body, staff });
+      else if (body.action === 'set-agency-billing') return setAgencyBilling({ ...body, staff });
+      return INVALID_ACTION;
+    };
+    const result = await runOnce(staff, body.offlineRequestId, dispatch);
+    if (result === INVALID_ACTION) return res.status(400).json({ error: 'Choose a valid billing action.' });
+    if (result?.alreadySaved) return res.status(200).json({ ok: true, ...result });
     // Previews change nothing, so they aren't logged.
     const entry = result?.preview ? null : describeBillingAction(body, result || {});
     if (entry) {

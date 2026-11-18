@@ -7,6 +7,19 @@ import { getContactLinkError, isPreferredContactMethod } from '../src/lib/prefer
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { DEFAULT_PAYMENT_TERMS_DAYS, normalizeAgencyDetails } from '../src/lib/agencyBilling';
 import { staffStamp } from '../src/lib/staffLabel';
+import { getRoomMaximumGuests, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { holdsRoom } from '../src/lib/unpaidBookings';
+import { ROOM_BLOCK_TYPE } from '../lib/corporateRooms';
+
+// The guest can pick the rooms the group will use (optional). Rooms under
+// maintenance can't be picked.
+const MAX_GROUP_ROOMS = 30;
+const BLOCKED_ROOM_STATUS = ['maintenance', 'unavailable', 'out-of-service'];
+const dayKeyOf = value => {
+  if (typeof value === 'string') return value.slice(0, 10);
+  const date = typeof value?.toDate === 'function' ? value.toDate() : null;
+  return date ? getResortNow(date).dateKey : '';
+};
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -51,7 +64,13 @@ export async function createCorporateReservation(body, staff = null) {
       notes,
       clientType,
       agency,
+      roomIds, // rooms the group picked (optional)
     } = body || {};
+    const isFamily = clientType === 'family';
+    const wantedRooms = Array.isArray(roomIds) ? [...new Set(roomIds)] : [];
+    if (wantedRooms.length > MAX_GROUP_ROOMS || wantedRooms.some(id => typeof id !== 'string' || !id || id.length > 100)) {
+      return reply(400, { error: `Choose up to ${MAX_GROUP_ROOMS} rooms.` });
+    }
     // Government agencies (per diem): no online deposit, billed to the agency.
     const isGovernment = clientType === 'government';
     const agencyDetails = isGovernment ? normalizeAgencyDetails(agency || {}) : { value: null };
@@ -74,7 +93,9 @@ export async function createCorporateReservation(body, staff = null) {
     const guestError = getGroupGuestError(totalGuests);
     if (guestError) return reply(400, { error: guestError });
 
-    if (typeof companyName !== 'string' || !companyName.trim() || companyName.trim().length > 120
+    // Families don't need a company name.
+    if ((!isFamily && (typeof companyName !== 'string' || !companyName.trim()))
+      || (companyName !== undefined && typeof companyName !== 'string') || String(companyName || '').trim().length > 120
       || typeof email !== 'string' || !email.trim() || email.length > 254
       || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
       || typeof phone !== 'string' || !/^09\d{9}$/.test(phone)
@@ -136,7 +157,7 @@ export async function createCorporateReservation(body, staff = null) {
     const reservation = {
       type: 'corporate',
       bookingType: 'corporate',
-      companyName: companyName.trim(),
+      companyName: String(companyName || '').trim() || (isFamily ? `${contactLastName} family` : ''),
       packageId: packageDetails.id,
       packageName: packageDetails.name,
       packageRate: packageDetails.ratePerGuest,
@@ -164,7 +185,7 @@ export async function createCorporateReservation(body, staff = null) {
       extraCharges: 0,
       paymentMethod: isGovernment ? 'agency' : staff ? 'cash' : 'online',
       paymentStatus: 'pending',
-      clientType: isGovernment ? 'government' : 'private',
+      clientType: isGovernment ? 'government' : isFamily ? 'family' : 'private',
       ...(isGovernment ? {
         chargeToAgency: true,
         // A PO typed on the website is kept aside until staff check it in
@@ -179,7 +200,67 @@ export async function createCorporateReservation(body, staff = null) {
       notes: typeof notes === 'string' ? notes.trim() : '',
       createdAt: FieldValue.serverTimestamp(),
     };
-    await reservationRef.create(reservation);
+    if (!wantedRooms.length) {
+      await reservationRef.create(reservation);
+    } else {
+      // Hold the rooms the group picked: each gets a room-block booking on the
+      // same dates (like rooms staff assign), checked for double bookings.
+      try {
+        await adminDb.runTransaction(async transaction => {
+          const picked = [];
+          for (const roomId of wantedRooms) {
+            const roomSnap = await transaction.get(adminDb.collection('rooms').doc(roomId));
+            if (!roomSnap.exists) throw Object.assign(new Error('One of the rooms you picked could not be found.'), { code: 404 });
+            const room = roomSnap.data();
+            if (BLOCKED_ROOM_STATUS.includes(String(room.status || '').toLowerCase())) {
+              throw Object.assign(new Error(`Room ${room.roomNumber} isn't available. Pick another room.`), { code: 409 });
+            }
+            const bookings = await transaction.get(adminDb.collection('reservations').where('roomId', '==', roomId));
+            const taken = bookings.docs.some(doc => {
+              const other = doc.data();
+              return holdsRoom(other) && stayRangesOverlap(checkIn, checkOut, dayKeyOf(other.checkIn), dayKeyOf(other.checkOut || other.checkIn));
+            });
+            if (taken) throw Object.assign(new Error(`Room ${room.roomNumber} was just booked for these dates. Pick another room.`), { code: 409 });
+            picked.push({ roomId, room, blockRef: adminDb.collection('reservations').doc() });
+          }
+          const groupName = reservation.companyName || normalizedGuestName;
+          transaction.create(reservationRef, {
+            ...reservation,
+            assignedRooms: picked.map(({ roomId, room, blockRef }) => ({
+              roomId, roomNumber: room.roomNumber || '', roomType: room.type || '', maxGuests: getRoomMaximumGuests(room) || null, blockId: blockRef.id,
+            })),
+            assignedRoomCount: picked.length,
+            roomsAssignedBy: staff ? (staff.name || staff.email || staff.uid) : 'Guest (online booking)',
+          });
+          picked.forEach(({ roomId, room, blockRef }) => transaction.set(blockRef, {
+            type: ROOM_BLOCK_TYPE,
+            corporateId: reservationRef.id,
+            groupId: reservationRef.id,
+            roomId,
+            roomNumber: room.roomNumber || '',
+            roomType: room.type || '',
+            guestName: `${groupName} (group)`,
+            companyName: reservation.companyName,
+            checkIn,
+            checkOut,
+            checkInTime: reservation.checkInTime,
+            checkOutTime: reservation.checkOutTime,
+            bookingType: 'corporate',
+            status: reservation.status,
+            totalAmount: 0,
+            amountPaid: 0,
+            extraCharges: 0,
+            paymentStatus: 'paid',
+            paymentMethod: 'corporate',
+            notes: `Room for the ${groupName} group (booking #${reservationRef.id.slice(0, 8).toUpperCase()}).`,
+            createdAt: FieldValue.serverTimestamp(),
+          }));
+        });
+      } catch (roomError) {
+        if (roomError.code === 404 || roomError.code === 409) return reply(roomError.code, { error: roomError.message, code: 'ROOM_TAKEN' });
+        throw roomError;
+      }
+    }
 
     try {
       await sendReservationPendingEmail({

@@ -424,23 +424,27 @@ export default function WalkIn() {
         appAlert(createError.message, { title: 'Couldn’t create the booking', tone: 'danger' });
         return;
       }
-      const arrivesToday = created.arrivesToday;
+      const arrivesToday = created.arrivesToday ?? (form.checkIn === today);
 
       let confirmationMessage = '';
       try {
+        // Offline: the booking (and its confirmation email) is sent later.
+        if (created.offline) throw Object.assign(new Error(''), { offline: true });
         const result = await staffApi('send-reservation-confirmation', { reservationId: created.reservationId });
         confirmationMessage = result.sent
           ? ' Confirmation email sent.'
           : result.alreadySent ? ' Confirmation email was already sent.' : ' Confirmation email is being sent.';
       } catch (confirmationError) {
-        confirmationMessage = ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
+        confirmationMessage = confirmationError.offline
+          ? ' Saved on this computer (no internet). It will be sent to the system automatically when the internet is back. The price shown is an estimate until then.'
+          : ` Confirmation email failed: ${confirmationError.message || 'email delivery error'}`;
       }
       // Next: take the payment. Guests pay in full before entering.
       setCreated({
         id: created.reservationId,
         guestName,
         roomNumber: created.rooms?.length > 1 ? created.rooms.map(item => item.roomNumber).join(', ') : selectedRoom.roomNumber,
-        total: Number(created.groupTotal ?? created.totalAmount ?? 0),
+        total: Number(created.groupTotal ?? created.totalAmount ?? (created.offline ? estimatedTotal : 0)),
         isGroup: (created.rooms?.length || 1) > 1,
         paid: 0,
         stayLabel: isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`,
@@ -448,7 +452,7 @@ export default function WalkIn() {
         notes: [confirmationMessage.trim()].filter(Boolean),
         checkedIn: false,
       });
-      setPayment({ method: 'cash', amount: String(Number(created.groupTotal ?? created.totalAmount ?? 0)), busy: false, error: '' });
+      setPayment({ method: 'cash', amount: String(Number(created.groupTotal ?? created.totalAmount ?? (created.offline ? estimatedTotal : 0))), busy: false, error: '' });
       setExtraRoomIds([]);
       setSuccess('');
       setStep(3);
@@ -489,14 +493,16 @@ export default function WalkIn() {
     setPayment(p => ({ ...p, busy: true, error: '' }));
     try {
       const result = await staffApi('staff-billing', { action: created.isGroup ? 'record-group-payment' : 'record-payment', reservationId: created.id, amount, method: payment.method });
-      const receipt = result.receiptError ? `Receipt email failed: ${result.receiptError}` : result.receipt ? 'Receipt emailed.' : '';
+      const receipt = result.offline
+        ? `Payment of ₱${amount.toLocaleString()} saved on this computer; it is recorded when the internet is back.`
+        : result.receiptError ? `Receipt email failed: ${result.receiptError}` : result.receipt ? 'Receipt emailed.' : '';
       setCreated(c => ({
         ...c,
-        paid: Number(result.amountPaid || 0),
+        paid: result.offline ? c.paid + amount : Number(result.amountPaid || 0),
         checkedIn: Boolean(result.autoCheckedIn) || c.checkedIn,
         notes: [...c.notes, receipt].filter(Boolean),
       }));
-      const left = Math.max(0, Math.round((walkInTotal - Number(result.amountPaid || 0)) * 100) / 100);
+      const left = Math.max(0, Math.round((walkInTotal - (result.offline ? created.paid + amount : Number(result.amountPaid || 0))) * 100) / 100);
       setPayment(p => ({ ...p, busy: false, amount: left > 0 ? String(left) : '' }));
     } catch (error) {
       setPayment(p => ({ ...p, busy: false, error: error.message || 'The payment could not be saved.' }));

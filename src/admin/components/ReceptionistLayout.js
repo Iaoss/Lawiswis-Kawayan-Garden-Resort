@@ -26,6 +26,7 @@ import ShiftSummaryDialog from './ShiftSummaryDialog';
 import { useIdleLogout } from '../lib/staffSession';
 import { CheckInIdHost } from './CheckInIdDialog';
 import { loadCottageCatalogOnce } from '../../lib/useCottageCatalog';
+import OfflineStatus from './OfflineStatus';
 
 // Start loading the admin's cottage list as soon as the site opens.
 loadCottageCatalogOnce();
@@ -236,6 +237,8 @@ export default function ReceptionistLayout({ children }) {
 
         <div className="portal-main-content" style={{ flex: 1, padding: '28px', background: BG }}>
           {/* Page content eases in (see src/motion.css). */}
+          {/* Offline: shows the saved copy and changes waiting to sync. */}
+          <OfflineStatus dark={dark} />
           <div className="lk-enter">{children}</div>
         </div>
       </AnimatedSidebarInset>

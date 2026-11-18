@@ -39,6 +39,7 @@ import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import { decorateRoom } from '../lib/roomCatalog';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
+import { normalizeSeniorPwdDeclared } from '../../lib/seniorPwdGuests';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -356,6 +357,10 @@ export default function BookRoom() {
   const [extraRoomIds] = useState(() => (Array.isArray(location.state?.extraRoomIds) ? location.state.extraRoomIds.slice(0, 2) : []));
   // Day / night tour: the extra guests can add a meal (₱350 each).
   const [extraGuestMeal, setExtraGuestMeal] = useState(false);
+  // Senior citizens / PWDs in the group (the discount is applied at the front desk).
+  const [seniorPwd, setSeniorPwd] = useState({ senior: '', pwd: '' });
+  const seniorPwdGroup = (Number(form.adults) || 0) + (Number(form.children) || 0);
+  const seniorPwdCheck = normalizeSeniorPwdDeclared(seniorPwd, seniorPwdGroup);
   const mealChosen = form.bookingType === 'daytour' && extraGuestMeal;
   const pricingFor = (target, a, c) => calculateBookingPrice({
     room: target, bookingType: form.bookingType, nights: Math.max(1, nights || 1), adults: a, children: c,
@@ -853,6 +858,7 @@ export default function BookRoom() {
       // only in the browser, since a bot can skip your page's JS entirely
       // and call this same endpoint directly. The server is the one place
       // these checks actually hold.
+      if (seniorPwdCheck.error) throw new Error(seniorPwdCheck.error);
       const response = await fetch('/api/create-reservation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -885,6 +891,7 @@ export default function BookRoom() {
           promoCode: activePromo?.code || '',
           additionalRooms: extraRooms.map(item => ({ roomId: item.roomId, adults: Number(item.adults), children: Number(item.children) })),
           extraGuestMeal: mealChosen && tourExtraGuests > 0,
+          seniorPwd: seniorPwdCheck.value || { senior: 0, pwd: 0 },
           website: form.website,
         }),
       });
@@ -1419,6 +1426,22 @@ export default function BookRoom() {
                   )}
                 </div>
               )}
+              <fieldset style={{ marginTop: '14px', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '12px 14px' }}>
+                <legend style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0 4px' }}>Senior citizens or PWDs in your group (optional)</legend>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
+                  {[['senior', 'Senior citizens (60+)'], ['pwd', 'Persons with disability (PWD)']].map(([key, label]) => (
+                    <label key={key} style={{ display: 'grid', gap: '4px', fontSize: '12px', color: '#374151' }}>
+                      {label}
+                      <input type="number" min="0" max={seniorPwdGroup} step="1" inputMode="numeric" value={seniorPwd[key]} placeholder="0"
+                        onChange={e => setSeniorPwd(current => ({ ...current, [key]: e.target.value }))}
+                        style={{ border: '1px solid #e5e7eb', borderRadius: '10px', padding: '9px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none' }} />
+                    </label>
+                  ))}
+                </div>
+                {seniorPwdCheck.error
+                  ? <div role="alert" style={{ fontSize: '11.5px', color: '#b91c1c', marginTop: '8px' }}>{seniorPwdCheck.error}</div>
+                  : <div style={{ fontSize: '11.5px', color: '#6b7280', marginTop: '8px', lineHeight: 1.6 }}>Bring their senior citizen or PWD ID. The 20% discount and VAT exemption on each qualified guest's share are applied at the front desk after the ID is checked.</div>}
+              </fieldset>
               <div style={{ marginTop: '14px' }}>
                 <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Special Requests (optional)</label>
                 <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}

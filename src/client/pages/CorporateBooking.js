@@ -1,4 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../../firebase/firebase';
+import { getRoomMaximumGuests } from '../../lib/bookingPricing';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
@@ -38,7 +41,7 @@ export default function CorporateBooking() {
     checkOut: '',
     accommodationInterest: false,
     notes: '',
-    clientType: 'private',
+    clientType: 'family',
     office: '',
     tin: '',
     poNumber: '',
@@ -47,6 +50,7 @@ export default function CorporateBooking() {
   // Government agencies send a request (no online deposit) and pay after the
   // event through their Purchase Order.
   const isGovernment = form.clientType === 'government';
+  const isFamily = form.clientType === 'family';
   const [sentRequest, setSentRequest] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -67,6 +71,37 @@ export default function CorporateBooking() {
   const noticeError = form.checkIn ? getGroupAdvanceNoticeError(form.checkIn) : '';
 
   const fit = isGovernment && selectedPackage ? perDiemFit(selectedPackage.ratePerGuest, form.perDiemRate) : null;
+
+  // Rooms the group can pick (optional): free on the chosen dates.
+  const [allRooms, setAllRooms] = useState([]);
+  const [freeRoomIds, setFreeRoomIds] = useState(null); // null = not checked yet
+  const [roomIds, setRoomIds] = useState([]);
+  const stayEnd = form.bookingType === 'daytour' ? form.checkIn : form.checkOut;
+  useEffect(() => {
+    getDocs(collection(db, 'rooms'))
+      .then(snap => setAllRooms(snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || '')))))
+      .catch(() => setAllRooms([]));
+  }, []);
+  useEffect(() => {
+    setFreeRoomIds(null);
+    if (!dateValid || noticeError) return undefined;
+    let active = true;
+    fetch(`/api/room-availability?${new URLSearchParams({ startDate: form.checkIn, endDate: stayEnd })}`)
+      .then(response => (response.ok ? response.json() : Promise.reject()))
+      .then(data => {
+        if (!active) return;
+        const free = Array.isArray(data.availableRoomIds) ? data.availableRoomIds : [];
+        setFreeRoomIds(free);
+        setRoomIds(current => current.filter(id => free.includes(id)));
+      })
+      .catch(() => { if (active) setFreeRoomIds([]); });
+    return () => { active = false; };
+  }, [form.checkIn, stayEnd, dateValid, noticeError]);
+  const freeRooms = freeRoomIds ? allRooms.filter(room => freeRoomIds.includes(room.id)) : [];
+  const pickedRooms = allRooms.filter(room => roomIds.includes(room.id));
+  const pickedBeds = pickedRooms.reduce((sum, room) => sum + (getRoomMaximumGuests(room) || 0), 0);
+  const toggleRoom = id => setRoomIds(current => (current.includes(id) ? current.filter(x => x !== id) : [...current, id]));
 
   const packageFeatures = useMemo(() => selectedPackage
     ? CORPORATE_FEATURE_ROWS.filter(row => isCorporateFeatureIncluded(selectedPackage.id, nights, row.id))
@@ -135,6 +170,7 @@ export default function CorporateBooking() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             companyName: form.companyName.trim(),
+            roomIds,
             firstName: form.firstName.trim(),
             lastName: form.lastName.trim(),
             guestName,
@@ -153,7 +189,11 @@ export default function CorporateBooking() {
           }),
         });
         const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.error || 'Could not create the group reservation.');
+        if (!response.ok) {
+          // A picked room was just taken: check the free rooms again.
+          if (result.code === 'ROOM_TAKEN') setFreeRoomIds(null);
+          throw new Error(result.error || 'Could not create the group reservation.');
+        }
         reservationId = result.reservationId;
         if (!reservationId) throw new Error('The group reservation was created without a reference. Please contact the resort.');
         setSavedReservationId(reservationId);
@@ -193,9 +233,9 @@ export default function CorporateBooking() {
       <header style={{ background: FOREST_DEEP, color: '#fff', padding: '64px 24px 56px' }}>
         <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
           <button type="button" onClick={openBookingTypeModal} style={{ border: 0, background: 'transparent', color: '#e4d4a7', padding: 0, marginBottom: '24px', cursor: 'pointer', font: `600 11px ${SANS}` }}>← CHANGE BOOKING TYPE</button>
-          <div style={{ color: '#e4d4a7', font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '12px' }}>Corporate / Big Group Booking · {MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS} Guests</div>
-          <h1 style={{ margin: '0 0 12px', font: `500 clamp(38px, 6vw, 64px)/1.05 ${SERIF}` }}>Bring your whole team.</h1>
-          <p style={{ maxWidth: '650px', color: 'rgba(255,255,255,.76)', font: `14px/1.8 ${SANS}`, margin: 0 }}>Select your group size and dates to see the Bamboo package tier and per-person pricing. A {RESERVATION_DEPOSIT_PERCENTAGE}% deposit reserves your request.</p>
+          <div style={{ color: '#e4d4a7', font: `600 11px ${SANS}`, letterSpacing: '.16em', textTransform: 'uppercase', marginBottom: '12px' }}>Big Group Booking · Families, companies & agencies · {MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS} Guests</div>
+          <h1 style={{ margin: '0 0 12px', font: `500 clamp(38px, 6vw, 64px)/1.05 ${SERIF}` }}>Bring the whole group.</h1>
+          <p style={{ maxWidth: '650px', color: 'rgba(255,255,255,.76)', font: `14px/1.8 ${SANS}`, margin: 0 }}>For family reunions, celebrations, company outings and government events. Select your group size and dates to see the Bamboo package and per-person price, and pick your rooms. A {RESERVATION_DEPOSIT_PERCENTAGE}% deposit reserves your request.</p>
         </div>
       </header>
 
@@ -278,7 +318,7 @@ export default function CorporateBooking() {
             <h2 style={{ color: FOREST_DEEP, font: `500 28px ${SERIF}`, margin: '0 0 18px' }}>Your group</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px' }}>
               <label style={labelStyle}>Who is booking?<select name="clientType" value={form.clientType} onChange={changeField} style={inputStyle}>{CLIENT_TYPES.map(type => <option key={type.id} value={type.id}>{type.label}</option>)}</select></label>
-              <label style={labelStyle}>{isGovernment ? 'Agency name' : 'Company / organization'}<input required maxLength={120} name="companyName" value={form.companyName} onChange={changeField} placeholder={isGovernment ? 'e.g. Department of Education' : ''} style={inputStyle} /></label>
+              <label style={labelStyle}>{isGovernment ? 'Agency name' : isFamily ? 'Group name (optional)' : 'Company / organization'}<input required={!isFamily} maxLength={120} name="companyName" value={form.companyName} onChange={changeField} placeholder={isGovernment ? 'e.g. Department of Education' : isFamily ? 'e.g. Santos family reunion' : ''} style={inputStyle} /></label>
               {isGovernment && (
                 <>
                   <label style={labelStyle}>Office / unit (optional)<input maxLength={120} name="office" value={form.office} onChange={changeField} placeholder="e.g. Region III, HR Division" style={inputStyle} /></label>
@@ -322,6 +362,35 @@ export default function CorporateBooking() {
             <p role={noticeError ? 'alert' : undefined} style={{ margin: '14px 0 0', padding: '10px 12px', background: noticeError ? '#fef3f2' : CREAM, color: noticeError ? '#b42318' : '#626355', font: `12px/1.6 ${SANS}` }}>
               {noticeError || `Group and corporate bookings must be made at least ${GROUP_ADVANCE_DAYS} days before check-in, so the resort can inspect and prepare the areas. The earliest date you can choose is ${formatLongDate(earliestDate)}.`}
             </p>
+            <div style={{ marginTop: '18px' }}>
+              <div style={{ ...labelStyle, display: 'block', marginBottom: '6px' }}>Rooms for your group (optional)</div>
+              {!dateValid || noticeError ? (
+                <p style={{ margin: 0, color: '#626355', font: `12px/1.6 ${SANS}` }}>Pick your dates first to see the free rooms.</p>
+              ) : freeRoomIds === null ? (
+                <p role="status" style={{ margin: 0, color: '#626355', font: `12px/1.6 ${SANS}` }}>Checking free rooms…</p>
+              ) : freeRooms.length === 0 ? (
+                <p style={{ margin: 0, color: '#626355', font: `12px/1.6 ${SANS}` }}>No rooms are free on these dates. You can still book the package; the resort will contact you about rooms.</p>
+              ) : (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: '8px' }}>
+                    {freeRooms.map(room => {
+                      const on = roomIds.includes(room.id);
+                      return (
+                        <label key={room.id} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '10px 12px', border: `1px solid ${on ? FOREST : LINE}`, background: on ? CREAM : '#fff', cursor: 'pointer', font: `12px/1.45 ${SANS}`, color: INK }}>
+                          <input type="checkbox" checked={on} onChange={() => toggleRoom(room.id)} style={{ marginTop: '2px' }} />
+                          <span><strong>{room.roomNumber}</strong><br /><span style={{ color: '#626355' }}>{room.type || 'Room'} · up to {getRoomMaximumGuests(room) || '?'} guests</span></span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p style={{ margin: '8px 0 0', color: '#626355', font: `12px/1.6 ${SANS}` }}>
+                    {roomIds.length
+                      ? `${roomIds.length} room${roomIds.length === 1 ? '' : 's'} picked, sleeping up to ${pickedBeds} of your ${totalGuests || 0} guests. They are held for your group once you book.`
+                      : 'Pick the rooms you want, or leave this empty and the resort will assign rooms for your group.'}
+                  </p>
+                </>
+              )}
+            </div>
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '18px', color: '#626355', font: `12px/1.6 ${SANS}` }}>
               <input type="checkbox" name="accommodationInterest" checked={form.accommodationInterest} onChange={changeField} style={{ marginTop: '3px' }} />
               Please include optional accommodation and meal package options (without meals, plated meals, or managed buffet meals) in our follow-up.

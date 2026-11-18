@@ -22,7 +22,25 @@ function readRememberedRole() {
   }
 }
 
+// The last role confirmed on this computer, so the portal can still open
+// when the internet is down (data is still protected by Firestore rules,
+// and changes made offline are re-checked by the server when they sync).
+const OFFLINE_KEY = 'lkgr_staff_offline_access';
+const OFFLINE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+function readOfflineRole(uid) {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(OFFLINE_KEY) || 'null');
+    return saved && saved.uid === uid && Date.now() - Number(saved.at || 0) < OFFLINE_MAX_AGE_MS ? saved.role : null;
+  } catch {
+    return null;
+  }
+}
+
 function rememberAccess(uid, role) {
+  try {
+    if (role) window.localStorage.setItem(OFFLINE_KEY, JSON.stringify({ uid, role, at: Date.now() }));
+    else window.localStorage.removeItem(OFFLINE_KEY);
+  } catch { /* storage unavailable */ }
   lastConfirmed = role ? { uid, role } : null;
   try {
     if (role) window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({ role }));
@@ -60,6 +78,13 @@ export default function RequireStaffRoute({ children, allowedRoles = ['admin', '
         rememberAccess(user.uid, confirmedRole);
         if (active && authCheck === latestAuthCheck) setAccess({ loading: false, role: confirmedRole });
       } catch {
+        // No internet: use the role confirmed earlier on this computer.
+        const offlineRole = navigator.onLine === false ? readOfflineRole(user.uid) : null;
+        if (offlineRole) {
+          lastConfirmed = { uid: user.uid, role: offlineRole };
+          if (active && authCheck === latestAuthCheck) setAccess({ loading: false, role: offlineRole });
+          return;
+        }
         rememberAccess(null, null);
         if (active && authCheck === latestAuthCheck) setAccess({ loading: false, role: null });
       }

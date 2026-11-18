@@ -17,6 +17,7 @@ import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 import PromoCodeForm from '../components/PromoCodeForm';
 import AgencyBillingCard from '../components/AgencyBillingCard';
 import { agencyDueText, agencyPaymentDue, agencyStatusLabel, canStayOnAgencyCredit, isAgencyBilled, PAY_LATER_LABEL } from '../../lib/agencyBilling';
+import { seniorPwdSummary } from '../../lib/seniorPwdGuests';
 
 // Rooms booked together (one reservation, several rooms) share one bill.
 const billKeyOf = r => (Array.isArray(r.groupReservationIds) && r.groupReservationIds.length > 1 ? (r.groupId || r.groupReservationIds[0]) : r.id);
@@ -155,9 +156,9 @@ export default function Billing() {
         action: 'add-charge', reservationId: selected.id, amount: Number(extraCharge.amount), description: extraCharge.description,
       });
       setExtraCharge({ description: '', amount: '' });
-      setSelected(prev => ({ ...prev, extraCharges: result.extraCharges }));
+      setSelected(prev => ({ ...prev, extraCharges: result.offline ? Number(prev.extraCharges || 0) + Number(extraCharge.amount) : result.extraCharges }));
       fetchReservations();
-      setSuccess('Extra charge added.');
+      setSuccess(result.offline ? `Extra charge: Saved on this computer (no internet). It will be sent to the system automatically when the internet is back.` : 'Extra charge added.');
     } catch (error) {
       appAlert(error.message, { title: 'Couldn’t save', tone: 'danger' });
     } finally {
@@ -212,9 +213,9 @@ export default function Billing() {
         action: 'add-service', reservationId: selected.id,
         serviceId: service.serviceId, hours: Number(service.hours), persons: Number(service.persons),
       });
-      setSelected(prev => ({ ...prev, extraCharges: result.extraCharges }));
+      if (!result.offline) setSelected(prev => ({ ...prev, extraCharges: result.extraCharges }));
       fetchReservations();
-      setSuccess(`${result.description} added (${formatCurrency(result.amount)}).`);
+      setSuccess(result.offline ? `Add-on service: Saved on this computer (no internet). It will be sent to the system automatically when the internet is back.` : `${result.description} added (${formatCurrency(result.amount)}).`);
     } catch (error) {
       appAlert(error.message, { title: 'Couldn’t save', tone: 'danger' });
     } finally {
@@ -230,6 +231,13 @@ export default function Billing() {
         action: isGroupBill ? 'record-group-payment' : 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: deskMethod,
         officialReceiptNo: paperReceiptNo.trim(),
       });
+      if (result.offline) {
+        if (!isGroupBill) setSelected(prev => ({ ...prev, amountPaid: Number(prev.amountPaid || 0) + Number(paymentAmount) }));
+        setSuccess(`Payment of ${formatCurrency(paymentAmount)}: Saved on this computer (no internet). It will be sent to the system automatically when the internet is back.`);
+        setPaymentAmount('');
+        setPaperReceiptNo('');
+        return;
+      }
       if (!isGroupBill) setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus, ...(result.autoCheckedIn ? { status: 'checked-in' } : result.autoConfirmed ? { status: 'confirmed' } : {}) }));
       fetchReservations();
       setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${result.autoCheckedIn ? ' Fully paid: the guest is now checked in.' : result.autoConfirmed ? ' The booking is now confirmed.' : ''}${receiptNotice(result)}`);
@@ -336,17 +344,16 @@ export default function Billing() {
     if (totalBalance(selected) > 0) return appAlert('Collect the remaining balance before checking this guest out.', { title: 'Balance still due', tone: 'warning' });
     // The server re-checks the balance, records late check-outs, and sets the room to cleaning.
     // Rooms booked together check out together.
+    let savedOffline = false;
     try {
-      const token = await auth.currentUser.getIdToken();
       const leaving = isGroupBill ? billRooms.filter(room => room.status === 'checked-in') : [selected];
       for (const room of leaving) {
-        const response = await fetch('/api/reservation-status', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ action: 'set-status', reservationId: room.id, status: 'checked-out' }),
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(`${isGroupBill ? `Room ${room.roomNumber || ''}: ` : ''}${result.error || 'The guest could not be checked out.'}`);
+        try {
+          const result = await staffApi('reservation-status', { action: 'set-status', reservationId: room.id, status: 'checked-out' });
+          if (result.offline) savedOffline = true;
+        } catch (roomError) {
+          throw new Error(`${isGroupBill ? `Room ${room.roomNumber || ''}: ` : ''}${roomError.message || 'The guest could not be checked out.'}`);
+        }
       }
     } catch (checkoutError) {
       // An overstay charge may have just been added: show the new balance.
@@ -363,6 +370,11 @@ export default function Billing() {
       });
     } catch (thankYouError) {
       console.warn('Thank-you email skipped:', thankYouError.message);
+    }
+    if (savedOffline) {
+      setSelected(null);
+      setSuccess(`Check-out: Saved on this computer (no internet). It will be sent to the system automatically when the internet is back.`);
+      return;
     }
     const roomLabel = isGroupBill ? `Rooms ${billRooms.map(room => room.roomNumber).filter(Boolean).join(', ')} are` : `${selected.roomName || 'The room'} is`;
     setSelected(null);
@@ -689,6 +701,11 @@ export default function Billing() {
                         setSuccess(`Promo ${result.code} (${result.label}): −${formatCurrency(result.discount)}.`);
                       }}
                     />
+                    {seniorPwdSummary(selected) && (
+                      <div style={{ fontSize: 12, fontWeight: 600, color: seniorPwdSummary(selected).toCheck ? RED : GREEN, margin: '0 0 8px' }}>
+                        <i className="ti ti-wheelchair" aria-hidden="true" /> Guest said: {seniorPwdSummary(selected).text}
+                      </div>
+                    )}
                     <SeniorPwdDiscountForm
                       reservation={selected}
                       colors={{ TEXT, SUBTEXT, MUTED, BORDER, RED }}
