@@ -10,6 +10,7 @@ import {
   LATE_ARRIVAL_SURCHARGE_RATE,
   getSwimmingRate,
   COTTAGE_OPTIONS,
+  cottageName,
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
@@ -25,8 +26,9 @@ import {
   isSingleDayStay,
   describeRoomCapacity,
 } from '../../lib/bookingPricing';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 import { EXTRA_GUEST_MEAL_RATE, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES } from '../../lib/bookingPricing';
-import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactFieldErrors, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
+import { CONTACT_REQUIREMENT_NOTE, FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactFieldErrors, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 import BookingSteps from '../components/BookingSteps';
@@ -367,6 +369,10 @@ export default function BookRoom() {
   const [seniorPwd, setSeniorPwd] = useState({ senior: '', pwd: '' });
   const seniorPwdGroup = (Number(form.adults) || 0) + (Number(form.children) || 0);
   const seniorPwdCheck = normalizeSeniorPwdDeclared(seniorPwd, seniorPwdGroup);
+  // Seniors or PWDs in the group: recommend rooms without stairs, even if the
+  // guest didn't tick "limited mobility" when choosing dates.
+  const seniorPwdCount = (Number(seniorPwd.senior) || 0) + (Number(seniorPwd.pwd) || 0);
+  const needsStepFree = Boolean(form.stepFree) || seniorPwdCount > 0;
   // Discount requested online: IDs are sent now, payment follows staff approval.
   const discountKinds = discountKindsFor(seniorPwdCheck.value || {});
   const canRequestDiscount = discountKinds.length > 0 && discountKinds.length <= MAX_DISCOUNT_IDS && extraRoomIds.length === 0;
@@ -477,7 +483,7 @@ export default function BookRoom() {
     const matchingRooms = availableRooms
       .filter(item => item.id !== room?.id && !['maintenance', 'cleaning', 'occupied', 'unavailable'].includes(String(item.status || '').toLowerCase()))
       .filter(item => !getGuestCountViolation(item, adults, children))
-      .filter(item => !form.stepFree || !roomHasStairs(decorateRoom(item, 0)))
+      .filter(item => !needsStepFree || !roomHasStairs(decorateRoom(item, 0)))
       .map(item => ({ item, price: priceFor(item), kind: getRoomCapacityPolicy(item)?.label || item.type || '' }))
       .sort((a, b) => a.price - b.price
         || (getRoomCapacityPolicy(a.item)?.maxGuests || 99) - (getRoomCapacityPolicy(b.item)?.maxGuests || 99)
@@ -492,7 +498,7 @@ export default function BookRoom() {
       others.push(withPrice(entry));
     });
     return { suggestedRooms: picks, otherRoomKinds: others };
-  }, [availableRooms, form.adults, form.children, form.bookingType, form.tourPeriod, nights, room?.id]);
+  }, [availableRooms, form.adults, form.children, form.bookingType, form.tourPeriod, needsStepFree, nights, room?.id]);
 
   // Land at the top whenever the page moves to another step (bookings tab,
   // payment preview, confirmation).
@@ -1492,6 +1498,24 @@ export default function BookRoom() {
                   ? <div role="alert" style={{ fontSize: '11.5px', color: '#b91c1c', marginTop: '8px' }}>{seniorPwdCheck.error}</div>
                   : <div style={{ fontSize: '11.5px', color: '#6b7280', marginTop: '8px', lineHeight: 1.6 }}>Bring their senior citizen or PWD ID. The 20% discount and VAT exemption on each qualified guest's share are applied at the front desk after the ID is checked.</div>}
               </fieldset>
+              {needsStepFree && room && roomHasStairs(decorateRoom(room, 0)) && (
+                <section role="note" aria-label="Rooms without stairs" style={{ marginTop: '12px', border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: '12px', padding: '12px 14px' }}>
+                  <div style={{ fontSize: '12.5px', color: '#78350f', lineHeight: 1.55 }}>
+                    <strong>{room.roomNumber || 'This room'} is on the second floor (stairs).</strong> For senior citizens, PWDs or guests who find stairs hard, we recommend a ground-floor room{suggestedRooms.length ? ':' : '. Contact the resort and we will help you find one.'}
+                  </div>
+                  {suggestedRooms.length > 0 && (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+                      {suggestedRooms.map(option => (
+                        <button key={option.id} type="button" onClick={() => switchToRoom(option)}
+                          style={{ border: '1px solid #d8e7db', background: '#fff', color: DARK, borderRadius: '8px', padding: '8px 12px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                          Switch to {option.roomNumber || option.name}{option.suggestedPrice < Number.MAX_SAFE_INTEGER ? ` · ₱${option.suggestedPrice.toLocaleString()}` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ fontSize: '11px', color: '#92400e', marginTop: '8px' }}>You can still keep this room if the stairs are not a problem.</div>
+                </section>
+              )}
               <div style={{ marginTop: '14px' }}>
                 <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Special Requests (optional)</label>
                 <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
@@ -1521,6 +1545,14 @@ export default function BookRoom() {
                     );
                   })}
                 </select>
+                {(() => {
+                  const chosen = COTTAGE_OPTIONS.find(option => option.id && option.id === form.cottageId);
+                  return chosen?.image ? (
+                    <img src={optimizeImage(chosen.image, IMAGE_WIDTHS.thumb)} alt={`${cottageName(chosen)} cottage`} loading="lazy"
+                      onError={e => { e.currentTarget.style.display = 'none'; }}
+                      style={{ display: 'block', width: '100%', maxWidth: 320, aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: 10, marginTop: 8 }} />
+                  ) : null;
+                })()}
                 {isTourBooking && (
                   <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '5px' }}>
                     Room not required? <a href="/book-cottage" style={{ color: DARK, fontWeight: 600 }}>Make a cottage-only booking</a> for your tour.
@@ -1539,6 +1571,9 @@ export default function BookRoom() {
                 <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>2</span>
                 Guest Information
               </div>
+              <p role="note" style={{ margin: '-6px 0 16px', padding: '10px 12px', background: '#f6f8f1', border: '1px solid #dfe6d2', borderRadius: '10px', fontSize: '12px', lineHeight: 1.55, color: '#374151' }}>
+                <strong>At least one contact is required.</strong> {CONTACT_REQUIREMENT_NOTE}
+              </p>
               <div className="responsive-grid-2" style={{ gap: '14px' }}>
                 {[
                   { label: 'First Name', key: 'firstName', placeholder: 'Juan', type: 'text', required: true },

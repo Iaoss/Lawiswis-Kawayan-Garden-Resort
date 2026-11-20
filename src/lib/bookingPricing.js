@@ -124,8 +124,23 @@ export const DEFAULT_COTTAGES = [
   { id: 'poolside-cabana', name: 'Poolside Cabana', maxGuests: 10, price: 1500 },
   { id: 'pavilion', name: 'Pavilion', maxGuests: 20, price: 3000 },
 ];
+// Photos from lawiswiskawayanresort.com. An admin can upload a different
+// photo for any cottage in Settings (saved as cottage.image).
+const RESORT_UPLOADS = 'https://lawiswiskawayanresort.com/wp-content/uploads/';
+export const DEFAULT_COTTAGE_IMAGES = {
+  'garden-cabana': `${RESORT_UPLOADS}2024/10/2017-13.jpg`,
+  'poolside-cabana': `${RESORT_UPLOADS}2024/10/2017-16.jpg`,
+  pavilion: `${RESORT_UPLOADS}2020/01/Pavillion-Featured.jpg`,
+};
+// Only https links are kept.
+const cleanCottageImage = value => {
+  const url = String(value || '').trim();
+  return /^https:\/\/[^\s"'<>]+$/i.test(url) && url.length <= 500 ? url : '';
+};
+// The cottage's photo: the uploaded one, else the resort's default, else ''.
+export const cottageImage = cottage => cleanCottageImage(cottage?.image) || DEFAULT_COTTAGE_IMAGES[cottage?.id] || '';
 const NO_COTTAGE = { id: '', label: 'No cottage', price: 0, maxGuests: 0 };
-const cottageOption = c => ({ id: c.id, name: c.name, label: `${c.name} (up to ${c.maxGuests} guests)`, price: c.price, maxGuests: c.maxGuests });
+const cottageOption = c => ({ id: c.id, name: c.name, label: `${c.name} (up to ${c.maxGuests} guests)`, price: c.price, maxGuests: c.maxGuests, image: cottageImage(c) });
 
 export const COTTAGE_OPTIONS = [NO_COTTAGE, ...DEFAULT_COTTAGES.map(cottageOption)];
 export const COTTAGE_IDS = DEFAULT_COTTAGES.map(c => c.id);
@@ -146,6 +161,7 @@ export function normalizeCottageCatalog(doc) {
       maxGuests: Math.round(Number(c?.maxGuests)),
       price: Math.round(Number(c?.price) * 100) / 100,
       archived: c?.archived === true,
+      image: cleanCottageImage(c?.image),
     }))
     .filter(c => COTTAGE_ID.test(c.id) && !seen.has(c.id) && seen.add(c.id) && c.name.length >= 2
       && Number.isInteger(c.maxGuests) && c.maxGuests >= 1 && c.maxGuests <= 200

@@ -1,7 +1,10 @@
+import PillTabs, { FolderPanel } from '../components/PillTabs';
+import BookingCalendar from '../../components/ui/visualize-booking';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, auth } from '../../firebase/firebase';
-import { getDoc, setDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { getDoc, getDocs, setDoc, updateDoc, doc, serverTimestamp, collection, query, where } from 'firebase/firestore';
+import { openReceiptWindow, printBookingReceipt } from '../lib/printBookingReceipt';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
@@ -496,38 +499,17 @@ function ReservationBoard({
 
   // ── Month view ──
   const monthView = (
-    <div style={{ overflowX: 'auto' }}>
-      <div style={{ minWidth: 720, display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', border: `1px solid ${t.BORDER}`, borderRadius: 12, overflow: 'hidden' }}>
-        {DOW_LONG.map(d => (
-          <div key={d} style={{ padding: '8px 10px', fontSize: 11, color: t.MUTED, background: t.CARD2, borderBottom: `1px solid ${t.BORDER}` }}>{d}</div>
-        ))}
-        {grid.map((d, i) => {
-          const k = toIso(d);
-          const inMonth = d.getMonth() === cursor.getMonth();
-          const list = perDay[k] || [];
-          return (
-            <div key={k} style={{
-              minHeight: 112, padding: 6, background: t.CARD, opacity: inMonth ? 1 : 0.55,
-              borderRight: i % 7 === 6 ? 'none' : `1px solid ${t.BORDER}`, borderBottom: i >= 35 ? 'none' : `1px solid ${t.BORDER}`,
-            }}>
-              <button type="button" onClick={() => pickDay(d, 'day')} title="Open this day"
-                style={{
-                  border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 700, width: 24, height: 24, borderRadius: 999,
-                  background: k === todayIso ? t.ACCENT : 'transparent', color: k === todayIso ? t.ACCENT_TEXT : t.TEXT,
-                }}>{d.getDate()}</button>
-              <div style={{ display: 'grid', gap: 3, marginTop: 4 }}>
-                {list.slice(0, 3).map(r => chip(r, k))}
-                {list.length > 3 && (
-                  <button type="button" onClick={() => pickDay(d, 'day')}
-                    style={{ textAlign: 'left', border: 'none', background: 'transparent', color: t.MUTED, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', padding: '1px 4px' }}>
-                    +{list.length - 3} more
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+    <div>
+      <BookingCalendar
+        days={grid}
+        bookingsOn={perDay}
+        month={cursor}
+        todayKey={todayIso}
+        title={false}
+        statusColor={STATUS_COLOR}
+        onSelect={onSelect}
+        t={{ ...t, BUBBLE: t.dark ? '#52525b' : '#27272a', BUBBLE_TEXT: '#fff' }}
+      />
       {legend}
     </div>
   );
@@ -564,15 +546,7 @@ function ReservationBoard({
                 </>
               )}
             </div>
-            {isCalendar && <div role="tablist" aria-label="Calendar view" style={{ display: 'inline-flex', background: t.CARD2, border: `1px solid ${t.BORDER2}`, borderRadius: 10, padding: 3 }}>
-              {[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([id, label]) => (
-                <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
-                  style={{
-                    border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-                    background: tab === id ? t.ACCENT : 'transparent', color: tab === id ? t.ACCENT_TEXT : t.MUTED,
-                  }}>{label}</button>
-              ))}
-            </div>}
+            {isCalendar && <PillTabs variant="pill" t={t} size="sm" label="Calendar view" value={tab} onChange={setTab} items={[{ id: 'day', label: 'Day' }, { id: 'week', label: 'Week' }, { id: 'month', label: 'Month' }]} />}
           </div>
 
           {/* Filters */}
@@ -654,6 +628,8 @@ export default function Reservations() {
   const MUTED    = dark ? '#9ca3af' : '#6b7280';
   const ACCENT   = settings?.accentColor || '#9cb56f';
   const ACCENT_TEXT = '#0a1a0a';
+  // Folder tabs: the panel is a soft green-grey so the white cards inside stand out.
+  const folderColors = { CARD: dark ? '#111815' : '#e7ece4', CARD2: dark ? '#1b221e' : '#d6ded1', BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT };
 
   // ── Role detection (based on route; swap for real auth/role context if available) ──
   const isReceptionist = window.location.pathname.startsWith('/receptionist');
@@ -1369,21 +1345,10 @@ export default function Reservations() {
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '20px' }}>
 
         {/* Header: one tab per job, plus print and add booking. */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
-          <div role="tablist" aria-label="Reservation sections" style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12, padding: 4 }}>
-            {RESERVATION_TABS.map(item => {
-              const on = tab === item.id;
-              const count = item.id === 'attention' ? attentionCount : 0;
-              return (
-                <button key={item.id} type="button" role="tab" aria-selected={on} onClick={() => chooseTab(item.id)}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, border: 0, borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: on ? 700 : 600, cursor: 'pointer', fontFamily: 'inherit', background: on ? ACCENT : 'transparent', color: on ? ACCENT_TEXT : TEXT }}>
-                  <i className={`ti ${item.icon}`} aria-hidden="true" />{item.label}
-                  {count > 0 && <span style={{ minWidth: 20, height: 20, borderRadius: 999, padding: '0 6px', display: 'inline-grid', placeItems: 'center', background: '#dc2626', color: '#fff', fontSize: 11, fontWeight: 700 }}>{count}</span>}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+          <PillTabs label="Reservation sections" value={tab} onChange={chooseTab} t={folderColors}
+            items={RESERVATION_TABS.map(item => ({ ...item, count: item.id === 'attention' ? attentionCount : 0 }))} />
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingBottom: 8 }}>
             {/* Backup for internet outages: today's arrivals, departures and balances on paper. */}
           <button type="button" onClick={() => { if (!printDailySheet(reservations, { staffName: staffLabel(access.user?.name || auth.currentUser?.email, access.user?.role) })) setToast({ type: 'error', text: 'Allow pop-ups for this site to print the sheet.' }); }}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${BORDER2}`, background: CARD, color: TEXT, borderRadius: 9, padding: '7px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
@@ -1395,7 +1360,8 @@ export default function Reservations() {
             </button>
           </div>
         </div>
-        <div style={{ fontSize: 12, color: MUTED, marginBottom: 14 }}>{RESERVATION_TABS.find(item => item.id === tab)?.hint}</div>
+        <FolderPanel t={folderColors} key={tab} className="lk-enter-soft" style={{ display: 'grid', gap: 14 }}>
+        <div style={{ fontSize: 12, color: MUTED }}>{RESERVATION_TABS.find(item => item.id === tab)?.hint}</div>
 
         {toast && (
           <div role="status" onClick={() => setToast(null)}
@@ -1773,7 +1739,29 @@ export default function Reservations() {
                     </button>
                   </div>
                 )}
+                {!String(s.email || '').trim() && s.status !== 'cancelled' && (
+                  <div style={{ marginTop: '16px', fontSize: '12px', color: TEXT, background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '10px', padding: '10px 12px' }}>
+                    <i className="ti ti-mail-off" aria-hidden="true" style={{ marginRight: 6 }} />
+                    No email on this booking, so the guest gets no emailed receipt. Use <strong>Print receipt</strong> and hand it over at the counter.
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={async () => {
+                    const win = openReceiptWindow();
+                    if (!win) { setToast({ type: 'error', text: 'Allow pop-ups for this site to print the receipt.' }); return; }
+                    try {
+                      const snap = await getDocs(query(collection(db, 'payments'), where('reservationId', '==', s.id)));
+                      const payments = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                        .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+                      printBookingReceipt(s, payments, win);
+                    } catch (error) {
+                      win.close();
+                      setToast({ type: 'error', text: error.message || 'The payments could not be loaded for the receipt.' });
+                    }
+                  }}
+                    style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <i className="ti ti-printer" aria-hidden="true" /> Print receipt
+                  </button>
                   <button type="button" onClick={() => navigate(billingPath(s.id))}
                     style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Open in Billing</button>
                   {s.status === 'checked-in' && bookedGuestCount(s) > 1 && (
@@ -2144,6 +2132,7 @@ export default function Reservations() {
           onSelect={setSelectedId}
           renderActions={renderActions}
         />}
+        </FolderPanel>
       </div>
     </PageLayout>
   );

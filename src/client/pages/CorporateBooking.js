@@ -8,7 +8,7 @@ import {
   CORPORATE_FEATURE_ROWS, CORPORATE_PACKAGES, GROUP_ADVANCE_DAYS, MAX_GROUP_GUESTS, MIN_GROUP_GUESTS, isCorporateFeatureIncluded,
 } from '../../lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
-import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactFieldErrors, getContactLinkError } from '../../lib/preferredContactMethods';
+import { CONTACT_REQUIREMENT_NOTE, FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactFieldErrors, getContactLinkError } from '../../lib/preferredContactMethods';
 import { CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
 import { openBookingTypeModal } from '../lib/bookingTypeModal';
@@ -382,6 +382,9 @@ export default function CorporateBooking() {
                 </>
               )}
               <label style={labelStyle}>Number of guests ({MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS})<input required type="number" min={MIN_GROUP_GUESTS} max={MAX_GROUP_GUESTS} step="1" name="totalGuests" value={form.totalGuests} onChange={changeField} aria-invalid={Boolean(guestError)} style={inputStyle} />{fieldError('totalGuests')}</label>
+              <p role="note" style={{ gridColumn: '1 / -1', margin: '4px 0 0', padding: '10px 12px', background: '#f6f8f1', border: '1px solid #dfe6d2', borderRadius: 10, fontSize: 12, lineHeight: 1.55, color: '#374151' }}>
+                <strong>At least one contact is required.</strong> {CONTACT_REQUIREMENT_NOTE}
+              </p>
               <label style={labelStyle}>Contact first name<input required minLength="2" maxLength="35" name="firstName" value={form.firstName} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('firstName'))} style={inputStyle} />{fieldError('firstName')}</label>
               <label style={labelStyle}>Contact last name<input required minLength="2" maxLength="35" name="lastName" value={form.lastName} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('lastName'))} style={inputStyle} />{fieldError('lastName')}</label>
               <label style={labelStyle}>{form.preferredContactMethod === 'Email' ? 'Email address' : 'Email address (optional)'}<input type="email" maxLength="254" name="email" value={form.email} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('email'))} style={inputStyle} />{fieldError('email')}</label>

@@ -9,6 +9,9 @@ export const PREFERRED_CONTACT_METHODS = [
 
 export const FACEBOOK_CONTACT_METHOD = 'Facebook Messenger';
 
+// Shown above the contact fields on every booking form.
+export const CONTACT_REQUIREMENT_NOTE = 'Email and mobile number are optional, but we need at least one way to reach you about your booking. Choose your preferred contact method and fill in that detail (mobile number, email, or Facebook link).';
+
 export function isPreferredContactMethod(value) {
   return PREFERRED_CONTACT_METHODS.includes(value);
 }

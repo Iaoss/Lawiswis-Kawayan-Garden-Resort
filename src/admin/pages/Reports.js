@@ -3,6 +3,8 @@ import { auth } from '../../firebase/firebase';
 import Layout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { getReservationRemarks } from '../../lib/reservationRemarks';
+import { printTable } from '../lib/printTable';
+import { seniorPwdSummary } from '../../lib/seniorPwdGuests';
 import { getVatBreakdown } from '../../lib/bookingPricing';
 import { getStayTimingDetails } from '../../lib/stayTimes';
 import { money } from '../lib/money';
@@ -10,7 +12,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { formatManilaTime, getScheduledCheckOutMs } from '../../lib/reservationStatus';
 import { FOREST_MEADOW } from '../lib/cardGradient';
 import { useStaffAccess } from '../lib/useStaffAccess';
-import { staffLabel } from '../../lib/staffLabel';
+import { bookedByText, staffLabel } from '../../lib/staffLabel';
 import { loadCollection } from '../lib/cachedCollection';
 
 const STATUS_OPTIONS = [
@@ -40,6 +42,45 @@ function isWithinRange(value, start, end) {
   if (!key) return false;
   return (!start || key >= start) && (!end || key <= end);
 }
+
+// Columns staff can pick for a printed list (Reports → Print a custom list).
+const LIST_COLUMNS_KEY = 'lkgr_report_list_columns';
+const DEFAULT_LIST_COLUMNS = ['guest', 'phone', 'email', 'room', 'checkIn', 'checkOut'];
+const listBalance = r => Math.max(0, Number(r.totalAmount || 0) + (Number(r.extraCharges) || 0) - Number(r.amountPaid || 0));
+const LIST_COLUMNS = [
+  { id: 'ref', label: 'Booking #', get: r => `#${String(r.id).slice(0, 8).toUpperCase()}` },
+  { id: 'guest', label: 'Guest name', get: r => r.companyName ? `${r.companyName} (${r.guestName || ''})` : (r.guestName || '') },
+  { id: 'phone', label: 'Phone', get: r => r.phone || '' },
+  { id: 'email', label: 'Email', get: r => r.email || '' },
+  { id: 'facebook', label: 'Facebook link', get: r => r.contactLink || '' },
+  { id: 'room', label: 'Room', get: r => (r.groupRooms || [r]).map(x => x.roomNumber).filter(Boolean).join(', ') || (r.cottageOnly ? 'Cottage only' : '') },
+  { id: 'checkIn', label: 'Check-in', get: r => `${r.checkIn || ''}${r.checkInTime ? ` ${r.checkInTime}` : ''}` },
+  { id: 'checkOut', label: 'Check-out', get: r => `${r.checkOut || r.checkIn || ''}${r.checkOutTime ? ` ${r.checkOutTime}` : ''}` },
+  { id: 'dateBooked', label: 'Date booked', get: r => toDateKey(getDateBooked(r)) || '' },
+  // How many people, not who: "3 (2 adults, 1 child)".
+  { id: 'guests', label: 'No. of guests', get: r => {
+    const adults = Number(r.adults || 0);
+    const children = Number(r.children || 0);
+    const total = Number(r.totalGuests || 0) || adults + children;
+    if (!total) return '';
+    return adults || children ? `${total} (${adults} adult${adults === 1 ? '' : 's'}${children ? `, ${children} child${children === 1 ? '' : 'ren'}` : ''})` : String(total);
+  } },
+  { id: 'type', label: 'Booking type', get: r => String(r.type || '').replace(/-/g, ' ') },
+  { id: 'status', label: 'Status', get: r => String(r.status || 'pending').replace(/-/g, ' ') },
+  { id: 'total', label: 'Total', get: r => money(Number(r.totalAmount || 0) + (Number(r.extraCharges) || 0)) },
+  { id: 'paid', label: 'Paid', get: r => money(Number(r.amountPaid || 0)) },
+  { id: 'balance', label: 'Balance', get: r => money(listBalance(r)) },
+  { id: 'seniorPwd', label: 'Senior / PWD', get: r => seniorPwdSummary(r)?.text || '' },
+  { id: 'bookedBy', label: 'Booked by', get: r => bookedByText(r) },
+  { id: 'requests', label: 'Special requests', get: r => r.specialRequests || r.notes || '' },
+  { id: 'remarks', label: 'Remarks', get: r => getReservationRemarks(r).map(item => `${item.label}: ${item.text}`).join('; ') },
+];
+const readListColumns = () => {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(LIST_COLUMNS_KEY) || 'null');
+    return Array.isArray(saved) && saved.length ? saved.filter(id => LIST_COLUMNS.some(c => c.id === id)) : DEFAULT_LIST_COLUMNS;
+  } catch { return DEFAULT_LIST_COLUMNS; }
+};
 
 const normalizeStatus = status => String(status || 'pending').toLowerCase().trim().replace(/[\s_]+/g, '-');
 const getDateBooked = r => r.createdAt || r.dateBooked;
@@ -85,6 +126,17 @@ export default function Reports() {
   const [sortBy, setSortBy] = useState('checkIn');
   const [sortDirection, setSortDirection] = useState('desc');
   const [generatedAt] = useState(() => new Date());
+  // Custom printed list.
+  const [listColumns, setListColumns] = useState(readListColumns);
+  const [listType, setListType] = useState('all');
+  const [listPay, setListPay] = useState('all');
+  const [listSearch, setListSearch] = useState('');
+  const [listSeniorOnly, setListSeniorOnly] = useState(false);
+  const toggleListColumn = id => setListColumns(current => {
+    const next = current.includes(id) ? current.filter(item => item !== id) : LIST_COLUMNS.map(c => c.id).filter(c => c === id || current.includes(c));
+    try { window.localStorage.setItem(LIST_COLUMNS_KEY, JSON.stringify(next)); } catch { /* storage unavailable */ }
+    return next;
+  });
   const { user: me } = useStaffAccess();
   const generatedBy = staffLabel(me?.name || auth.currentUser?.displayName || auth.currentUser?.email, me?.role);
 
@@ -415,6 +467,87 @@ export default function Reports() {
             Reset Filters
           </button>
         </div>
+
+        {/* Print a custom list: pick the columns, narrow the bookings, print. */}
+        {(() => {
+          const term = listSearch.trim().toLowerCase();
+          const listRows = sortedReservations.filter(r =>
+            (listType === 'all' || String(r.type || '') === listType)
+            && (listPay === 'all' || (listPay === 'unpaid' ? listBalance(r) > 0 : listBalance(r) <= 0))
+            && (!listSeniorOnly || Boolean(seniorPwdSummary(r)))
+            && (!term || [r.guestName, r.companyName, r.phone, r.email, r.id, ...(r.groupRooms || [r]).map(x => x.roomNumber)].some(v => String(v || '').toLowerCase().includes(term))));
+          const chosen = LIST_COLUMNS.filter(c => listColumns.includes(c.id));
+          const typeOptions = [...new Set(reservations.map(r => r.type).filter(Boolean))].sort();
+          const printList = () => {
+            const statusText = statusFilter === 'all' ? '' : (STATUS_OPTIONS.find(([v]) => v === statusFilter)?.[1] || statusFilter);
+            const ok = printTable({
+              title: 'Guest List',
+              subtitle: `Bookings matching the filters on the Reports page${dateField === 'booked' ? ' (by date booked)' : ' (by check-in date)'}.`,
+              printedBy: generatedBy,
+              filters: [
+                ['Status', statusText],
+                ['Room', roomFilter !== 'all' ? roomFilter : ''],
+                ['Dates', checkInFrom || checkInTo ? `${checkInFrom || '...'} to ${checkInTo || '...'}` : ''],
+                ['Type', listType !== 'all' ? listType : ''],
+                ['Payment', listPay === 'paid' ? 'Fully paid' : listPay === 'unpaid' ? 'With balance' : ''],
+                ['Senior / PWD only', listSeniorOnly ? 'Yes' : ''],
+                ['Search', listSearch.trim()],
+              ],
+              columns: chosen.map(c => c.label),
+              rows: listRows.map(r => chosen.map(c => c.get(r))),
+            });
+            if (!ok) window.alert('Allow pop-ups for this site to print the list.');
+          };
+          return (
+            <div className="report-print-controls" style={{ ...card, padding: '18px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+                <div>
+                  <h3 style={{ ...cardTitle, margin: 0 }}><i className="ti ti-list-check" style={{ marginRight: 6 }} />Print a custom list</h3>
+                  <p style={{ fontSize: 12, color: MUTED, margin: '3px 0 0' }}>Tick the columns you need. It prints only the bookings that match the filters above and here.</p>
+                </div>
+                <button type="button" onClick={printList} disabled={!chosen.length}
+                  style={{ background: ACCENT, color: '#fff', border: 'none', borderRadius: '10px', padding: '10px 16px', fontSize: '12px', fontWeight: 700, cursor: chosen.length ? 'pointer' : 'not-allowed', opacity: chosen.length ? 1 : 0.5 }}>
+                  <i className="ti ti-printer" style={{ marginRight: 7 }} />Print list ({listRows.length})
+                </button>
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: SUBTEXT, textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>Columns</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                {LIST_COLUMNS.map(c => {
+                  const on = listColumns.includes(c.id);
+                  return (
+                    <label key={c.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${on ? ACCENT : BORDER}`, background: on ? (dark ? 'rgba(156,181,111,0.18)' : '#f2f7e8') : CARD2, color: TEXT, borderRadius: 999, padding: '6px 12px', fontSize: 12, cursor: 'pointer', fontWeight: on ? 600 : 400 }}>
+                      <input type="checkbox" checked={on} onChange={() => toggleListColumn(c.id)} style={{ margin: 0 }} />{c.label}
+                    </label>
+                  );
+                })}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, alignItems: 'end' }}>
+                <div>
+                  <label style={lbl}>Booking type</label>
+                  <select value={listType} onChange={e => setListType(e.target.value)} style={{ ...inp, width: '100%' }}>
+                    <option value="all">All types</option>
+                    {typeOptions.map(v => <option key={v} value={v}>{v.replace(/-/g, ' ')}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={lbl}>Payment</label>
+                  <select value={listPay} onChange={e => setListPay(e.target.value)} style={{ ...inp, width: '100%' }}>
+                    <option value="all">Any</option>
+                    <option value="paid">Fully paid</option>
+                    <option value="unpaid">With balance</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={lbl}>Search</label>
+                  <input value={listSearch} onChange={e => setListSearch(e.target.value)} placeholder="Guest, phone, email, room or #ref" style={{ ...inp, width: '100%' }} />
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: TEXT, cursor: 'pointer', padding: '10px 0' }}>
+                  <input type="checkbox" checked={listSeniorOnly} onChange={e => setListSeniorOnly(e.target.checked)} /> Senior / PWD guests only
+                </label>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Row: Room availability + Reservations by room type */}
         <div className="report-two-col" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>

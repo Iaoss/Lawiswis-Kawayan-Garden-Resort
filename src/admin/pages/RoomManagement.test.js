@@ -7,6 +7,7 @@ jest.mock('firebase/firestore', () => ({
   onSnapshot: () => () => {},
   collection: () => ({}), doc: () => ({}), query: () => ({}), where: () => ({}),
   addDoc: () => Promise.resolve(), updateDoc: () => Promise.resolve(), deleteDoc: () => Promise.resolve(),
+  getDocs: () => Promise.resolve({ docs: [] }),
 }), { virtual: true });
 jest.mock('../components/PageLayout', () => ({ children }) => <div>{children}</div>);
 jest.mock('../components/RoomExcelImport', () => () => null);

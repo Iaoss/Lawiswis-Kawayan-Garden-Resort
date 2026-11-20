@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { guardedNavigate } from '../lib/leaveGuard';
 import { auth, db } from '../../firebase/firebase';
 import { doc, getDoc, collection, query, where } from 'firebase/firestore';
@@ -63,6 +63,7 @@ const EXTRA_LABELS = {
 };
 
 export default function ReceptionistLayout({ children }) {
+  const location = useLocation();
   const routerNavigate = useNavigate();
   // Asks first when the current page has unsaved work (e.g. a half-filled walk-in).
   const navigate = useMemo(() => guardedNavigate(routerNavigate), [routerNavigate]);
@@ -241,7 +242,7 @@ export default function ReceptionistLayout({ children }) {
           {/* Page content eases in (see src/motion.css). */}
           {/* Offline: shows the saved copy and changes waiting to sync. */}
           <OfflineStatus dark={dark} />
-          <div className="lk-enter">{children}</div>
+          <div className="lk-page" key={location.pathname}>{children}</div>
         </div>
       </AnimatedSidebarInset>
 

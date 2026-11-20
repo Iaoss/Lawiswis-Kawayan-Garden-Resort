@@ -1,3 +1,4 @@
+import PillTabs from '../components/PillTabs';
 import React, { useEffect, useMemo, useState } from 'react';
 import { auth, db, secondaryAuth } from '../../firebase/firebase';
 import {
@@ -508,14 +509,7 @@ export default function UserManagement() {
           <section style={{ ...card, padding: 12, marginBottom: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <input aria-label="Search staff" placeholder="Search name, email or role…" value={search}
               onChange={event => setSearch(event.target.value)} style={{ ...input, flex: '1 1 220px', width: 'auto', minWidth: 0 }} />
-            <div role="tablist" aria-label="Filter staff" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {FILTERS.map(item => (
-                <button key={item.id} type="button" role="tab" aria-selected={filter === item.id} onClick={() => setFilter(item.id)}
-                  style={filter === item.id ? { ...primary, borderRadius: 999 } : { ...btn, borderRadius: 999 }}>
-                  {item.label}
-                </button>
-              ))}
-            </div>
+            <PillTabs variant="pill" t={{ CARD: c.card, CARD2: c.card2, BORDER: c.border, TEXT: c.text, MUTED: c.sub, ACCENT: c.accent, ACCENT_TEXT: c.accentText }} size="sm" label="Filter staff" value={filter} onChange={setFilter} items={FILTERS} />
           </section>
 
           {/* Staff cards */}

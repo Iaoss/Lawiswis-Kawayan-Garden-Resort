@@ -217,7 +217,15 @@ export default function RoomSchedule({ reservations, t, onSelect }) {
 
   // Rooms whose bookings are listed: the one clicked, or up to 3 search matches.
   const picked = rows.find(row => row.room.id === pickedRoomId);
-  const panels = picked ? [picked] : searchText && rows.length <= 3 ? rows : [];
+  const panels = !picked && searchText && rows.length <= 3 ? rows : [];
+
+  // Esc closes the room's pop-up.
+  useEffect(() => {
+    if (!pickedRoomId) return undefined;
+    const onKey = event => { if (event.key === 'Escape') setPickedRoomId(''); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pickedRoomId]);
 
   const ctl = { border: `1px solid ${t.BORDER2}`, background: t.CARD2, color: t.TEXT, borderRadius: 8, padding: '7px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' };
   const nameCol = 150;
@@ -225,12 +233,48 @@ export default function RoomSchedule({ reservations, t, onSelect }) {
   const dayLabel = key => new Date(`${key}T00:00:00`).toLocaleDateString('en-PH', { weekday: 'short', day: 'numeric' });
   const monthLabel = `${new Date(`${days[0]}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} – ${new Date(`${days[days.length - 1]}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
+  // Opening a booking closes the room pop-up so the booking shows on top.
+  const openBooking = id => { setPickedRoomId(''); onSelect?.(id); };
+  const roomPanel = ({ room, upcoming, allBookings, state }, { inDialog = false } = {}) => (
+        <section key={room.id} aria-label={`Bookings in ${room.roomNumber || 'room'}`} style={{ background: inDialog ? 'transparent' : t.CARD2, border: inDialog ? 0 : `1px solid ${t.BORDER2}`, borderRadius: 12, padding: 14, marginBottom: inDialog ? 0 : 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+            <div style={{ minWidth: 0 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: t.TEXT }}>{room.roomNumber || 'Room'}</span>
+              {room.type && <span style={{ fontSize: 12, color: t.MUTED }}> · {room.type}</span>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: t.TEXT, marginTop: 2 }}>
+                <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', background: state.color }} />{state.label}
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: t.MUTED }}>{upcoming.length ? `${upcoming.length} booking${upcoming.length === 1 ? '' : 's'} from today` : 'No bookings from today on'}</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: 14, alignItems: 'start' }}>
+          <RoomMonthCalendar bookings={allBookings} today={today} t={t} onSelect={openBooking} />
+          <div role="group" aria-label="Current and upcoming bookings" style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+            {upcoming.map(r => {
+              const style = STATUS_STYLE[String(r.status || '').toLowerCase()] || STATUS_STYLE.pending;
+              const checkIn = toKey(r.checkIn);
+              const checkOut = toKey(r.checkOut) || checkIn;
+              return (
+                <button key={r.id} type="button" onClick={() => onSelect?.(bookingId(r))}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', width: '100%', textAlign: 'left', background: t.CARD, border: `1px solid ${t.BORDER}`, borderRadius: 9, padding: '9px 12px', cursor: 'pointer', fontFamily: 'inherit', color: t.TEXT }}>
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 13, fontWeight: 700 }}>{r.companyName || r.guestName || 'Guest'}</span>
+                    <span style={{ display: 'block', fontSize: 12, color: t.MUTED }}>{shortDate(checkIn)}{r.checkInTime ? `, ${r.checkInTime}` : ''} → {shortDate(checkOut)}{r.checkOutTime ? `, ${r.checkOutTime}` : ''}</span>
+                  </span>
+                  <span style={{ background: style.bg, color: style.fg, borderRadius: 999, padding: '3px 10px', fontSize: 11, fontWeight: 700 }}>{style.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          </div>
+        </section>);
+
   return (
     <section aria-label="Room schedule" style={{ background: t.CARD, border: `1px solid ${t.BORDER}`, borderRadius: 14, padding: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <div>
           <div style={{ fontWeight: 700, fontSize: 15, color: t.TEXT }}>Room schedule</div>
-          <div style={{ fontSize: 11.5, color: t.MUTED }}>{monthLabel} · search a room or click its name to list its bookings</div>
+          <div style={{ fontSize: 11.5, color: t.MUTED }}>{monthLabel} · click a room name to see all its bookings</div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ ...ctl, display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'text', fontWeight: 500 }}>
@@ -276,41 +320,25 @@ export default function RoomSchedule({ reservations, t, onSelect }) {
         <div style={{ fontSize: 12, color: t.MUTED, marginBottom: 10 }}>{rows.length} rooms match. Keep typing, or click a room name to see its bookings.</div>
       )}
 
-      {/* The chosen room's bookings, from today on. Updates live. */}
-      {panels.map(({ room, upcoming, allBookings, state }) => (
-        <section key={room.id} aria-label={`Bookings in ${room.roomNumber || 'room'}`} style={{ background: t.CARD2, border: `1px solid ${t.BORDER2}`, borderRadius: 12, padding: 14, marginBottom: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-            <div style={{ minWidth: 0 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: t.TEXT }}>{room.roomNumber || 'Room'}</span>
-              {room.type && <span style={{ fontSize: 12, color: t.MUTED }}> · {room.type}</span>}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: t.TEXT, marginTop: 2 }}>
-                <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: '50%', background: state.color }} />{state.label}
-              </div>
+      {/* Up to 3 rooms matching the search, listed under the search box. */}
+      {panels.map(row => roomPanel(row))}
+
+      {/* The clicked room's bookings, in a pop-up right where staff are looking. */}
+      {picked && (
+        <div role="presentation" onClick={event => { if (event.target === event.currentTarget) setPickedRoomId(''); }}
+          style={{ position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: 16 }}>
+          <div role="dialog" aria-modal="true" aria-label={`Bookings in ${picked.room.roomNumber || 'room'}`} className="lk-enter"
+            style={{ width: 'min(960px, 100%)', maxHeight: 'calc(100vh - 32px)', overflowY: 'auto', background: t.CARD, borderRadius: 16, boxShadow: '0 24px 60px rgba(0,0,0,0.35)', padding: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 4px 0' }}>
+              <button type="button" onClick={() => setPickedRoomId('')} aria-label="Close" autoFocus
+                style={{ border: `1px solid ${t.BORDER2}`, background: t.CARD2, color: t.TEXT, borderRadius: 8, width: 32, height: 32, cursor: 'pointer', fontSize: 16 }}>
+                <i className="ti ti-x" aria-hidden="true" />
+              </button>
             </div>
-            <div style={{ fontSize: 12, color: t.MUTED }}>{upcoming.length ? `${upcoming.length} booking${upcoming.length === 1 ? '' : 's'} from today` : 'No bookings from today on'}</div>
+            {roomPanel(picked, { inDialog: true })}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: 14, alignItems: 'start' }}>
-          <RoomMonthCalendar bookings={allBookings} today={today} t={t} onSelect={onSelect} />
-          <div role="group" aria-label="Current and upcoming bookings" style={{ display: 'grid', gap: 6, minWidth: 0 }}>
-            {upcoming.map(r => {
-              const style = STATUS_STYLE[String(r.status || '').toLowerCase()] || STATUS_STYLE.pending;
-              const checkIn = toKey(r.checkIn);
-              const checkOut = toKey(r.checkOut) || checkIn;
-              return (
-                <button key={r.id} type="button" onClick={() => onSelect?.(bookingId(r))}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', width: '100%', textAlign: 'left', background: t.CARD, border: `1px solid ${t.BORDER}`, borderRadius: 9, padding: '9px 12px', cursor: 'pointer', fontFamily: 'inherit', color: t.TEXT }}>
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 13, fontWeight: 700 }}>{r.companyName || r.guestName || 'Guest'}</span>
-                    <span style={{ display: 'block', fontSize: 12, color: t.MUTED }}>{shortDate(checkIn)}{r.checkInTime ? `, ${r.checkInTime}` : ''} → {shortDate(checkOut)}{r.checkOutTime ? `, ${r.checkOutTime}` : ''}</span>
-                  </span>
-                  <span style={{ background: style.bg, color: style.fg, borderRadius: 999, padding: '3px 10px', fontSize: 11, fontWeight: 700 }}>{style.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          </div>
-        </section>
-      ))}
+        </div>
+      )}
 
       <div style={{ overflowX: 'auto', border: `1px solid ${t.BORDER}`, borderRadius: 10 }}>
         <div style={{ minWidth: nameCol + totalSlots * (daysShown > 7 ? 22 : 40) }}>

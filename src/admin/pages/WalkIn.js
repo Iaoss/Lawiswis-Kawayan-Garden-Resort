@@ -1,3 +1,4 @@
+import PillTabs from '../components/PillTabs';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
@@ -20,7 +21,7 @@ import CorporateWalkInForm from '../components/CorporateWalkInForm';
 import AssignRoomsDialog from '../components/AssignRoomsDialog';
 import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
 import { appAlert } from '../../components/ui/app-dialog';
-import { IMAGE_WIDTHS, optimizeImageMap } from '../../lib/imageUrl';
+import { IMAGE_WIDTHS, optimizeImage, optimizeImageMap } from '../../lib/imageUrl';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
 import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
@@ -62,6 +63,17 @@ const blockedByStatus = (room, checkIn, today) => {
 };
 
 // Same real room photos used in RoomManagement — keyed by room name/number (lowercased).
+// Photo of the chosen cottage, so staff can show the guest.
+function CottagePreview({ cottageId }) {
+  const cottage = COTTAGE_OPTIONS.find(option => option.id && option.id === cottageId);
+  if (!cottage?.image) return null;
+  return (
+    <img src={optimizeImage(cottage.image, IMAGE_WIDTHS.thumb)} alt={`${cottageName(cottage)} cottage`} loading="lazy"
+      onError={e => { e.currentTarget.style.display = 'none'; }}
+      style={{ display: 'block', width: '100%', maxWidth: 280, aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: 10, marginTop: 8 }} />
+  );
+}
+
 const ROOM_IMAGES = optimizeImageMap({
   himbing:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Himbing-01-1400x700-1.jpeg',
   tahimik:    'https://lawiswiskawayanresort.com/wp-content/uploads/2024/10/Tahimik-02-1400x700-1.jpeg',
@@ -600,14 +612,8 @@ export default function WalkIn() {
         </AnimatePresence>
 
         {step !== 3 && (
-          <div role="tablist" aria-label="Walk-in type" style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-            {[['guest', 'Guest / family'], ['corporate', 'Corporate / group']].map(([id, text]) => (
-              <button key={id} type="button" role="tab" aria-selected={mode === id} onClick={() => setMode(id)}
-                style={{ border: `1px solid ${mode === id ? ACCENT : BORDER2}`, background: mode === id ? ACCENT : CARD, color: mode === id ? ACCENT_TEXT : TEXT, borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                {text}
-              </button>
-            ))}
-          </div>
+          <div style={{ marginBottom: 14 }}><PillTabs variant="pill" t={{ CARD, CARD2, BORDER: BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }} size="sm" label="Walk-in type" value={mode} onChange={setMode}
+            items={[{ id: 'guest', label: 'Guest / family', icon: 'ti-users' }, { id: 'corporate', label: 'Corporate / group', icon: 'ti-building' }]} /></div>
         )}
 
         {mode === 'corporate' && step !== 3 && (
@@ -790,6 +796,7 @@ export default function WalkIn() {
                                 </option>
                               ))}
                             </select>
+                            <CottagePreview cottageId={form.cottageId} />
                           </div>
                           <div style={{ fontSize: 12, color: MUTED }}>
                             {form.cottageId && totalAmount > 0
@@ -1017,6 +1024,9 @@ export default function WalkIn() {
                   <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div style={card}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}><i className="ti ti-user" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Guest Details</div>
+                      <div role="note" style={{ fontSize: 11.5, color: MUTED, margin: '-6px 0 14px', lineHeight: 1.5 }}>
+                        Get at least one contact: mobile number, email, or Facebook link. No email? Print the receipt at the counter after payment.
+                      </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                         {[
                           { lbl: 'First Name', key: 'firstName', ph: 'Juan', req: true },
@@ -1105,6 +1115,7 @@ export default function WalkIn() {
                               </option>
                             ))}
                           </select>
+                          <CottagePreview cottageId={form.cottageId} />
                           {cottageSuggestion?.cottage && form.cottageId !== cottageSuggestion.cottage.id && (
                             <div style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>Suggested for {guestTotal}: {cottageSuggestion.cottage.label}</div>
                           )}

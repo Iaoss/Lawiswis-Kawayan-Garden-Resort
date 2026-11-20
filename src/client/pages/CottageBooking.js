@@ -7,10 +7,12 @@ import {
   getResortNow, getSwimmingRate, getTourCutoffError,
 } from '../../lib/bookingPricing';
 import { NAME_PATTERN } from '../../lib/nameValidation';
-import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactDetailsError, getContactFieldErrors } from '../../lib/preferredContactMethods';
+import { CONTACT_REQUIREMENT_NOTE, FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactDetailsError, getContactFieldErrors } from '../../lib/preferredContactMethods';
 import { RESERVATION_DEPOSIT_PERCENTAGE, getOnlinePaymentAmount } from '../../lib/paymentPolicy';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
+import { Trees } from 'lucide-react';
 
 // Day tour or night tour with just a cottage — no room needed. Guests pay
 // the swimming entrance per person plus the cottage.
@@ -23,6 +25,21 @@ const addMonthsKey = (dateKey, months) => {
   result.setUTCDate(Math.min(d, lastDay));
   return result.toISOString().slice(0, 10);
 };
+// The cottage's photo, or a plain leaf tile when it has none yet.
+function CottagePhoto({ cottage }) {
+  const [failed, setFailed] = useState(false);
+  const box = { width: 104, height: 78, flex: '0 0 auto', borderRadius: 10, overflow: 'hidden', background: '#e7ecdf', display: 'grid', placeItems: 'center' };
+  if (!cottage.image || failed) {
+    return <span style={box} aria-hidden="true"><Trees size={28} color={FOREST} strokeWidth={1.5} /></span>;
+  }
+  return (
+    <span style={box}>
+      <img src={optimizeImage(cottage.image, IMAGE_WIDTHS.thumb)} alt={`${cottageName(cottage)} cottage`} loading="lazy" onError={() => setFailed(true)}
+        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+    </span>
+  );
+}
+
 const readLocal = (key, fallback) => { try { const v = window.localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } };
 
 
@@ -206,7 +223,8 @@ export default function CottageBooking() {
                   return (
                     <button key={cottage.id} type="button" disabled={disabled} onClick={() => set('cottageId', cottage.id)} aria-pressed={form.cottageId === cottage.id}
                       style={{ ...choice(form.cottageId === cottage.id), display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', opacity: disabled ? 0.5 : 1, cursor: disabled ? 'not-allowed' : 'pointer' }}>
-                      <span>
+                      <CottagePhoto cottage={cottage} />
+                      <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
                         <strong style={{ display: 'block', font: `600 14px ${SANS}` }}>{cottageName(cottage)}</strong>
                         <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>
                           Up to {cottage.maxGuests} guests
@@ -222,7 +240,10 @@ export default function CottageBooking() {
             </section>
 
             <section style={card}>
-              <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 14px' }}>Your details</h2>
+              <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 8px' }}>Your details</h2>
+              <p role="note" style={{ margin: '0 0 14px', padding: '10px 12px', background: CREAM, border: `1px solid ${LINE}`, font: `12px/1.6 ${SANS}`, color: '#4b4a3f' }}>
+                <strong>At least one contact is required.</strong> {CONTACT_REQUIREMENT_NOTE}
+              </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                 <label style={label}>First name<input required maxLength={35} value={form.firstName} onBlur={() => touch('firstName')} onChange={e => set('firstName', e.target.value)} style={input} autoComplete="given-name" />{fieldError('firstName')}</label>
                 <label style={label}>Last name<input required maxLength={35} value={form.lastName} onBlur={() => touch('lastName')} onChange={e => set('lastName', e.target.value)} style={input} autoComplete="family-name" />{fieldError('lastName')}</label>

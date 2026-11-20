@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { DEFAULT_USD_RATE, money, setMoneySettings } from '../lib/money';
+import { playThemeSound } from '../lib/uiSounds';
 
 const STORAGE_KEY = 'lkgr_admin_settings';
 
@@ -14,7 +15,7 @@ export const DEFAULT_SETTINGS = {
   usdRate: DEFAULT_USD_RATE, // pesos per US$1, for showing amounts in dollars
   dateFormat: 'MM/DD/YYYY',
   notifications: true,
-  soundAlerts: false,
+  soundAlerts: true,
   emailAlerts: true,
   autoLogout: '30',
   showTotalRevenue: true,
@@ -45,6 +46,8 @@ function load() {
         delete parsed[oldKey];
       }
     });
+    // Sounds were off by default before; turn them on once for everyone.
+    if (!parsed.soundsOnByDefault) { parsed.soundAlerts = true; parsed.soundsOnByDefault = true; }
     // The accent colour is fixed; an old saved choice (e.g. pink) is ignored.
     return { ...DEFAULT_SETTINGS, ...parsed, accentColor: DEFAULT_SETTINGS.accentColor };
   } catch { return DEFAULT_SETTINGS; }
@@ -63,6 +66,7 @@ export function SettingsProvider({ children }) {
 
   const updateSetting = (key, value) => {
     if (key === 'accentColor') return;
+    if (key === 'darkMode' && Boolean(value) !== Boolean(settings.darkMode) && settings.soundAlerts) playThemeSound(Boolean(value));
     const next = { ...settings, [key]: value };
     setSettings(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
