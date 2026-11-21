@@ -343,6 +343,10 @@ export default function PortalSidebar({
   email,
   initials,
   onLogout,
+  // flat: every page as its own line, no grouped dropdowns (receptionists
+  // only see their own front-desk pages, so groups made it look like the
+  // admin menu).
+  flat = false,
 }) {
   const { isMobile, state } = useAnimatedSidebar();
   const collapsed = !isMobile && state === 'collapsed';
@@ -410,7 +414,29 @@ export default function PortalSidebar({
               </AnimatedSidebarMenuItem>
             )}
 
-            {MENU_GROUPS.map((group) => {
+            {flat && navItems
+              .filter((item) => item !== dashboard && item !== settings)
+              .map((item) => {
+                const badge = badgeFor(item);
+                return (
+                  <AnimatedSidebarMenuItem key={item.path}>
+                    <AnimatedSidebarMenuButton
+                      href={item.path}
+                      icon={<i className={`ti ${item.icon}`} />}
+                      isActive={currentPath === item.path}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                      {badge && (
+                        <span className="shrink-0 rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white">
+                          {badge}
+                        </span>
+                      )}
+                    </AnimatedSidebarMenuButton>
+                  </AnimatedSidebarMenuItem>
+                );
+              })}
+
+            {!flat && MENU_GROUPS.map((group) => {
               const items = group.children.map(linkFor).filter(Boolean);
               if (!items.length) return null;
 

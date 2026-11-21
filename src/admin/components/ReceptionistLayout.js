@@ -32,11 +32,12 @@ import { subscribeLive } from '../lib/liveCollection';
 // Start loading the admin's cottage list as soon as the site opens.
 loadCottageCatalogOnce();
 
+// Shown as a simple list (no grouped dropdowns), in front-desk order.
 const navItems = [
   { label: 'Dashboard', path: '/receptionist/dashboard', icon: 'ti-layout-dashboard' },
-  { label: 'Room Management', path: '/receptionist/rooms', icon: 'ti-bed' },
   { label: 'Reservations', path: '/receptionist/reservations', icon: 'ti-calendar-event' },
   { label: 'Walk-in', path: '/receptionist/walkin', icon: 'ti-walk' },
+  { label: 'Room Management', path: '/receptionist/rooms', icon: 'ti-bed' },
   { label: 'Billing', path: '/receptionist/billing', icon: 'ti-receipt' },
   { label: 'Customers', path: '/receptionist/customers', icon: 'ti-users' },
   { label: 'History', path: '/receptionist/history', icon: 'ti-clock' },
@@ -156,6 +157,7 @@ export default function ReceptionistLayout({ children }) {
         unreadCount={unreadCount}
         logo={logo}
         portalName="Receptionist"
+        flat
         name={staffName || 'Receptionist'}
         role={staffRole || 'receptionist'}
         email={staffEmail}
