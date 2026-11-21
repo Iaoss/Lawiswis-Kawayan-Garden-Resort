@@ -1,6 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../firebase/firebase';
 import { staffApi } from '../lib/staffApi';
 import { getRoomMaximumGuests } from '../../lib/bookingPricing';
 import { CORPORATE_FEATURE_ROWS, isCorporateFeatureIncluded } from '../../lib/corporatePackages';

@@ -54,6 +54,7 @@ import { normalizeIdCheck } from '../src/lib/checkInId';
 import { arrivedGuestCount, bookedGuestCount, normalizeArrivedGuests } from '../src/lib/guestArrivals';
 import { syncCorporateRoomBlocks } from '../lib/corporateRooms';
 import { staffStamp } from '../src/lib/staffLabel';
+import { runOnce } from '../lib/offlineRequests';
 
 // Room status to set after a reservation changes (unchanged from the old
 // browser-side behaviour).
@@ -346,7 +347,8 @@ export default async function handler(req, res) {
     lastChargeNote = chargeNote;
     let checkOutDate = '';
     let guestName = '';
-    const result = await adminDb.runTransaction(async transaction => {
+    // Offline changes carry an id so a resend is never saved twice.
+    const result = await runOnce(staff, req.body?.offlineRequestId, () => adminDb.runTransaction(async transaction => {
       const snapshot = await transaction.get(reservationRef);
       if (!snapshot.exists) throw new StatusError(404, 'This reservation could not be found.');
       const reservation = snapshot.data();
@@ -383,7 +385,7 @@ export default async function handler(req, res) {
         return { ...selected, fee: Math.round(extensions.reduce((sum, item) => sum + item.fee, 0) * 100) / 100, roomCount: extensions.length };
       }
       throw new StatusError(400, 'Choose a valid reservation action.');
-    });
+    }));
 
     // Close the overstay alert once the guest has checked out.
     if (result.status === 'checked-out' && !result.unchanged) {
@@ -391,7 +393,7 @@ export default async function handler(req, res) {
         await adminDb.collection('notifications').doc(`overstay-${reservationId}-${checkOutDate}`).update({ resolved: true });
       } catch { /* no alert was raised for this stay */ }
     }
-    if (!result.unchanged) {
+    if (!result.unchanged && !result.alreadySaved) {
       const ref = `#${reservationId.slice(0, 8).toUpperCase()}`;
       const entry = action === 'set-arrived-guests'
         ? { action: 'guests_arrived', summary: `Recorded ${result.arrivedGuests} of ${result.booked} guests arrived on booking ${ref}` }

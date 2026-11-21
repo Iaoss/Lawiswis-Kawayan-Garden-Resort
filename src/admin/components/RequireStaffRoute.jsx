@@ -3,6 +3,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { Navigate, useLocation } from 'react-router-dom';
 import { auth, db } from '../../firebase/firebase';
+import { clearOfflineCopies } from '../lib/offlineCopy';
 import { withTimeout } from '../../lib/withTimeout';
 
 // The staff check needs Firebase to restore the login and read the user's
@@ -23,7 +24,25 @@ function readRememberedRole() {
   }
 }
 
+// The last role confirmed on this computer, so the portal can still open
+// when the internet is down (data is still protected by Firestore rules,
+// and changes made offline are re-checked by the server when they sync).
+const OFFLINE_KEY = 'lkgr_staff_offline_access';
+const OFFLINE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+function readOfflineRole(uid) {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(OFFLINE_KEY) || 'null');
+    return saved && saved.uid === uid && Date.now() - Number(saved.at || 0) < OFFLINE_MAX_AGE_MS ? saved.role : null;
+  } catch {
+    return null;
+  }
+}
+
 function rememberAccess(uid, role) {
+  try {
+    if (role) window.localStorage.setItem(OFFLINE_KEY, JSON.stringify({ uid, role, at: Date.now() }));
+    else window.localStorage.removeItem(OFFLINE_KEY);
+  } catch { /* storage unavailable */ }
   lastConfirmed = role ? { uid, role } : null;
   try {
     if (role) window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({ role }));
@@ -32,7 +51,11 @@ function rememberAccess(uid, role) {
 }
 
 // Forget the remembered access as soon as anyone signs out (from any page).
-onAuthStateChanged(auth, user => { if (!user) rememberAccess(null, null); });
+onAuthStateChanged(auth, user => {
+  if (user) return;
+  rememberAccess(null, null);
+  clearOfflineCopies(); // the saved lists hold guest details
+});
 
 export default function RequireStaffRoute({ children, allowedRoles = ['admin', 'receptionist'] }) {
   const location = useLocation();
@@ -66,10 +89,11 @@ export default function RequireStaffRoute({ children, allowedRoles = ['admin', '
       } catch (error) {
         console.error('Staff access check failed:', error);
         // A connection problem isn't "no access": keep a role this tab
-        // already confirmed, otherwise show a retry message instead of
-        // sending a signed-in staff member back to the login page.
+        // already confirmed, or (with no internet) the role confirmed earlier
+        // on this computer. Otherwise show a retry message instead of sending
+        // a signed-in staff member back to the login page.
         if (!active || authCheck !== latestAuthCheck) return;
-        const remembered = readRememberedRole();
+        const remembered = readRememberedRole() || (navigator.onLine === false ? readOfflineRole(user.uid) : null);
         if (remembered) setAccess({ loading: false, role: remembered });
         else setAccess({ loading: false, role: null, failed: true });
       }

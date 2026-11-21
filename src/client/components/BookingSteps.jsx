@@ -5,7 +5,7 @@ import { BRASS, FOREST, FOREST_DEEP, LINE, SANS } from './clientTheme';
 // page (/book) and the room booking page (/book/:roomId).
 export const BOOKING_STEPS = ['Type', 'When', 'Room', 'Stay details', 'Your details', 'Review & pay'];
 
-export default function BookingSteps({ current, onStep, style }) {
+export default function BookingSteps({ current, onStep, style, steps = BOOKING_STEPS }) {
   return (
     <nav aria-label="Booking steps" style={{ marginBottom: 24, ...style }}>
       <style>{`
@@ -15,7 +15,7 @@ export default function BookingSteps({ current, onStep, style }) {
         @media (max-width: 640px) { .booking-steps .booking-step-label { display: none; } .booking-steps li.is-current .booking-step-label { display: inline; } }
       `}</style>
       <ol className="booking-steps">
-        {BOOKING_STEPS.map((label, index) => {
+        {steps.map((label, index) => {
           const done = index < current;
           const active = index === current;
           const clickable = done && typeof onStep === 'function';

@@ -16,6 +16,7 @@ import { getSamePriceSuggestions } from '../src/lib/closureReschedule';
 import { getRoomChangeError } from '../src/lib/roomChange';
 import { readSeasonPeriods } from '../lib/seasonStore';
 import { checkResortCapacity } from '../lib/resortCapacity';
+import { isAwaitingDiscountReview } from '../src/lib/discountReview';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
 
@@ -586,7 +587,10 @@ async function askGuestToConfirm({ reservationRef, reservationId, staff, siteUrl
 async function sendUnpaidPaymentLink({ reservationRef, reservationId, staff, choice, siteUrl }) {
   if (!['deposit', 'full'].includes(choice)) throw new Error('Choose the deposit or the full amount.');
   const reservation = await getUnpaidBooking(reservationRef);
-  const amount = getOnlinePaymentAmount(Number(reservation.totalAmount || 0), choice);
+  if (isAwaitingDiscountReview(reservation)) throw new Error('Review this guest’s Senior / PWD ID first.');
+  const amount = ['approved', 'rejected'].includes(reservation.discountReview?.status)
+    ? Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0)
+    : getOnlinePaymentAmount(Number(reservation.totalAmount || 0), choice);
   const units = Number(reservation.nights) || 1;
   const unitLabel = reservation.bookingType === 'daytour' ? 'day' : 'night';
   // paymentType 'booking' makes the PayMongo webhook confirm the booking

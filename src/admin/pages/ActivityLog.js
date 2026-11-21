@@ -1,5 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { printTable } from '../lib/printTable';
+import { useStaffAccess } from '../lib/useStaffAccess';
+import { staffLabel } from '../../lib/staffLabel';
 import { db } from '../../firebase/firebase';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
@@ -10,18 +13,25 @@ import { useSettings } from '../components/SettingsContext';
 // by the staff member's own account) and can't be edited or deleted.
 
 const MAX_ENTRIES = 500;
+// With a date range the log is read from the database for those dates only,
+// so older entries can be found too.
+const MAX_RANGE_ENTRIES = 3000;
 
 export const ACTION_GROUPS = [
   { id: 'payments', label: 'Payments & charges', actions: ['payment_recorded', 'charge_added', 'service_added', 'late_fee_added'] },
   { id: 'bookings', label: 'Bookings', actions: ['walk_in_created', 'booking_edited', 'status_changed', 'no_show_closed', 'overstay_flagged', 'guest_info_updated', 'guests_arrived'] },
   { id: 'cancellations', label: 'Cancellations & refunds', actions: ['reservation_cancelled', 'reservation_no_show', 'closure_notice_sent', 'approve_refund', 'reject_refund', 'review_refund'] },
   { id: 'changes', label: 'Date-change requests', actions: ['approve_modification', 'reject_modification'] },
-  { id: 'rooms', label: 'Rooms', actions: ['room_created', 'room_updated', 'room_deleted', 'room_status_changed', 'season_rate_saved', 'season_rate_removed', 'cottages_updated', 'cottage_inventory_changed'] },
+  { id: 'rooms', label: 'Rooms', actions: ['room_created', 'room_updated', 'room_deleted', 'room_status_changed', 'season_rate_saved', 'season_rate_removed', 'cottages_updated', 'extra_fees_updated', 'cottage_inventory_changed'] },
   { id: 'accounts', label: 'Staff accounts', actions: ['staff_account_created', 'staff_account_edited', 'staff_account_status', 'staff_password_reset', 'staff_access_granted', 'staff_access_removed', 'staff_account_deleted', 'staff_role_saved', 'staff_role_deleted', 'shift_handover', 'staff_login_locked', 'staff_login_unlocked'] },
   { id: 'resort', label: 'Resort status', actions: ['resort_status_changed'] },
 ];
 
 const groupOf = action => ACTION_GROUPS.find(group => group.actions.includes(action));
+export const actionLabel = action => {
+  const text = String(action || 'other').replace(/_/g, ' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+};
 
 const toDate = value => (value?.toDate ? value.toDate() : null);
 const manilaDay = date => date.toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
@@ -35,6 +45,8 @@ export default function ActivityLog() {
   const [search, setSearch] = useState('');
   const [staffFilter, setStaffFilter] = useState('all');
   const [groupFilter, setGroupFilter] = useState('all');
+  const [actionFilter, setActionFilter] = useState('all');
+  const { user: me } = useStaffAccess();
   const [roleFilter, setRoleFilter] = useState('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -50,7 +62,17 @@ export default function ActivityLog() {
   };
 
   useEffect(() => {
-    const logQuery = query(collection(db, 'activityLogs'), orderBy('createdAt', 'desc'), limit(MAX_ENTRIES));
+    // Manila midnight of "from", up to the end of "to".
+    const start = from ? new Date(`${from}T00:00:00+08:00`) : null;
+    const end = to ? new Date(new Date(`${to}T00:00:00+08:00`).getTime() + 86400000) : null;
+    const parts = [
+      ...(start ? [where('createdAt', '>=', start)] : []),
+      ...(end ? [where('createdAt', '<', end)] : []),
+      orderBy('createdAt', 'desc'),
+      limit(start || end ? MAX_RANGE_ENTRIES : MAX_ENTRIES),
+    ];
+    setLoading(true);
+    const logQuery = query(collection(db, 'activityLogs'), ...parts);
     return onSnapshot(logQuery, snapshot => {
       setEntries(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
       setLoading(false);
@@ -60,7 +82,7 @@ export default function ActivityLog() {
       setError('The activity log could not be loaded. Make sure the latest Firestore rules are published.');
       setLoading(false);
     });
-  }, []);
+  }, [from, to]);
 
   const staffOptions = useMemo(() => {
     const seen = new Map();
@@ -78,13 +100,52 @@ export default function ActivityLog() {
       if (staffFilter !== 'all' && entry.staffUid !== staffFilter) return false;
       if (roleFilter !== 'all' && entry.staffRole !== roleFilter) return false;
       if (groupFilter !== 'all' && groupOf(entry.action)?.id !== groupFilter) return false;
+      if (actionFilter !== 'all' && entry.action !== actionFilter) return false;
       if (from && (!day || day < from)) return false;
       if (to && (!day || day > to)) return false;
       if (!term) return true;
       return [entry.summary, entry.staffName, entry.staffEmail, entry.guestName, entry.reservationId]
         .some(value => String(value || '').toLowerCase().includes(term));
     });
-  }, [entries, search, staffFilter, roleFilter, groupFilter, from, to]);
+  }, [entries, search, staffFilter, roleFilter, groupFilter, actionFilter, from, to]);
+
+  // Exact actions seen in the log (inside the chosen type, if any).
+  const actionOptions = useMemo(() => [...new Set(entries.map(entry => entry.action).filter(Boolean))]
+    .filter(action => groupFilter === 'all' || groupOf(action)?.id === groupFilter)
+    .sort(), [entries, groupFilter]);
+
+  const printLog = () => {
+    const staffName = staffOptions.find(([uid]) => uid === staffFilter)?.[1];
+    const ok = printTable({
+      title: 'Activity Log',
+      subtitle: 'What staff did in the reservation system, newest first.',
+      printedBy: staffLabel(me?.name || me?.email, me?.role),
+      filters: [
+        ['Search', search.trim()],
+        ['Staff', staffFilter !== 'all' ? staffName : ''],
+        ['Role', roleFilter !== 'all' ? roleFilter : ''],
+        ['Type', groupFilter !== 'all' ? ACTION_GROUPS.find(group => group.id === groupFilter)?.label : ''],
+        ['Action', actionFilter !== 'all' ? actionLabel(actionFilter) : ''],
+        ['From', from],
+        ['To', to],
+      ],
+      columns: ['Date & time', 'Staff', 'Role', 'Type', 'What happened', 'Guest', 'Booking'],
+      rows: filtered.map(entry => {
+        const date = toDate(entry.createdAt);
+        return [
+          date ? date.toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '',
+          entry.staffName || entry.staffEmail || 'Unknown staff',
+          entry.staffRole || '',
+          groupOf(entry.action)?.label || actionLabel(entry.action),
+          entry.summary || actionLabel(entry.action),
+          entry.guestName || '',
+          entry.reservationId ? `#${String(entry.reservationId).slice(0, 8).toUpperCase()}` : '',
+        ];
+      }),
+      landscape: true,
+    });
+    if (!ok) window.alert('Allow pop-ups for this site to print the activity log.');
+  };
 
   const today = manilaDay(new Date());
   const todayCount = entries.filter(entry => {
@@ -97,7 +158,7 @@ export default function ActivityLog() {
     border: `1px solid ${c.border}`, borderRadius: 8, padding: '8px 10px', fontSize: 12,
     background: c.card2, color: c.text, fontFamily: 'inherit', minWidth: 0,
   };
-  const hasFilters = search || staffFilter !== 'all' || roleFilter !== 'all' || groupFilter !== 'all' || from || to;
+  const hasFilters = search || staffFilter !== 'all' || roleFilter !== 'all' || groupFilter !== 'all' || actionFilter !== 'all' || from || to;
 
   return (
     <PageLayout>
@@ -106,7 +167,7 @@ export default function ActivityLog() {
           <header style={{ marginBottom: 18 }}>
             <h1 style={{ fontSize: 21, margin: '0 0 5px' }}>Activity Log</h1>
             <p style={{ color: c.muted, fontSize: 12, margin: 0 }}>
-              Everything staff did in the system, newest first. Entries can’t be edited or deleted. Showing the latest {MAX_ENTRIES}.
+              Everything staff did in the system, newest first. Entries can’t be edited or deleted. Shows the latest {MAX_ENTRIES}; pick dates to search older entries. Print shows exactly what the filters show.
             </p>
           </header>
 
@@ -136,9 +197,13 @@ export default function ActivityLog() {
               <option value="receptionist">Receptionists</option>
               <option value="admin">Admins</option>
             </select>
-            <select aria-label="Filter by type of action" value={groupFilter} onChange={event => setGroupFilter(event.target.value)} style={field}>
-              <option value="all">All actions</option>
+            <select aria-label="Filter by type of action" value={groupFilter} onChange={event => { setGroupFilter(event.target.value); setActionFilter('all'); }} style={field}>
+              <option value="all">All types</option>
               {ACTION_GROUPS.map(group => <option key={group.id} value={group.id}>{group.label}</option>)}
+            </select>
+            <select aria-label="Filter by exact action" value={actionFilter} onChange={event => setActionFilter(event.target.value)} style={field}>
+              <option value="all">All actions</option>
+              {actionOptions.map(action => <option key={action} value={action}>{actionLabel(action)}</option>)}
             </select>
             <label style={{ fontSize: 11, color: c.muted, display: 'flex', alignItems: 'center', gap: 6 }}>
               From <input type="date" value={from} onChange={event => setFrom(event.target.value)} style={field} />
@@ -147,7 +212,7 @@ export default function ActivityLog() {
               To <input type="date" value={to} onChange={event => setTo(event.target.value)} style={field} />
             </label>
             {hasFilters && (
-              <button type="button" onClick={() => { setSearch(''); setStaffFilter('all'); setRoleFilter('all'); setGroupFilter('all'); setFrom(''); setTo(''); }}
+              <button type="button" onClick={() => { setSearch(''); setStaffFilter('all'); setRoleFilter('all'); setGroupFilter('all'); setActionFilter('all'); setFrom(''); setTo(''); }}
                 style={{ ...field, cursor: 'pointer', fontWeight: 600 }}>
                 Clear
               </button>
@@ -157,8 +222,12 @@ export default function ActivityLog() {
           {error && <div role="alert" style={{ background: dark ? '#7f1d1d' : '#fee2e2', color: dark ? '#fca5a5' : '#991b1b', padding: '12px 16px', borderRadius: 10, marginBottom: 14, fontSize: 13 }}>{error}</div>}
 
           <section style={{ background: c.card, border: `1px solid ${c.border}`, borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ padding: '10px 16px', fontSize: 11.5, color: c.muted, borderBottom: `1px solid ${c.border}` }}>
-              Showing {filtered.length} of {entries.length}
+            <div style={{ padding: '10px 16px', fontSize: 11.5, color: c.muted, borderBottom: `1px solid ${c.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span>Showing {filtered.length} of {entries.length}{from || to ? ' in the chosen dates' : ''}</span>
+              <button type="button" onClick={printLog} disabled={loading}
+                style={{ border: 0, borderRadius: 8, padding: '8px 14px', background: c.accent, color: '#0a1a0a', fontWeight: 700, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <i className="ti ti-printer" aria-hidden="true" /> Print {hasFilters ? 'filtered list' : 'log'} ({filtered.length})
+              </button>
             </div>
             {loading ? (
               <p style={{ padding: 24, margin: 0, color: c.muted, fontSize: 13 }}>Loading…</p>

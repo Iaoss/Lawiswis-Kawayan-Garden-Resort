@@ -1,3 +1,5 @@
+import { DISCOUNT_REVIEW_HOLD_HOURS } from './discountReview';
+
 // Online bookings that came in without any payment.
 //
 // A guest who pays at least the deposit online is confirmed automatically.
@@ -60,6 +62,10 @@ export function getHoldExpiresMs(reservation = {}) {
   let expires = started + ONLINE_HOLD_MINUTES * 60000;
   const linkSent = toMs(reservation.unpaidFollowUp?.paymentLinkSentAt);
   if (linkSent) expires = Math.max(expires, linkSent + PAYMENT_LINK_HOLD_HOURS * 3600000);
+  // The room is kept while staff check Senior / PWD IDs.
+  if (reservation.discountReview?.status === 'pending') {
+    expires = Math.max(expires, toMs(reservation.discountReview.submittedAt) + DISCOUNT_REVIEW_HOLD_HOURS * 3600000);
+  }
   return expires;
 }
 

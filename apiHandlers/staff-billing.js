@@ -36,7 +36,7 @@ import { sendClosureNoticeEmail } from '../lib/email';
 import { shouldAutoConfirm } from '../lib/recordPayMongoPayment';
 import { sendConfirmationEmailOnce } from '../lib/confirmationEmail';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
-import { isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { getContactDetailsError } from '../src/lib/preferredContactMethods';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { DAYTOUR_TIME_SLOT, NIGHTTOUR_TIME_SLOT, calculateCottageTourPrice, extraGuestMealFields, getCottageFee, formatResortClock, getReservationDayVisitors, getRoomMaximumGuests, getWalkInTourCutoffError, isLateArrivalTime, stayRangesOverlap } from '../src/lib/bookingPricing';
 import { getCottageAvailabilityFor } from '../lib/cottageStock';
@@ -57,6 +57,7 @@ import { ROOM_BLOCK_TYPE, syncCorporateRoomBlocks } from '../lib/corporateRooms'
 import { bookedGuestCount, splitArrivedGuests } from '../src/lib/guestArrivals';
 import { normalizePhMobile } from '../src/lib/phoneNumber';
 import { staffStamp } from '../src/lib/staffLabel';
+import { runOnce } from '../lib/offlineRequests';
 import { checkResortCapacity } from '../lib/resortCapacity';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
@@ -110,6 +111,14 @@ async function recordPayment({ staff, reservationId, amount, method, officialRec
     // Read the room now: a transaction must do all its reads before writing.
     const roomRef = reservation.roomId ? adminDb.collection('rooms').doc(reservation.roomId) : null;
     const roomSnap = roomRef ? await transaction.get(roomRef) : null;
+    const blockRefs = [];
+    if (reservation.type === 'corporate' && Array.isArray(reservation.assignedRooms)) {
+      for (const item of reservation.assignedRooms) {
+        if (!item.blockId) continue;
+        const blockRef = adminDb.collection('reservations').doc(item.blockId);
+        if ((await transaction.get(blockRef)).exists) blockRefs.push(blockRef);
+      }
+    }
     const balance = owed(reservation);
     if (balance <= 0) throw new BillingError(409, 'This reservation has no balance left to pay.');
     if (paid - balance > 0.001) {
@@ -141,6 +150,7 @@ async function recordPayment({ staff, reservationId, amount, method, officialRec
         statusUpdatedBy: staff.uid,
       } : {}),
     });
+    if (autoConfirmed) blockRefs.forEach(blockRef => transaction.update(blockRef, { status: 'confirmed', statusUpdatedAt: FieldValue.serverTimestamp() }));
     if (autoCheckedIn && roomSnap?.exists) transaction.update(roomRef, { status: 'occupied' });
     // A paid-up corporate group checks in with its assigned rooms.
     if (autoCheckedIn) syncCorporateRoomBlocks(transaction, reservation, 'checked-in');
@@ -339,7 +349,7 @@ async function addCharge({ staff, reservationId, amount, description }) {
 // is worked out here (20% off the VAT-free share of each qualified guest).
 // The same ID can't be used twice on one booking or on another booking for
 // overlapping dates.
-async function applyDiscount({ staff, reservationId, kind, idNumber, holderName, birthDate, expiryDate, qualifiedGuests, checked, checkMethod }) {
+export async function applyDiscount({ staff, reservationId, kind, idNumber, holderName, birthDate, expiryDate, qualifiedGuests, checked, checkMethod }) {
   const today = manilaDateKey();
   const idError = getDiscountIdError({ kind, idNumber, holderName, birthDate, expiryDate, today, checked, checkMethod: checkMethod || '' });
   if (idError) throw new BillingError(400, idError);
@@ -490,10 +500,10 @@ async function updateGuest({ staff, reservationIds, firstName, lastName, phone, 
   const last = cleanText(lastName, 35);
   if (!NAME_PATTERN.test(first) || !NAME_PATTERN.test(last)) throw new BillingError(400, 'Enter a valid first and last name (2–35 letters each).');
   const cleanPhone = normalizePhMobile(phone);
-  if (!cleanPhone) throw new BillingError(400, 'Enter a valid 11-digit mobile number starting with 09.');
-  if (cleanPhone && !/^09\d{9}$/.test(cleanPhone)) throw new BillingError(400, 'Enter an 11-digit mobile number starting with 09, or leave it empty.');
+  if (String(phone || '').trim() && !cleanPhone) throw new BillingError(400, 'Enter an 11-digit mobile number starting with 09, or leave it blank.');
   const cleanEmail = cleanText(email, 120).toLowerCase();
   if (cleanEmail && !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(cleanEmail)) throw new BillingError(400, 'Enter a valid email address, or leave it empty.');
+  if (!cleanPhone && !cleanEmail) throw new BillingError(400, 'Enter a mobile number or an email address.');
   const cleanAddress = cleanText(address, 300);
   const guestName = joinGuestName(first, last);
 
@@ -624,8 +634,16 @@ async function assertResortOpen(checkIn, checkOut) {
   if (closedPeriod) throw new BillingError(409, closedPeriodMessage(closedPeriod));
 }
 
+// Email and mobile are optional at the desk too, but the guest's preferred
+// way of being contacted must be filled in.
+function assertWalkInContact(booking) {
+  const phone = String(booking.phone || '').trim();
+  const contactError = getContactDetailsError({ ...booking, phone: phone && (normalizePhMobile(phone) || phone) });
+  if (contactError) throw new BillingError(400, contactError);
+}
+
 async function createCottageWalkIn({ staff, booking }) {
-  if (!normalizePhMobile(booking.phone)) throw new BillingError(400, 'Enter a valid 11-digit mobile number starting with 09.');
+  assertWalkInContact(booking);
   const firstName = cleanText(booking.firstName, 35);
   const lastName = cleanText(booking.lastName, 35);
   const tourPeriod = booking.bookingOption === 'night' ? 'night' : booking.bookingOption === 'day' ? 'day' : '';
@@ -662,6 +680,7 @@ async function createCottageWalkIn({ staff, booking }) {
     phone: normalizePhMobile(booking.phone),
     address: cleanText(booking.address, 300),
     preferredContactMethod: booking.preferredContactMethod,
+    contactLink: booking.preferredContactMethod === 'Facebook Messenger' ? cleanText(booking.contactLink, 200) : '',
     notes: cleanText(booking.notes, 1000),
     category: 'Cottage',
     bookingType: 'daytour',
@@ -698,14 +717,13 @@ async function createCottageWalkIn({ staff, booking }) {
 }
 
 async function createWalkIn({ staff, booking = {} }) {
-  if (!normalizePhMobile(booking.phone)) throw new BillingError(400, 'Enter a valid 11-digit mobile number starting with 09.');
+  assertWalkInContact(booking);
   const firstName = cleanText(booking.firstName, 35);
   const lastName = cleanText(booking.lastName, 35);
   if (!NAME_PATTERN.test(firstName) || !NAME_PATTERN.test(lastName)) {
     throw new BillingError(400, 'Enter a valid first and last name (2-35 letters each).');
   }
   if (booking.cottageOnly === true) {
-    if (!isPreferredContactMethod(booking.preferredContactMethod)) throw new BillingError(400, 'Choose a preferred contact method.');
     return createCottageWalkIn({ staff, booking });
   }
   const { roomId } = booking;
@@ -714,7 +732,6 @@ async function createWalkIn({ staff, booking = {} }) {
   const roomsError = getAdditionalRoomsError(roomId, booking.additionalRooms);
   if (roomsError) throw new BillingError(400, roomsError);
   const additionalRooms = Array.isArray(booking.additionalRooms) ? booking.additionalRooms : [];
-  if (!isPreferredContactMethod(booking.preferredContactMethod)) throw new BillingError(400, 'Choose a preferred contact method.');
   const paymentMethod = COUNTER_PAYMENT_METHODS.includes(booking.paymentMethod) ? booking.paymentMethod : '';
   const paymentStatus = WALK_IN_PAYMENT_STATUSES.includes(booking.paymentStatus) ? booking.paymentStatus : '';
   if (!paymentMethod || !paymentStatus) throw new BillingError(400, 'Choose a payment method and payment status.');
@@ -806,6 +823,7 @@ async function createWalkIn({ staff, booking = {} }) {
       phone: normalizePhMobile(booking.phone),
       address: cleanText(booking.address, 300),
       preferredContactMethod: booking.preferredContactMethod,
+      contactLink: booking.preferredContactMethod === 'Facebook Messenger' ? cleanText(booking.contactLink, 200) : '',
       notes: cleanText(booking.notes, 1000),
       roomId,
       roomNumber: room.roomNumber || '',
@@ -865,6 +883,7 @@ async function createWalkIn({ staff, booking = {} }) {
         phone: normalizePhMobile(booking.phone),
         address: cleanText(booking.address, 300),
         preferredContactMethod: booking.preferredContactMethod,
+        contactLink: booking.preferredContactMethod === 'Facebook Messenger' ? cleanText(booking.contactLink, 200) : '',
         notes: `Booked together with Room ${room.roomNumber || ''} (booking #${reservationRef.id.slice(0, 8).toUpperCase()}).`,
         roomId: extra.id,
         roomNumber: extra.room.roomNumber || '',
@@ -1233,25 +1252,31 @@ export default async function handler(req, res) {
 
   const body = req.body || {};
   try {
-    let result;
-    if (body.action === 'record-payment') result = await recordPayment({ ...body, staff });
-    else if (body.action === 'add-charge') result = await addCharge({ ...body, staff });
-    else if (body.action === 'record-group-payment') result = await recordGroupPayment({ ...body, staff });
-    else if (body.action === 'assign-corporate-rooms') result = await assignCorporateRooms({ ...body, staff });
-    else if (body.action === 'create-corporate-walk-in') result = await createCorporateWalkIn({ staff, booking: body.booking });
-    else if (body.action === 'add-service') result = await addService({ ...body, staff });
-    else if (body.action === 'apply-discount') result = await applyDiscount({ ...body, staff });
-    else if (body.action === 'apply-promo') result = await applyPromo({ ...body, staff });
-    else if (body.action === 'cancel-with-policy') result = await cancelWithPolicy({ ...body, staff });
-    else if (body.action === 'create-walk-in') result = await createWalkIn({ staff, booking: body.booking });
-    else if (body.action === 'edit-booking') result = await editBooking({ ...body, staff });
-    else if (body.action === 'add-room-to-booking') result = await addRoomToBooking({ ...body, staff });
-    else if (body.action === 'phone-display-set') result = await setPhoneDisplay({ ...body, staff });
-    else if (body.action === 'phone-display-get') result = await getPhoneDisplay({ staff });
-    else if (body.action === 'closure-notice') result = await sendClosureNotices({ ...body, staff });
-    else if (body.action === 'update-guest') result = await updateGuest({ ...body, staff });
-    else if (body.action === 'set-agency-billing') result = await setAgencyBilling({ ...body, staff });
-    else return res.status(400).json({ error: 'Choose a valid billing action.' });
+    // Offline changes carry an id so a resend is never saved twice.
+    const INVALID_ACTION = Symbol('invalid');
+    const dispatch = async () => {
+      if (body.action === 'record-payment') return recordPayment({ ...body, staff });
+      else if (body.action === 'add-charge') return addCharge({ ...body, staff });
+      else if (body.action === 'record-group-payment') return recordGroupPayment({ ...body, staff });
+      else if (body.action === 'assign-corporate-rooms') return assignCorporateRooms({ ...body, staff });
+      else if (body.action === 'create-corporate-walk-in') return createCorporateWalkIn({ staff, booking: body.booking });
+      else if (body.action === 'add-service') return addService({ ...body, staff });
+      else if (body.action === 'apply-discount') return applyDiscount({ ...body, staff });
+      else if (body.action === 'apply-promo') return applyPromo({ ...body, staff });
+      else if (body.action === 'cancel-with-policy') return cancelWithPolicy({ ...body, staff });
+      else if (body.action === 'create-walk-in') return createWalkIn({ staff, booking: body.booking });
+      else if (body.action === 'edit-booking') return editBooking({ ...body, staff });
+      else if (body.action === 'add-room-to-booking') return addRoomToBooking({ ...body, staff });
+      else if (body.action === 'phone-display-set') return setPhoneDisplay({ ...body, staff });
+      else if (body.action === 'phone-display-get') return getPhoneDisplay({ staff });
+      else if (body.action === 'closure-notice') return sendClosureNotices({ ...body, staff });
+      else if (body.action === 'update-guest') return updateGuest({ ...body, staff });
+      else if (body.action === 'set-agency-billing') return setAgencyBilling({ ...body, staff });
+      return INVALID_ACTION;
+    };
+    const result = await runOnce(staff, body.offlineRequestId, dispatch);
+    if (result === INVALID_ACTION) return res.status(400).json({ error: 'Choose a valid billing action.' });
+    if (result?.alreadySaved) return res.status(200).json({ ok: true, ...result });
     // Previews change nothing, so they aren't logged.
     const entry = result?.preview ? null : describeBillingAction(body, result || {});
     if (entry) {

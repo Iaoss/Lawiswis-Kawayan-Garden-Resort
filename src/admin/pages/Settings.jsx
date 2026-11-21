@@ -1,3 +1,5 @@
+import PillTabs, { FolderPanel } from '../components/PillTabs';
+import { playNotificationSound } from '../lib/uiSounds';
 import React, { useState, useEffect } from 'react';
 import PageLayout from '../components/PageLayout';
 import { useSettings, DEFAULT_SETTINGS, DASHBOARD_KEYS } from '../components/SettingsContext';
@@ -5,6 +7,7 @@ import { auth } from '../../firebase/firebase';
 import QuickRepliesManager from '../components/QuickRepliesManager';
 import CottageInventoryManager from '../components/CottageInventoryManager';
 import ClosedDatesManager from '../components/ClosedDatesManager';
+import ExtraFeesManager from '../components/ExtraFeesManager';
 import { appConfirm } from '../../components/ui/app-dialog';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
@@ -98,6 +101,8 @@ export default function Settings() {
     TOGGLE_ON:  dark ? '#282827' : '#1a3a1a',
     TOGGLE_OFF: dark ? '#3a3a38' : '#e5e7eb',
   };
+  // Folder tabs: a soft green-grey panel so the white sections inside stand out.
+  const folderColors = { CARD: dark ? '#111815' : '#e7ece4', CARD2: dark ? '#1b221e' : '#d6ded1', BORDER: t.BORDER, TEXT: t.TEXT, MUTED: t.SUBTEXT, ACCENT: t.ACCENT, ACCENT_TEXT: t.ACCENT_TEXT };
 
   const [local, setLocal] = useState({ ...DEFAULT_SETTINGS, ...settings });
   const [saved, setSaved] = useState(false);
@@ -165,22 +170,7 @@ export default function Settings() {
     updateSetting(key, value);
   };
 
-  const playSoundPreview = () => {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0.18, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-      osc.connect(gain); gain.connect(ctx.destination);
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.18);
-    } catch {
-      // Browser blocked audio before the first user gesture.
-    }
-  };
+  const playSoundPreview = playNotificationSound;
 
   const handleSave = () => {
     saveAll({ ...settings, ...local });
@@ -271,22 +261,9 @@ export default function Settings() {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: t.CARD2, borderRadius: 12, padding: 4 }}>
-          {TABS.filter(tab => !(isReceptionistPortal && tab.id === 'availability')).map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              style={{
-                flex: 1, padding: '8px 4px', border: 'none', borderRadius: 9, cursor: 'pointer',
-                fontFamily: 'inherit', fontSize: 11, fontWeight: activeTab === tab.id ? 700 : 400,
-                background: activeTab === tab.id ? t.CARD : 'transparent',
-                color: activeTab === tab.id ? t.TEXT : t.SUBTEXT,
-                boxShadow: activeTab === tab.id ? (dark ? '0 1px 4px rgba(0,0,0,0.3)' : '0 1px 4px rgba(0,0,0,0.08)') : 'none',
-                transition: 'all 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              }}>
-              <i className={`ti ${tab.icon}`} style={{ fontSize: 14 }} />
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </div>
+        <PillTabs label="Settings sections" t={folderColors} value={activeTab} onChange={setActiveTab}
+          items={TABS.filter(tab => !(isReceptionistPortal && tab.id === 'availability'))} />
+        <FolderPanel t={folderColors} key={activeTab} className="lk-enter-soft">
 
         {/* ── APPEARANCE ── */}
         {activeTab === 'appearance' && (
@@ -322,7 +299,7 @@ export default function Settings() {
             <SettingRow t={t} icon="ti-bell" label="Bell notifications" desc="Show alerts for new bookings, payments and messages">
               <Toggle t={t} value={local.notifications} onChange={v => set('notifications', v)} />
             </SettingRow>
-            <SettingRow t={t} icon="ti-volume" label="Sound alerts" desc="Play a chime when a new notification arrives" last>
+            <SettingRow t={t} icon="ti-volume" label="Sound alerts" desc="A soft chime for new notifications and a click when switching dark / light mode" last>
               <Toggle t={t} value={local.soundAlerts} onChange={v => { set('soundAlerts', v); if (v) playSoundPreview(); }} />
             </SettingRow>
           </Section>
@@ -449,10 +426,12 @@ export default function Settings() {
             </button>
             <ClosedDatesManager t={t} />
             <CottageInventoryManager t={t} />
+            <ExtraFeesManager t={t} />
           </Section>
         )}
 
         {activeTab === 'quickReplies' && <QuickRepliesManager t={t} />}
+        </FolderPanel>
 
         {saved && (
           <div style={{

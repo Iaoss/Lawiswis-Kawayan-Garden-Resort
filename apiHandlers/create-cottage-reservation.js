@@ -9,7 +9,7 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendReservationPendingEmail } from '../lib/email';
 import { getCottageAvailabilityFor } from '../lib/cottageStock';
 import { NAME_PATTERN, joinGuestName } from '../src/lib/nameValidation';
-import { getContactLinkError, isPreferredContactMethod } from '../src/lib/preferredContactMethods';
+import { getContactDetailsError } from '../src/lib/preferredContactMethods';
 import {
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
@@ -59,17 +59,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Enter a valid first and last name (2-35 letters each).' });
     }
     const emailValue = String(email || '').trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue) || emailValue.length > 254) {
-      return res.status(400).json({ error: 'Enter a valid email address.' });
-    }
-    if (typeof phone !== 'string' || !/^09\d{9}$/.test(phone)) {
-      return res.status(400).json({ error: 'Please enter a valid 11-digit mobile number.' });
-    }
-    if (!isPreferredContactMethod(preferredContactMethod)) {
-      return res.status(400).json({ error: 'Please choose a preferred contact method.' });
-    }
-    const linkError = getContactLinkError(preferredContactMethod, contactLink);
-    if (linkError) return res.status(400).json({ error: linkError });
+    if (phone !== undefined && typeof phone !== 'string') return res.status(400).json({ error: 'Enter a valid mobile number.' });
+    // Email and mobile are optional, but the preferred method must be filled in.
+    const contactError = getContactDetailsError({ preferredContactMethod, email: emailValue, phone, contactLink });
+    if (contactError) return res.status(400).json({ error: contactError });
     if (notes !== undefined && (typeof notes !== 'string' || notes.length > 1000)) {
       return res.status(400).json({ error: 'Special requests must be 1,000 characters or fewer.' });
     }
@@ -115,7 +108,7 @@ export default async function handler(req, res) {
       lastName: last,
       email: emailValue,
       emailLower: emailValue.toLowerCase(),
-      phone,
+      phone: String(phone || '').trim(),
       preferredContactMethod,
       contactLink: preferredContactMethod === 'Facebook Messenger' ? String(contactLink).trim() : '',
       checkIn: date,
@@ -147,7 +140,7 @@ export default async function handler(req, res) {
     await docRef.create(reservation);
 
     try {
-      await sendReservationPendingEmail({
+      if (emailValue) await sendReservationPendingEmail({
         guestName, email: emailValue, roomNumber: reservation.roomNumber, roomType: reservation.roomType,
         checkIn: date, checkOut: date, totalAmount: pricing.subtotalAmount, nights: 1, paymentMethod: 'online',
         stayLabel: `${pricing.cottageLabel} cottage · ${tourLabel.toLowerCase()} for ${pricing.totalGuests}`,

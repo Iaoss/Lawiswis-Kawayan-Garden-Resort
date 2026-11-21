@@ -1,0 +1,138 @@
+/* Portal tabs (see PillTabs.jsx). Colours come from the page through
+   --tab-* variables, so the tabs match light and dark mode. */
+
+/* ---- Folder tabs --------------------------------------------------------- */
+.folder-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  max-width: 100%;
+  padding: 8px 18px 0; /* room on both sides for the tabs' curves, so the panel keeps round corners */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  box-sizing: border-box;
+}
+.folder-tabs::-webkit-scrollbar { display: none; }
+.folder-tabs--stretch .folder-tab { flex: 1 0 auto; justify-content: center; }
+
+.folder-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 16px 16px 0 0;
+  padding: 10px 20px;
+  background: var(--tab-idle);
+  color: var(--tab-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.25s ease, color 0.2s ease, padding 0.25s ease;
+}
+.folder-tab i { font-size: 16px; }
+.folder-tab:hover { color: var(--tab-text); }
+.folder-tab:focus-visible { outline: 2px solid var(--tab-accent); outline-offset: -3px; }
+.folder-tab[aria-selected='true'] {
+  z-index: 1;
+  padding-top: 13px;
+  padding-bottom: 12px;
+  background: var(--tab-surface);
+  color: var(--tab-text);
+  font-weight: 700;
+}
+.folder-tab[aria-selected='true'] i { color: var(--tab-accent); }
+/* The curves where the chosen tab flows into the panel. */
+.folder-tab[aria-selected='true']::before,
+.folder-tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+.folder-tab[aria-selected='true']::before {
+  left: -16px;
+  background: radial-gradient(circle at 0 0, transparent 15.5px, var(--tab-surface) 16px);
+}
+.folder-tab[aria-selected='true']::after {
+  right: -16px;
+  background: radial-gradient(circle at 100% 0, transparent 15.5px, var(--tab-surface) 16px);
+}
+
+.folder-tabs--sm .folder-tab { padding: 8px 14px; font-size: 12px; }
+.folder-tabs--sm .folder-tab[aria-selected='true'] { padding-top: 10px; padding-bottom: 9px; }
+
+.folder-panel {
+  background: var(--tab-surface);
+  border-radius: 18px;
+  padding: 16px;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+/* ---- Small rounded switches ---------------------------------------------- */
+.pill-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--tab-idle);
+  border: 1px solid var(--tab-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  box-sizing: border-box;
+}
+.pill-tabs::-webkit-scrollbar { display: none; }
+.pill-tabs--stretch { display: flex; width: 100%; }
+.pill-tabs--stretch .pill-tab { flex: 1 0 auto; justify-content: center; }
+.pill-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--tab-muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease;
+}
+.pill-tab i { font-size: 15px; }
+.pill-tab:hover { color: var(--tab-text); }
+.pill-tab:active { transform: scale(0.97); }
+.pill-tab:focus-visible { outline: 2px solid var(--tab-accent); outline-offset: 2px; }
+.pill-tab[aria-selected='true'] { background: var(--tab-accent); color: var(--tab-accent-text); font-weight: 700; }
+.pill-tabs--sm .pill-tab { padding: 6px 13px; font-size: 12px; }
+
+.tab-count {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: #dc2626;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .folder-tab, .pill-tab { transition: none; }
+  .pill-tab:active { transform: none; }
+}

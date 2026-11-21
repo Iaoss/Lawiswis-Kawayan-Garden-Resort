@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { playNotificationSound } from '../lib/uiSounds';
 import { Timestamp, collection, query, where } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import NotificationButton from '../../components/ui/notification-button';
@@ -34,23 +35,7 @@ function saveReadIds(ids) {
   try { localStorage.setItem(READ_KEY, JSON.stringify(ids)); } catch { /* storage unavailable */ }
 }
 
-function playSound() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = ctx.createOscillator();
-    const gain = ctx.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.value = 880;
-    gain.gain.setValueAtTime(0.18, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-    oscillator.connect(gain);
-    gain.connect(ctx.destination);
-    oscillator.start(ctx.currentTime);
-    oscillator.stop(ctx.currentTime + 0.18);
-  } catch {
-    // Browsers block audio until the user has interacted with the page.
-  }
-}
+const playSound = playNotificationSound;
 
 // Live bookings that may need a notification. Several small queries instead
 // of one filtered one, so nothing slips through: new bookings of any type

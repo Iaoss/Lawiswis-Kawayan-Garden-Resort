@@ -8,6 +8,7 @@ import { adminDb } from '../lib/firebaseAdmin';
 import { getOnlinePaymentAmount } from '../src/lib/paymentPolicy';
 import { createPayMongoCheckoutSession } from '../lib/paymongoCheckout';
 import { verifyStaff } from '../lib/verifyStaff';
+import { isAwaitingDiscountReview } from '../src/lib/discountReview';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -81,6 +82,9 @@ export default async function handler(req, res) {
       if (reservation.paymentMethod !== 'online') {
         return res.status(400).json({ error: 'This reservation was not set up for online payment' });
       }
+      if (isAwaitingDiscountReview(reservation)) {
+        return res.status(409).json({ error: 'Your Senior / PWD ID is still being checked. You will receive a payment link once it is reviewed.' });
+      }
       if (!['full', 'deposit'].includes(paymentChoice)) {
         return res.status(400).json({ error: 'Choose full payment or the required deposit' });
       }
@@ -98,7 +102,10 @@ export default async function handler(req, res) {
         bookingTotal += active.reduce((sum, snap) => sum + Number(snap.data().totalAmount || 0), 0);
         description = `${active.length + 1} rooms (${[reservation.roomNumber, ...active.map(snap => snap.data().roomNumber)].filter(Boolean).map(n => `Room ${n}`).join(', ')}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`;
       }
-      checkoutAmount = getOnlinePaymentAmount(bookingTotal, paymentChoice);
+      // After an ID review the guest pays the balance (with any discount).
+      checkoutAmount = ['approved', 'rejected'].includes(reservation.discountReview?.status)
+        ? balance
+        : getOnlinePaymentAmount(bookingTotal, paymentChoice);
     } else if (checkoutType === 'group') {
       const ids = Array.isArray(reservation.groupReservationIds) && reservation.groupReservationIds.length ? reservation.groupReservationIds : [reservationId];
       const linked = await Promise.all(ids.map(id => adminDb.collection('reservations').doc(id).get()));

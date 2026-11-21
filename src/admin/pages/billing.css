@@ -1,0 +1,14 @@
+/* Billing: the steps on the left (folder tabs), the bill always on the right. */
+.billing-work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  gap: 16px;
+  align-items: start;
+}
+.billing-main { min-width: 0; }
+.billing-side { position: sticky; top: 96px; min-width: 0; }
+
+@media (max-width: 1180px) {
+  .billing-work { grid-template-columns: 1fr; }
+  .billing-side { position: static; order: -1; }
+}

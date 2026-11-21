@@ -4,7 +4,7 @@ import {
   CORPORATE_FEATURE_ROWS, MAX_GROUP_GUESTS, MIN_GROUP_GUESTS,
   getCorporateNights, getCorporatePackage, getGroupGuestError, isCorporateFeatureIncluded,
 } from '../../lib/corporatePackages';
-import { PREFERRED_CONTACT_METHODS } from '../../lib/preferredContactMethods';
+import { PREFERRED_CONTACT_METHODS, getContactDetailsError } from '../../lib/preferredContactMethods';
 import { NAME_PATTERN } from '../../lib/nameValidation';
 
 const empty = {
@@ -32,6 +32,8 @@ export default function CorporateWalkInForm({ colors, inp, label, today, onCreat
     const guestError = getGroupGuestError(guests);
     if (guestError) { setError(guestError); return; }
     if (!form.companyName.trim()) { setError('Enter the company or group name.'); return; }
+    const contactError = getContactDetailsError(form);
+    if (contactError) { setError(contactError); return; }
     if (!NAME_PATTERN.test(form.firstName.trim()) || !NAME_PATTERN.test(form.lastName.trim())) { setError('Enter the contact person’s first and last name.'); return; }
     if (!form.checkIn || (!isTour && !form.checkOut) || nights < 1) { setError(isTour ? 'Choose the event date.' : 'Choose a check-out date after check-in.'); return; }
     setBusy(true);
@@ -73,8 +75,8 @@ export default function CorporateWalkInForm({ colors, inp, label, today, onCreat
           {field('totalGuests', 'Number of guests', { type: 'number', min: MIN_GROUP_GUESTS, max: MAX_GROUP_GUESTS, required: true })}
           {field('firstName', 'Contact first name', { maxLength: 35, required: true })}
           {field('lastName', 'Contact last name', { maxLength: 35, required: true })}
-          {field('phone', 'Mobile number', { inputMode: 'numeric', maxLength: 11, placeholder: '09XXXXXXXXX', required: true })}
-          {field('email', 'Email', { type: 'email', maxLength: 254, required: true })}
+          {field('phone', form.preferredContactMethod === 'Phone' ? 'Mobile number' : 'Mobile number (optional)', { inputMode: 'numeric', maxLength: 11, placeholder: '09XXXXXXXXX' })}
+          {field('email', form.preferredContactMethod === 'Email' ? 'Email' : 'Email (optional)', { type: 'email', maxLength: 254 })}
           <div>
             <label style={label}>Preferred contact</label>
             <select value={form.preferredContactMethod} onChange={e => set('preferredContactMethod', e.target.value)} style={inp} required>

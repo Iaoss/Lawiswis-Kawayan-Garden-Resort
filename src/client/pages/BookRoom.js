@@ -10,6 +10,7 @@ import {
   LATE_ARRIVAL_SURCHARGE_RATE,
   getSwimmingRate,
   COTTAGE_OPTIONS,
+  cottageName,
   DAYTOUR_TIME_SLOT,
   NIGHTTOUR_TIME_SLOT,
   OVERNIGHT_TIME_SLOTS,
@@ -25,8 +26,9 @@ import {
   isSingleDayStay,
   describeRoomCapacity,
 } from '../../lib/bookingPricing';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 import { EXTRA_GUEST_MEAL_RATE, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES } from '../../lib/bookingPricing';
-import { FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
+import { CONTACT_REQUIREMENT_NOTE, FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactFieldErrors, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
 import BookingSteps from '../components/BookingSteps';
@@ -39,7 +41,11 @@ import { appAlert, appConfirm } from '../../components/ui/app-dialog';
 import { decorateRoom } from '../lib/roomCatalog';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
+import { normalizeSeniorPwdDeclared } from '../../lib/seniorPwdGuests';
 import { loadPublicRooms } from '../lib/publicRooms';
+import DiscountIdForm, { idEntryError } from '../components/DiscountIdForm';
+import { discountKindsFor, MAX_DISCOUNT_IDS } from '../../lib/discountReview';
+import { roomHasStairs } from '../../lib/roomAccess';
 
 const ACCENT = '#4a7c59';
 const DARK = '#1a3a1a';
@@ -359,6 +365,35 @@ export default function BookRoom() {
   const [extraRoomIds] = useState(() => (Array.isArray(location.state?.extraRoomIds) ? location.state.extraRoomIds.slice(0, 2) : []));
   // Day / night tour: the extra guests can add a meal (₱350 each).
   const [extraGuestMeal, setExtraGuestMeal] = useState(false);
+  // Senior citizens / PWDs in the group (the discount is applied at the front desk).
+  const [seniorPwd, setSeniorPwd] = useState({ senior: '', pwd: '' });
+  const seniorPwdGroup = (Number(form.adults) || 0) + (Number(form.children) || 0);
+  const seniorPwdCheck = normalizeSeniorPwdDeclared(seniorPwd, seniorPwdGroup);
+  // Seniors or PWDs in the group: recommend rooms without stairs, even if the
+  // guest didn't tick "limited mobility" when choosing dates.
+  const seniorPwdCount = (Number(seniorPwd.senior) || 0) + (Number(seniorPwd.pwd) || 0);
+  const needsStepFree = Boolean(form.stepFree) || seniorPwdCount > 0;
+  // Discount requested online: IDs are sent now, payment follows staff approval.
+  const discountKinds = discountKindsFor(seniorPwdCheck.value || {});
+  const canRequestDiscount = discountKinds.length > 0 && discountKinds.length <= MAX_DISCOUNT_IDS && extraRoomIds.length === 0;
+  const [wantsDiscountReview, setWantsDiscountReview] = useState(false);
+  const discountActive = wantsDiscountReview && canRequestDiscount;
+  const [discountEntries, setDiscountEntries] = useState([]);
+  const [showDiscountErrors, setShowDiscountErrors] = useState(false);
+  const [savedDiscountBooking, setSavedDiscountBooking] = useState(null);
+  const [discountSubmitted, setDiscountSubmitted] = useState(false);
+  const discountEntryProblem = discountActive ? discountKinds.map((kind, i) => idEntryError(discountEntries[i], kind, today)).find(Boolean) || '' : '';
+  const uploadDiscountIds = async (reservationId, token) => {
+    for (let index = 0; index < discountKinds.length; index += 1) {
+      const response = await fetch('/api/discount-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'upload', reservationId, token, index, entry: discountEntries[index] }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Your ID could not be sent.');
+    }
+  };
   const mealChosen = form.bookingType === 'daytour' && extraGuestMeal;
   const pricingFor = (target, a, c) => calculateBookingPrice({
     room: target, bookingType: form.bookingType, nights: Math.max(1, nights || 1), adults: a, children: c,
@@ -448,6 +483,7 @@ export default function BookRoom() {
     const matchingRooms = availableRooms
       .filter(item => item.id !== room?.id && !['maintenance', 'cleaning', 'occupied', 'unavailable'].includes(String(item.status || '').toLowerCase()))
       .filter(item => !getGuestCountViolation(item, adults, children))
+      .filter(item => !needsStepFree || !roomHasStairs(decorateRoom(item, 0)))
       .map(item => ({ item, price: priceFor(item), kind: getRoomCapacityPolicy(item)?.label || item.type || '' }))
       .sort((a, b) => a.price - b.price
         || (getRoomCapacityPolicy(a.item)?.maxGuests || 99) - (getRoomCapacityPolicy(b.item)?.maxGuests || 99)
@@ -462,7 +498,7 @@ export default function BookRoom() {
       others.push(withPrice(entry));
     });
     return { suggestedRooms: picks, otherRoomKinds: others };
-  }, [availableRooms, form.adults, form.children, form.bookingType, form.tourPeriod, nights, room?.id]);
+  }, [availableRooms, form.adults, form.children, form.bookingType, form.tourPeriod, needsStepFree, nights, room?.id]);
 
   // Land at the top whenever the page moves to another step (bookings tab,
   // payment preview, confirmation).
@@ -725,13 +761,18 @@ export default function BookRoom() {
         ? ''
         : `${key === 'firstName' ? 'First' : 'Last'} name must contain only letters, spaces, hyphens, or apostrophes (2-35 characters).`;
     }
-    if (key === 'phone') {
-      return /^09\d{9}$/.test(String(value || ''))
-        ? ''
-        : 'Please enter a valid 11-digit mobile number.';
+    if (['email', 'phone', 'contactLink', 'preferredContactMethod'].includes(key)) {
+      return getContactFieldErrors({ ...form, [key]: value })[key];
     }
     return '';
   };
+  // Changing the preferred method re-checks the field it depends on.
+  const changeContactMethod = value => {
+    setForm(previous => ({ ...previous, preferredContactMethod: value }));
+    const errors = getContactFieldErrors({ ...form, preferredContactMethod: value });
+    setFieldErrors(previous => ({ ...previous, ...errors }));
+  };
+  const contactStepErrors = () => getContactFieldErrors(form);
 
   const handleGuestFieldChange = (event) => {
     const { name, value } = event.target;
@@ -754,6 +795,11 @@ export default function BookRoom() {
     if (normalized !== value) setForm(previous => ({ ...previous, [name]: normalized }));
     setFieldErrors(previous => ({ ...previous, [name]: validateField(name, normalized) }));
   };
+  const handleEmailChange = event => {
+    const { value } = event.target;
+    setForm(previous => ({ ...previous, email: value }));
+    if (fieldErrors.email) setFieldErrors(previous => ({ ...previous, email: validateField('email', value) }));
+  };
 
   // Checks for the current step before moving on. Returns true when OK.
   const checkStayStep = () => {
@@ -766,23 +812,11 @@ export default function BookRoom() {
     const guestErrors = {
       firstName: validateField('firstName', form.firstName),
       lastName: validateField('lastName', form.lastName),
-      phone: validateField('phone', form.phone),
+      ...contactStepErrors(),
     };
     setFieldErrors(guestErrors);
     const firstBad = Object.keys(guestErrors).find(key => guestErrors[key]);
     if (firstBad) { document.getElementById(firstBad)?.focus(); return false; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(form.email || '').trim())) {
-      setErrorMsg('Enter a valid email address.');
-      document.getElementById('email')?.focus();
-      return false;
-    }
-    if (!isPreferredContactMethod(form.preferredContactMethod)) {
-      setErrorMsg('Please choose a preferred contact method.');
-      document.getElementById('preferredContactMethod')?.focus();
-      return false;
-    }
-    const linkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
-    if (linkError) { setErrorMsg(linkError); document.getElementById('contactLink')?.focus(); return false; }
     return true;
   };
   const goToFormStep = next => {
@@ -818,22 +852,17 @@ export default function BookRoom() {
     const guestErrors = {
       firstName: validateField('firstName', form.firstName),
       lastName: validateField('lastName', form.lastName),
-      phone: validateField('phone', form.phone),
+      ...contactStepErrors(),
     };
     setFieldErrors(guestErrors);
     if (Object.values(guestErrors).some(Boolean)) {
-      document.getElementById(Object.keys(guestErrors).find(key => guestErrors[key]))?.focus();
+      setFormStep(1);
+      setErrorMsg('Please correct your contact details.');
       return;
     }
-    if (!isPreferredContactMethod(form.preferredContactMethod)) {
-      setErrorMsg('Please choose a preferred contact method.');
-      document.getElementById('preferredContactMethod')?.focus();
-      return;
-    }
-    const contactLinkError = getContactLinkError(form.preferredContactMethod, form.contactLink);
-    if (contactLinkError) {
-      setErrorMsg(contactLinkError);
-      document.getElementById('contactLink')?.focus();
+    if (discountEntryProblem) {
+      setShowDiscountErrors(true);
+      setErrorMsg(discountEntryProblem);
       return;
     }
     if (guestCountViolation) {
@@ -856,6 +885,19 @@ export default function BookRoom() {
       // only in the browser, since a bot can skip your page's JS entirely
       // and call this same endpoint directly. The server is the one place
       // these checks actually hold.
+      if (seniorPwdCheck.error) throw new Error(seniorPwdCheck.error);
+      // The booking was saved but an ID did not go through: send the IDs again.
+      if (discountActive && savedDiscountBooking) {
+        try {
+          await uploadDiscountIds(savedDiscountBooking.reservationId, savedDiscountBooking.token);
+          setDiscountSubmitted(true);
+          setSuccess(true);
+        } catch (uploadError) {
+          setErrorMsg(`Booking #${savedDiscountBooking.reservationId.slice(0, 8).toUpperCase()} is saved. ${uploadError.message} Please try again.`);
+        }
+        setSubmitting(false);
+        return;
+      }
       const response = await fetch('/api/create-reservation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -888,6 +930,8 @@ export default function BookRoom() {
           promoCode: activePromo?.code || '',
           additionalRooms: extraRooms.map(item => ({ roomId: item.roomId, adults: Number(item.adults), children: Number(item.children) })),
           extraGuestMeal: mealChosen && tourExtraGuests > 0,
+          seniorPwd: seniorPwdCheck.value || { senior: 0, pwd: 0 },
+          discountRequest: discountActive,
           website: form.website,
         }),
       });
@@ -938,6 +982,20 @@ export default function BookRoom() {
       setBookingHistory(updatedHistory);
       if (!writeLocalValue(BOOKING_HISTORY_KEY, updatedHistory)) {
         setErrorMsg('Reservation submitted, but the booking history could not be saved in this browser.');
+      }
+
+      // Senior / PWD discount: send the IDs. Payment comes after staff approve.
+      if (discountActive) {
+        setSavedDiscountBooking({ reservationId, token: data.discountUploadToken });
+        try {
+          await uploadDiscountIds(reservationId, data.discountUploadToken);
+          setDiscountSubmitted(true);
+          setSuccess(true);
+        } catch (uploadError) {
+          setErrorMsg(`Booking #${ref8} is saved. ${uploadError.message} Please try again.`);
+        }
+        setSubmitting(false);
+        return;
       }
 
       // The server priced this booking itself. If that differs from what this
@@ -1017,11 +1075,13 @@ export default function BookRoom() {
         <div style={{ width: '70px', height: '70px', background: '#d4f550', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
           <IconCheck />
         </div>
-        <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#111', marginBottom: '10px' }}>Booking Confirmed!</h2>
+        <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#111', marginBottom: '10px' }}>{discountSubmitted ? 'ID Submitted for Review' : 'Booking Confirmed!'}</h2>
         <p style={{ color: '#6b7280', fontSize: '13px', marginBottom: '24px' }}>
-          Thank you, <strong>{guestName}</strong>! Your reservation has been submitted successfully.
+          {discountSubmitted
+            ? <>Thank you, <strong>{guestName}</strong>. No payment is due yet. Our staff will check your ID and contact you with the result and a payment link. Your room is held while we review it.</>
+            : <>Thank you, <strong>{guestName}</strong>! Your reservation has been submitted successfully.</>}
         </p>
-        <p role="status" style={{ color: '#355a42', background: LIGHT, borderRadius: '8px', padding: '12px', fontSize: '12px', lineHeight: 1.6, marginBottom: '18px' }}>{RECEIPT_NOTICE}</p>
+        <p role="status" style={{ color: '#355a42', background: LIGHT, borderRadius: '8px', padding: '12px', fontSize: '12px', lineHeight: 1.6, marginBottom: '18px' }}>{discountSubmitted ? 'Please keep your booking reference and bring the same ID when you arrive.' : form.email.trim() ? RECEIPT_NOTICE : 'Keep your booking reference. The resort will contact you using your preferred contact method.'}</p>
         <div style={{ background: LIGHT, borderRadius: '12px', padding: '20px', marginBottom: '24px', textAlign: 'left' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '13px' }}>
             <span style={{ color: '#6b7280' }}>Booking Reference</span>
@@ -1422,6 +1482,40 @@ export default function BookRoom() {
                   )}
                 </div>
               )}
+              <fieldset style={{ marginTop: '14px', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '12px 14px' }}>
+                <legend style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0 4px' }}>Senior citizens or PWDs in your group (optional)</legend>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
+                  {[['senior', 'Senior citizens (60+)'], ['pwd', 'Persons with disability (PWD)']].map(([key, label]) => (
+                    <label key={key} style={{ display: 'grid', gap: '4px', fontSize: '12px', color: '#374151' }}>
+                      {label}
+                      <input type="number" min="0" max={seniorPwdGroup} step="1" inputMode="numeric" value={seniorPwd[key]} placeholder="0"
+                        onChange={e => setSeniorPwd(current => ({ ...current, [key]: e.target.value }))}
+                        style={{ border: '1px solid #e5e7eb', borderRadius: '10px', padding: '9px 12px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none' }} />
+                    </label>
+                  ))}
+                </div>
+                {seniorPwdCheck.error
+                  ? <div role="alert" style={{ fontSize: '11.5px', color: '#b91c1c', marginTop: '8px' }}>{seniorPwdCheck.error}</div>
+                  : <div style={{ fontSize: '11.5px', color: '#6b7280', marginTop: '8px', lineHeight: 1.6 }}>Bring their senior citizen or PWD ID. The 20% discount and VAT exemption on each qualified guest's share are applied at the front desk after the ID is checked.</div>}
+              </fieldset>
+              {needsStepFree && room && roomHasStairs(decorateRoom(room, 0)) && (
+                <section role="note" aria-label="Rooms without stairs" style={{ marginTop: '12px', border: '1px solid #fcd34d', background: '#fffbeb', borderRadius: '12px', padding: '12px 14px' }}>
+                  <div style={{ fontSize: '12.5px', color: '#78350f', lineHeight: 1.55 }}>
+                    <strong>{room.roomNumber || 'This room'} is on the second floor (stairs).</strong> For senior citizens, PWDs or guests who find stairs hard, we recommend a ground-floor room{suggestedRooms.length ? ':' : '. Contact the resort and we will help you find one.'}
+                  </div>
+                  {suggestedRooms.length > 0 && (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+                      {suggestedRooms.map(option => (
+                        <button key={option.id} type="button" onClick={() => switchToRoom(option)}
+                          style={{ border: '1px solid #d8e7db', background: '#fff', color: DARK, borderRadius: '8px', padding: '8px 12px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}>
+                          Switch to {option.roomNumber || option.name}{option.suggestedPrice < Number.MAX_SAFE_INTEGER ? ` · ₱${option.suggestedPrice.toLocaleString()}` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ fontSize: '11px', color: '#92400e', marginTop: '8px' }}>You can still keep this room if the stairs are not a problem.</div>
+                </section>
+              )}
               <div style={{ marginTop: '14px' }}>
                 <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Special Requests (optional)</label>
                 <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
@@ -1451,9 +1545,17 @@ export default function BookRoom() {
                     );
                   })}
                 </select>
+                {(() => {
+                  const chosen = COTTAGE_OPTIONS.find(option => option.id && option.id === form.cottageId);
+                  return chosen?.image ? (
+                    <img src={optimizeImage(chosen.image, IMAGE_WIDTHS.thumb)} alt={`${cottageName(chosen)} cottage`} loading="lazy"
+                      onError={e => { e.currentTarget.style.display = 'none'; }}
+                      style={{ display: 'block', width: '100%', maxWidth: 320, aspectRatio: '4 / 3', objectFit: 'cover', borderRadius: 10, marginTop: 8 }} />
+                  ) : null;
+                })()}
                 {isTourBooking && (
                   <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '5px' }}>
-                    Don't need a room? <a href="/book-cottage" style={{ color: DARK, fontWeight: 600 }}>Book just a cottage</a> for your tour.
+                    Room not required? <a href="/book-cottage" style={{ color: DARK, fontWeight: 600 }}>Make a cottage-only booking</a> for your tour.
                   </div>
                 )}
               </div>
@@ -1469,12 +1571,15 @@ export default function BookRoom() {
                 <span style={{ width: '24px', height: '24px', background: DARK, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: '#d4f550', fontWeight: '700' }}>2</span>
                 Guest Information
               </div>
+              <p role="note" style={{ margin: '-6px 0 16px', padding: '10px 12px', background: '#f6f8f1', border: '1px solid #dfe6d2', borderRadius: '10px', fontSize: '12px', lineHeight: 1.55, color: '#374151' }}>
+                <strong>At least one contact is required.</strong> {CONTACT_REQUIREMENT_NOTE}
+              </p>
               <div className="responsive-grid-2" style={{ gap: '14px' }}>
                 {[
                   { label: 'First Name', key: 'firstName', placeholder: 'Juan', type: 'text', required: true },
                   { label: 'Last Name', key: 'lastName', placeholder: 'dela Cruz', type: 'text', required: true },
-                  { label: 'Phone Number', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: true },
-                  { label: 'Email Address', key: 'email', placeholder: 'juan@email.com', type: 'email', required: true },
+                  { label: form.preferredContactMethod === 'Phone' ? 'Phone Number' : 'Phone Number (optional)', key: 'phone', placeholder: '09XX XXX XXXX', type: 'tel', required: form.preferredContactMethod === 'Phone' },
+                  { label: form.preferredContactMethod === 'Email' ? 'Email Address' : 'Email Address (optional)', key: 'email', placeholder: 'juan@email.com', type: 'email', required: form.preferredContactMethod === 'Email' },
                   { label: 'Address (optional)', key: 'address', placeholder: 'City, Province', type: 'text', required: false },
                 ].map(f => (
                   <div key={f.key}>
@@ -1484,8 +1589,9 @@ export default function BookRoom() {
                       inputMode={f.key === 'phone' ? 'numeric' : undefined}
                       autoComplete={f.key === 'firstName' ? 'given-name' : f.key === 'lastName' ? 'family-name' : f.key === 'phone' ? 'tel' : f.key === 'email' ? 'email' : f.key === 'address' ? 'street-address' : undefined}
                       pattern={f.key === 'phone' ? '09[0-9]{9}' : undefined}
-                      onChange={['firstName', 'lastName', 'phone'].includes(f.key) ? handleGuestFieldChange : e => setForm(previous => ({ ...previous, [f.key]: e.target.value }))}
-                      onBlur={['firstName', 'lastName', 'phone'].includes(f.key) ? handleGuestFieldBlur : undefined}
+                      aria-invalid={Boolean(fieldErrors[f.key])}
+                      onChange={['firstName', 'lastName', 'phone'].includes(f.key) ? handleGuestFieldChange : f.key === 'email' ? handleEmailChange : e => setForm(previous => ({ ...previous, [f.key]: e.target.value }))}
+                      onBlur={['firstName', 'lastName', 'phone', 'email'].includes(f.key) ? handleGuestFieldBlur : undefined}
                       placeholder={f.placeholder}
                       style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
                     {['firstName', 'lastName'].includes(f.key) && (
@@ -1499,11 +1605,13 @@ export default function BookRoom() {
                 <div>
                   <label htmlFor="preferredContactMethod" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Preferred Contact Method</label>
                   <select id="preferredContactMethod" name="preferredContactMethod" required value={form.preferredContactMethod}
-                    onChange={e => setForm(previous => ({ ...previous, preferredContactMethod: e.target.value }))}
+                    aria-invalid={Boolean(fieldErrors.preferredContactMethod)}
+                    onChange={e => changeContactMethod(e.target.value)}
                     style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 14px', fontSize: '13px', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box', background: '#fff' }}>
                     <option value="">Select contact method</option>
                     {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
                   </select>
+                  {fieldErrors.preferredContactMethod && <div role="alert" style={{ color: '#b91c1c', fontSize: '11px', marginTop: '5px' }}>{fieldErrors.preferredContactMethod}</div>}
                   {/* Email / Phone reuse what the guest typed above; Facebook needs a link. */}
                   {['Email', 'Phone'].includes(form.preferredContactMethod) && (() => {
                     const value = form.preferredContactMethod === 'Email' ? form.email.trim() : form.phone.trim();
@@ -1588,7 +1696,24 @@ export default function BookRoom() {
 
               </div>
 
-              {form.paymentMethod === 'online' && (
+              {canRequestDiscount && (
+                <div style={{ border: `1px solid ${discountActive ? ACCENT : '#e5e7eb'}`, borderRadius: '12px', padding: '14px', marginBottom: '14px' }}>
+                  <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={wantsDiscountReview} onChange={e => { setWantsDiscountReview(e.target.checked); setSelectedPaymentChoice('full'); }} style={{ marginTop: '3px', accentColor: ACCENT }} />
+                    <span>Request the Senior / PWD discount and pay in full online
+                      <span style={{ display: 'block', fontWeight: 400, fontSize: '12px', color: '#6b7280', lineHeight: 1.6 }}>Send your ID now. Nothing is charged yet: your room is held while staff check it, then you receive the result and a payment link for the discounted amount.</span>
+                    </span>
+                  </label>
+                  {discountActive && (
+                    <div style={{ marginTop: '12px' }}>
+                      <DiscountIdForm kinds={discountKinds} entries={discountEntries} onChange={setDiscountEntries} today={today} showAll={showDiscountErrors} colors={{ line: '#e5e7eb' }} />
+                      <p style={{ margin: '10px 0 0', fontSize: '11.5px', color: '#6b7280', lineHeight: 1.6 }}>Your ID is used only to check this discount. Staff can view it, and the photo is deleted after their decision. Please bring the same ID when you arrive.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {form.paymentMethod === 'online' && !discountActive && (
                 <>
                   {/* Senior / PWD discount is applied at the resort after staff see the ID,
                       so these guests pay the deposit online and the rest on arrival. */}
@@ -1768,12 +1893,15 @@ export default function BookRoom() {
             )}
             <button type="submit" disabled={submitting || !termsAccepted || !resortAvailable || availabilityLoading || Boolean(availabilityError) || Boolean(guestCountViolation)}
               style={{ width: '100%', background: DARK, color: '#d4f550', border: 'none', borderRadius: '14px', padding: '16px', fontSize: '15px', fontWeight: '700', cursor: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError || guestCountViolation ? 'not-allowed' : 'pointer', fontFamily: "'Poppins', sans-serif", opacity: submitting || !termsAccepted || !resortAvailable || availabilityLoading || availabilityError || guestCountViolation ? 0.7 : 1 }}>
-              {availabilityLoading ? 'Checking resort status…' : availabilityError ? 'Booking status unavailable' : !resortAvailable ? 'Reservations temporarily closed' : submitting ? 'Redirecting to payment...' : guestCountViolation ? 'Choose a room that fits your group' : !termsAccepted ? 'Accept terms to continue' : 'Continue to Payment →'}
+              {availabilityLoading ? 'Checking resort status…' : availabilityError ? 'Booking status unavailable' : !resortAvailable ? 'Reservations temporarily closed' : submitting ? (discountActive ? 'Sending your ID…' : 'Redirecting to payment...') : guestCountViolation ? 'Choose a room that fits your group' : !termsAccepted ? 'Accept terms to continue' : discountActive ? 'Submit ID for review' : 'Continue to Payment →'}
             </button>
             </>
             )}
             {formStep < 2 && (
               <>
+                {formStep === 0 && !errorMsg && (!datesValid || tourCutoffError || guestCountViolation) && (
+                  <div role="alert" style={{ marginBottom: '12px', color: '#b91c1c', fontSize: '12px' }}>{!datesValid ? 'Choose valid dates for your stay.' : tourCutoffError || guestCountViolation}</div>
+                )}
                 {errorMsg && (
                   <div role="alert" style={{ marginBottom: '12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', padding: '12px 14px', fontSize: '12px', color: '#b91c1c' }}>
                     {errorMsg}

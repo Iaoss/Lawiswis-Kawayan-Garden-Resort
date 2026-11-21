@@ -27,7 +27,15 @@ const row = (label, value, bold = false) => `<tr${bold ? ' class="total"' : ''}>
 
 export const paymentReceiptNumber = payment => `RCP-${String(payment.id || '').slice(-8).toUpperCase()}`;
 
-export function printBookingReceipt(reservation, payments = []) {
+// Opens the print window straight away (on the staff member's click), so the
+// browser doesn't block it while the payments are still loading.
+export function openReceiptWindow() {
+  const win = window.open('', '_blank', 'width=720,height=900');
+  if (win) win.document.write('<p style="font-family:Arial,sans-serif;padding:24px;color:#374151">Preparing the receipt...</p>');
+  return win;
+}
+
+export function printBookingReceipt(reservation, payments = [], openedWindow = null) {
   const r = reservation;
   const ref = r.id.slice(0, 8).toUpperCase();
   const items = getReceiptLineItems(r);
@@ -145,7 +153,7 @@ export function printBookingReceipt(reservation, payments = []) {
   <script>window.onload = function () { setTimeout(function () { window.print(); }, 400); };</script>
 </body></html>`;
 
-  const win = window.open('', '_blank', 'width=720,height=900');
+  const win = openedWindow || window.open('', '_blank', 'width=720,height=900');
   if (!win) return false;
   win.document.open();
   win.document.write(html);

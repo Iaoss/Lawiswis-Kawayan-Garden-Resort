@@ -28,6 +28,7 @@ import arrivalReminders from '../apiHandlers/arrival-reminders';
 import sendThankYou from '../apiHandlers/send-thank-you';
 import reservationStatus from '../apiHandlers/reservation-status';
 import staffBilling from '../apiHandlers/staff-billing';
+import discountReview from '../apiHandlers/discount-review';
 import staffUsers from '../apiHandlers/staff-users';
 import imageUpload from '../apiHandlers/image-upload';
 import seasonalRates from '../apiHandlers/seasonal-rates';
@@ -66,6 +67,7 @@ const handlers = {
   'reservation-staff-action': reservationStaffAction,
   'reservation-status': reservationStatus,
   'staff-billing': staffBilling,
+  'discount-review': discountReview,
   'staff-users': staffUsers,
   'login-guard': loginGuard,
   'image-upload': imageUpload,

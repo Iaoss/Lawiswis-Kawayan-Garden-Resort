@@ -1,7 +1,10 @@
+import PillTabs, { FolderPanel } from '../components/PillTabs';
+import BookingCalendar from '../../components/ui/visualize-booking';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, auth } from '../../firebase/firebase';
-import { getDoc, setDoc, updateDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { getDoc, getDocs, setDoc, updateDoc, doc, serverTimestamp, collection, query, where } from 'firebase/firestore';
+import { openReceiptWindow, printBookingReceipt } from '../lib/printBookingReceipt';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { SortControls, sortRecords } from '../lib/listSort';
@@ -48,7 +51,11 @@ import { serverNow } from '../../lib/serverClock';
 import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive, splitArrivedGuests } from '../../lib/guestArrivals';
 import { bookedByText, staffLabel } from '../../lib/staffLabel';
 import { invalidateCollections } from '../lib/cachedCollection';
+import RoomSchedule from '../components/RoomSchedule';
+import { seniorPwdSummary } from '../../lib/seniorPwdGuests';
 import { subscribeCollection } from '../lib/liveCollection';
+import DiscountReviewDialog from '../components/DiscountReviewDialog';
+import { isAwaitingDiscountReview, isDiscountReviewQueued } from '../../lib/discountReview';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -75,17 +82,10 @@ const localToday = () => {
 
 // Sends a staff status / overstay change to the server. Throws with the
 // server's message when it refuses (e.g. an unpaid balance at check-out).
+// Status changes go through staffApi: without internet, check-ins and
+// check-outs are saved on this computer and sent when it is back.
 async function callReservationStatusApi(body) {
-  const user = auth.currentUser;
-  if (!user) throw new Error('Your session has ended. Please sign in again.');
-  const token = await user.getIdToken();
-  const response = await fetch('/api/reservation-status', {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || 'The reservation could not be updated.');
+  const result = await staffApi('reservation-status', body);
   invalidateCollections();
   return result;
 }
@@ -186,13 +186,27 @@ function Tag({ t, c = 'gray', title, children }) {
   return <span title={title} style={{ background: bg, color, borderRadius: 6, padding: '2px 8px', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap' }}>{children}</span>;
 }
 
+// The page is split into tabs so each job has its own screen.
+const RESERVATION_TABS = [
+  { id: 'bookings', label: 'Bookings', icon: 'ti-list-details', hint: 'All reservations, with search and filters. Click a booking to open it.' },
+  { id: 'calendar', label: 'Calendar', icon: 'ti-calendar', hint: 'Bookings by day, week or month.' },
+  { id: 'attention', label: 'Needs attention', icon: 'ti-bell-ringing', hint: 'Late arrivals, overstays, unpaid online bookings and guest requests waiting for staff.' },
+  { id: 'schedule', label: 'Room schedule', icon: 'ti-calendar-time', hint: 'Which rooms are taken, on which dates and from what time to what time.' },
+];
+const TAB_KEY = 'lkgr_reservations_tab';
+const readTab = () => {
+  try { const saved = window.localStorage.getItem(TAB_KEY); return RESERVATION_TABS.some(t => t.id === saved) ? saved : 'bookings'; } catch { return 'bookings'; }
+};
+
 function ReservationBoard({
   reservations, t, formatDate, now,
   getOverstay: overstayOf, isDelayedArrival, hasOutstandingBalance: owes, nights,
-  onSelect, renderActions,
+  onSelect, renderActions, mode = 'list',
 }) {
   const todayIso = toIso(now);
-  const [tab, setTab] = useState('list'); // list | day | week | month
+  // Bookings tab: just the list. Calendar tab: day / week / month with the side calendar.
+  const isCalendar = mode === 'calendar';
+  const [tab, setTab] = useState(isCalendar ? 'month' : 'list'); // list | day | week | month
   const [cursor, setCursor] = useState(() => new Date(now.getFullYear(), now.getMonth(), 1));
   const [selected, setSelected] = useState(todayIso);
   const [scope, setScope] = useState('all'); // list tab only: all | day
@@ -485,38 +499,17 @@ function ReservationBoard({
 
   // ── Month view ──
   const monthView = (
-    <div style={{ overflowX: 'auto' }}>
-      <div style={{ minWidth: 720, display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', border: `1px solid ${t.BORDER}`, borderRadius: 12, overflow: 'hidden' }}>
-        {DOW_LONG.map(d => (
-          <div key={d} style={{ padding: '8px 10px', fontSize: 11, color: t.MUTED, background: t.CARD2, borderBottom: `1px solid ${t.BORDER}` }}>{d}</div>
-        ))}
-        {grid.map((d, i) => {
-          const k = toIso(d);
-          const inMonth = d.getMonth() === cursor.getMonth();
-          const list = perDay[k] || [];
-          return (
-            <div key={k} style={{
-              minHeight: 112, padding: 6, background: t.CARD, opacity: inMonth ? 1 : 0.55,
-              borderRight: i % 7 === 6 ? 'none' : `1px solid ${t.BORDER}`, borderBottom: i >= 35 ? 'none' : `1px solid ${t.BORDER}`,
-            }}>
-              <button type="button" onClick={() => pickDay(d, 'day')} title="Open this day"
-                style={{
-                  border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 700, width: 24, height: 24, borderRadius: 999,
-                  background: k === todayIso ? t.ACCENT : 'transparent', color: k === todayIso ? t.ACCENT_TEXT : t.TEXT,
-                }}>{d.getDate()}</button>
-              <div style={{ display: 'grid', gap: 3, marginTop: 4 }}>
-                {list.slice(0, 3).map(r => chip(r, k))}
-                {list.length > 3 && (
-                  <button type="button" onClick={() => pickDay(d, 'day')}
-                    style={{ textAlign: 'left', border: 'none', background: 'transparent', color: t.MUTED, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', padding: '1px 4px' }}>
-                    +{list.length - 3} more
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+    <div>
+      <BookingCalendar
+        days={grid}
+        bookingsOn={perDay}
+        month={cursor}
+        todayKey={todayIso}
+        title={false}
+        statusColor={STATUS_COLOR}
+        onSelect={onSelect}
+        t={{ ...t, BUBBLE: t.dark ? '#52525b' : '#27272a', BUBBLE_TEXT: '#fff' }}
+      />
       {legend}
     </div>
   );
@@ -538,7 +531,7 @@ function ReservationBoard({
   return (
     <div style={{ background: t.CARD, border: `1px solid ${t.BORDER}`, borderRadius: 16, overflow: 'hidden' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap' }}>
-        {tab !== 'month' && sidebar}
+        {isCalendar && tab !== 'month' && sidebar}
 
         <div style={{ flex: '1 1 460px', minWidth: 0, padding: 16 }}>
           {/* Title, navigation, view tabs */}
@@ -553,15 +546,7 @@ function ReservationBoard({
                 </>
               )}
             </div>
-            <div role="tablist" aria-label="Reservation view" style={{ display: 'inline-flex', background: t.CARD2, border: `1px solid ${t.BORDER2}`, borderRadius: 10, padding: 3 }}>
-              {[['list', 'List'], ['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([id, label]) => (
-                <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
-                  style={{
-                    border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-                    background: tab === id ? t.ACCENT : 'transparent', color: tab === id ? t.ACCENT_TEXT : t.MUTED,
-                  }}>{label}</button>
-              ))}
-            </div>
+            {isCalendar && <PillTabs variant="pill" t={t} size="sm" label="Calendar view" value={tab} onChange={setTab} items={[{ id: 'day', label: 'Day' }, { id: 'week', label: 'Week' }, { id: 'month', label: 'Month' }]} />}
           </div>
 
           {/* Filters */}
@@ -582,7 +567,7 @@ function ReservationBoard({
             {filtersActive && (
               <button type="button" style={{ ...ctl, color: t.MUTED }} onClick={() => { setType('all'); setPay('all'); setRoom('all'); }}>Clear filters</button>
             )}
-            {tab === 'list' && (
+            {isCalendar && tab === 'list' && (
               <div style={{ marginLeft: 'auto', display: 'inline-flex', background: t.CARD2, border: `1px solid ${t.BORDER2}`, borderRadius: 9, padding: 2 }}>
                 {[['all', 'All dates'], ['day', 'Selected day']].map(([id, label]) => (
                   <button key={id} type="button" onClick={() => { setScope(id); }}
@@ -643,6 +628,8 @@ export default function Reservations() {
   const MUTED    = dark ? '#9ca3af' : '#6b7280';
   const ACCENT   = settings?.accentColor || '#9cb56f';
   const ACCENT_TEXT = '#0a1a0a';
+  // Folder tabs: the panel is a soft green-grey so the white cards inside stand out.
+  const folderColors = { CARD: dark ? '#111815' : '#e7ece4', CARD2: dark ? '#1b221e' : '#d6ded1', BORDER, TEXT, MUTED, ACCENT, ACCENT_TEXT };
 
   // ── Role detection (based on route; swap for real auth/role context if available) ──
   const isReceptionist = window.location.pathname.startsWith('/receptionist');
@@ -675,6 +662,14 @@ export default function Reservations() {
   const [manualRefunds, setManualRefunds] = useState({});
   const [filter, setFilter]             = useState(QUICK_VIEWS[initialView]?.status || 'all');
   const [quickView, setQuickView]       = useState(initialView);
+  const [discountReviewTarget, setDiscountReviewTarget] = useState(null);
+  const [tab, setTab] = useState(() => (initialView ? 'bookings' : readTab()));
+  const chooseTab = id => {
+    setTab(id);
+    try { window.localStorage.setItem(TAB_KEY, id); } catch { /* ignore */ }
+  };
+  // A quick view (e.g. "Overstayed" from a card) shows the bookings list.
+  useEffect(() => { if (quickView) setTab('bookings'); }, [quickView]);
   const [sortBy, setSortBy]             = useState(QUICK_VIEWS[initialView]?.sortBy || 'booked');
   const [sortDir, setSortDir]           = useState(QUICK_VIEWS[initialView]?.sortDir || 'desc');
   const [search, setSearch]             = useState(initialBookingQuery);
@@ -881,6 +876,10 @@ export default function Reservations() {
         };
       }));
       if (status === 'cancelled') return;
+      if (result.offline) {
+        setToast({ type: 'success', text: `${status === 'checked-in' ? 'Check-in' : status === 'checked-out' ? 'Check-out' : 'Status change'}: Saved on this computer (no internet). It will be sent to the system automatically when the internet is back.` });
+        return;
+      }
       if (status === 'checked-out') {
         setToast({
           type: 'success',
@@ -1273,6 +1272,11 @@ export default function Reservations() {
           <i className={`ti ${label.type === 'in' ? 'ti-login' : 'ti-logout'}`} aria-hidden="true" />{label.text}
         </div>
       ))}
+      {seniorPwdSummary(r) && (
+        <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: seniorPwdSummary(r).toCheck ? (dark ? '#fcd34d' : '#b45309') : (dark ? '#86efac' : '#15803d'), display: 'flex', alignItems: 'center', gap: 5 }}>
+          <i className="ti ti-wheelchair" aria-hidden="true" />{seniorPwdSummary(r).text}
+        </div>
+      )}
       {isAgencyBilled(r) && (
         <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: hasAgencyPo(r) ? (dark ? '#c7d2fe' : '#3730a3') : (dark ? '#fcd34d' : '#b45309'), display: 'flex', alignItems: 'center', gap: 5 }}>
           <i className="ti ti-building-bank" aria-hidden="true" />{agencyStatusLabel(r)}
@@ -1320,7 +1324,9 @@ export default function Reservations() {
   const pendingCancellations = reservations.filter(r => r.cancellationRequested && r.status !== 'cancelled');
   const pendingRefunds = reservations.filter(r =>
     ['eligible', 'needs_review'].includes(String(r.refundRequestStatus || '').toLowerCase()));
-  const unpaidOnline = reservations.filter(isUnpaidOnlineBooking);
+  // Bookings waiting for a Senior / PWD ID check have their own list.
+  const discountReviews = reservations.filter(isDiscountReviewQueued);
+  const unpaidOnline = reservations.filter(r => isUnpaidOnlineBooking(r) && !isAwaitingDiscountReview(r));
   const followUpTime = value => {
     const ms = value?.toMillis ? value.toMillis() : value?.seconds ? value.seconds * 1000 : 0;
     return ms ? new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'just now';
@@ -1332,23 +1338,42 @@ export default function Reservations() {
     ['requested', 'needs_review'].includes(String(r.modificationRequest?.status || '').toLowerCase()));
 
 
+  const attentionCount = discountReviews.length + stillArriving.length + dueToCheckOut.length + lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length;
+
   return (
     <PageLayout>
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: '20px' }}>
 
-        {/* Backup for internet outages: today's arrivals, departures and balances on paper. */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+        {/* Header: one tab per job, plus print and add booking. */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+          <PillTabs label="Reservation sections" value={tab} onChange={chooseTab} t={folderColors}
+            items={RESERVATION_TABS.map(item => ({ ...item, count: item.id === 'attention' ? attentionCount : 0 }))} />
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingBottom: 8 }}>
+            {/* Backup for internet outages: today's arrivals, departures and balances on paper. */}
           <button type="button" onClick={() => { if (!printDailySheet(reservations, { staffName: staffLabel(access.user?.name || auth.currentUser?.email, access.user?.role) })) setToast({ type: 'error', text: 'Allow pop-ups for this site to print the sheet.' }); }}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: `1px solid ${BORDER2}`, background: CARD, color: TEXT, borderRadius: 9, padding: '7px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
             <i className="ti ti-printer" aria-hidden="true" /> Print today's sheet
           </button>
+            <button type="button" onClick={() => navigate(isReceptionist ? '/receptionist/walkin' : '/admin/walkin')}
+              style={{ background: ACCENT, border: 'none', borderRadius: 9, padding: '7px 16px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: ACCENT_TEXT }}>
+              + Add booking
+            </button>
+          </div>
         </div>
+        <FolderPanel t={folderColors} key={tab} className="lk-enter-soft" style={{ display: 'grid', gap: 14 }}>
+        <div style={{ fontSize: 12, color: MUTED }}>{RESERVATION_TABS.find(item => item.id === tab)?.hint}</div>
 
         {toast && (
           <div role="status" onClick={() => setToast(null)}
             style={{ position: 'fixed', top: '18px', right: '18px', zIndex: 1000, maxWidth: '360px', padding: '12px 16px', borderRadius: '8px', cursor: 'pointer', background: toast.type === 'error' ? '#fee2e2' : '#dcfce7', color: toast.type === 'error' ? '#991b1b' : '#166534', border: `1px solid ${toast.type === 'error' ? '#fecaca' : '#bbf7d0'}`, boxShadow: '0 4px 14px rgba(0,0,0,0.12)', fontSize: '12px' }}>
             {toast.text}
           </div>
+        )}
+
+        {discountReviewTarget && (
+          <DiscountReviewDialog reservation={discountReviewTarget}
+            colors={{ CARD, CARD2, BORDER, BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+            onClose={() => setDiscountReviewTarget(null)} />
         )}
 
         {assignTarget && (
@@ -1601,6 +1626,7 @@ export default function Reservations() {
             ...(s.checkedOutByName ? [['Checked out by', staffLabel(s.checkedOutByName, s.checkedOutByRole)]] : []),
             ...(s.status === 'cancelled' && s.cancelledByName ? [['Cancelled by', staffLabel(s.cancelledByName, s.cancelledByRole)]] : []),
             ['Guests', `${Number(s.adults || 0)} adult(s), ${Number(s.children || 0)} child(ren)`],
+            ...(seniorPwdSummary(s) ? [['Senior citizen / PWD', seniorPwdSummary(s).text]] : []),
             ...(Number(s.dayVisitorAdults || 0) + Number(s.dayVisitorChildren || 0) > 0 ? [[
               'Day Visitors (not staying overnight)',
               `${Number(s.dayVisitorAdults || 0)} adult(s), ${Number(s.dayVisitorChildren || 0)} child(ren) · ${s.dayVisitorPeriod === 'night' ? 'night tour' : 'day tour'} · ${money(s.dayVisitorCharge)}`,
@@ -1647,14 +1673,60 @@ export default function Reservations() {
                   <div style={{ fontSize: '11px', color: MUTED, marginBottom: '10px' }}>Status — click a step to change it</div>
                   {renderStepper(s, false)}
                 </div>
-                <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px 18px', margin: 0 }}>
-                  {rows.map(([label, value]) => (
-                    <div key={label} style={{ gridColumn: label === 'Special Requests' ? '1 / -1' : undefined }}>
-                      <dt style={{ color: MUTED, fontSize: '11px' }}>{label}</dt>
-                      <dd style={{ color: label === 'Overstay' && so ? '#dc2626' : TEXT, fontSize: '13px', margin: '2px 0 0', textTransform: label === 'Payment Status' ? 'capitalize' : 'none', wordBreak: 'break-word' }}>{value}</dd>
-                    </div>
-                  ))}
-                </dl>
+                {/* Easy to read: the key facts first, then short sections.
+                    Rows that only say "None" / "No" are left out. */}
+                {(() => {
+                  const SECTIONS = [
+                    ['Guest', ['Phone Number', 'Email Address', 'Preferred Contact Method', 'Facebook Profile', 'Senior citizen / PWD']],
+                    ['Payment', ['Total Amount', 'Amount Paid', 'Balance Due', 'Payment Status', 'Payment Method']],
+                    ['Handled by', ['Booked by', 'Confirmed by', 'Checked in by', 'Checked out by', 'Cancelled by']],
+                  ];
+                  const EMPTY = ['none', 'no', 'not provided', '—', ''];
+                  // Room and duration are in the summary tiles above.
+                  const shown = rows.filter(([label, value]) => !['Room', 'Duration'].includes(label)
+                    && (!(typeof value === 'string' && EMPTY.includes(value.trim().toLowerCase())) || ['Total Amount', 'Amount Paid', 'Balance Due'].includes(label)));
+                  const sectionOf = label => SECTIONS.find(([, labels]) => labels.includes(label))?.[0] || 'Stay';
+                  const order = ['Stay', 'Guest', 'Payment', 'Handled by'];
+                  const balance = Math.max(0, outstandingAmount(s));
+                  const tile = { background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '12px', padding: '10px 12px', minWidth: 0 };
+                  return (
+                    <>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+                        <div style={tile}>
+                          <div style={{ fontSize: '11px', color: MUTED }}>Room</div>
+                          <div style={{ fontSize: '14px', fontWeight: 700, color: TEXT, wordBreak: 'break-word' }}>{[s.roomNumber, s.roomType].filter(Boolean).join(' · ') || '—'}</div>
+                        </div>
+                        <div style={tile}>
+                          <div style={{ fontSize: '11px', color: MUTED }}>Dates</div>
+                          <div style={{ fontSize: '14px', fontWeight: 700, color: TEXT }}>{formatDate(s.checkIn)}{s.checkOut && s.checkOut !== s.checkIn ? ` → ${formatDate(s.checkOut)}` : ''}</div>
+                          <div style={{ fontSize: '11px', color: MUTED }}>{nights(s)}</div>
+                        </div>
+                        <div style={{ ...tile, borderColor: balance > 0 && s.status !== 'cancelled' ? '#fdba74' : BORDER2 }}>
+                          <div style={{ fontSize: '11px', color: MUTED }}>Balance</div>
+                          <div style={{ fontSize: '16px', fontWeight: 800, color: balance > 0 ? '#dc2626' : '#16a34a' }}>{balance > 0 ? money(balance) : 'Paid in full'}</div>
+                          <div style={{ fontSize: '11px', color: MUTED }}>of {money(s.totalAmount)}</div>
+                        </div>
+                      </div>
+                      {order.map(name => {
+                        const items = shown.filter(([label]) => sectionOf(label) === name);
+                        if (!items.length) return null;
+                        return (
+                          <div key={name} style={{ marginBottom: '14px' }}>
+                            <div style={{ fontSize: '11px', fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '.06em', borderBottom: `1px solid ${BORDER2}`, paddingBottom: '5px', marginBottom: '8px' }}>{name}</div>
+                            <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px 18px', margin: 0 }}>
+                              {items.map(([label, value]) => (
+                                <div key={label} style={{ gridColumn: label === 'Special Requests' || label === 'Rooms in this booking' ? '1 / -1' : undefined }}>
+                                  <dt style={{ color: MUTED, fontSize: '11px' }}>{label}</dt>
+                                  <dd style={{ color: label === 'Overstay' && so ? '#dc2626' : TEXT, fontSize: '13.5px', fontWeight: 500, margin: '2px 0 0', textTransform: label === 'Payment Status' ? 'capitalize' : 'none', wordBreak: 'break-word' }}>{value}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </div>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
                 {hasOutstandingBalance(s) && s.status !== 'cancelled' && (
                   <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', background: dark ? 'rgba(217,119,6,0.12)' : '#fff7ed', border: `1px solid ${dark ? 'rgba(217,119,6,0.35)' : '#fed7aa'}`, borderRadius: '10px', padding: '10px 12px' }}>
                     <div style={{ fontSize: '12px', color: TEXT }}>
@@ -1667,7 +1739,29 @@ export default function Reservations() {
                     </button>
                   </div>
                 )}
+                {!String(s.email || '').trim() && s.status !== 'cancelled' && (
+                  <div style={{ marginTop: '16px', fontSize: '12px', color: TEXT, background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '10px', padding: '10px 12px' }}>
+                    <i className="ti ti-mail-off" aria-hidden="true" style={{ marginRight: 6 }} />
+                    No email on this booking, so the guest gets no emailed receipt. Use <strong>Print receipt</strong> and hand it over at the counter.
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px', flexWrap: 'wrap' }}>
+                  <button type="button" onClick={async () => {
+                    const win = openReceiptWindow();
+                    if (!win) { setToast({ type: 'error', text: 'Allow pop-ups for this site to print the receipt.' }); return; }
+                    try {
+                      const snap = await getDocs(query(collection(db, 'payments'), where('reservationId', '==', s.id)));
+                      const payments = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                        .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+                      printBookingReceipt(s, payments, win);
+                    } catch (error) {
+                      win.close();
+                      setToast({ type: 'error', text: error.message || 'The payments could not be loaded for the receipt.' });
+                    }
+                  }}
+                    style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <i className="ti ti-printer" aria-hidden="true" /> Print receipt
+                  </button>
                   <button type="button" onClick={() => navigate(billingPath(s.id))}
                     style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Open in Billing</button>
                   {s.status === 'checked-in' && bookedGuestCount(s) > 1 && (
@@ -1696,15 +1790,9 @@ export default function Reservations() {
           );
         })()}
 
-        {/* Two columns: what needs attention on the left (overstays, late
-            arrivals, requests), search and filters on the right. */}
-        <div style={{ fontWeight: '700', fontSize: '18px', color: TEXT, marginBottom: '12px' }}>Reservation List</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '14px', marginBottom: '20px', alignItems: 'start' }}>
-          {/* Notifications: one compact line per type with its count; click a
-              line to open the details and actions. Empty types are hidden. */}
-          <section aria-label="Notifications" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '12px 14px', display: 'grid', gap: '8px', alignContent: 'start', minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Notifications</div>
-            {stillArriving.length + dueToCheckOut.length + lateArrivals.length + overstayed.length + unpaidOnline.length + pendingCancellations.length + pendingRefunds.length + pendingModifications.length === 0 && (
+        {tab === 'attention' && (
+          <section aria-label="Needs attention" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '14px 16px', display: 'grid', gap: '8px', alignContent: 'start', minWidth: 0, marginBottom: 20 }}>
+            {attentionCount === 0 && (
               <div style={{ fontSize: '12px', color: MUTED }}>All clear — nothing needs action right now.</div>
             )}
 
@@ -1734,6 +1822,20 @@ export default function Reservations() {
                     </div>
                   );
                 })}
+              </NotificationGroup>
+            )}
+
+            {discountReviews.length > 0 && (
+              <NotificationGroup title="Senior / PWD ID checks" detail="IDs sent online. Approve or reject, and the guest gets a payment link" count={discountReviews.length} color="#2563eb" t={{ CARD2, BORDER, BORDER2, TEXT, MUTED }}>
+                {discountReviews.map(r => (
+                  <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap', padding: '10px 0', borderTop: `1px solid ${BORDER}` }}>
+                    <div style={{ fontSize: '12px', color: TEXT }}>
+                      <strong>{r.guestName || 'Guest'}</strong> — Room {r.roomNumber || '—'} · #{r.id.slice(0, 8).toUpperCase()}
+                      <div style={{ fontSize: '10px', color: MUTED }}>{seniorPwdSummary(r)?.text} · {formatDate(r.checkIn)} · {money(r.totalAmount)}</div>
+                    </div>
+                    <button type="button" onClick={() => setDiscountReviewTarget(r)} style={{ background: ACCENT, color: ACCENT_TEXT, border: 0, borderRadius: '8px', padding: '7px 12px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>Review IDs</button>
+                  </div>
+                ))}
               </NotificationGroup>
             )}
 
@@ -1976,11 +2078,12 @@ export default function Reservations() {
               </NotificationGroup>
             )}
           </section>
+        )}
 
-          <section aria-label="Find bookings" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '14px', display: 'grid', gap: '10px', alignContent: 'start', position: 'sticky', top: '16px' }}>
-            <div style={{ fontWeight: 700, fontSize: '13px', color: TEXT }}>Find bookings</div>
+        {tab === 'bookings' && (
+          <section aria-label="Find bookings" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '12px 14px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
             {/* Search */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '10px', padding: '8px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: CARD2, border: `1px solid ${BORDER2}`, borderRadius: '10px', padding: '8px 14px', flex: '1 1 260px', minWidth: 0 }}>
               <i className="ti ti-search" style={{ fontSize: '14px', color: MUTED }} />
               <input value={search} onChange={e => setSearch(e.target.value)} type="search"
                 placeholder="Search guest, room, phone, status or #ref"
@@ -2006,17 +2109,18 @@ export default function Reservations() {
                   {QUICK_VIEWS[quickView].label} <i className="ti ti-x" style={{ fontSize: '12px' }} />
                 </button>
               )}
-              {/* Add booking */}
-              <button onClick={() => navigate(isReceptionist ? '/receptionist/walkin' : '/admin/walkin')}
-                style={{ background: ACCENT, border: 'none', borderRadius: '10px', padding: '10px 18px', fontSize: '12px', fontWeight: '700', cursor: 'pointer', fontFamily: "'Poppins', sans-serif", color: ACCENT_TEXT }}>
-                + Add Booking
-              </button>
             </div>
           </section>
-        </div>
+        )}
 
         {/* List / Day / Week / Month board */}
-        <ReservationBoard
+        {tab === 'schedule' && (
+          <RoomSchedule reservations={reservations} onSelect={setSelectedId}
+            t={{ dark, CARD, CARD2, BORDER, BORDER2, TEXT, MUTED }} />
+        )}
+        {(tab === 'bookings' || tab === 'calendar') && <ReservationBoard
+          key={tab}
+          mode={tab === 'calendar' ? 'calendar' : 'list'}
           reservations={boardReservations}
           t={{ dark, CARD, CARD2, BORDER, BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
           formatDate={formatDate}
@@ -2027,7 +2131,8 @@ export default function Reservations() {
           nights={nights}
           onSelect={setSelectedId}
           renderActions={renderActions}
-        />
+        />}
+        </FolderPanel>
       </div>
     </PageLayout>
   );

@@ -59,7 +59,8 @@ describe('unpaid online bookings', () => {
     expect(shouldAutoConfirm(pending, {}, 3000)).toBe(true);
     expect(shouldAutoConfirm(pending, { paymentType: 'booking' }, 1500)).toBe(true);
     expect(shouldAutoConfirm(pending, {}, 100)).toBe(false);
-    expect(shouldAutoConfirm({ ...pending, type: 'corporate' }, {}, 3000)).toBe(false);
+    expect(shouldAutoConfirm({ ...pending, type: 'corporate' }, {}, 3000)).toBe(true);
+    expect(shouldAutoConfirm({ ...pending, type: 'corporate', chargeToAgency: true }, {}, 3000)).toBe(false);
   });
 });
 

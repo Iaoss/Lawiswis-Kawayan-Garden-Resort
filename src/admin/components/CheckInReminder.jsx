@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, query, where } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { getResortNow } from '../../lib/bookingPricing';
 import { getUpcomingCheckIns } from '../../lib/stayTimes';

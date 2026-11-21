@@ -10,7 +10,8 @@
 // per changed document only. The connection stays open for a while after the
 // last page using it closes, so moving between pages reads nothing new.
 import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../../firebase/firebase';
+import { auth, db } from '../../firebase/firebase';
+import { isSavedList, readOfflineCopy, saveOfflineCopy } from './offlineCopy';
 
 const KEEP_ALIVE_MS = 20 * 60 * 1000;
 const feeds = new Map(); // key -> feed
@@ -20,11 +21,30 @@ function openFeed(key, makeQuery) {
   if (feed) return feed;
   feed = { key, snapshot: null, error: null, listeners: new Set(), waiters: [], stop: null, closeTimer: null, closed: false };
   feeds.set(key, feed);
-  const stop = onSnapshot(makeQuery(), snapshot => {
+  const deliver = snapshot => {
     feed.snapshot = snapshot;
     feed.error = null;
     feed.waiters.splice(0).forEach(({ resolve }) => resolve(snapshot));
     feed.listeners.forEach(listener => listener.onNext(snapshot));
+  };
+  // No internet: show the copy saved on this computer (see offlineCopy.js).
+  const loadSavedCopy = async fallback => {
+    await auth?.authStateReady?.();
+    const copy = await readOfflineCopy(auth?.currentUser?.uid, key);
+    if (feed.closed || feed.hasServerData) return;
+    if (copy) deliver(copy);
+    else if (fallback) deliver(fallback);
+  };
+  const stop = onSnapshot(makeQuery(), snapshot => {
+    if (!snapshot.metadata?.fromCache) {
+      feed.hasServerData = true;
+      saveOfflineCopy(auth?.currentUser?.uid, key, snapshot);
+    } else if (snapshot.empty && isSavedList(key) && !feed.hasServerData) {
+      // Firestore's "nothing yet" while offline must not blank the list.
+      loadSavedCopy(snapshot);
+      return;
+    }
+    deliver(snapshot);
   }, error => {
     feed.error = error;
     feed.waiters.splice(0).forEach(({ reject }) => reject(error));
@@ -34,6 +54,7 @@ function openFeed(key, makeQuery) {
   });
   // The listener may have failed (and closed the feed) before returning.
   if (feed.closed) stop(); else feed.stop = stop;
+  if (!feed.closed && isSavedList(key) && typeof navigator !== 'undefined' && navigator.onLine === false) loadSavedCopy(null);
   return feed;
 }
 

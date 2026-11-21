@@ -8,21 +8,25 @@
 //     without a check-in are cancelled as no-shows (the policy fee applies);
 //   - unpaid online bookings whose room hold ran out a day ago or more are
 //     cancelled ("not paid in time");
-//   - a backup of the data is emailed to the resort's Gmail.
+//   - a backup of the data (restorable .json.gz file + readable PDF report)
+//     is emailed to the resort's Gmail.
 //
 // Vercel calls this with the CRON_SECRET password (set it in the Vercel
 // project's environment variables).
 import zlib from 'zlib';
+import crypto from 'crypto';
 import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendArrivalReminderEmail, sendBackupEmail } from '../lib/email';
 import { cancelBooking, canMarkNoShow } from '../lib/cancelBooking';
 import { logActivity } from '../lib/activityLog';
 import { getHoldExpiresMs } from '../src/lib/unpaidBookings';
 import { isPromoExpired } from '../lib/promoPolicy';
+import { ID_PHOTO_COLLECTION } from '../src/lib/discountReview';
+import { BACKUP_FORMAT, readBackupData } from '../lib/backupData';
+import { backupIdFor, buildBackupPdf } from '../lib/backupReport';
 
 const MANILA_OFFSET_MS = 8 * 60 * 60 * 1000;
 const SYSTEM = { uid: 'system', name: 'Automatic daily check', email: '', role: 'system' };
-const BACKUP_COLLECTIONS = ['reservations', 'payments', 'rooms', 'users', 'settings', 'feedback', 'contacts', 'promoCodes', 'news', 'newsletterSubscribers'];
 
 const manilaKey = (offsetDays = 0) => {
   const date = new Date(Date.now() + MANILA_OFFSET_MS);
@@ -91,26 +95,38 @@ async function closeMissedBookings() {
 }
 
 // Firestore values (Timestamps, etc.) as plain JSON.
-const toPlain = value => {
-  if (value === null || value === undefined) return null;
-  if (typeof value.toDate === 'function') return value.toDate().toISOString();
-  if (Array.isArray(value)) return value.map(toPlain);
-  if (typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, toPlain(item)]));
-  return value;
-};
-
 async function emailBackup() {
-  const data = {};
-  const counts = {};
-  for (const name of BACKUP_COLLECTIONS) {
-    const snapshot = await adminDb.collection(name).get();
-    data[name] = snapshot.docs.map(doc => ({ id: doc.id, ...toPlain(doc.data()) }));
-    counts[name] = snapshot.size;
-  }
+  const createdAt = new Date();
   const dateLabel = manilaKey(0);
-  const content = zlib.gzipSync(Buffer.from(JSON.stringify({ exportedAt: new Date().toISOString(), data })));
-  await sendBackupEmail({ filename: `lawiswis-backup-${dateLabel}.json.gz`, content, counts, dateLabel });
-  return { sizeKb: Math.round(content.length / 1024), counts };
+  const { data, counts, failed } = await readBackupData(adminDb);
+  const projectId = process.env.FIREBASE_PROJECT_ID || '';
+  const content = zlib.gzipSync(Buffer.from(JSON.stringify({
+    format: BACKUP_FORMAT,
+    exportedAt: createdAt.toISOString(),
+    backupDate: dateLabel,
+    projectId,
+    counts,
+    failed,
+    data,
+  })));
+  const sha256 = crypto.createHash('sha256').update(content).digest('hex');
+  const dataFile = { name: `lawiswis-backup-${dateLabel}.json.gz`, sizeBytes: content.length, sha256 };
+  const pdf = Buffer.from(await buildBackupPdf({ data, counts, failed, createdAt, dateLabel, dataFile, projectId }));
+  const backupId = backupIdFor(dateLabel, sha256);
+  await sendBackupEmail({ backupId, dateLabel, createdAt, counts, failed, dataFile: { ...dataFile, content }, pdf: { name: `lawiswis-backup-${dateLabel}.pdf`, content: pdf } });
+  return { backupId, sizeKb: Math.round(content.length / 1024), pdfKb: Math.round(pdf.length / 1024), counts, failed: failed.map(item => item.name) };
+}
+
+// ID photos are deleted when staff decide. Any left behind (for example the
+// guest never finished, or the booking was cancelled) go after 14 days.
+async function deleteOldDiscountIds() {
+  const cutoff = new Date(Date.now() - 14 * 86400000);
+  const snapshot = await adminDb.collection(ID_PHOTO_COLLECTION).where('createdAt', '<', cutoff).limit(200).get();
+  if (snapshot.empty) return { deleted: 0 };
+  const batch = adminDb.batch();
+  snapshot.docs.forEach(document => batch.delete(document.ref));
+  await batch.commit();
+  return { deleted: snapshot.size };
 }
 
 // Promo codes past their end date are switched off (Promo Codes shows them
@@ -149,7 +165,7 @@ export default async function handler(req, res) {
   const morning = manilaHour < 12;
   const report = {};
   // Each job runs on its own, so one failing doesn't stop the others.
-  const jobs = [['reminders', sendReminders], ['expiredPromos', deactivateExpiredPromos]];
+  const jobs = [['reminders', sendReminders], ['expiredPromos', deactivateExpiredPromos], ['oldDiscountIds', deleteOldDiscountIds]];
   if (morning) jobs.push(['missedBookings', closeMissedBookings], ['backup', emailBackup]);
   for (const [name, job] of jobs) {
     try {

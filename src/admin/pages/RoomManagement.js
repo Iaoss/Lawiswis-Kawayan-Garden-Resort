@@ -1,3 +1,5 @@
+import PillTabs from '../components/PillTabs';
+import RoomBookingsList from '../components/RoomBookingsList';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
@@ -304,6 +306,37 @@ export default function RoomManagement() {
     logStaffActivity('room_status_changed', `Marked Room ${room.roomNumber} as available (was ${room.status})`);
     fetchRooms();
   };
+  // Button text for a room that isn't ready: cleaning vs. repairs.
+  const readyLabel = status => (status === 'maintenance' ? 'Maintenance done' : 'Mark as cleaned');
+
+  // ── Select several rooms and change them together ──
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState('');
+  const toggleSelected = id => setSelectedIds(list => (list.includes(id) ? list.filter(item => item !== id) : [...list, id]));
+  const exitSelect = () => { setSelectMode(false); setSelectedIds([]); setBulkMessage(''); };
+  const bulkSetStatus = async status => {
+    const chosen = rooms.filter(room => selectedIds.includes(room.id));
+    // A room with a guest in it stays Occupied; check-out frees it.
+    const targets = chosen.filter(room => room.status !== 'occupied' && (room.status === 'vacant' ? 'available' : room.status) !== status);
+    const skipped = chosen.filter(room => room.status === 'occupied').length;
+    if (!targets.length) { setBulkMessage(skipped ? 'Occupied rooms can\'t be changed here. Check the guest out first.' : 'The selected rooms already have that status.'); return; }
+    setBulkBusy(true);
+    setBulkMessage('');
+    try {
+      await Promise.all(targets.map(room => updateDoc(doc(db, 'rooms', room.id), { status })));
+      logStaffActivity('room_status_changed', `Set ${targets.length} room${targets.length === 1 ? '' : 's'} to ${badgeLabel(status)}: ${targets.map(room => room.roomNumber).join(', ')}`.slice(0, 300));
+      setBulkMessage(`${targets.length} room${targets.length === 1 ? '' : 's'} set to ${badgeLabel(status)}.${skipped ? ` ${skipped} occupied room${skipped === 1 ? ' was' : 's were'} left as is.` : ''}`);
+      setSelectedIds([]);
+      fetchRooms();
+    } catch (error) {
+      console.error('Could not change the rooms:', error);
+      setBulkMessage('Some rooms could not be changed. Please try again.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   // ── Filters, tabs, sorting ──
   const isAvailable = (r) => ['vacant', 'available'].includes(r.status);
@@ -364,10 +397,11 @@ export default function RoomManagement() {
 
     return (
       <motion.div key={room.id} custom={i} variants={roomCardVariants} initial="hidden" animate="visible"
-        onClick={() => setOpenId(room.id)}
+        onClick={() => (selectMode ? toggleSelected(room.id) : setOpenId(room.id))}
+        aria-pressed={selectMode ? selectedIds.includes(room.id) : undefined}
         style={{
           background: CARD, borderRadius: 16, padding: 10, cursor: 'pointer',
-          border: open ? `2px solid ${LIME}` : `1px solid ${BORDER}`,
+          border: open || (selectMode && selectedIds.includes(room.id)) ? `2px solid ${LIME}` : `1px solid ${BORDER}`,
           transition: 'box-shadow .3s, border-color .3s',
         }}>
         {/* Photo with status pill + ⋯ menu */}
@@ -377,6 +411,13 @@ export default function RoomManagement() {
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           {!photoUrl && <i className="ti ti-bed" style={{ fontSize: 44, color: dark ? LIME : '#4a7c59' }} />}
+          {selectMode && (
+            <span aria-hidden="true" style={{ position: 'absolute', inset: 0, background: selectedIds.includes(room.id) ? 'rgba(156,181,111,0.35)' : 'rgba(0,0,0,0.08)', display: 'grid', placeItems: 'center' }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: selectedIds.includes(room.id) ? LIME : 'rgba(255,255,255,0.92)', border: `2px solid ${selectedIds.includes(room.id) ? LIME : '#d1d5db'}`, display: 'grid', placeItems: 'center', color: DARK, fontSize: 20 }}>
+                {selectedIds.includes(room.id) && <i className="ti ti-check" />}
+              </span>
+            </span>
+          )}
           <span style={{ position: 'absolute', top: 10, left: 10, background: pill, color: '#fff', padding: '3px 10px 3px 8px', borderRadius: 6, fontSize: 10, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <StatusDot pulse={PULSING_STATUSES.has(room.status)} />{badgeLabel(room.status)}
           </span>
@@ -499,6 +540,8 @@ export default function RoomManagement() {
               </div>
             )}
 
+            <RoomBookingsList room={room} colors={{ TEXT, MUTED: SUBTEXT, BORDER, CARD2: HOVER }} />
+
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingBottom: 6, alignItems: 'center' }}>
               <select
                 aria-label={`Status of Room ${room.roomNumber}`}
@@ -514,7 +557,7 @@ export default function RoomManagement() {
               {['cleaning', 'maintenance'].includes(room.status) && (
                 <button type="button" onClick={() => markCleaned(room)}
                   style={{ padding: '7px 14px', background: LIME, border: 'none', borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', color: DARK }}>
-                  Mark as Cleaned
+                  {readyLabel(room.status)}
                 </button>
               )}
               {!isReceptionist && (
@@ -726,20 +769,8 @@ export default function RoomManagement() {
         {/* ── Toolbar: status tabs, search, type, sort, actions ── */}
         <motion.div variants={headerVariants} initial="hidden" animate="visible"
           style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap', background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14, padding: 10 }}>
-          <div role="tablist" aria-label="Room status" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {statusTabs.map(tab => {
-              const active = statusFilter === tab.value;
-              return (
-                <button key={tab.label} type="button" role="tab" aria-selected={active} onClick={() => setStatusFilter(tab.value)}
-                  style={{
-                    padding: '7px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', height: 36,
-                    border: `1px solid ${active ? LIME : BORDER}`, background: active ? LIME : INPUT_BG, color: active ? DARK : SUBTEXT,
-                  }}>
-                  {tab.label} <span style={{ opacity: 0.7 }}>({tab.count})</span>
-                </button>
-              );
-            })}
-          </div>
+          <PillTabs variant="pill" t={{ CARD, CARD2: INPUT_BG, BORDER, TEXT, MUTED: SUBTEXT, ACCENT: LIME, ACCENT_TEXT: DARK }} size="sm" label="Room status" value={statusFilter} onChange={setStatusFilter}
+            items={statusTabs.map(tab => ({ id: tab.value, label: `${tab.label} (${tab.count})` }))} />
 
           <div style={{ position: 'relative', flex: 1, minWidth: 160 }}>
             <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: MUTED }} />
@@ -758,6 +789,15 @@ export default function RoomManagement() {
             <option value="price-desc">Price: high to low</option>
           </select>
 
+          <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} type="button"
+            onClick={() => (selectMode ? exitSelect() : setSelectMode(true))} aria-pressed={selectMode}
+            style={{
+              padding: '7px 14px', border: `1px solid ${selectMode ? LIME : BORDER}`, borderRadius: 10,
+              background: selectMode ? 'rgba(200,240,110,0.12)' : INPUT_BG, color: selectMode ? (dark ? LIME : '#3f6212') : SUBTEXT,
+              fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 5, height: 36,
+            }}>
+            <i className="ti ti-checkbox" style={{ fontSize: 14 }} />{selectMode ? 'Done selecting' : 'Select rooms'}
+          </motion.button>
           {!isReceptionist && (
             <>
               <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
@@ -778,6 +818,38 @@ export default function RoomManagement() {
           )}
         </motion.div>
 
+        {/* ── Several rooms at once ── */}
+        {selectMode && (
+          <div role="region" aria-label="Change selected rooms"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14, background: CARD, border: `1px solid ${LIME}`, borderRadius: 14, padding: '10px 12px', fontSize: 12, color: TEXT }}>
+            <strong>{selectedIds.length} selected</strong>
+            <button type="button" onClick={() => setSelectedIds(sorted.map(room => room.id))}
+              style={{ border: `1px solid ${BORDER}`, background: INPUT_BG, color: TEXT, borderRadius: 8, padding: '6px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Select all shown ({sorted.length})
+            </button>
+            {selectedIds.length > 0 && (
+              <button type="button" onClick={() => setSelectedIds([])}
+                style={{ border: `1px solid ${BORDER}`, background: 'transparent', color: SUBTEXT, borderRadius: 8, padding: '6px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Clear
+              </button>
+            )}
+            <span style={{ flex: 1 }} />
+            <button type="button" disabled={!selectedIds.length || bulkBusy} onClick={() => bulkSetStatus('available')}
+              style={{ border: 0, background: LIME, color: DARK, borderRadius: 8, padding: '7px 14px', fontSize: 11.5, fontWeight: 700, cursor: selectedIds.length ? 'pointer' : 'not-allowed', opacity: selectedIds.length && !bulkBusy ? 1 : 0.5, fontFamily: 'inherit' }}>
+              <i className="ti ti-sparkles" aria-hidden="true" /> Mark as ready (cleaned / fixed)
+            </button>
+            <button type="button" disabled={!selectedIds.length || bulkBusy} onClick={() => bulkSetStatus('cleaning')}
+              style={{ border: `1px solid ${BORDER}`, background: INPUT_BG, color: TEXT, borderRadius: 8, padding: '7px 12px', fontSize: 11.5, fontWeight: 600, cursor: selectedIds.length ? 'pointer' : 'not-allowed', opacity: selectedIds.length && !bulkBusy ? 1 : 0.5, fontFamily: 'inherit' }}>
+              Needs cleaning
+            </button>
+            <button type="button" disabled={!selectedIds.length || bulkBusy} onClick={() => bulkSetStatus('maintenance')}
+              style={{ border: `1px solid ${BORDER}`, background: INPUT_BG, color: TEXT, borderRadius: 8, padding: '7px 12px', fontSize: 11.5, fontWeight: 600, cursor: selectedIds.length ? 'pointer' : 'not-allowed', opacity: selectedIds.length && !bulkBusy ? 1 : 0.5, fontFamily: 'inherit' }}>
+              Under maintenance
+            </button>
+            {bulkMessage && <div role="status" style={{ flexBasis: '100%', fontSize: 11.5, color: SUBTEXT }}>{bulkMessage}</div>}
+          </div>
+        )}
+
         {/* ── Room grid ── */}
         {sorted.length === 0 ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ textAlign: 'center', color: MUTED, padding: '48px 0', fontSize: 13 }}>
@@ -787,7 +859,7 @@ export default function RoomManagement() {
             No rooms found.
           </motion.div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(max(240px, calc((100% - 54px) / 4)), 1fr))', gap: 18, alignItems: 'start' }}>
             {sorted.map(renderCard)}
           </div>
         )}

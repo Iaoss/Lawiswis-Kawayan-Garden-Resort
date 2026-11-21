@@ -11,6 +11,7 @@ import { GUEST_REPLY_LABELS, isUnpaidOnlineBooking } from '../../lib/unpaidBooki
 import { agencyDueText, agencyPaymentDue, formatTermsLength, isAgencyBilled, paymentTermsOf } from '../../lib/agencyBilling';
 import { formatManilaTime, getCheckoutDue, getOutstandingBalance, getOverstay } from '../../lib/reservationStatus';
 import { arrivedGuestCount, bookedGuestCount, guestsStillToArrive } from '../../lib/guestArrivals';
+import { isDiscountReviewQueued } from '../../lib/discountReview';
 
 export const NEW_BOOKING_DAYS = 7;
 export const ACTIVE_MODIFICATION_STATUSES = ['requested', 'needs_review', 'awaiting_payment', 'awaiting_refund'];
@@ -136,6 +137,20 @@ export function buildBookingNotifications(reservations, { prefix = '/admin', now
         message: `${guest} · ${r.roomNumber ? `Room ${r.roomNumber}` : ref(r.id)}`,
         details: `${arrivedGuestCount(r)} of ${bookedGuestCount(r)} here · ${waiting} still to come. Open the booking and choose Guests arrived when they come.`,
         timeMs: toMs(r.checkedInAt) || createdMs,
+        bookingId: r.id,
+        path,
+      });
+    }
+
+    // Senior / PWD IDs sent online, waiting for staff.
+    if (isDiscountReviewQueued(r)) {
+      items.push({
+        id: `discount-review_${r.id}`,
+        icon: 'ti-id',
+        badge: 'Senior / PWD ID Check',
+        message: `${guest} · ${ref(r.id)}`,
+        details: 'Check the ID in Reservations → Needs attention. The guest is waiting for a payment link.',
+        timeMs: createdMs || now,
         bookingId: r.id,
         path,
       });

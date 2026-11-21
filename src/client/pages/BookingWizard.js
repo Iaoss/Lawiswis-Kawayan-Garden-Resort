@@ -15,6 +15,7 @@ import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { closedPeriodMessage, findClosedPeriod, formatClosedRange } from '../../lib/closedDates';
 import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
 import { loadPublicRooms } from '../lib/publicRooms';
+import { roomHasStairs } from '../../lib/roomAccess';
 
 // Step-by-step start of a booking: 1 Type (personal or group), 2 When (stay
 // type, dates, guests), 3 Choose a room (only rooms free on those dates,
@@ -22,7 +23,7 @@ import { loadPublicRooms } from '../lib/publicRooms';
 // (stay details, your details, review & pay) happens on /book/:roomId.
 
 const STAYS = [
-  { id: 'overnight', name: 'Overnight stay', hint: 'Sleep over · check out another day', phoneName: 'Overnight', phoneHint: 'Sleep over' },
+  { id: 'overnight', name: 'Overnight stay', hint: 'Multi-day accommodation with overnight lodging', phoneName: 'Overnight', phoneHint: 'With lodging' },
   { id: 'day', name: 'Day tour', hint: 'Same day · 8:00 AM – 5:00 PM', phoneHint: '8 AM – 5 PM' },
   { id: 'night', name: 'Night tour', hint: 'Same day · 5:00 PM – 10:00 PM', phoneHint: '5 – 10 PM' },
 ];
@@ -66,6 +67,9 @@ export default function BookingWizard() {
   const [adults, setAdults] = useState(() => Math.max(1, Number(params.get('adults')) || 2));
   const [children, setChildren] = useState(() => Math.max(0, Number(params.get('children')) || 0));
   const [whenError, setWhenError] = useState('');
+  // A senior or guest with limited mobility: rooms with stairs are left out.
+  const [stepFree, setStepFree] = useState(() => params.get('access') === '1');
+  const [showStairRooms, setShowStairRooms] = useState(false);
 
   const [rooms, setRooms] = useState([]);
   const [roomsLoading, setRoomsLoading] = useState(true);
@@ -111,8 +115,9 @@ export default function BookingWizard() {
     next.set('adults', String(adults));
     next.set('children', String(children));
     if (step === 2) next.set('step', 'room');
+    if (stepFree) next.set('access', '1');
     if (next.toString() !== params.toString()) setParams(next, { replace: true });
-  }, [step, stay, checkIn, checkOut, adults, children, isTour, presetRoomId, setParams, params, location.pathname]);
+  }, [step, stay, checkIn, checkOut, adults, children, isTour, presetRoomId, setParams, params, location.pathname, stepFree]);
 
   const presetRoom = rooms.find(room => room.id === presetRoomId) || null;
 
@@ -134,6 +139,13 @@ export default function BookingWizard() {
     if (guests > MAX_PERSONAL_GUESTS) return `For ${MIN_GROUP_GUESTS} or more guests, please use a group booking.`;
     return '';
   };
+
+  // Shown as soon as a date is entered, not only on Continue.
+  const liveWhenError = (() => {
+    if (!checkIn) return '';
+    const problem = validateWhen();
+    return problem === 'Choose your check-out date.' ? '' : problem;
+  })();
 
   const goToRooms = () => {
     const error = validateWhen();
@@ -211,15 +223,19 @@ export default function BookingWizard() {
           children: Number(children),
           checkIn,
           checkOut: stayEnd,
+          stepFree,
         },
         extraRoomIds: split.slice(1).map(item => item.roomId),
       },
     });
   };
 
+  const hideStairRooms = stepFree && !showStairRooms;
+  const stairRoomsHidden = hideStairRooms && availableIds ? rooms.filter(room => availableIds.includes(room.id) && roomHasStairs(room) && room.id !== presetRoomId).length : 0;
   const { fitting, tooSmall, partRooms = [] } = useMemo(() => {
     if (!availableIds) return { fitting: [], tooSmall: 0, partRooms: [] };
-    const free = rooms.filter(room => availableIds.includes(room.id));
+    const free = rooms.filter(room => availableIds.includes(room.id)
+      && (!hideStairRooms || !roomHasStairs(room) || room.id === presetRoomId));
     const fits = free
       .filter(room => !getGuestCountViolation(room, Number(adults), Number(children)))
       .map(room => ({ room, price: priceFor(room), kind: getRoomCapacityPolicy(room)?.label || room.groupTitle, spare: (getRoomCapacityPolicy(room)?.maxGuests || 99) - guests }))
@@ -227,7 +243,7 @@ export default function BookingWizard() {
       // Cheapest first; at the same price, the room closest to the group size.
       .sort((a, b) => a.price - b.price || a.spare - b.spare || String(a.room.title).localeCompare(String(b.room.title)));
     return { fitting: fits, tooSmall: free.length - fits.length, partRooms: free.filter(room => getGuestCountViolation(room, Number(adults), Number(children))) };
-  }, [rooms, availableIds, adults, children, stay, nights, seasonPeriods]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rooms, availableIds, adults, children, stay, nights, seasonPeriods, hideStairRooms, presetRoomId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const presetEntry = presetRoom ? fitting.find(entry => entry.room.id === presetRoom.id) : null;
   const { recommended, others } = pickRecommendedRooms(fitting.filter(entry => entry.room.id !== presetRoomId));
@@ -242,6 +258,7 @@ export default function BookingWizard() {
           children: Number(children),
           checkIn,
           checkOut: stayEnd,
+          stepFree,
         },
       },
     });
@@ -323,7 +340,7 @@ export default function BookingWizard() {
               <button type="button" onClick={() => setStep(1)} style={choice(false)}>
                 <span style={{ display: 'block', color: FOREST, font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: 10 }}>Personal booking</span>
                 <strong style={{ display: 'block', font: `500 24px ${SERIF}`, marginBottom: 6 }}>1–{MAX_PERSONAL_GUESTS} guests</strong>
-                <span style={{ color: '#6b6a5c', font: `13px/1.6 ${SANS}` }}>Overnight stay, or a day or night tour — with a room or just a cottage.</span>
+                <span style={{ color: '#6b6a5c', font: `13px/1.6 ${SANS}` }}>Overnight stay, or a day or night tour with a room or a cottage-only booking.</span>
               </button>
               <button type="button" onClick={() => navigate('/corporate-booking')} style={{ ...choice(false), background: FOREST, color: '#fff', borderColor: FOREST }}>
                 <span style={{ display: 'block', color: '#e4d4a7', font: `600 11px ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: 10 }}>Corporate / big group</span>
@@ -372,7 +389,11 @@ export default function BookingWizard() {
                 Closed (can’t be booked): {closedDates.map(item => `${formatClosedRange(item)}${item.reason ? ` (${item.reason})` : ''}`).join('; ')}
               </p>
             )}
-            {whenError && <p role="alert" style={{ color: '#b42318', font: `13px ${SANS}`, margin: '14px 0 0' }}>{whenError}</p>}
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 18, color: INK, font: `13px/1.5 ${SANS}`, cursor: 'pointer' }}>
+              <input type="checkbox" checked={stepFree} onChange={e => { setStepFree(e.target.checked); setShowStairRooms(false); }} style={{ marginTop: 3 }} />
+              <span>A senior citizen or guest with limited mobility is in our group <span style={{ color: '#6b6a5c' }}>(we will only suggest rooms without stairs)</span></span>
+            </label>
+            {(liveWhenError || whenError) && <p role="alert" style={{ color: '#b42318', font: `13px ${SANS}`, margin: '14px 0 0' }}>{liveWhenError || whenError}</p>}
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
               <button type="button" onClick={() => (presetRoomId ? navigate('/rooms') : setStep(0))} style={secondary}>← Back</button>
               <button type="button" onClick={goToRooms} disabled={!resortOpen} style={{ ...primary, opacity: resortOpen ? 1 : 0.6 }}>See available rooms →</button>
@@ -391,13 +412,24 @@ export default function BookingWizard() {
               </p>
             </div>
 
+            {stepFree && (
+              <div role="status" style={{ ...card, marginBottom: 16, padding: '12px 16px', background: CREAM, font: `13px/1.6 ${SANS}`, color: INK }}>
+                {hideStairRooms
+                  ? <>Showing rooms without stairs{stairRoomsHidden ? ` (${stairRoomsHidden} second-floor room${stairRoomsHidden === 1 ? '' : 's'} hidden)` : ''}. Rooms with no floor listed are shown; please confirm access with the resort.</>
+                  : <>All rooms are shown, including second-floor rooms with stairs.</>}
+                {' '}<button type="button" onClick={() => setShowStairRooms(value => !value)} style={{ border: 0, background: 'none', padding: 0, color: FOREST, font: `600 13px ${SANS}`, textDecoration: 'underline', cursor: 'pointer' }}>{hideStairRooms ? 'Show all rooms' : 'Hide rooms with stairs'}</button>
+              </div>
+            )}
+
             {/* No room: only for tours */}
             <button type="button" onClick={isTour ? chooseCottageOnly : undefined} disabled={!isTour}
               style={{ ...choice(false), width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, marginBottom: 18, opacity: isTour ? 1 : 0.6, cursor: isTour ? 'pointer' : 'not-allowed' }}>
               <span>
-                <strong style={{ display: 'block', font: `600 15px ${SANS}` }}>No room — just a cottage</strong>
+                <strong style={{ display: 'block', font: `600 15px ${SANS}` }}>Cottage-only booking</strong>
                 <span style={{ font: `12px/1.6 ${SANS}`, color: '#6b6a5c' }}>
-                  {isTour ? 'Swim and relax for the tour with your own cottage. Entrance per person + cottage.' : 'Only for day and night tours. Overnight stays need a room.'}
+                  {isTour
+                    ? `${stay === 'night' ? 'Night' : 'Day'} tour access with a private cottage. Room accommodation not included. Entrance is charged per person, plus the cottage rate.`
+                    : 'Available for day and night tours only. Overnight stays require a room.'}
                 </span>
               </span>
               {isTour && <span style={{ font: `600 13px ${SANS}`, color: FOREST, whiteSpace: 'nowrap' }}>See cottages →</span>}
@@ -427,7 +459,7 @@ export default function BookingWizard() {
                   <div style={{ ...card, color: '#6b6a5c' }}>
                     {partRooms.length
                       ? `No single room fits ${guests} guests. Add 2 or more rooms below and we'll split your group between them.`
-                      : `No room is free for ${guests} guest${guests === 1 ? '' : 's'} on those dates. Try other dates${isTour ? ', or book just a cottage above' : ''}.`}
+                      : `No room is free for ${guests} guest${guests === 1 ? '' : 's'} on those dates. Try other dates${isTour ? ', or choose a cottage-only booking above' : ''}.`}
                   </div>
                 ) : (
                   <>

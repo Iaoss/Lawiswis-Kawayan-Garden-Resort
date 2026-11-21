@@ -17,8 +17,12 @@ import SeniorPwdDiscountForm from '../components/SeniorPwdDiscountForm';
 import PromoCodeForm from '../components/PromoCodeForm';
 import AgencyBillingCard from '../components/AgencyBillingCard';
 import { agencyDueText, agencyPaymentDue, agencyPromiseText, agencyStatusLabel, canStayOnAgencyCredit, formatDueDate, groupBillsByAgency, hasAgencyPo, isAgencyBilled, PAY_LATER_LABEL } from '../../lib/agencyBilling';
-import { printBookingReceipt } from '../lib/printBookingReceipt';
+import { openReceiptWindow, printBookingReceipt } from '../lib/printBookingReceipt';
 import { subscribeLive } from '../lib/liveCollection';
+import { seniorPwdSummary } from '../../lib/seniorPwdGuests';
+import PillTabs, { FolderPanel } from '../components/PillTabs';
+import { useExtraFees } from '../lib/useExtraFees';
+import './billing.css';
 
 // Rooms booked together (one reservation, several rooms) share one bill.
 const billKeyOf = r => (Array.isArray(r.groupReservationIds) && r.groupReservationIds.length > 1 ? (r.groupId || r.groupReservationIds[0]) : r.id);
@@ -65,10 +69,14 @@ export default function Billing() {
   // "Pay later by agency" view (government bills grouped per agency).
   const [showAgencies, setShowAgencies] = useState(false);
   const [printingId, setPrintingId] = useState('');
+  // Which step of the bill is open: charges | payment | checkout | agency.
+  const [billTab, setBillTab] = useState('payment');
   const [sortBy, setSortBy] = useState('booked');
   const [sortDir, setSortDir] = useState('desc');
   const [selected, setSelected] = useState(null);
   const [extraCharge, setExtraCharge] = useState({ description: '', amount: '' });
+  const extraFees = useExtraFees();
+  const extraAmountRef = useRef(null);
   const [search, setSearch] = useState('');
   // Rate-card service being added (spa / photoshoot). Priced again on the server.
   const [service, setService] = useState({ serviceId: 'spa', hours: 1, persons: 5 });
@@ -169,9 +177,9 @@ export default function Billing() {
         action: 'add-charge', reservationId: selected.id, amount: Number(extraCharge.amount), description: extraCharge.description,
       });
       setExtraCharge({ description: '', amount: '' });
-      setSelected(prev => ({ ...prev, extraCharges: result.extraCharges }));
+      setSelected(prev => ({ ...prev, extraCharges: result.offline ? Number(prev.extraCharges || 0) + Number(extraCharge.amount) : result.extraCharges }));
       fetchReservations();
-      setSuccess('Extra charge added.');
+      setSuccess(result.offline ? `Extra charge: Saved on this computer (no internet). It will be sent to the system automatically when the internet is back.` : 'Extra charge added.');
     } catch (error) {
       appAlert(error.message, { title: 'Couldn’t save', tone: 'danger' });
     } finally {
@@ -226,9 +234,9 @@ export default function Billing() {
         action: 'add-service', reservationId: selected.id,
         serviceId: service.serviceId, hours: Number(service.hours), persons: Number(service.persons),
       });
-      setSelected(prev => ({ ...prev, extraCharges: result.extraCharges }));
+      if (!result.offline) setSelected(prev => ({ ...prev, extraCharges: result.extraCharges }));
       fetchReservations();
-      setSuccess(`${result.description} added (${formatCurrency(result.amount)}).`);
+      setSuccess(result.offline ? `Add-on service: Saved on this computer (no internet). It will be sent to the system automatically when the internet is back.` : `${result.description} added (${formatCurrency(result.amount)}).`);
     } catch (error) {
       appAlert(error.message, { title: 'Couldn’t save', tone: 'danger' });
     } finally {
@@ -244,6 +252,13 @@ export default function Billing() {
         action: isGroupBill ? 'record-group-payment' : 'record-payment', reservationId: selected.id, amount: Number(paymentAmount), method: deskMethod,
         officialReceiptNo: paperReceiptNo.trim(),
       });
+      if (result.offline) {
+        if (!isGroupBill) setSelected(prev => ({ ...prev, amountPaid: Number(prev.amountPaid || 0) + Number(paymentAmount) }));
+        setSuccess(`Payment of ${formatCurrency(paymentAmount)}: Saved on this computer (no internet). It will be sent to the system automatically when the internet is back.`);
+        setPaymentAmount('');
+        setPaperReceiptNo('');
+        return;
+      }
       if (!isGroupBill) setSelected(prev => ({ ...prev, amountPaid: result.amountPaid, paymentStatus: result.paymentStatus, ...(result.autoCheckedIn ? { status: 'checked-in' } : result.autoConfirmed ? { status: 'confirmed' } : {}) }));
       fetchReservations();
       setSuccess(`Payment of ${formatCurrency(paymentAmount)} recorded.${result.autoCheckedIn ? ' Fully paid: the guest is now checked in.' : result.autoConfirmed ? ' The booking is now confirmed.' : ''}${receiptNotice(result)}`);
@@ -350,17 +365,16 @@ export default function Billing() {
     if (totalBalance(selected) > 0) return appAlert('Collect the remaining balance before checking this guest out.', { title: 'Balance still due', tone: 'warning' });
     // The server re-checks the balance, records late check-outs, and sets the room to cleaning.
     // Rooms booked together check out together.
+    let savedOffline = false;
     try {
-      const token = await auth.currentUser.getIdToken();
       const leaving = isGroupBill ? billRooms.filter(room => room.status === 'checked-in') : [selected];
       for (const room of leaving) {
-        const response = await fetch('/api/reservation-status', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ action: 'set-status', reservationId: room.id, status: 'checked-out' }),
-        });
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(`${isGroupBill ? `Room ${room.roomNumber || ''}: ` : ''}${result.error || 'The guest could not be checked out.'}`);
+        try {
+          const result = await staffApi('reservation-status', { action: 'set-status', reservationId: room.id, status: 'checked-out' });
+          if (result.offline) savedOffline = true;
+        } catch (roomError) {
+          throw new Error(`${isGroupBill ? `Room ${room.roomNumber || ''}: ` : ''}${roomError.message || 'The guest could not be checked out.'}`);
+        }
       }
     } catch (checkoutError) {
       // An overstay charge may have just been added: show the new balance.
@@ -377,6 +391,11 @@ export default function Billing() {
       });
     } catch (thankYouError) {
       console.warn('Thank-you email skipped:', thankYouError.message);
+    }
+    if (savedOffline) {
+      setSelected(null);
+      setSuccess(`Check-out: Saved on this computer (no internet). It will be sent to the system automatically when the internet is back.`);
+      return;
     }
     const roomLabel = isGroupBill ? `Rooms ${billRooms.map(room => room.roomNumber).filter(Boolean).join(', ')} are` : `${selected.roomName || 'The room'} is`;
     setSelected(null);
@@ -470,13 +489,16 @@ export default function Billing() {
 
   // Paper receipt for one booking (each room of a group bill has its own).
   const printReceipt = async room => {
+    const win = openReceiptWindow();
+    if (!win) { appAlert('Allow pop-ups for this site to print the receipt.', { title: 'Pop-up blocked', tone: 'warning' }); return; }
     setPrintingId(room.id);
     try {
       const snap = await getDocs(query(collection(db, 'payments'), where('reservationId', '==', room.id)));
       const payments = snap.docs.map(d => ({ id: d.id, ...d.data() }))
         .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
-      if (!printBookingReceipt(room, payments)) appAlert('Allow pop-ups for this site to print the receipt.', { title: 'Pop-up blocked', tone: 'warning' });
+      printBookingReceipt(room, payments, win);
     } catch (error) {
+      win.close();
       appAlert(error.message || 'Payments could not be loaded.', { title: 'Couldn’t print the receipt', tone: 'danger' });
     } finally {
       setPrintingId('');
@@ -490,6 +512,25 @@ export default function Billing() {
   const billTotal = billRooms.reduce((sum, room) => sum + Number(room.totalAmount || 0) + Number(room.extraCharges || 0), 0);
   const lineItems = selected && Array.isArray(selected.extraChargeItems) ? selected.extraChargeItems : [];
   const otherExtras = selected ? Math.max(0, Number(selected.extraCharges || 0) - lineItems.reduce((s, i) => s + Number(i.amount || 0), 0)) : 0;
+
+  // Steps of the bill, shown one at a time as folder tabs.
+  const showAgencyTab = Boolean(selected) && (selected.type === 'corporate' || isAgencyBilled(selected));
+  const billTabs = [
+    { id: 'charges', label: '1 · Add charges', icon: 'ti-circle-plus', hint: 'Extra charges, services, extra guests, promo and Senior / PWD discount' },
+    { id: 'payment', label: '2 · Take payment', icon: 'ti-cash', hint: 'Record a payment at the desk or make an online payment link' },
+    { id: 'checkout', label: '3 · Check out', icon: 'ti-logout', hint: 'Check the guest out when they leave' },
+    ...(showAgencyTab ? [{ id: 'agency', label: 'Agency billing', icon: 'ti-building-bank', hint: 'Purchase Order, agency details and pay-later terms' }] : []),
+  ];
+  const folderColors = { CARD: dark ? '#111815' : '#e7ece4', CARD2: dark ? '#1b221e' : '#d6ded1', BORDER, TEXT, MUTED: SUBTEXT, ACCENT, ACCENT_TEXT };
+  // Open the step that makes sense when a guest is picked.
+  const selectedId = selected?.id;
+  const selectedStatus = selected?.status;
+  useEffect(() => {
+    if (!selectedId) return;
+    setBillTab(balance > 0 ? 'payment' : selectedStatus === 'checked-in' ? 'checkout' : 'charges');
+    // Only when another guest is chosen, not on every balance change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   return (
     <PageLayout>
@@ -681,56 +722,31 @@ export default function Billing() {
                   );
                 })()}
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, alignItems: 'start' }}>
-                  {/* The bill */}
-                  <div style={card}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: TEXT, marginBottom: 12 }}><i className="ti ti-file-invoice" aria-hidden="true" /> Bill</div>
-                    <div style={{ display: 'grid', gap: 8 }}>
-                      {isGroupBill ? billRooms.map(room => {
-                        const items = Array.isArray(room.extraChargeItems) ? room.extraChargeItems : [];
-                        const other = Math.max(0, Number(room.extraCharges || 0) - items.reduce((sum, i) => sum + Number(i.amount || 0), 0));
-                        return (
-                          <React.Fragment key={room.id}>
-                            <Receipt label={`Room ${room.roomNumber || '—'}${room.id === selected.id ? ' (room, guests, cottage)' : ''}`} value={formatCurrency(room.totalAmount)} />
-                            {items.map(item => <Receipt key={item.id || item.description} label={`  ${item.description}`} value={formatCurrency(item.amount)} />)}
-                            {other > 0.004 && <Receipt label="  Other charges" value={formatCurrency(other)} />}
-                          </React.Fragment>
-                        );
-                      }) : (
-                        <>
-                          <Receipt label={selected.cottageOnly ? 'Entrance + cottage' : 'Booking (room, guests, cottage)'} value={formatCurrency(selected.totalAmount)} />
-                          {lineItems.map(item => <Receipt key={item.id || item.description} label={item.description} value={formatCurrency(item.amount)} />)}
-                          {otherExtras > 0.004 && <Receipt label="Other charges" value={formatCurrency(otherExtras)} />}
-                        </>
-                      )}
-                      <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 8 }}>
-                        <Receipt label="Total" value={formatCurrency(billTotal)} strong />
-                      </div>
-                      <Receipt label="Paid so far" value={`− ${formatCurrency(totalPaid(selected))}`} />
-                      <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 8 }}>
-                        <Receipt label={balance > 0 ? 'Balance due' : 'Balance'} value={formatCurrency(Math.max(0, balance))} strong />
-                      </div>
-                      {(() => {
-                        const vat = getVatBreakdown(billTotal);
-                        return <div style={{ fontSize: 11, color: MUTED }}>Prices include 12% VAT ({formatCurrency(vat.vat)}); net of VAT {formatCurrency(vat.net)}.</div>;
-                      })()}
-                    </div>
-                  </div>
-
-                  {(selected.type === 'corporate' || isAgencyBilled(selected)) && (
-                    <AgencyBillingCard reservation={selected} balance={balance} onSaved={text => { setSuccess(text); fetchReservations(); }}
-                      t={{ card, inp, btn, TEXT, SUBTEXT, GREEN, RED, ACCENT_LINK: dark ? '#bef264' : '#2f6b3a' }} />
-                  )}
-
-                  {/* 1 · Add to the bill */}
+                <div className="billing-work">
+                  <div className="billing-main">
+                    <PillTabs label="Bill steps" t={folderColors} value={billTab} onChange={setBillTab} items={billTabs} />
+                    <FolderPanel t={folderColors} key={billTab} className="lk-enter-soft" style={{ display: 'grid', gap: 14 }}>
+                      {billTab === 'charges' && (<>
+{/* 1 · Add to the bill */}
                   <div style={card}>
                     {stepTitle(1, 'Add to the bill', isGroupBill ? `Anything the guest used during the stay. Added to Room ${selected.roomNumber || ''}'s line.` : 'Anything the guest used during the stay.')}
                     <div style={{ display: 'grid', gap: 8 }}>
-                      <label style={{ fontSize: 11, fontWeight: 600, color: SUBTEXT }}>Extra charge</label>
+                      <label htmlFor="common-fee" style={{ fontSize: 11, fontWeight: 600, color: SUBTEXT }}>Common fee (damage, loss, extra cleaning)</label>
+                      <select id="common-fee" value="" style={{ ...inp, width: '100%' }}
+                        onChange={e => {
+                          const fee = extraFees.find(item => item.id === e.target.value);
+                          if (!fee) return;
+                          setExtraCharge({ description: fee.label, amount: fee.amount ? String(fee.amount) : '' });
+                          if (!fee.amount) setTimeout(() => extraAmountRef.current?.focus(), 0);
+                        }}>
+                        <option value="">Pick a fee to fill in the charge…</option>
+                        {extraFees.map(fee => <option key={fee.id} value={fee.id}>{fee.label}{fee.amount ? ` · ${formatCurrency(fee.amount)}` : ''}</option>)}
+                      </select>
+                      <label style={{ fontSize: 11, fontWeight: 600, color: SUBTEXT, marginTop: 4 }}>Extra charge</label>
                       <div style={{ display: 'flex', gap: 8 }}>
                         <input value={extraCharge.description} onChange={e => setExtraCharge({ ...extraCharge, description: e.target.value })}
                           placeholder="e.g. Food, laundry, damage" style={{ ...inp, flex: 1, minWidth: 0 }} />
-                        <input type="number" value={extraCharge.amount} onChange={e => setExtraCharge({ ...extraCharge, amount: e.target.value })}
+                        <input ref={extraAmountRef} type="number" aria-label="Charge amount" value={extraCharge.amount} onChange={e => setExtraCharge({ ...extraCharge, amount: e.target.value })}
                           placeholder="₱" style={{ ...inp, width: 90 }} />
                         <button type="button" onClick={handleAddExtra} disabled={billingBusy || !extraCharge.description || !extraCharge.amount} style={{ ...btn(), opacity: !extraCharge.description || !extraCharge.amount ? 0.6 : 1 }}>Add</button>
                       </div>
@@ -789,6 +805,11 @@ export default function Billing() {
                         setSuccess(`Promo ${result.code} (${result.label}): −${formatCurrency(result.discount)}.`);
                       }}
                     />
+                    {seniorPwdSummary(selected) && (
+                      <div style={{ fontSize: 12, fontWeight: 600, color: seniorPwdSummary(selected).toCheck ? RED : GREEN, margin: '0 0 8px' }}>
+                        <i className="ti ti-wheelchair" aria-hidden="true" /> Guest said: {seniorPwdSummary(selected).text}
+                      </div>
+                    )}
                     <SeniorPwdDiscountForm
                       reservation={selected}
                       colors={{ TEXT, SUBTEXT, MUTED, BORDER, RED }}
@@ -799,9 +820,9 @@ export default function Billing() {
                       }}
                     />
                   </div>
-                </div>
-
-                {/* 2 · Take payment */}
+                      </>)}
+                      {billTab === 'payment' && (<>
+{/* 2 · Take payment */}
                 <div style={card}>
                   {stepTitle(2, 'Take payment', balance > 0
                     ? (['pending', 'confirmed'].includes(selected.status) ? 'Paying the full balance on the stay date checks the guest in automatically.' : 'Collect what the guest still owes.')
@@ -873,8 +894,9 @@ export default function Billing() {
                     </div>
                   </div>
                 </div>
-
-                {/* 3 · Check out */}
+                      </>)}
+                      {billTab === 'checkout' && (<>
+{/* 3 · Check out */}
                 <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                   <div>
                     {stepTitle(3, isGroupBill ? 'Check out all rooms' : 'Check out', selected.status === 'checked-in'
@@ -893,6 +915,52 @@ export default function Billing() {
                     style={{ ...btn('primary'), padding: '11px 20px', opacity: selected.status !== 'checked-in' || checkoutBlocked ? 0.5 : 1, cursor: selected.status !== 'checked-in' || checkoutBlocked ? 'not-allowed' : 'pointer' }}>
                     <i className="ti ti-logout" aria-hidden="true" /> Check out guest
                   </button>
+                </div>
+                      </>)}
+                      {billTab === 'agency' && (<>
+{(selected.type === 'corporate' || isAgencyBilled(selected)) && (
+                    <AgencyBillingCard reservation={selected} balance={balance} onSaved={text => { setSuccess(text); fetchReservations(); }}
+                      t={{ card, inp, btn, TEXT, SUBTEXT, GREEN, RED, ACCENT_LINK: dark ? '#bef264' : '#2f6b3a' }} />
+                  )}
+                      </>)}
+                    </FolderPanel>
+                  </div>
+                  <aside className="billing-side" aria-label="The bill">
+{/* The bill */}
+                  <div style={card}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: TEXT, marginBottom: 12 }}><i className="ti ti-file-invoice" aria-hidden="true" /> Bill</div>
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {isGroupBill ? billRooms.map(room => {
+                        const items = Array.isArray(room.extraChargeItems) ? room.extraChargeItems : [];
+                        const other = Math.max(0, Number(room.extraCharges || 0) - items.reduce((sum, i) => sum + Number(i.amount || 0), 0));
+                        return (
+                          <React.Fragment key={room.id}>
+                            <Receipt label={`Room ${room.roomNumber || '—'}${room.id === selected.id ? ' (room, guests, cottage)' : ''}`} value={formatCurrency(room.totalAmount)} />
+                            {items.map(item => <Receipt key={item.id || item.description} label={`  ${item.description}`} value={formatCurrency(item.amount)} />)}
+                            {other > 0.004 && <Receipt label="  Other charges" value={formatCurrency(other)} />}
+                          </React.Fragment>
+                        );
+                      }) : (
+                        <>
+                          <Receipt label={selected.cottageOnly ? 'Entrance + cottage' : 'Booking (room, guests, cottage)'} value={formatCurrency(selected.totalAmount)} />
+                          {lineItems.map(item => <Receipt key={item.id || item.description} label={item.description} value={formatCurrency(item.amount)} />)}
+                          {otherExtras > 0.004 && <Receipt label="Other charges" value={formatCurrency(otherExtras)} />}
+                        </>
+                      )}
+                      <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 8 }}>
+                        <Receipt label="Total" value={formatCurrency(billTotal)} strong />
+                      </div>
+                      <Receipt label="Paid so far" value={`− ${formatCurrency(totalPaid(selected))}`} />
+                      <div style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 8 }}>
+                        <Receipt label={balance > 0 ? 'Balance due' : 'Balance'} value={formatCurrency(Math.max(0, balance))} strong />
+                      </div>
+                      {(() => {
+                        const vat = getVatBreakdown(billTotal);
+                        return <div style={{ fontSize: 11, color: MUTED }}>Prices include 12% VAT ({formatCurrency(vat.vat)}); net of VAT {formatCurrency(vat.net)}.</div>;
+                      })()}
+                    </div>
+                  </div>
+                  </aside>
                 </div>
               </div>
             )}

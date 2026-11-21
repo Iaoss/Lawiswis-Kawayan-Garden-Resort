@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { auth, db } from '../../firebase/firebase';
-import { DEFAULT_COTTAGES, getCottageCatalogError, normalizeCottageCatalog } from '../../lib/bookingPricing';
+import { DEFAULT_COTTAGES, cottageImage, getCottageCatalogError, normalizeCottageCatalog } from '../../lib/bookingPricing';
+import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
+import { uploadImage } from '../lib/uploadImage';
 import { applySavedCottageCatalog } from '../../lib/useCottageCatalog';
 import { logStaffActivity } from '../lib/activityLog';
 import { appConfirm } from '../../components/ui/app-dialog';
@@ -26,6 +28,7 @@ export default function CottageInventoryManager({ t }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
   const [dirty, setDirty] = useState(false);
+  const [uploadingId, setUploadingId] = useState('');
 
   useEffect(() => {
     Promise.all([
@@ -45,6 +48,21 @@ export default function CottageInventoryManager({ t }) {
     setRows(list => list.map(r => (r.id === id ? { ...r, [field]: value } : r)));
     setDirty(true);
     setMessage(null);
+  };
+
+  // Uploads a new photo for one cottage (saved with the other changes).
+  const pickPhoto = async (row, file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setMessage({ type: 'error', text: 'Choose a photo (JPG or PNG).' }); return; }
+    setUploadingId(row.id);
+    try {
+      update(row.id, 'image', await uploadImage(file, 'room'));
+      setMessage({ type: 'ok', text: `Photo added for ${row.name || 'the new cottage'}. Click Save to keep it.` });
+    } catch (error) {
+      setMessage({ type: 'error', text: error.message || 'The photo could not be uploaded.' });
+    } finally {
+      setUploadingId('');
+    }
   };
 
   const add = () => {
@@ -80,7 +98,7 @@ export default function CottageInventoryManager({ t }) {
         taken.add(id);
         return { ...r, id, isNew: false };
       });
-      const cottages = finalRows.map(r => ({ id: r.id, name: r.name.trim(), maxGuests: Number(r.maxGuests), price: Number(r.price), archived: Boolean(r.archived) }));
+      const cottages = finalRows.map(r => ({ id: r.id, name: r.name.trim(), maxGuests: Number(r.maxGuests), price: Number(r.price), archived: Boolean(r.archived), image: r.image || '' }));
       await setDoc(doc(db, 'settings', 'cottageTypes'), { cottages, updatedAt: serverTimestamp(), updatedBy: auth.currentUser?.email || '' });
       applySavedCottageCatalog(cottages);
 
@@ -110,7 +128,7 @@ export default function CottageInventoryManager({ t }) {
   const head = { fontSize: 10.5, fontWeight: 700, color: t.MUTED, textTransform: 'uppercase', letterSpacing: '.05em' };
   const active = rows?.filter(r => !r.archived) || [];
   const archived = rows?.filter(r => r.archived) || [];
-  const cols = 'minmax(140px, 2fr) minmax(80px, 1fr) minmax(90px, 1fr) minmax(90px, 1fr) 70px';
+  const cols = 'minmax(140px, 2fr) minmax(80px, 1fr) minmax(90px, 1fr) minmax(90px, 1fr) 150px 70px';
 
   return (
     <div style={{ borderTop: `1px solid ${t.BORDER}`, paddingTop: 14, marginTop: 4 }}>
@@ -121,13 +139,27 @@ export default function CottageInventoryManager({ t }) {
       {!rows ? <div style={{ color: t.MUTED, fontSize: 12 }}>Loading…</div> : (
         <>
           <div className="keep-columns" style={{ display: 'grid', gridTemplateColumns: cols, gap: 8, alignItems: 'center', overflowX: 'auto' }}>
-            <span style={head}>Name</span><span style={head}>Up to guests</span><span style={head}>Price (₱)</span><span style={head}>How many</span><span />
+            <span style={head}>Name</span><span style={head}>Up to guests</span><span style={head}>Price (₱)</span><span style={head}>How many</span><span style={head}>Photo</span><span />
             {active.map(row => (
               <React.Fragment key={row.id}>
                 <input aria-label="Cottage name" value={row.name} maxLength={40} placeholder="e.g. Bamboo Kubo" onChange={e => update(row.id, 'name', e.target.value)} style={input} />
                 <input aria-label="Up to guests" type="number" min="1" max="200" value={row.maxGuests} onChange={e => update(row.id, 'maxGuests', e.target.value)} style={input} />
                 <input aria-label="Price" type="number" min="1" max="100000" value={row.price} onChange={e => update(row.id, 'price', e.target.value)} style={input} />
                 <input aria-label="How many" type="number" min="0" max="100" placeholder="No limit" value={row.count} onChange={e => update(row.id, 'count', e.target.value)} style={input} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {cottageImage(row)
+                    ? <img src={optimizeImage(cottageImage(row), IMAGE_WIDTHS.thumb)} alt="" style={{ width: 44, height: 33, objectFit: 'cover', borderRadius: 6, flex: '0 0 auto' }} />
+                    : <span style={{ width: 44, height: 33, borderRadius: 6, background: t.CARD2, border: `1px dashed ${t.BORDER}`, flex: '0 0 auto' }} title="No photo yet" />}
+                  <label style={{ border: `1px solid ${t.BORDER}`, borderRadius: 8, padding: '6px 8px', fontSize: 11.5, fontWeight: 600, color: t.TEXT, cursor: uploadingId ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+                    {uploadingId === row.id ? 'Uploading...' : cottageImage(row) ? 'Change' : 'Add photo'}
+                    <input type="file" accept="image/*" hidden disabled={Boolean(uploadingId)} aria-label={`Photo for ${row.name || 'cottage'}`}
+                      onChange={e => { pickPhoto(row, e.target.files?.[0]); e.target.value = ''; }} />
+                  </label>
+                  {row.image && (
+                    <button type="button" title="Remove the uploaded photo" aria-label="Remove the uploaded photo" onClick={() => update(row.id, 'image', '')}
+                      style={{ border: 'none', background: 'transparent', color: t.MUTED, cursor: 'pointer', fontSize: 14, padding: 2 }}>×</button>
+                  )}
+                </div>
                 <button type="button" onClick={() => remove(row)} style={{ border: `1px solid ${t.BORDER}`, background: 'transparent', color: '#dc2626', borderRadius: 8, padding: '7px 8px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Remove</button>
               </React.Fragment>
             ))}
@@ -151,7 +183,7 @@ export default function CottageInventoryManager({ t }) {
 
           {message && <div role={message.type === 'error' ? 'alert' : 'status'} style={{ color: message.type === 'error' ? '#b91c1c' : '#15803d', fontSize: 12, marginTop: 10 }}>{message.text}</div>}
           <div style={{ fontSize: 11.5, color: t.MUTED, marginTop: 10 }}>Price changes apply to new bookings. Existing bookings keep the price they were booked at.</div>
-          <button type="button" onClick={save} disabled={saving || !dirty}
+          <button type="button" onClick={save} disabled={saving || !dirty || Boolean(uploadingId)}
             style={{ margin: '12px 0 16px', padding: '9px 16px', border: 0, borderRadius: 9, background: t.ACCENT, color: t.ACCENT_TEXT, fontSize: 12, fontWeight: 700, cursor: saving ? 'wait' : 'pointer', opacity: saving || !dirty ? 0.6 : 1 }}>
             {saving ? 'Saving…' : 'Save cottages'}
           </button>
