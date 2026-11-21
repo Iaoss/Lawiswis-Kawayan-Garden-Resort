@@ -1621,6 +1621,8 @@ export default function Reservations() {
             ))]] : []),
             ['Booking Type', BOOKING_OPTIONS.find(option => option.id === getBookingOptionId(s))?.label || '—'],
             ['Booked by', bookedByText(s)],
+            // When the booking was made (Philippine time).
+            ['Booked on', formatStayDateTime(s.createdAt) || '—'],
             ...(s.confirmedByName ? [['Confirmed by', staffLabel(s.confirmedByName, s.confirmedByRole)]] : []),
             ...(s.checkedInByName ? [['Checked in by', staffLabel(s.checkedInByName, s.checkedInByRole)]] : []),
             ...(s.checkedOutByName ? [['Checked out by', staffLabel(s.checkedOutByName, s.checkedOutByRole)]] : []),
@@ -1662,6 +1664,9 @@ export default function Reservations() {
                   <div>
                     <h2 id="reservation-details-title" style={{ color: TEXT, fontSize: '18px', margin: 0 }}>{s.guestName || 'Guest'}</h2>
                     <div style={{ color: ACCENT, fontSize: '12px', marginTop: '3px' }}>Booking ID: {s.id.slice(0, 8).toUpperCase()}</div>
+                    {formatStayDateTime(s.createdAt) && (
+                      <div style={{ color: MUTED, fontSize: '11.5px', marginTop: '2px' }}>Booked on {formatStayDateTime(s.createdAt)}</div>
+                    )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <span style={{ background: sb.bg, color: sb.color, padding: '4px 12px', borderRadius: '20px', fontSize: '10px', fontWeight: 600, textTransform: 'capitalize' }}>{s.status}</span>
@@ -1679,7 +1684,7 @@ export default function Reservations() {
                   const SECTIONS = [
                     ['Guest', ['Phone Number', 'Email Address', 'Preferred Contact Method', 'Facebook Profile', 'Senior citizen / PWD']],
                     ['Payment', ['Total Amount', 'Amount Paid', 'Balance Due', 'Payment Status', 'Payment Method']],
-                    ['Handled by', ['Booked by', 'Confirmed by', 'Checked in by', 'Checked out by', 'Cancelled by']],
+                    ['Handled by', ['Booked by', 'Booked on', 'Confirmed by', 'Checked in by', 'Checked out by', 'Cancelled by']],
                   ];
                   const EMPTY = ['none', 'no', 'not provided', '—', ''];
                   // Room and duration are in the summary tiles above.
