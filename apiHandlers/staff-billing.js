@@ -1118,6 +1118,43 @@ async function getPhoneDisplay({ staff }) {
 // Staff add another room to an existing booking (more guests coming).
 // The new room is a linked booking on the same dates, with its own price
 // and balance; Billing can take one payment for all the rooms.
+// Adds a new booking for a returning guest to one of their existing bookings,
+// so both are billed and paid together (one bill in Billing). Each keeps its
+// own room, dates, price and status. Both must be the same guest (mobile,
+// email or name) and still active.
+const ACTIVE_FOR_LINK = ['pending', 'confirmed', 'checked-in'];
+const guestDigits = value => String(value || '').replace(/\D/g, '').slice(-10);
+function sameGuest(a, b) {
+  if (guestDigits(a.phone).length === 10 && guestDigits(a.phone) === guestDigits(b.phone)) return true;
+  const email = value => String(value || '').trim().toLowerCase();
+  if (email(a.email) && email(a.email) === email(b.email)) return true;
+  const name = value => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return Boolean(name(a.guestName)) && name(a.guestName) === name(b.guestName);
+}
+
+export async function linkToBooking({ reservationId, targetId }) {
+  if (typeof reservationId !== 'string' || typeof targetId !== 'string' || !reservationId || !targetId || reservationId === targetId) {
+    throw new BillingError(400, 'Choose the booking to add this stay to.');
+  }
+  return adminDb.runTransaction(async transaction => {
+    const { reservation: added } = await getReservation(transaction, reservationId);
+    const { reservation: target } = await getReservation(transaction, targetId);
+    for (const r of [added, target]) {
+      if (!ACTIVE_FOR_LINK.includes(String(r.status || '').toLowerCase())) throw new BillingError(409, 'Only pending, confirmed or checked-in bookings can be put on one bill.');
+      if (r.type === 'corporate' || r.type === 'corporate-room') throw new BillingError(409, 'Group (corporate) bookings can’t be combined this way.');
+    }
+    if (!sameGuest(added, target)) throw new BillingError(409, 'These bookings are for different guests, so they can’t share one bill.');
+    const idsOf = r => (Array.isArray(r.groupReservationIds) && r.groupReservationIds.length ? r.groupReservationIds : null);
+    const leadId = target.groupId || targetId;
+    const ids = [...new Set([...(idsOf(target) || [targetId]), ...(idsOf(added) || [reservationId])])];
+    if (ids.length > MAX_ROOMS_PER_BOOKING) throw new BillingError(409, `One bill can have up to ${MAX_ROOMS_PER_BOOKING} bookings.`);
+    const fields = { groupId: leadId, groupReservationIds: ids, groupRoomCount: ids.length };
+    // Reads above, writes below (every linked booking gets the same group).
+    ids.forEach(id => transaction.update(adminDb.collection('reservations').doc(id), fields));
+    return { linked: true, groupId: leadId, count: ids.length, targetRef: leadId.slice(0, 8).toUpperCase() };
+  });
+}
+
 async function addRoomToBooking({ staff, reservationId, roomId, adults, children = 0, preview = false }) {
   if (typeof roomId !== 'string' || !roomId) throw new BillingError(400, 'Choose the room to add.');
   return adminDb.runTransaction(async transaction => {
@@ -1263,6 +1300,7 @@ export default async function handler(req, res) {
       else if (body.action === 'add-service') return addService({ ...body, staff });
       else if (body.action === 'apply-discount') return applyDiscount({ ...body, staff });
       else if (body.action === 'apply-promo') return applyPromo({ ...body, staff });
+      else if (body.action === 'link-to-booking') return linkToBooking({ ...body, staff });
       else if (body.action === 'cancel-with-policy') return cancelWithPolicy({ ...body, staff });
       else if (body.action === 'create-walk-in') return createWalkIn({ staff, booking: body.booking });
       else if (body.action === 'edit-booking') return editBooking({ ...body, staff });
