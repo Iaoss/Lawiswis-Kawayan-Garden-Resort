@@ -249,9 +249,9 @@ export default function CustomerManagement() {
                     <BeamAvatar seed={guestAvatarSeed(selected)} size={48} title={`${selected.guestName || 'Guest'}'s avatar`} />
                     <h3 style={{ fontWeight: '600', color: TEXT, margin: 0, fontSize: '14px' }}>Guest Profile</h3>
                     <button type="button" onClick={bookAgain}
-                      title="Open Walk-In with this guest's details filled in"
+                      title="Start a new booking for the same guest. You only choose the dates and room; their details are already there."
                       style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, border: 'none', background: ACCENT, color: '#0a1a0a', borderRadius: 8, padding: '6px 11px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
-                      <i className="ti ti-user-plus" aria-hidden="true" /> Book again
+                      <i className="ti ti-calendar-plus" aria-hidden="true" /> New booking, same guest
                     </button>
                     <button type="button" onClick={openEdit}
                       style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${BORDER}`, background: CARD2, color: TEXT, borderRadius: 8, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>

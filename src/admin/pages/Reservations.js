@@ -1,4 +1,5 @@
 import PillTabs, { FolderPanel } from '../components/PillTabs';
+import StayLongerPanel from '../components/StayLongerPanel';
 import BookingCalendar from '../../components/ui/visualize-booking';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -1534,9 +1535,31 @@ export default function Reservations() {
           <div role="presentation" onClick={event => { if (event.target === event.currentTarget && !extendDialog.busy) setExtendDialog(null); }}
             style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.45)', display: 'grid', placeItems: 'center', padding: '16px' }}>
             <form role="dialog" aria-modal="true" aria-labelledby="extend-title"
-              onSubmit={event => { event.preventDefault(); submitExtension(); }}
-              style={{ width: '100%', maxWidth: '420px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '20px', display: 'grid', gap: '12px' }}>
-              <div id="extend-title" style={{ fontWeight: 700, fontSize: '15px', color: TEXT }}>Extend stay by the hour</div>
+              onSubmit={event => { event.preventDefault(); if (extendDialog.mode !== 'longer') submitExtension(); }}
+              style={{ width: '100%', maxWidth: '460px', background: CARD, border: `1px solid ${BORDER}`, borderRadius: '14px', padding: '20px', display: 'grid', gap: '12px' }}>
+              <div id="extend-title" style={{ fontWeight: 700, fontSize: '15px', color: TEXT }}>Extend stay</div>
+              <PillTabs variant="pill" size="sm" label="How to extend" t={{ CARD, CARD2, BORDER: BORDER2, TEXT, MUTED, ACCENT, ACCENT_TEXT }}
+                value={extendDialog.mode || 'hours'} onChange={mode => setExtendDialog(d => ({ ...d, mode }))}
+                items={[
+                  { id: 'hours', label: 'A few more hours', icon: 'ti-clock-plus' },
+                  { id: 'longer', label: extendDialog.reservation.bookingType === 'daytour' ? 'Stay overnight' : 'Add nights', icon: 'ti-moon' },
+                ]} />
+              {extendDialog.mode === 'longer' ? (
+                <>
+                  {extensionRooms.length > 1 && (
+                    <div style={{ fontSize: '12px', color: '#b45309' }}>This changes Room {extendDialog.reservation.roomNumber || ''} only. Extend the other rooms from their own bookings.</div>
+                  )}
+                  <StayLongerPanel reservation={extendDialog.reservation}
+                    colors={{ CARD2, TEXT, MUTED, BORDER: BORDER2, ACCENT, ACCENT_TEXT, inp }}
+                    onSaved={(result, info) => {
+                      setExtendDialog(null);
+                      setToast({ type: 'success', text: `${info.isTour ? 'Now an overnight stay' : 'Stay extended'} until ${info.checkOut}${info.checkOutTime ? ` ${info.checkOutTime}` : ''}. New total ${money(Number(result.totalAmount))}${Number(result.balance) > 0 ? `; collect ${money(Number(result.balance))} in Billing` : ''}.` });
+                    }} />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button type="button" onClick={() => setExtendDialog(null)} style={{ ...inp, fontWeight: 600 }}>Cancel</button>
+                  </div>
+                </>
+              ) : (<>
               <div style={{ fontSize: '12px', color: MUTED }}>
                 {extendDialog.reservation.guestName || 'Guest'} · {roomsLabel(extensionRooms)} · current check-out {due === null ? 'unavailable' : formatStayDateTime(due)}.
                 The extension starts from the current scheduled check-out, even if it has already passed.
@@ -1569,6 +1592,7 @@ export default function Reservations() {
                   {extendDialog.busy ? 'Saving…' : `Extend by ${extendDialog.hours} hour${Number(extendDialog.hours) === 1 ? '' : 's'}`}
                 </button>
               </div>
+              </>)}
             </form>
           </div>
           );
@@ -1813,9 +1837,9 @@ export default function Reservations() {
                     style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Open in Billing</button>
                   {s.type !== 'corporate' && s.type !== 'corporate-room' && (
                     <button type="button" onClick={() => bookAgainFor(s)}
-                      title="Open Walk-In with this guest's details filled in"
+                      title="Start a new booking for the same guest. You only choose the dates and room; their details are already there."
                       style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                      <i className="ti ti-user-plus" aria-hidden="true" /> Book again for this guest
+                      <i className="ti ti-calendar-plus" aria-hidden="true" /> New booking, same guest
                     </button>
                   )}
                   {s.status === 'checked-in' && bookedGuestCount(s) > 1 && (

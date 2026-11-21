@@ -179,6 +179,8 @@ export default function WalkIn() {
   const [guestMatches, setGuestMatches] = useState([]);
   const [chosenGuest, setChosenGuest] = useState(null); // { guestName, bookingCount, activeBookings }
   const [linkTargetId, setLinkTargetId] = useState('');
+  // A returning guest's details show as a short card; "Edit details" opens the form.
+  const [editingGuest, setEditingGuest] = useState(false);
   useEffect(() => {
     if (guestQuery.trim().length < 2) { setGuestMatches([]); return undefined; }
     let active = true;
@@ -192,6 +194,7 @@ export default function WalkIn() {
     setForm(f => ({ ...f, firstName, lastName, phone, email, address, preferredContactMethod, contactLink }));
     setNameErrors({});
     setChosenGuest(guest);
+    setEditingGuest(false);
     setLinkTargetId('');
     setGuestQuery('');
     setGuestMatches([]);
@@ -204,6 +207,7 @@ export default function WalkIn() {
     const prefill = guestPrefillFrom(saved.reservation);
     setForm(f => ({ ...f, ...prefill }));
     setChosenGuest({ ...prefill, guestName: saved.reservation.guestName, bookingCount: null, activeBookings: saved.activeBookings || [] });
+    setEditingGuest(false);
   }, []);
   // More rooms for the same group (the group is split across them).
   const [extraRoomIds, setExtraRoomIds] = useState([]);
@@ -1087,9 +1091,11 @@ export default function WalkIn() {
                       </div>
                       {/* Returning guest: fill in their details from an earlier booking. */}
                       <div style={{ marginBottom: 14, display: 'grid', gap: 8 }}>
+                        {!chosenGuest && (<>
                         <label style={label} htmlFor="returning-guest">Returning guest? Search by name, mobile or email</label>
                         <input id="returning-guest" type="search" value={guestQuery} onChange={e => setGuestQuery(e.target.value)}
                           placeholder="e.g. Ana Cruz or 0917…" autoComplete="off" style={inp} />
+                        </>)}
                         {guestMatches.length > 0 && (
                           <div role="listbox" aria-label="Returning guests" style={{ display: 'grid', gap: 6 }}>
                             {guestMatches.map(g => (
@@ -1106,9 +1112,29 @@ export default function WalkIn() {
                         )}
                         {chosenGuest && (
                           <div role="status" style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 12px', fontSize: 12, color: TEXT, display: 'grid', gap: 8 }}>
-                            <div>
-                              <i className="ti ti-user-check" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />
-                              Details filled in from {chosenGuest.guestName}’s earlier booking{chosenGuest.bookingCount > 1 ? 's' : ''}. Check them with the guest.
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 14, fontWeight: 700 }}>
+                                  <i className="ti ti-user-check" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                                  {[form.firstName, form.lastName].filter(Boolean).join(' ') || chosenGuest.guestName}
+                                </div>
+                                <div style={{ color: MUTED, marginTop: 3, lineHeight: 1.6 }}>
+                                  {[form.phone, form.email, form.address].filter(Boolean).join(' · ') || 'No contact details'}
+                                  {form.preferredContactMethod ? ` · prefers ${form.preferredContactMethod}` : ''}
+                                </div>
+                                <div style={{ color: MUTED, fontSize: 11, marginTop: 2 }}>Same guest as their earlier booking{chosenGuest.bookingCount > 1 ? 's' : ''}. Ask if anything changed.</div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button type="button" onClick={() => setEditingGuest(value => !value)}
+                                  style={{ ...inp, width: 'auto', padding: '6px 12px', cursor: 'pointer', fontWeight: 600 }}>
+                                  <i className={`ti ${editingGuest ? 'ti-check' : 'ti-pencil'}`} aria-hidden="true" /> {editingGuest ? 'Done editing' : 'Edit details'}
+                                </button>
+                                <button type="button" title="Book for someone else"
+                                  onClick={() => { setChosenGuest(null); setEditingGuest(false); setLinkTargetId(''); setForm(f => ({ ...f, firstName: '', lastName: '', phone: '', email: '', address: '', preferredContactMethod: '', contactLink: '' })); }}
+                                  style={{ ...inp, width: 'auto', padding: '6px 12px', cursor: 'pointer', color: MUTED }}>
+                                  Different guest
+                                </button>
+                              </div>
                             </div>
                             {chosenGuest.activeBookings.length > 0 && (
                               <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: MUTED }}>
@@ -1127,6 +1153,7 @@ export default function WalkIn() {
                           </div>
                         )}
                       </div>
+                      {(!chosenGuest || editingGuest || Object.values(nameErrors).some(Boolean)) && (
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                         {[
                           { lbl: 'First Name', key: 'firstName', ph: 'Juan', req: true },
@@ -1207,6 +1234,7 @@ export default function WalkIn() {
                           </div>
                         )}
                       </div>
+                      )}
                     </div>
 
                     <div style={card}>

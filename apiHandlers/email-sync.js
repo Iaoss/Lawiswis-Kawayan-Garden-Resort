@@ -6,6 +6,9 @@
 //
 //   POST { action: 'not-spam', emailId }  moves a Spam email to the Inbox
 //   (Gmail then learns it isn't spam) and syncs again.
+//   POST { action: 'attachment', emailId, index }  returns one attachment
+//   of a saved email (fetched from Gmail, not stored here), as base64.
+//   Used to open the daily backup's PDF and data file in the portal.
 // Only NEW messages are downloaded in full, so repeat syncs are fast.
 //
 // Usage:  POST /api/email-sync   (Authorization: Bearer <Firebase ID token>)
@@ -22,6 +25,8 @@ import { verifyStaff } from '../lib/verifyStaff';
 const PER_FOLDER = 25;        // newest messages checked per folder per sync
 const MAX_HTML = 400000;      // keep each Firestore doc safely under 1 MB
 const MAX_TEXT = 100000;
+// Vercel's response limit is 4.5 MB; base64 adds a third.
+const MAX_ATTACHMENT_BYTES = 3 * 1024 * 1024;
 
 const addrList = (field) =>
   [].concat(field || []).flatMap((f) => f.value || []).map((a) => a.address).filter(Boolean);
@@ -155,6 +160,36 @@ export default async function handler(req, res) {
     }
 
     const spamPath = boxes.find((b) => b.specialUse === '\\Junk')?.path || '[Gmail]/Spam';
+
+    // One attachment of a saved email, straight from Gmail.
+    if (req.body?.action === 'attachment') {
+      const emailId = String(req.body?.emailId || '');
+      const index = Number(req.body?.index);
+      const snap = await adminDb.collection('emails').doc(emailId).get();
+      if (!snap.exists || !Number.isInteger(index) || index < 0) return res.status(404).json({ error: 'This attachment could not be found.' });
+      const { folder, uid } = snap.data();
+      const path = folder === 'sent' ? sentPath : folder === 'spam' ? spamPath : 'INBOX';
+      const lock = await client.getMailboxLock(path);
+      let file;
+      try {
+        const message = await client.fetchOne(String(uid), { source: true }, { uid: true });
+        if (!message?.source) return res.status(404).json({ error: 'This email is no longer in Gmail.' });
+        const parsed = await simpleParser(message.source);
+        file = (parsed.attachments || [])[index];
+      } finally {
+        lock.release();
+      }
+      if (!file?.content) return res.status(404).json({ error: 'This attachment could not be found.' });
+      if (file.content.length > MAX_ATTACHMENT_BYTES) {
+        return res.status(413).json({ error: 'This file is too big to open here. Open the email in Gmail to download it.' });
+      }
+      return res.status(200).json({
+        filename: file.filename || `attachment-${index + 1}`,
+        contentType: file.contentType || 'application/octet-stream',
+        size: file.content.length,
+        data: file.content.toString('base64'),
+      });
+    }
 
     // "Not spam": move the email to the Inbox in Gmail, then sync again.
     if (req.body?.action === 'not-spam') {

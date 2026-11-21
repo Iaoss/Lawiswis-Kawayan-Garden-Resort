@@ -74,6 +74,7 @@ export default function UserManagement() {
   const [now, setNow] = useState(() => Date.now());
 
   const [showCreate, setShowCreate] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
 
@@ -613,7 +614,15 @@ export default function UserManagement() {
               <input required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={input} placeholder="juan@resort.com" />
             </label>
             <label style={label}>Password
-              <input required type="password" minLength={6} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} style={input} placeholder="At least 6 characters" />
+              <span style={{ position: 'relative', display: 'block' }}>
+                <input required type={showPassword ? 'text' : 'password'} minLength={6} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })}
+                  style={{ ...input, paddingRight: 44 }} placeholder="At least 6 characters" autoComplete="new-password" />
+                <button type="button" onClick={() => setShowPassword(value => !value)} aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', border: 0, background: 'transparent', color: c.sub, cursor: 'pointer', padding: 6, fontSize: 17, lineHeight: 1 }}>
+                  <i className={`ti ${showPassword ? 'ti-eye-off' : 'ti-eye'}`} aria-hidden="true" />
+                </button>
+              </span>
             </label>
             <label style={label}>Role
               <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={{ ...input, cursor: 'pointer' }}>

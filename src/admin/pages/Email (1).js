@@ -62,6 +62,14 @@ async function callApi(path, body) {
 }
 
 
+const toBytes = base64 => Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+async function sha256Hex(bytes) {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+// The SHA-256 code written in a backup email (64 hex characters).
+const checksumIn = email => (String(email.text || '') + ' ' + String(email.html || '')).match(/\b[0-9a-f]{64}\b/i)?.[0]?.toLowerCase() || '';
+
 // ── page ───────────────────────────────────────────────────
 export default function Email() {
   const [authReady, setAuthReady] = useState(false);
@@ -125,6 +133,48 @@ export default function Email() {
 
   // Moves a Spam email to the Inbox (in Gmail too, so it learns).
   const [moving, setMoving] = useState(false);
+  // Attachment being opened, and the result of the backup checksum check.
+  const [openingFile, setOpeningFile] = useState('');
+  const [fileNote, setFileNote] = useState(null);
+  const openAttachment = async (email, attachment, index) => {
+    const isPdf = /pdf/i.test(attachment.contentType || '') || /\.pdf$/i.test(attachment.filename || '');
+    // Open the tab now (on the click) so the browser doesn't block it.
+    const tab = isPdf ? window.open('', '_blank') : null;
+    if (tab) tab.document.write('<p style="font-family:Arial,sans-serif;padding:24px">Opening the file…</p>');
+    setOpeningFile(`${email.id}:${index}`);
+    setFileNote(null);
+    try {
+      const file = await callApi('/api/email-sync', { action: 'attachment', emailId: email.id, index });
+      const bytes = toBytes(file.data);
+      const url = URL.createObjectURL(new Blob([bytes], { type: file.contentType }));
+      if (tab) {
+        tab.location.href = url;
+      } else {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      // A backup data file: check it against the code in the email.
+      const expected = checksumIn(email);
+      if (/\.json\.gz$/i.test(file.filename) && expected && window.crypto?.subtle) {
+        const actual = await sha256Hex(bytes);
+        setFileNote(actual === expected
+          ? { ok: true, text: `Downloaded ${file.filename}. Checksum matches the email, so the backup file is complete and unchanged.` }
+          : { ok: false, text: `Downloaded ${file.filename}, but its checksum does not match the email. Don't use this file to restore; download it again from Gmail.` });
+      } else {
+        setFileNote({ ok: true, text: `${tab ? 'Opened' : 'Downloaded'} ${file.filename}.` });
+      }
+    } catch (error) {
+      if (tab) tab.close();
+      setFileNote({ ok: false, text: error.message || 'The file could not be opened.' });
+    } finally {
+      setOpeningFile('');
+    }
+  };
   const notSpam = async (m) => {
     setMoving(true);
     try {
@@ -318,10 +368,29 @@ export default function Email() {
                 {selected.attachments?.length > 0 && (
                   <div style={{ marginTop: '10px', fontSize: '11px', color: C.sub, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     {selected.attachments.map((a, i) => (
-                      <span key={i} style={{ background: C.card2, border: `1px solid ${C.border}`, borderRadius: '20px', padding: '2px 10px' }}>
-                        <i className="ti ti-paperclip" style={{ fontSize: '11px' }} /> {a.filename}
-                      </span>
+                      <button key={i} type="button" onClick={() => openAttachment(selected, a, i)} disabled={Boolean(openingFile)}
+                        title={/\.pdf$/i.test(a.filename || '') ? 'Open this PDF' : 'Download this file'}
+                        style={{ background: C.card2, border: `1px solid ${C.border}`, borderRadius: '20px', padding: '4px 12px', fontSize: '11.5px', color: C.text, cursor: openingFile ? 'wait' : 'pointer', fontFamily: FONT, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                        <i className={`ti ${/\.pdf$/i.test(a.filename || '') ? 'ti-file-type-pdf' : 'ti-download'}`} style={{ fontSize: '13px' }} />
+                        {openingFile === `${selected.id}:${i}` ? 'Opening…' : a.filename}
+                        {a.size ? <span style={{ color: C.sub }}>· {Math.max(1, Math.round(a.size / 1024))} KB</span> : null}
+                      </button>
                     ))}
+                  </div>
+                )}
+                {checksumIn(selected) && (
+                  <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '11.5px', color: C.sub }}>
+                    <span>SHA-256 code:</span>
+                    <code style={{ userSelect: 'all', background: C.card2, border: `1px solid ${C.border}`, borderRadius: '6px', padding: '2px 6px', fontSize: '11px', color: C.text, wordBreak: 'break-all' }}>{checksumIn(selected)}</code>
+                    <button type="button" onClick={() => navigator.clipboard?.writeText(checksumIn(selected)).then(() => setFileNote({ ok: true, text: 'SHA-256 code copied.' })).catch(() => {})}
+                      style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: '6px', padding: '2px 8px', fontSize: '11px', color: C.text, cursor: 'pointer', fontFamily: FONT }}>
+                      Copy
+                    </button>
+                  </div>
+                )}
+                {fileNote && (
+                  <div role="status" style={{ marginTop: '8px', fontSize: '11.5px', padding: '7px 10px', borderRadius: '8px', background: fileNote.ok ? (dark ? 'rgba(34,197,94,.12)' : '#ecfdf5') : (dark ? 'rgba(239,68,68,.12)' : '#fef2f2'), color: fileNote.ok ? (dark ? '#86efac' : '#065f46') : (dark ? '#fca5a5' : '#991b1b') }}>
+                    {fileNote.text}
                   </div>
                 )}
               </div>
