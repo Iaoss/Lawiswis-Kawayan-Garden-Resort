@@ -262,9 +262,9 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
         {canAddRoom && (
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', minWidth: 0, gap: 8, border: `1px solid ${c.BORDER2}`, borderRadius: 10, padding: 10 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: c.TEXT }}>Add a room for more guests</div>
-            <div style={{ fontSize: 11, color: c.MUTED, lineHeight: 1.5 }}>Same dates as this booking. It gets its own price and balance (one payment for all rooms in Billing).</div>
+            <div style={{ fontSize: 11, color: c.MUTED, lineHeight: 1.5 }}>Same dates as this booking. Paid together with the other rooms in Billing.</div>
             <select value={extra.roomId} onChange={e => setExtra(x => ({ ...x, roomId: e.target.value }))} style={fit} aria-label="Room to add">
-              <option value="">{addChoices.length ? 'Choose a free room…' : 'No free rooms on these dates'}</option>
+              <option value="">{addChoices.length ? 'Choose room' : 'No rooms free on these dates'}</option>
               {addChoices.map(room => <option key={room.id} value={room.id}>{roomLabel(room)}</option>)}
             </select>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
