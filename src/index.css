@@ -196,6 +196,19 @@ code {
   width: 100%;
 }
 
+/* Fields inside these grids never stick out of their column. */
+.responsive-grid-2 > *,
+.responsive-grid-3 > *,
+.responsive-grid-4 > * {
+  min-width: 0;
+}
+.responsive-grid-2 select,
+.responsive-grid-2 input,
+.responsive-grid-2 textarea {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .responsive-grid-3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -220,7 +233,7 @@ code {
   }
 
   .timeline-item {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .timeline-line {
@@ -241,7 +254,7 @@ code {
   .two-column-sidebar,
   .two-column-fluid,
   .two-column-fixed {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .responsive-nav {
@@ -252,7 +265,10 @@ code {
   .responsive-grid-2,
   .responsive-grid-3,
   .responsive-grid-4 {
-    grid-template-columns: 1fr;
+    /* minmax(0, 1fr): the column shrinks to the screen. A plain 1fr grows to
+       fit its widest content (e.g. a long dropdown option), which pushed
+       booking forms off the right edge on phones. */
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .sticky-summary {

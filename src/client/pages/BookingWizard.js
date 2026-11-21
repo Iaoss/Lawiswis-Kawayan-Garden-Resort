@@ -399,7 +399,7 @@ export default function BookingWizard() {
             )}
             <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 18, color: INK, font: `13px/1.5 ${SANS}`, cursor: 'pointer' }}>
               <input type="checkbox" checked={stepFree} onChange={e => { setStepFree(e.target.checked); setShowStairRooms(false); }} style={{ marginTop: 3 }} />
-              <span>A senior citizen or guest with limited mobility is in our group <span style={{ color: '#6b6a5c' }}>(we will only suggest rooms without stairs)</span></span>
+              <span>A senior citizen or guest with limited mobility is in our group</span>
             </label>
             {(liveWhenError || whenError) && <p role="alert" style={{ color: '#b42318', font: `13px ${SANS}`, margin: '14px 0 0' }}>{liveWhenError || whenError}</p>}
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>

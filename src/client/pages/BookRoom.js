@@ -2069,12 +2069,12 @@ export default function BookRoom() {
       </div>
       <style>{`
         .booking-layout{display:grid;grid-template-columns:minmax(0,8fr) minmax(300px,5fr);gap:24px;align-items:start}
-        .booking-layout>div{min-width:0}
+        .booking-layout>*{min-width:0}
         .booking-history-details{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
         .booking-history-details>div{display:grid;gap:4px}
         .booking-history-details span{color:#9ca3af;font-size:10px}
         .booking-history-details strong{color:#374151;font-size:12px;overflow-wrap:anywhere}
-        @media(max-width:900px){.booking-layout{grid-template-columns:1fr}.sticky-summary{position:static!important}}
+        @media(max-width:900px){.booking-layout{grid-template-columns:minmax(0,1fr)}.sticky-summary{position:static!important}}
         @media(max-width:600px){.booking-history-details{grid-template-columns:repeat(2,minmax(0,1fr))}}
       `}</style>
     </div>
