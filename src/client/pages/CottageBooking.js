@@ -7,6 +7,7 @@ import {
   getResortNow, getSwimmingRate, getTourCutoffError,
 } from '../../lib/bookingPricing';
 import { NAME_PATTERN } from '../../lib/nameValidation';
+import { phoneTypingError } from '../../lib/liveFieldErrors';
 import { CONTACT_REQUIREMENT_NOTE, FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactDetailsError, getContactFieldErrors } from '../../lib/preferredContactMethods';
 import { RESERVATION_DEPOSIT_PERCENTAGE, getOnlinePaymentAmount } from '../../lib/paymentPolicy';
 import { createPayMongoCheckout } from '../../lib/paymongo';
@@ -250,7 +251,7 @@ export default function CottageBooking() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                 <label style={label}>First name<input required maxLength={35} value={form.firstName} onBlur={() => touch('firstName')} onChange={e => set('firstName', e.target.value)} style={input} autoComplete="given-name" />{fieldError('firstName')}</label>
                 <label style={label}>Last name<input required maxLength={35} value={form.lastName} onBlur={() => touch('lastName')} onChange={e => set('lastName', e.target.value)} style={input} autoComplete="family-name" />{fieldError('lastName')}</label>
-                <label style={label}>{form.preferredContactMethod === 'Phone' ? 'Mobile number' : 'Mobile number (optional)'}<input onBlur={() => touch('phone')} inputMode="numeric" maxLength={11} placeholder="09XXXXXXXXX" value={form.phone} onChange={e => set('phone', e.target.value.replace(/\D/g, '').slice(0, 11))} style={input} autoComplete="tel" />{fieldError('phone')}</label>
+                <label style={label}>{form.preferredContactMethod === 'Phone' ? 'Mobile number' : 'Mobile number (optional)'}<input onBlur={() => touch('phone')} inputMode="numeric" maxLength={11} placeholder="09XXXXXXXXX" value={form.phone} onChange={e => { const phone = e.target.value.replace(/\D/g, '').slice(0, 11); set('phone', phone); if (phoneTypingError(phone)) touch('phone'); }} style={input} autoComplete="tel" />{fieldError('phone')}</label>
                 <label style={label}>{form.preferredContactMethod === 'Email' ? 'Email' : 'Email (optional)'}<input type="email" maxLength={254} value={form.email} onBlur={() => touch('email')} onChange={e => set('email', e.target.value)} style={input} autoComplete="email" />{fieldError('email')}</label>
                 <label style={label}>Preferred contact method
                   <select required value={form.preferredContactMethod} onChange={e => { set('preferredContactMethod', e.target.value); setTouched(previous => ({ ...previous, preferredContactMethod: true, email: true, phone: true })); }} style={input}>
