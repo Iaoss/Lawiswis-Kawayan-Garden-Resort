@@ -31,6 +31,8 @@ import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
 import { roomHasStairs } from '../../lib/roomAccess';
 import { decorateRoom } from '../../client/lib/roomCatalog';
 import NumberField from '../../components/ui/number-field';
+import { loadCollection } from '../lib/cachedCollection';
+import { findReturningGuests, guestPrefillFrom } from '../lib/returningGuests';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'This room is full for that many guests. Couple rooms take 2 guests; a Couple Room with Extra Bed takes a third adult. For bigger groups, choose a Family Room or Family Suite.';
 
@@ -168,6 +170,40 @@ export default function WalkIn() {
 
   const today = getLocalToday();
   const guestName = joinGuestName(form.firstName, form.lastName);
+
+  // Returning guest: search earlier bookings to fill in their details, and
+  // optionally put this new stay on the same bill as one of their active
+  // bookings. "Book again" in Reservations opens this page pre-filled.
+  const [guestQuery, setGuestQuery] = useState('');
+  const [guestMatches, setGuestMatches] = useState([]);
+  const [chosenGuest, setChosenGuest] = useState(null); // { guestName, bookingCount, activeBookings }
+  const [linkTargetId, setLinkTargetId] = useState('');
+  useEffect(() => {
+    if (guestQuery.trim().length < 2) { setGuestMatches([]); return undefined; }
+    let active = true;
+    loadCollection('reservations')
+      .then(snap => { if (active) setGuestMatches(findReturningGuests(snap.docs.map(d => ({ id: d.id, ...d.data() })), guestQuery)); })
+      .catch(() => { if (active) setGuestMatches([]); });
+    return () => { active = false; };
+  }, [guestQuery]);
+  const fillFromReturningGuest = guest => {
+    const { firstName, lastName, phone, email, address, preferredContactMethod, contactLink } = guest;
+    setForm(f => ({ ...f, firstName, lastName, phone, email, address, preferredContactMethod, contactLink }));
+    setNameErrors({});
+    setChosenGuest(guest);
+    setLinkTargetId('');
+    setGuestQuery('');
+    setGuestMatches([]);
+  };
+  // Opened from "Book again for this guest" in Reservations.
+  useEffect(() => {
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem('lkgr_walkin_prefill') || 'null'); sessionStorage.removeItem('lkgr_walkin_prefill'); } catch { saved = null; }
+    if (!saved?.reservation) return;
+    const prefill = guestPrefillFrom(saved.reservation);
+    setForm(f => ({ ...f, ...prefill }));
+    setChosenGuest({ ...prefill, guestName: saved.reservation.guestName, bookingCount: null, activeBookings: saved.activeBookings || [] });
+  }, []);
   // More rooms for the same group (the group is split across them).
   const [extraRoomIds, setExtraRoomIds] = useState([]);
   // Walk-in kind: a guest / family, or a corporate group.
@@ -443,6 +479,21 @@ export default function WalkIn() {
       }
       const arrivesToday = created.arrivesToday ?? (form.checkIn === today);
 
+      // Same bill as one of the guest's existing bookings, if staff chose it.
+      let linkMessage = '';
+      if (linkTargetId) {
+        if (created.offline) {
+          linkMessage = 'Not put on the same bill yet (no internet). Use “Add to an existing bill” in Reservations later.';
+        } else {
+          try {
+            const linked = await staffApi('staff-billing', { action: 'link-to-booking', reservationId: created.reservationId, targetId: linkTargetId });
+            linkMessage = `Added to the same bill as booking #${linked.targetRef} (${linked.count} bookings, paid together in Billing).`;
+          } catch (linkError) {
+            linkMessage = `Saved as its own booking: it couldn’t be put on the same bill (${linkError.message}).`;
+          }
+        }
+      }
+
       let confirmationMessage = '';
       try {
         // Offline: the booking (and its confirmation email) is sent later.
@@ -467,7 +518,7 @@ export default function WalkIn() {
         paid: 0,
         stayLabel: isTour ? `${bookingOption.label} on ${formatDate(form.checkIn)}` : `${formatDate(form.checkIn)} – ${formatDate(form.checkOut)}`,
         isToday: arrivesToday,
-        notes: [confirmationMessage.trim()].filter(Boolean),
+        notes: [confirmationMessage.trim(), linkMessage].filter(Boolean),
         checkedIn: false,
       });
       setPayment({ method: 'cash', amount: String(Number(created.groupTotal ?? created.totalAmount ?? (created.offline ? estimatedTotal : 0))), busy: false, error: '' });
@@ -544,6 +595,9 @@ export default function WalkIn() {
     setExtraRoomIds([]);
     setSelectedRoom(null);
     setCatFilter('all');
+    setChosenGuest(null);
+    setLinkTargetId('');
+    setGuestQuery('');
     setStep(1);
   };
 
@@ -1029,6 +1083,48 @@ export default function WalkIn() {
                       <div style={{ fontSize: 12, fontWeight: 600, color: TEXT, marginBottom: 14 }}><i className="ti ti-user" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />Guest Details</div>
                       <div role="note" style={{ fontSize: 11.5, color: MUTED, margin: '-6px 0 14px', lineHeight: 1.5 }}>
                         Get at least one contact: mobile number, email, or Facebook link. No email? Print the receipt at the counter after payment.
+                      </div>
+                      {/* Returning guest: fill in their details from an earlier booking. */}
+                      <div style={{ marginBottom: 14, display: 'grid', gap: 8 }}>
+                        <label style={label} htmlFor="returning-guest">Returning guest? Search by name, mobile or email</label>
+                        <input id="returning-guest" type="search" value={guestQuery} onChange={e => setGuestQuery(e.target.value)}
+                          placeholder="e.g. Ana Cruz or 0917…" autoComplete="off" style={inp} />
+                        {guestMatches.length > 0 && (
+                          <div role="listbox" aria-label="Returning guests" style={{ display: 'grid', gap: 6 }}>
+                            {guestMatches.map(g => (
+                              <button key={g.key} type="button" role="option" aria-selected="false" onClick={() => fillFromReturningGuest(g)}
+                                style={{ ...inp, textAlign: 'left', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                                <span><strong>{g.guestName}</strong>{g.phone ? ` · ${g.phone}` : ''}{g.email ? ` · ${g.email}` : ''}</span>
+                                <span style={{ color: MUTED, fontSize: 11 }}>{g.bookingCount} booking{g.bookingCount === 1 ? '' : 's'}{g.activeBookings.length ? ` · ${g.activeBookings.length} active` : ''}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {guestQuery.trim().length >= 2 && guestMatches.length === 0 && (
+                          <div style={{ fontSize: 11.5, color: MUTED }}>No earlier bookings match. Fill in the details below.</div>
+                        )}
+                        {chosenGuest && (
+                          <div role="status" style={{ background: CARD2, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '10px 12px', fontSize: 12, color: TEXT, display: 'grid', gap: 8 }}>
+                            <div>
+                              <i className="ti ti-user-check" aria-hidden="true" style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                              Details filled in from {chosenGuest.guestName}’s earlier booking{chosenGuest.bookingCount > 1 ? 's' : ''}. Check them with the guest.
+                            </div>
+                            {chosenGuest.activeBookings.length > 0 && (
+                              <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: MUTED }}>
+                                Put this stay on the same bill as:
+                                <select value={linkTargetId} onChange={e => setLinkTargetId(e.target.value)} style={inp} aria-label="Same bill as">
+                                  <option value="">No, a separate booking and bill</option>
+                                  {chosenGuest.activeBookings.map(b => (
+                                    <option key={b.id} value={b.id}>
+                                      #{b.id.slice(0, 8).toUpperCase()} · {b.roomNumber ? `Room ${b.roomNumber}` : 'Booking'} · {b.checkIn}{b.checkOut && b.checkOut !== b.checkIn ? ` → ${b.checkOut}` : ''} · {b.status}
+                                    </option>
+                                  ))}
+                                </select>
+                                {linkTargetId && <span>Both bookings keep their own room and dates, and are paid together in Billing.</span>}
+                              </label>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
                         {[

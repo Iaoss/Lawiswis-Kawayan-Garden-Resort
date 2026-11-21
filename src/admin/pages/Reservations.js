@@ -56,6 +56,7 @@ import { seniorPwdSummary } from '../../lib/seniorPwdGuests';
 import { subscribeCollection } from '../lib/liveCollection';
 import DiscountReviewDialog from '../components/DiscountReviewDialog';
 import { isAwaitingDiscountReview, isDiscountReviewQueued } from '../../lib/discountReview';
+import { guestKeyOf, isActiveBooking } from '../lib/returningGuests';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -1153,6 +1154,18 @@ export default function Reservations() {
     .filter(x => x.due)
     .sort((a, b) => a.due.dueMs - b.due.dueMs);
   const billingPath = id => `${isReceptionist ? '/receptionist' : '/admin'}/billing?booking=${encodeURIComponent(id)}&from=reservations`;
+  // Same guest, new stay: open Walk-In with their details filled in, and
+  // offer their active bookings so the new stay can share one bill.
+  const bookAgainFor = r => {
+    const key = guestKeyOf(r);
+    const activeBookings = reservations
+      .filter(x => guestKeyOf(x) === key && isActiveBooking(x) && (!x.groupId || x.groupId === x.id))
+      .map(x => ({ id: x.id, roomNumber: x.roomNumber || '', checkIn: x.checkIn || '', checkOut: x.checkOut || '', status: x.status || '' }));
+    const reservation = { guestName: r.guestName, firstName: r.firstName, lastName: r.lastName, phone: r.phone, email: r.email, address: r.address, preferredContactMethod: r.preferredContactMethod, contactLink: r.contactLink };
+    try { sessionStorage.setItem('lkgr_walkin_prefill', JSON.stringify({ reservation, activeBookings })); } catch { /* storage blocked: Walk-In opens empty */ }
+    setSelectedId(null);
+    navigate(`${isReceptionist ? '/receptionist' : '/admin'}/walkin`);
+  };
 
   const submitExtension = async () => {
     if (!extendDialog || extendDialog.busy) return;
@@ -1769,6 +1782,13 @@ export default function Reservations() {
                   </button>
                   <button type="button" onClick={() => navigate(billingPath(s.id))}
                     style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Open in Billing</button>
+                  {s.type !== 'corporate' && s.type !== 'corporate-room' && (
+                    <button type="button" onClick={() => bookAgainFor(s)}
+                      title="Open Walk-In with this guest's details filled in"
+                      style={{ border: `1px solid ${BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      <i className="ti ti-user-plus" aria-hidden="true" /> Book again for this guest
+                    </button>
+                  )}
                   {s.status === 'checked-in' && bookedGuestCount(s) > 1 && (
                     <button type="button" onClick={() => setArrivalDialog({ reservation: s, count: bookedGuestCount(s), busy: false })}
                       style={{ border: `1px solid ${guestsStillToArrive(s) > 0 ? '#d97706' : BORDER2}`, borderRadius: '8px', padding: '9px 16px', background: CARD2, color: TEXT, fontWeight: 600, cursor: 'pointer' }}>Guests arrived</button>
