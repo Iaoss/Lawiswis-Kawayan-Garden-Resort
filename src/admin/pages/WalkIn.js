@@ -15,6 +15,7 @@ import { COTTAGE_OPTIONS, EXTRA_GUEST_MEAL_RATE, EXTRA_PERSON_NOTE, ROOM_RATE_IN
 import { groupTooLargeNote, suggestCottage, suggestRooms } from '../../lib/bookingSuggestions';
 import DateOccupancy from '../../components/ui/date-occupancy';
 import { PREFERRED_CONTACT_METHODS, getContactFieldErrors } from '../../lib/preferredContactMethods';
+import { guestFieldError, phoneTypingError } from '../../lib/liveFieldErrors';
 import { staffApi } from '../lib/staffApi';
 import OnlinePaymentQr from '../components/OnlinePaymentQr';
 import CorporateWalkInForm from '../components/CorporateWalkInForm';
@@ -1150,14 +1151,20 @@ export default function WalkIn() {
                                   }));
                                 } else if (f.key === 'phone') {
                                   // Philippine mobile number: digits only, 09XXXXXXXXX.
+                                  // Warned while typing as soon as it can't be valid.
                                   const digits = e.target.value.replace(/\D/g, '').slice(0, 11);
                                   setForm(previous => ({ ...previous, phone: digits }));
-                                  setNameErrors(previous => ({ ...previous, phone: '' }));
+                                  setNameErrors(previous => ({ ...previous, phone: phoneTypingError(digits) }));
                                 } else {
-                                  setForm(previous => ({ ...previous, [f.key]: e.target.value }));
+                                  const value = e.target.value;
+                                  setForm(previous => ({ ...previous, [f.key]: value }));
+                                  // Clear the warning as soon as the entry is fixed.
+                                  if (nameErrors[f.key]) setNameErrors(previous => ({ ...previous, [f.key]: guestFieldError(f.key, { ...form, [f.key]: value }) }));
                                 }
                               }}
-                              placeholder={f.ph} style={inp} />
+                              onBlur={() => setNameErrors(previous => ({ ...previous, [f.key]: guestFieldError(f.key, form) }))}
+                              aria-invalid={Boolean(nameErrors[f.key])}
+                              placeholder={f.ph} style={{ ...inp, ...(nameErrors[f.key] ? { borderColor: '#dc2626' } : {}) }} />
                             {f.key === 'email' && nameErrors.email && <div role="alert" style={{ color: '#b91c1c', fontSize: 10, marginTop: 4 }}>{nameErrors.email}</div>}
                             {f.key === 'phone' && (
                               <div role={nameErrors.phone ? 'alert' : undefined} style={{ color: nameErrors.phone ? '#b91c1c' : MUTED, fontSize: 10, marginTop: 4 }}>
@@ -1187,7 +1194,15 @@ export default function WalkIn() {
                         {form.preferredContactMethod === 'Facebook Messenger' && (
                           <div>
                             <label style={label}>Facebook profile link</label>
-                            <input type="url" maxLength={200} value={form.contactLink} placeholder="https://www.facebook.com/guest.name" onChange={e => setForm(previous => ({ ...previous, contactLink: e.target.value }))} style={inp} />
+                            <input type="url" maxLength={200} value={form.contactLink} placeholder="https://www.facebook.com/guest.name"
+                              onChange={e => {
+                                const contactLink = e.target.value;
+                                setForm(previous => ({ ...previous, contactLink }));
+                                if (nameErrors.contactLink) setNameErrors(previous => ({ ...previous, contactLink: guestFieldError('contactLink', { ...form, contactLink }) }));
+                              }}
+                              onBlur={() => setNameErrors(previous => ({ ...previous, contactLink: guestFieldError('contactLink', form) }))}
+                              aria-invalid={Boolean(nameErrors.contactLink)}
+                              style={{ ...inp, ...(nameErrors.contactLink ? { borderColor: '#dc2626' } : {}) }} />
                             {nameErrors.contactLink && <div role="alert" style={{ color: '#b91c1c', fontSize: 10, marginTop: 4 }}>{nameErrors.contactLink}</div>}
                           </div>
                         )}

@@ -8,6 +8,7 @@ import {
   CORPORATE_FEATURE_ROWS, CORPORATE_PACKAGES, GROUP_ADVANCE_DAYS, MAX_GROUP_GUESTS, MIN_GROUP_GUESTS, isCorporateFeatureIncluded,
 } from '../../lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName } from '../../lib/nameValidation';
+import { phoneTypingError } from '../../lib/liveFieldErrors';
 import { CONTACT_REQUIREMENT_NOTE, FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactFieldErrors, getContactLinkError } from '../../lib/preferredContactMethods';
 import { CREAM, FOREST, FOREST_DEEP, INK, LINE, PAPER, SERIF, SANS } from '../components/clientTheme';
 import { useResortAvailability } from '../components/ResortAvailabilityContext';
@@ -160,6 +161,8 @@ export default function CorporateBooking() {
     if (['checkIn', 'checkOut', 'totalGuests', 'preferredContactMethod'].includes(name)) {
       setTouched(previous => ({ ...previous, [name]: true, ...(name === 'preferredContactMethod' ? { email: true, phone: true } : {}) }));
     }
+    // A mobile number that can no longer be valid is flagged while typing.
+    if (name === 'phone' && phoneTypingError(value)) setTouched(previous => ({ ...previous, phone: true }));
     setForm(previous => ({
       ...previous,
       [name]: type === 'checkbox' ? checked : value,

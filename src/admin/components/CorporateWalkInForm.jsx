@@ -6,6 +6,7 @@ import {
 } from '../../lib/corporatePackages';
 import { PREFERRED_CONTACT_METHODS, getContactDetailsError } from '../../lib/preferredContactMethods';
 import { NAME_PATTERN } from '../../lib/nameValidation';
+import { guestFieldError, phoneTypingError } from '../../lib/liveFieldErrors';
 
 const empty = {
   companyName: '', firstName: '', lastName: '', email: '', phone: '', preferredContactMethod: '', contactLink: '',
@@ -19,7 +20,27 @@ export default function CorporateWalkInForm({ colors, inp, label, today, onCreat
   const [form, setForm] = useState(empty);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const set = (key, value) => { setForm(f => ({ ...f, [key]: value })); setError(''); };
+  // Per-field warnings, shown once a field is left (or straight away for an
+  // impossible mobile number), and cleared as soon as it is fixed.
+  const [fieldErrors, setFieldErrors] = useState({});
+  const checkField = (key, values) => {
+    if (key === 'companyName') return String(values.companyName || '').trim() ? '' : 'Enter the company or group name.';
+    if (key === 'totalGuests') return getGroupGuestError(Math.floor(Number(values.totalGuests) || 0)) || '';
+    return guestFieldError(key, values);
+  };
+  const set = (key, value) => {
+    const next = { ...form, [key]: value };
+    setForm(next);
+    setError('');
+    setFieldErrors(previous => {
+      if (key === 'phone') return { ...previous, phone: phoneTypingError(value) };
+      if (key === 'preferredContactMethod') {
+        return { ...previous, preferredContactMethod: '', ...['email', 'phone', 'contactLink'].reduce((all, k) => ({ ...all, [k]: next[k] || k === 'contactLink' ? checkField(k, next) : '' }), {}) };
+      }
+      return previous[key] ? { ...previous, [key]: checkField(key, next) } : previous;
+    });
+  };
+  const touch = key => setFieldErrors(previous => ({ ...previous, [key]: checkField(key, form) }));
   const isTour = form.bookingType === 'daytour';
   const checkOut = isTour ? form.checkIn : form.checkOut;
   const guests = Math.floor(Number(form.totalGuests) || 0);
@@ -59,7 +80,10 @@ export default function CorporateWalkInForm({ colors, inp, label, today, onCreat
   const field = (key, text, props = {}) => (
     <div>
       <label style={label}>{text}</label>
-      <input value={form[key]} onChange={e => set(key, e.target.value)} style={inp} {...props} />
+      <input value={form[key]} onChange={e => set(key, key === 'phone' ? e.target.value.replace(/\D/g, '').slice(0, 11) : e.target.value)}
+        onBlur={() => touch(key)} aria-invalid={Boolean(fieldErrors[key])}
+        style={{ ...inp, ...(fieldErrors[key] ? { borderColor: '#dc2626' } : {}) }} {...props} />
+      {fieldErrors[key] && <div role="alert" style={{ color: '#b91c1c', fontSize: 10, marginTop: 4 }}>{fieldErrors[key]}</div>}
     </div>
   );
 
@@ -79,10 +103,11 @@ export default function CorporateWalkInForm({ colors, inp, label, today, onCreat
           {field('email', form.preferredContactMethod === 'Email' ? 'Email' : 'Email (optional)', { type: 'email', maxLength: 254 })}
           <div>
             <label style={label}>Preferred contact</label>
-            <select value={form.preferredContactMethod} onChange={e => set('preferredContactMethod', e.target.value)} style={inp} required>
+            <select value={form.preferredContactMethod} onChange={e => set('preferredContactMethod', e.target.value)} onBlur={() => touch('preferredContactMethod')} style={{ ...inp, ...(fieldErrors.preferredContactMethod ? { borderColor: '#dc2626' } : {}) }} required>
               <option value="">Choose…</option>
               {PREFERRED_CONTACT_METHODS.map(method => <option key={method} value={method}>{method}</option>)}
             </select>
+            {fieldErrors.preferredContactMethod && <div role="alert" style={{ color: '#b91c1c', fontSize: 10, marginTop: 4 }}>{fieldErrors.preferredContactMethod}</div>}
           </div>
           {form.preferredContactMethod === 'Facebook Messenger' && field('contactLink', 'Facebook profile link', { required: true })}
           <div>

@@ -28,6 +28,7 @@ import {
 } from '../../lib/bookingPricing';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 import { EXTRA_GUEST_MEAL_RATE, EXTRA_PERSON_NOTE, ROOM_RATE_INCLUDES } from '../../lib/bookingPricing';
+import { phoneTypingError } from '../../lib/liveFieldErrors';
 import { CONTACT_REQUIREMENT_NOTE, FACEBOOK_CONTACT_METHOD, PREFERRED_CONTACT_METHODS, getContactFieldErrors, getContactLinkError, isPreferredContactMethod } from '../../lib/preferredContactMethods';
 import { FALLBACK_ROOM_IMAGES, resolveRoomImage } from '../components/clientTheme';
 import OccupancyBadge from '../components/OccupancyBadge';
@@ -783,9 +784,9 @@ export default function BookRoom() {
     setForm(previous => ({ ...previous, [name]: sanitized }));
     setFieldErrors(previous => ({
       ...previous,
-      [name]: isNameField && !NAME_ALLOWED_CHARACTERS.test(value)
-        ? 'Numbers and special symbols are not allowed'
-        : '',
+      [name]: isNameField
+        ? (!NAME_ALLOWED_CHARACTERS.test(value) ? 'Numbers and special symbols are not allowed' : '')
+        : phoneTypingError(sanitized), // warned while typing, e.g. not starting with 09
     }));
   };
 

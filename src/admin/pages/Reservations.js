@@ -184,8 +184,34 @@ const countBookings = list => new Set(list.map(bookingKey)).size;
 
 function Tag({ t, c = 'gray', title, children }) {
   const [bg, color] = tone(t, c);
-  return <span title={title} style={{ background: bg, color, borderRadius: 6, padding: '2px 8px', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap' }}>{children}</span>;
+  return <span title={title} style={{ background: bg, color, borderRadius: 6, padding: '2px 8px', fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis' }}>{children}</span>;
 }
+
+// Several rooms in one line that never grows: "Payapa +17 rooms".
+// The full list is in the tooltip and in the booking details.
+export function shortRoomList(names = []) {
+  const list = names.filter(Boolean);
+  if (list.length <= 1) return list[0] || '';
+  const more = list.length - 1;
+  return `${list[0]} +${more} room${more === 1 ? '' : 's'}`;
+}
+
+// Every booking card has the same columns, so long room lists or group
+// bookings no longer push the status steps onto a new line.
+const ROW_CSS = `
+.lk-res-row { display: grid; grid-template-columns: 84px 3px minmax(0, 1fr) 160px 240px; align-items: center; gap: 14px; }
+.lk-res-row > * { min-width: 0; }
+@container (max-width: 900px) {
+  .lk-res-row { grid-template-columns: 84px 3px minmax(0, 1fr) 240px; }
+  .lk-res-row .lk-res-contact { display: none; }
+}
+@container (max-width: 600px) {
+  .lk-res-row { grid-template-columns: 3px minmax(0, 1fr); }
+  .lk-res-row .lk-res-time { display: none; }
+  .lk-res-row .lk-res-actions { grid-column: 1 / -1; }
+}
+`;
+const isFlexibleTime = value => /^flexible/i.test(String(value || ''));
 
 // The page is split into tabs so each job has its own screen.
 const RESERVATION_TABS = [
@@ -362,21 +388,25 @@ function ReservationBoard({
     const overstay = overstayOf(r, now);
     const roomsOnCard = r.groupRooms || [r];
     const unpaid = roomsOnCard.some(owes);
+    const roomNames = roomsOnCard.map(x => x.roomNumber || '—');
+    const flexible = isFlexibleTime(r.checkInTime) && isFlexibleTime(r.checkOutTime);
     return (
-      <div key={r.id} role="button" tabIndex={0} onClick={() => onSelect(r.id)}
+      <div key={r.id} role="button" tabIndex={0} onClick={() => onSelect(r.id)} className="lk-res-row"
         onKeyDown={e => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSelect(r.id); } }}
-        style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: t.CARD, border: `1px solid ${t.BORDER}`, borderRadius: 14, padding: '14px 16px', cursor: 'pointer' }}>
-        <div style={{ width: 78, flex: '0 0 auto' }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: t.TEXT }}>{r.checkInTime || '2:00 PM'}</div>
-          <div style={{ fontSize: 11, color: t.MUTED, marginTop: 2 }}>{r.checkOutTime || '12:00 PM'}</div>
+        style={{ background: t.CARD, border: `1px solid ${t.BORDER}`, borderRadius: 14, padding: '14px 16px', cursor: 'pointer' }}>
+        <div className="lk-res-time">
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.TEXT }}>{flexible ? 'Flexible' : r.checkInTime || '2:00 PM'}</div>
+          <div style={{ fontSize: 11, color: t.MUTED, marginTop: 2 }}>{flexible ? 'any time' : r.checkOutTime || '12:00 PM'}</div>
         </div>
-        <div style={{ width: 3, alignSelf: 'stretch', minHeight: 44, borderRadius: 3, background: color, flex: '0 0 auto' }} />
-        <div style={{ flex: '1 1 240px', minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: t.TEXT }}>
+        <div style={{ width: 3, alignSelf: 'stretch', minHeight: 44, borderRadius: 3, background: color }} />
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: t.TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {r.guestName || 'Guest'} <span style={{ fontSize: 10, color: t.MUTED, fontWeight: 500 }}>#{r.id.slice(0, 8).toUpperCase()}</span>
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 7 }}>
-            <Tag t={t} c="green">{roomsOnCard.length > 1 ? `${roomsOnCard.length} rooms: ${roomsOnCard.map(x => x.roomNumber || '—').join(', ')}` : `Room ${r.roomNumber || '—'}`}{r.roomType ? ` · ${r.roomType}` : ''}</Tag>
+            <Tag t={t} c="green" title={roomsOnCard.length > 1 ? `Rooms: ${roomNames.join(', ')}` : `Room ${r.roomNumber || '—'}${r.roomType ? ` · ${r.roomType}` : ''}`}>
+              {roomsOnCard.length > 1 ? `Room ${shortRoomList(roomNames)}` : `Room ${r.roomNumber || '—'}`}{r.roomType && roomsOnCard.length === 1 ? ` · ${r.roomType}` : ''}
+            </Tag>
             {r.type && <Tag t={t} c="violet"><span style={{ textTransform: 'capitalize' }}>{r.type}</span></Tag>}
             <Tag t={t}>{r.checkOut && r.checkOut !== r.checkIn ? `${formatDate(r.checkIn)} – ${formatDate(r.checkOut)}` : formatDate(r.checkIn)}</Tag>
             <Tag t={t}>{nights(r)}</Tag>
@@ -384,8 +414,8 @@ function ReservationBoard({
             {r.cancellationRequested && <Tag t={t} c="red">Cancellation requested</Tag>}
             {isDelayedArrival(r) && <Tag t={t} c="amber" title="Guest has not checked in yet">Delayed arrival</Tag>}
             {roomsOnCard.some(x => x.status !== r.status) && (
-              <Tag t={t} c="amber" title="The rooms in this booking are at different steps">
-                {roomsOnCard.map(x => `${x.roomNumber}: ${String(x.status).replace('-', ' ')}`).join(' · ')}
+              <Tag t={t} c="amber" title={roomsOnCard.map(x => `${x.roomNumber}: ${String(x.status).replace('-', ' ')}`).join(' · ')}>
+                Rooms at different steps
               </Tag>
             )}
             {overstay && <Tag t={t} c="red" title="Still checked in past check-out time">Overstayed {overstay.label}</Tag>}
@@ -396,14 +426,14 @@ function ReservationBoard({
             </div>
           ))}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 150, flex: '0 0 auto' }}>
+        <div className="lk-res-contact" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <BeamAvatar seed={guestAvatarSeed(r)} size={30} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: t.TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.phone || 'No phone'}</div>
             <div style={{ fontSize: 10, color: t.MUTED, textTransform: 'capitalize' }}>{r.status}</div>
           </div>
         </div>
-        <div onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ flex: '0 0 auto', cursor: 'default' }}>
+        <div className="lk-res-actions" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} style={{ cursor: 'default' }}>
           {renderActions(r)}
         </div>
       </div>
@@ -531,10 +561,12 @@ function ReservationBoard({
 
   return (
     <div style={{ background: t.CARD, border: `1px solid ${t.BORDER}`, borderRadius: 16, overflow: 'hidden' }}>
+      <style>{ROW_CSS}</style>
       <div style={{ display: 'flex', flexWrap: 'wrap' }}>
         {isCalendar && tab !== 'month' && sidebar}
 
-        <div style={{ flex: '1 1 460px', minWidth: 0, padding: 16 }}>
+        {/* Cards adapt to this panel's width (container queries in ROW_CSS). */}
+        <div style={{ flex: '1 1 460px', minWidth: 0, padding: 16, containerType: 'inline-size' }}>
           {/* Title, navigation, view tabs */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1273,7 +1305,7 @@ export default function Reservations() {
   // Under the stepper: "Checked in 2:05 PM" while the guest is in, and the
   // check-out time for 5 minutes after they leave.
   const renderActions = (r) => (
-    <div onClick={event => event.stopPropagation()} style={{ minWidth: 190 }}>
+    <div onClick={event => event.stopPropagation()} style={{ minWidth: 0 }}>
       {renderStepper(r, true)}
       {getLiveStayLabels(r, now).map(label => (
         <div key={label.type} style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: label.type === 'in' ? (dark ? '#93c5fd' : '#1d4ed8') : MUTED, display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -1292,7 +1324,9 @@ export default function Reservations() {
       )}
       {r.type === 'corporate' && ['pending', 'confirmed', 'checked-in'].includes(r.status) && (
         <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
-          <span style={{ color: MUTED }}>{r.assignedRooms?.length ? `Rooms: ${r.assignedRooms.map(item => item.roomNumber).join(', ')}` : 'No rooms yet'}</span>
+          <span style={{ color: MUTED }} title={r.assignedRooms?.length ? r.assignedRooms.map(item => item.roomNumber).join(', ') : undefined}>
+            {r.assignedRooms?.length ? `Rooms: ${shortRoomList(r.assignedRooms.map(item => item.roomNumber))}` : 'No rooms yet'}
+          </span>
           <button type="button" onClick={() => setAssignTarget(r)}
             style={{ border: `1px solid ${BORDER2}`, borderRadius: 8, padding: '3px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer', background: 'transparent', color: TEXT, fontFamily: 'inherit' }}>
             {r.assignedRooms?.length ? 'Change rooms' : 'Assign rooms'}
