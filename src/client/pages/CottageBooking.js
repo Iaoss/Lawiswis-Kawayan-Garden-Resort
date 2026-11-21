@@ -13,6 +13,7 @@ import { createPayMongoCheckout } from '../../lib/paymongo';
 import { useCottageCatalog } from '../../lib/useCottageCatalog';
 import { IMAGE_WIDTHS, optimizeImage } from '../../lib/imageUrl';
 import { Trees } from 'lucide-react';
+import NumberField from '../../components/ui/number-field';
 
 // Day tour or night tour with just a cottage — no room needed. Guests pay
 // the swimming entrance per person plus the cottage.
@@ -201,12 +202,14 @@ export default function CottageBooking() {
             <section style={card}>
               <h2 style={{ font: `500 22px ${SERIF}`, color: FOREST_DEEP, margin: '0 0 14px' }}>Guests</h2>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <label style={label}>Adults (₱{rate.adult} each)
-                  <input type="number" min="1" max="20" required value={form.adults} onChange={e => set('adults', Math.max(1, Math.min(20, Number(e.target.value) || 1)))} style={input} />
-                </label>
-                <label style={label}>Children under 10 (₱{rate.child} each)
-                  <input type="number" min="0" max="20" value={form.children} onChange={e => set('children', Math.max(0, Math.min(20, Number(e.target.value) || 0)))} style={input} />
-                </label>
+                <div style={label}>Adults (₱{rate.adult} each)
+                  <NumberField value={form.adults} label="Adults" min={1} max={20} onChange={v => set('adults', v === '' ? '' : Number(v))}
+                    buttonStyle={{ borderRadius: 0 }} inputStyle={{ borderRadius: 0 }} />
+                </div>
+                <div style={label}>Children under 10 (₱{rate.child} each)
+                  <NumberField value={form.children} label="Children" min={0} max={20} onChange={v => set('children', v === '' ? '' : Number(v))}
+                    buttonStyle={{ borderRadius: 0 }} inputStyle={{ borderRadius: 0 }} />
+                </div>
               </div>
               <p style={{ color: '#6b6a5c', font: `12px/1.6 ${SANS}`, margin: '10px 0 0' }}>The swimming entrance is per person for the {form.tourPeriod === 'night' ? 'night' : 'day'} tour.</p>
             </section>
