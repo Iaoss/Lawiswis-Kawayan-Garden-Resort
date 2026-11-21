@@ -235,6 +235,13 @@ export async function createCorporateReservation(body, staff = null) {
             if (taken) throw Object.assign(new Error(`Room ${room.roomNumber} was just booked for these dates. Pick another room.`), { code: 409 });
             picked.push({ roomId, room, blockRef: adminDb.collection('reservations').doc() });
           }
+          // Rooms are held at no charge, so a group can't hold more than it
+          // needs: without its smallest room the group must no longer fit.
+          const beds = picked.map(({ room }) => Number(getRoomMaximumGuests(room)) || 0).sort((a, b) => a - b);
+          const totalBeds = beds.reduce((sum, n) => sum + n, 0);
+          if (picked.length > 1 && totalBeds - beds[0] >= totalGuests) {
+            throw Object.assign(new Error(`Your ${totalGuests} guests fit in fewer rooms. Remove a room you don't need.`), { code: 400 });
+          }
           const groupName = reservation.companyName || normalizedGuestName;
           transaction.create(reservationRef, {
             ...reservation,
@@ -269,6 +276,7 @@ export async function createCorporateReservation(body, staff = null) {
           }));
         });
       } catch (roomError) {
+        if (roomError.code === 400) return reply(400, { error: roomError.message, code: 'TOO_MANY_ROOMS' });
         if (roomError.code === 404 || roomError.code === 409) return reply(roomError.code, { error: roomError.message, code: 'ROOM_TAKEN' });
         throw roomError;
       }

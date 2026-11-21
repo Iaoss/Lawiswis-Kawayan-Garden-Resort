@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { loadPublicRooms } from '../lib/publicRooms';
-import { getRoomMaximumGuests, getStayDurationError } from '../../lib/bookingPricing';
+import { MAX_STAY_NIGHTS, getRoomMaximumGuests, getStayDurationError } from '../../lib/bookingPricing';
 import { createPayMongoCheckout } from '../../lib/paymongo';
 import { getOnlinePaymentAmount, RESERVATION_DEPOSIT_PERCENTAGE } from '../../lib/paymentPolicy';
 import {
@@ -149,7 +149,21 @@ export default function CorporateBooking() {
   const movePhoto = (room, by) => setPhotoIndex(current => ({ ...current, [room.id]: ((current[room.id] || 0) + by + room.gallery.length) % room.gallery.length }));
   const pickedRooms = allRooms.filter(room => roomIds.includes(room.id));
   const pickedBeds = pickedRooms.reduce((sum, room) => sum + (getRoomMaximumGuests(room) || 0), 0);
-  const toggleRoom = id => setRoomIds(current => (current.includes(id) ? current.filter(x => x !== id) : [...current, id]));
+  // Once the picked rooms sleep the whole group, no more rooms can be added
+  // (rooms are held at no charge, so extra ones would block other guests).
+  const groupFits = totalGuests > 0 && pickedBeds >= totalGuests;
+  const toggleRoom = id => setRoomIds(current => {
+    if (current.includes(id)) return current.filter(x => x !== id);
+    return groupFits ? current : [...current, id];
+  });
+  // Longest stay: 30 nights (same as other bookings).
+  const lastCheckOut = (() => {
+    if (!form.checkIn) return maxDate;
+    const date = new Date(`${form.checkIn}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + MAX_STAY_NIGHTS);
+    const key = date.toISOString().slice(0, 10);
+    return maxDate && maxDate < key ? maxDate : key;
+  })();
 
   const packageFeatures = useMemo(() => selectedPackage
     ? CORPORATE_FEATURE_ROWS.filter(row => isCorporateFeatureIncluded(selectedPackage.id, nights, row.id))
@@ -420,10 +434,15 @@ export default function CorporateBooking() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '14px' }}>
               <label style={labelStyle}>Booking format<select name="bookingType" value={form.bookingType} onChange={changeField} style={inputStyle}><option value="overnight">Overnight stay</option><option value="daytour">Day tour</option></select></label>
               <label style={labelStyle}>{form.bookingType === 'daytour' ? 'Event date' : 'Check-in'}<input type="date" name="checkIn" min={earliestDate} max={maxDate} value={form.checkIn} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('checkIn'))} style={inputStyle} />{fieldError('checkIn')}</label>
-              {form.bookingType === 'overnight' && <label style={labelStyle}>Check-out<input type="date" name="checkOut" min={form.checkIn || earliestDate} max={maxDate} value={form.checkOut} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('checkOut'))} style={inputStyle} />{fieldError('checkOut')}</label>}
+              {form.bookingType === 'overnight' && <label style={labelStyle}>Check-out (up to {MAX_STAY_NIGHTS} nights)<input type="date" name="checkOut" min={form.checkIn || earliestDate} max={lastCheckOut} value={form.checkOut} onChange={changeField} onBlur={touch} aria-invalid={Boolean(visibleError('checkOut'))} style={inputStyle} />{fieldError('checkOut')}</label>}
             </div>
+            {form.bookingType === 'overnight' && form.checkIn && form.checkOut && form.checkOut > form.checkIn && (
+              <p style={{ margin: '14px 0 0', color: FOREST, font: `600 13px/1.6 ${SANS}` }}>
+                {nights} night{nights === 1 ? '' : 's'} · {formatLongDate(form.checkIn)} to {formatLongDate(form.checkOut)}{nights > MAX_STAY_NIGHTS ? ` (the most is ${MAX_STAY_NIGHTS} nights)` : ''}
+              </p>
+            )}
             <p style={{ margin: '14px 0 0', padding: '10px 12px', background: CREAM, color: '#626355', font: `12px/1.6 ${SANS}` }}>
-              {`Group and corporate bookings must be made at least ${GROUP_ADVANCE_DAYS} days before check-in, so the resort can inspect and prepare the areas. The earliest date you can choose is ${formatLongDate(earliestDate)}.`}
+              {`Overnight group stays can be 1 to ${MAX_STAY_NIGHTS} nights. Group and corporate bookings must be made at least ${GROUP_ADVANCE_DAYS} days before check-in, so the resort can inspect and prepare the areas. The earliest date you can choose is ${formatLongDate(earliestDate)}.`}
             </p>
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '18px', color: '#626355', font: `12px/1.6 ${SANS}` }}>
               <input type="checkbox" name="accommodationInterest" checked={form.accommodationInterest} onChange={changeField} style={{ marginTop: '3px' }} />
@@ -466,14 +485,23 @@ export default function CorporateBooking() {
                         <strong style={{ font: `500 18px ${SERIF}`, color: INK }}>{room.title}</strong>
                         <span>{room.groupTitle} · up to {getRoomMaximumGuests(room) || '?'} guests</span>
                         {room.location && <span>{room.location}</span>}
-                        <button type="button" aria-pressed={on} onClick={() => toggleRoom(room.id)} style={{ marginTop: '8px', border: `1px solid ${FOREST}`, background: on ? FOREST : '#fff', color: on ? '#fff' : FOREST, padding: '9px', font: `600 12px ${SANS}`, cursor: 'pointer' }}>{on ? '✓ Selected' : 'Select room'}</button>
+                        <button type="button" aria-pressed={on} disabled={!on && groupFits} onClick={() => toggleRoom(room.id)} title={!on && groupFits ? 'Your group already has enough beds' : undefined}
+                          style={{ marginTop: '8px', border: `1px solid ${!on && groupFits ? LINE : FOREST}`, background: on ? FOREST : '#fff', color: on ? '#fff' : !on && groupFits ? '#9a9a8c' : FOREST, padding: '9px', font: `600 12px ${SANS}`, cursor: !on && groupFits ? 'not-allowed' : 'pointer' }}>
+                          {on ? '✓ Selected' : groupFits ? 'Group already fits' : 'Select room'}
+                        </button>
                       </div>
                     </article>
                   );
                 })}
               </div>
             )}
-            {roomIds.length > 0 && <p style={{ margin: '12px 0 0', color: FOREST, font: `600 13px/1.6 ${SANS}` }}>{roomIds.length} room{roomIds.length === 1 ? '' : 's'} selected, sleeping up to {pickedBeds} of your {totalGuests || 0} guests. They are held for your group once you book.</p>}
+            {roomIds.length > 0 && (
+              <p role="status" style={{ margin: '12px 0 0', color: FOREST, font: `600 13px/1.6 ${SANS}` }}>
+                {roomIds.length} room{roomIds.length === 1 ? '' : 's'} selected, sleeping up to {pickedBeds} of your {totalGuests || 0} guests.
+                {groupFits ? ' That\u2019s enough beds for everyone, so no more rooms can be added. Unselect one to pick a different room.' : ` ${Math.max(0, (totalGuests || 0) - pickedBeds)} more to place.`}
+                {' '}They are held for your group once you book.
+              </p>
+            )}
           </section>
           )}
 
