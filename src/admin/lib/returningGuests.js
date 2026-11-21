@@ -69,3 +69,19 @@ export function findReturningGuests(reservations = [], query = '', { limit = 6 }
     .sort((a, b) => String(b.lastStay).localeCompare(String(a.lastStay)))
     .slice(0, limit);
 }
+
+// Opens Walk-In for a new booking for this guest (Reservations → "Book again",
+// Customers → "Book again"): saves their details and active bookings for the
+// Walk-In page to fill in, and returns the page to go to.
+export function prepareBookAgain(guest = {}, reservations = []) {
+  const key = guestKeyOf(guest);
+  const activeBookings = reservations
+    .filter(x => guestKeyOf(x) === key && isActiveBooking(x) && (!x.groupId || x.groupId === x.id))
+    .map(x => ({ id: x.id, roomNumber: x.roomNumber || '', checkIn: x.checkIn || '', checkOut: x.checkOut || '', status: x.status || '' }));
+  const reservation = {
+    guestName: guest.guestName, firstName: guest.firstName, lastName: guest.lastName, phone: guest.phone, email: guest.email,
+    address: guest.address, preferredContactMethod: guest.preferredContactMethod, contactLink: guest.contactLink,
+  };
+  try { sessionStorage.setItem('lkgr_walkin_prefill', JSON.stringify({ reservation, activeBookings })); } catch { /* storage blocked: Walk-In opens empty */ }
+  return `${window.location.pathname.startsWith('/receptionist') ? '/receptionist' : '/admin'}/walkin`;
+}

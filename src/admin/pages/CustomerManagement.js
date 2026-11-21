@@ -7,6 +7,8 @@ import { splitGuestName } from '../../lib/nameValidation';
 import { staffApi } from '../lib/staffApi';
 import { money } from '../lib/money';
 import { loadCollection } from '../lib/cachedCollection';
+import { useNavigate } from 'react-router-dom';
+import { prepareBookAgain } from '../lib/returningGuests';
 
 const normalizeStatus = status => String(status || 'pending').toLowerCase().trim().replace(/[\s_]+/g, '-');
 const dateKey = value => {
@@ -46,6 +48,23 @@ export default function CustomerManagement() {
   const [checkInStart, setCheckInStart] = useState('');
   const [checkInEnd, setCheckInEnd] = useState('');
   const [selected, setSelected] = useState(null);
+  const navigate = useNavigate();
+  // New booking for this guest: Walk-In opens with their saved details filled
+  // in, and offers their active bookings so the stay can share one bill.
+  const bookAgain = () => {
+    if (!selected) return;
+    const latest = [...selected.stays].sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))[0] || {};
+    const names = splitGuestName(selected.guestName || '');
+    navigate(prepareBookAgain({
+      ...latest,
+      guestName: selected.guestName || latest.guestName,
+      firstName: names.firstName || latest.firstName,
+      lastName: names.lastName || latest.lastName,
+      phone: selected.phone || latest.phone,
+      email: selected.email || latest.email,
+      address: selected.address || latest.address,
+    }, selected.stays));
+  };
   // Edit guest info: the form, or null when closed.
   const [editForm, setEditForm] = useState(null);
   const [editBusy, setEditBusy] = useState(false);
@@ -229,8 +248,13 @@ export default function CustomerManagement() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
                     <BeamAvatar seed={guestAvatarSeed(selected)} size={48} title={`${selected.guestName || 'Guest'}'s avatar`} />
                     <h3 style={{ fontWeight: '600', color: TEXT, margin: 0, fontSize: '14px' }}>Guest Profile</h3>
+                    <button type="button" onClick={bookAgain}
+                      title="Open Walk-In with this guest's details filled in"
+                      style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, border: 'none', background: ACCENT, color: '#0a1a0a', borderRadius: 8, padding: '6px 11px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                      <i className="ti ti-user-plus" aria-hidden="true" /> Book again
+                    </button>
                     <button type="button" onClick={openEdit}
-                      style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${BORDER}`, background: CARD2, color: TEXT, borderRadius: 8, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: `1px solid ${BORDER}`, background: CARD2, color: TEXT, borderRadius: 8, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
                       <i className="ti ti-pencil" aria-hidden="true" /> Edit guest info
                     </button>
                   </div>

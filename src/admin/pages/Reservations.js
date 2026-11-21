@@ -56,7 +56,7 @@ import { seniorPwdSummary } from '../../lib/seniorPwdGuests';
 import { subscribeCollection } from '../lib/liveCollection';
 import DiscountReviewDialog from '../components/DiscountReviewDialog';
 import { isAwaitingDiscountReview, isDiscountReviewQueued } from '../../lib/discountReview';
-import { guestKeyOf, isActiveBooking } from '../lib/returningGuests';
+import { prepareBookAgain } from '../lib/returningGuests';
 
 // Pending/confirmed, never checked in, and the check-in date has passed
 // (same rule as lib/cancelBooking.js on the server).
@@ -1157,14 +1157,9 @@ export default function Reservations() {
   // Same guest, new stay: open Walk-In with their details filled in, and
   // offer their active bookings so the new stay can share one bill.
   const bookAgainFor = r => {
-    const key = guestKeyOf(r);
-    const activeBookings = reservations
-      .filter(x => guestKeyOf(x) === key && isActiveBooking(x) && (!x.groupId || x.groupId === x.id))
-      .map(x => ({ id: x.id, roomNumber: x.roomNumber || '', checkIn: x.checkIn || '', checkOut: x.checkOut || '', status: x.status || '' }));
-    const reservation = { guestName: r.guestName, firstName: r.firstName, lastName: r.lastName, phone: r.phone, email: r.email, address: r.address, preferredContactMethod: r.preferredContactMethod, contactLink: r.contactLink };
-    try { sessionStorage.setItem('lkgr_walkin_prefill', JSON.stringify({ reservation, activeBookings })); } catch { /* storage blocked: Walk-In opens empty */ }
+    const path = prepareBookAgain(r, reservations);
     setSelectedId(null);
-    navigate(`${isReceptionist ? '/receptionist' : '/admin'}/walkin`);
+    navigate(path);
   };
 
   const submitExtension = async () => {

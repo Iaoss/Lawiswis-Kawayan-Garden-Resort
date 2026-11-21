@@ -1,4 +1,4 @@
-import { findReturningGuests, guestKeyOf } from '../admin/lib/returningGuests';
+import { findReturningGuests, guestKeyOf, prepareBookAgain } from '../admin/lib/returningGuests';
 import { linkToBooking } from '../../apiHandlers/staff-billing';
 
 jest.mock('../../lib/firebaseAdmin', () => {
@@ -58,4 +58,16 @@ describe('putting a new stay on the same bill', () => {
     store.set('reservations/old', { ...store.get('reservations/old'), status: 'checked-out' });
     await expect(linkToBooking({ reservationId: 'new', targetId: 'old' })).rejects.toThrow(/pending, confirmed or checked-in/);
   });
+});
+
+test('Book again (Customers / Reservations) opens Walk-In with the guest and their active bookings', () => {
+  const stays = [
+    { id: 'old', guestName: 'Ana Cruz', phone: '09171234567', status: 'checked-out', checkIn: '2026-10-01' },
+    { id: 'now', guestName: 'Ana Cruz', phone: '09171234567', status: 'confirmed', checkIn: '2026-12-01', checkOut: '2026-12-02', roomNumber: 'Hirang' },
+  ];
+  const path = prepareBookAgain({ ...stays[1], email: 'ana@x.ph', preferredContactMethod: 'SMS' }, stays);
+  expect(path).toBe('/admin/walkin');
+  const saved = JSON.parse(sessionStorage.getItem('lkgr_walkin_prefill'));
+  expect(saved.reservation).toMatchObject({ guestName: 'Ana Cruz', phone: '09171234567', email: 'ana@x.ph', preferredContactMethod: 'SMS' });
+  expect(saved.activeBookings).toEqual([{ id: 'now', roomNumber: 'Hirang', checkIn: '2026-12-01', checkOut: '2026-12-02', status: 'confirmed' }]);
 });
