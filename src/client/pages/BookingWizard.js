@@ -15,7 +15,7 @@ import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
 import { closedPeriodMessage, findClosedPeriod, formatClosedRange } from '../../lib/closedDates';
 import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
 import { loadPublicRooms } from '../lib/publicRooms';
-import { roomHasStairs } from '../../lib/roomAccess';
+import { roomAccessLabel, roomHasStairs, roomIsStepFree } from '../../lib/roomAccess';
 
 // Step-by-step start of a booking: 1 Type (personal or group), 2 When (stay
 // type, dates, guests), 3 Choose a room (only rooms free on those dates,
@@ -240,10 +240,12 @@ export default function BookingWizard() {
       .filter(room => !getGuestCountViolation(room, Number(adults), Number(children)))
       .map(room => ({ room, price: priceFor(room), kind: getRoomCapacityPolicy(room)?.label || room.groupTitle, spare: (getRoomCapacityPolicy(room)?.maxGuests || 99) - guests }))
       .filter(entry => entry.price !== null)
-      // Cheapest first; at the same price, the room closest to the group size.
-      .sort((a, b) => a.price - b.price || a.spare - b.spare || String(a.room.title).localeCompare(String(b.room.title)));
+      // Seniors / PWD: rooms confirmed to have no stairs come first. Then
+      // cheapest first; at the same price, the room closest to the group size.
+      .sort((a, b) => (stepFree ? Number(roomIsStepFree(b.room)) - Number(roomIsStepFree(a.room)) : 0)
+        || a.price - b.price || a.spare - b.spare || String(a.room.title).localeCompare(String(b.room.title)));
     return { fitting: fits, tooSmall: free.length - fits.length, partRooms: free.filter(room => getGuestCountViolation(room, Number(adults), Number(children))) };
-  }, [rooms, availableIds, adults, children, stay, nights, seasonPeriods, hideStairRooms, presetRoomId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rooms, availableIds, adults, children, stay, nights, seasonPeriods, hideStairRooms, presetRoomId, stepFree]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const presetEntry = presetRoom ? fitting.find(entry => entry.room.id === presetRoom.id) : null;
   const { recommended, others } = pickRecommendedRooms(fitting.filter(entry => entry.room.id !== presetRoomId));
@@ -293,6 +295,12 @@ export default function BookingWizard() {
           <div style={{ color: MOSS, font: `600 10px ${SANS}`, letterSpacing: '.12em', textTransform: 'uppercase' }}>{entry.kind}</div>
           <strong style={{ font: `500 20px ${SERIF}`, color: INK }}>{room.title}</strong>
           <span style={{ font: `12px ${SANS}`, color: '#6b6a5c' }}>{describeRoomCapacity(getRoomCapacityPolicy(room)) || 'Ask us about capacity'}{room.location ? ` · ${room.location}` : ''}</span>
+          {stepFree && (() => {
+            // Seniors / PWD in the group: say plainly whether the room has stairs.
+            const access = roomAccessLabel(room);
+            const tone = access.tone === 'ok' ? { bg: '#e8f3ea', color: '#1d5b34' } : access.tone === 'warn' ? { bg: '#fdecec', color: '#9b1c1c' } : { bg: '#fff6dd', color: '#7a5300' };
+            return <span style={{ alignSelf: 'flex-start', background: tone.bg, color: tone.color, padding: '3px 8px', font: `600 11px ${SANS}` }}>{access.text}</span>;
+          })()}
           <p className="wizard-room-desc" style={{ margin: '2px 0 0', font: `12.5px/1.6 ${SANS}`, color: '#55584b', display: '-webkit-box', WebkitLineClamp: isPhone ? 2 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{room.description}</p>
           <button type="button" onClick={() => { setDetailsFor(entry); setPhotoIndex(0); }}
             style={{ alignSelf: 'flex-start', border: 0, background: 'none', padding: '2px 0 6px', color: FOREST, font: `600 12px ${SANS}`, textDecoration: 'underline', textUnderlineOffset: 3, cursor: 'pointer' }}>
@@ -415,7 +423,7 @@ export default function BookingWizard() {
             {stepFree && (
               <div role="status" style={{ ...card, marginBottom: 16, padding: '12px 16px', background: CREAM, font: `13px/1.6 ${SANS}`, color: INK }}>
                 {hideStairRooms
-                  ? <>Showing rooms without stairs{stairRoomsHidden ? ` (${stairRoomsHidden} second-floor room${stairRoomsHidden === 1 ? '' : 's'} hidden)` : ''}. Rooms with no floor listed are shown; please confirm access with the resort.</>
+                  ? <>Showing rooms without stairs first{stairRoomsHidden ? ` (${stairRoomsHidden} upper-floor room${stairRoomsHidden === 1 ? '' : 's'} with stairs hidden)` : ''}. Each room says “No stairs” or “Floor not confirmed”; for an unconfirmed room, please check access with the resort. Senior / PWD discount: you can send the ID in the next step.</>
                   : <>All rooms are shown, including second-floor rooms with stairs.</>}
                 {' '}<button type="button" onClick={() => setShowStairRooms(value => !value)} style={{ border: 0, background: 'none', padding: 0, color: FOREST, font: `600 13px ${SANS}`, textDecoration: 'underline', cursor: 'pointer' }}>{hideStairRooms ? 'Show all rooms' : 'Hide rooms with stairs'}</button>
               </div>

@@ -95,7 +95,7 @@ const CAPACITY_OPTIONS = {
   MainVilla: [20],
 };
 
-const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', dayTourPrice: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
+const emptyForm = { roomNumber: '', type: '', baseCapacity: '', price: '', dayTourPrice: '', floor: '', status: 'vacant', amenities: '', description: '', imageUrl: '' };
 
 // Activity Log line for a room save; price and status changes are spelled out.
 function describeRoomSave(before, after) {
@@ -619,6 +619,15 @@ export default function RoomManagement() {
                         onChange={e => setForm({ ...form, [f.key]: e.target.value })} />
                     </div>
                   ))}
+                  <div>
+                    <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Floor (for seniors / PWD)</label>
+                    <select style={inputStyle} value={form.floor || ''} onChange={e => setForm(previous => ({ ...previous, floor: e.target.value }))} aria-label="Floor">
+                      <option value="">Not set (read from the description)</option>
+                      <option value="ground">Ground floor · no stairs</option>
+                      <option value="upper">Upper floor · has stairs</option>
+                    </select>
+                    <div style={{ fontSize: 10.5, color: MUTED, marginTop: 4 }}>Guests booking for a senior or PWD are shown ground-floor rooms first; upper-floor rooms are hidden.</div>
+                  </div>
                   <div>
                     <label style={{ fontSize: 11, color: SUBTEXT, marginBottom: 5, display: 'block', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Room Type</label>
                     <select style={inputStyle} value={form.type} onChange={e => {
