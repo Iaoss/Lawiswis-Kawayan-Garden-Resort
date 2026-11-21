@@ -30,6 +30,7 @@ import { useLeaveGuard } from '../lib/leaveGuard';
 import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
 import { roomHasStairs } from '../../lib/roomAccess';
 import { decorateRoom } from '../../client/lib/roomCatalog';
+import NumberField from '../../components/ui/number-field';
 
 const COUPLE_ROOM_LIMIT_MESSAGE = 'This room is full for that many guests. Couple rooms take 2 guests; a Couple Room with Extra Bed takes a third adult. For bigger groups, choose a Family Room or Family Suite.';
 
@@ -675,11 +676,13 @@ export default function WalkIn() {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 14 }}>
                       <div>
                         <label style={label}>Adults</label>
-                        <input type="number" min="1" value={form.adults} onChange={e => changeGuests('adults', e.target.value)} style={inp} />
+                        <NumberField value={form.adults} label="Adults" min={1} max={250} onChange={v => changeGuests('adults', v)}
+                          buttonStyle={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}` }} inputStyle={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}` }} />
                       </div>
                       <div>
                         <label style={label}>Children (under 10)</label>
-                        <input type="number" min="0" value={form.children} onChange={e => changeGuests('children', e.target.value)} style={inp} />
+                        <NumberField value={form.children} label="Children" min={0} max={250} onChange={v => changeGuests('children', v)}
+                          buttonStyle={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}` }} inputStyle={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}` }} />
                       </div>
                       {guestTotal > 1 && (!form.checkIn || form.checkIn === today) && (
                         <div>
@@ -1100,11 +1103,13 @@ export default function WalkIn() {
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                           <label style={label}>Adults</label>
-                          <input type="number" min="1" value={form.adults} onChange={e => changeGuests('adults', e.target.value)} style={inp} />
+                          <NumberField value={form.adults} label="Adults" min={1} max={250} onChange={v => changeGuests('adults', v)}
+                          buttonStyle={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}` }} inputStyle={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}` }} />
                         </div>
                         <div>
                           <label style={label}>Children</label>
-                          <input type="number" min="0" value={form.children} onChange={e => changeGuests('children', e.target.value)} style={inp} />
+                          <NumberField value={form.children} label="Children" min={0} max={250} onChange={v => changeGuests('children', v)}
+                          buttonStyle={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}` }} inputStyle={{ background: CARD2, color: TEXT, border: `1px solid ${BORDER2}` }} />
                         </div>
                         <div style={{ gridColumn: '1 / -1' }}>
                           <label style={label}>Cottage (optional)</label>

@@ -21,6 +21,7 @@ import { getResortNow } from '../src/lib/bookingPricing';
 import { ID_PHOTO_COLLECTION, normalizeDiscountId } from '../src/lib/discountReview';
 import { getDiscountIdError, normalizeIdNumber } from '../src/lib/seniorPwdDiscount';
 import { applyDiscount } from './staff-billing';
+import { describeBooking } from '../src/lib/stayDescription';
 
 class ReviewError extends Error {
   constructor(status, message) {
@@ -87,7 +88,7 @@ async function finishReview({ ref, reservationId, refs, staff, approved, reason,
     amount,
     guestName: reservation.guestName || 'Guest',
     guestEmail: reservation.email || '',
-    description: `Room ${reservation.roomNumber || ''} (${reservation.roomType || ''})${approved ? ' — Senior / PWD discount applied' : ''}`,
+    description: `${describeBooking(reservation)}${approved ? ' · Senior / PWD discount applied' : ''}`,
     paymentType: 'booking',
     paymentChoice: 'full',
     siteUrl,

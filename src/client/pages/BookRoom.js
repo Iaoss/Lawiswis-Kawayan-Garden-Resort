@@ -1325,7 +1325,7 @@ export default function BookRoom() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <button type="button" aria-label={`Remove one ${guestType.label.toLowerCase()}`} disabled={count <= guestType.min} onClick={() => changeGuestCount(guestType.key, count - 1)}
                           style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: count <= guestType.min ? 'not-allowed' : 'pointer' }}>−</button>
-                        <input id={`${guestType.key}-count`} type="number" min={guestType.min} value={count} onChange={event => changeGuestCount(guestType.key, event.target.value)}
+                        <input id={`${guestType.key}-count`} type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="off" value={count} onFocus={event => event.target.select()} onChange={event => changeGuestCount(guestType.key, event.target.value.replace(/\D/g, '').slice(0, 3))}
                           style={{ minWidth: 0, flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 12px', fontSize: '13px', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
                         <button type="button" aria-label={`Add one ${guestType.label.toLowerCase()}`} onClick={() => changeGuestCount(guestType.key, count + 1)}
                           style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: 'pointer' }}>+</button>
@@ -1379,7 +1379,7 @@ export default function BookRoom() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <button type="button" aria-label={`Remove one ${visitor.label.toLowerCase()}`} disabled={count <= visitor.min} onClick={() => setCount(count - 1)}
                                 style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: count <= visitor.min ? 'not-allowed' : 'pointer' }}>−</button>
-                              <input id={`${visitor.key}-count`} type="number" min={visitor.min} max={MAX_DAY_VISITORS} value={count} onChange={event => setCount(event.target.value)}
+                              <input id={`${visitor.key}-count`} type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="off" value={count} onFocus={event => event.target.select()} onChange={event => setCount(event.target.value.replace(/\D/g, '').slice(0, 2))}
                                 style={{ minWidth: 0, flex: 1, border: '1px solid #e5e7eb', borderRadius: '10px', padding: '11px 12px', fontSize: '13px', textAlign: 'center', fontFamily: "'Poppins', sans-serif", outline: 'none', boxSizing: 'border-box' }} />
                               <button type="button" aria-label={`Add one ${visitor.label.toLowerCase()}`} disabled={atMax} onClick={() => setCount(count + 1)}
                                 style={{ width: '38px', height: '40px', border: '1px solid #e5e7eb', borderRadius: '9px', background: '#fff', color: DARK, fontSize: '20px', cursor: atMax ? 'not-allowed' : 'pointer' }}>+</button>

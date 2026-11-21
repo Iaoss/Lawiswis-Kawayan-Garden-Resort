@@ -17,6 +17,7 @@ import { getRoomChangeError } from '../src/lib/roomChange';
 import { readSeasonPeriods } from '../lib/seasonStore';
 import { checkResortCapacity } from '../lib/resortCapacity';
 import { isAwaitingDiscountReview } from '../src/lib/discountReview';
+import { describeBooking } from '../src/lib/stayDescription';
 
 const ACTIVE_RESERVATION_STATUSES = ['pending', 'confirmed'];
 
@@ -591,8 +592,6 @@ async function sendUnpaidPaymentLink({ reservationRef, reservationId, staff, cho
   const amount = ['approved', 'rejected'].includes(reservation.discountReview?.status)
     ? Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0)
     : getOnlinePaymentAmount(Number(reservation.totalAmount || 0), choice);
-  const units = Number(reservation.nights) || 1;
-  const unitLabel = reservation.bookingType === 'daytour' ? 'day' : 'night';
   // paymentType 'booking' makes the PayMongo webhook confirm the booking
   // once at least the deposit is paid.
   const session = await createPayMongoCheckoutSession({
@@ -600,7 +599,7 @@ async function sendUnpaidPaymentLink({ reservationRef, reservationId, staff, cho
     amount,
     guestName: reservation.guestName || 'Guest',
     guestEmail: reservation.email || reservation.guestEmail || '',
-    description: `Room ${reservation.roomNumber || ''} (${reservation.roomType || ''}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`,
+    description: describeBooking(reservation),
     paymentType: 'booking',
     paymentChoice: choice,
     siteUrl,

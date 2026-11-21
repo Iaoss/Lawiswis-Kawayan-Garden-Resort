@@ -11,6 +11,7 @@ import { canMoveToRoom } from '../../lib/roomChange';
 import { MAX_ROOMS_PER_BOOKING } from '../../lib/groupBooking';
 import { bookingsOnRoom, isRoomOutOfService, loadRooms } from '../lib/roomOccupancy';
 import { appConfirm } from '../../components/ui/app-dialog';
+import NumberField from '../../components/ui/number-field';
 
 const peso = value => money(value);
 
@@ -196,12 +197,14 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
               </label>
             </>
           )}
-          <label style={field}>Adults
-            <input type="number" min="1" max="60" required value={form.adults} onChange={e => setForm(f => ({ ...f, adults: e.target.value }))} style={input} />
-          </label>
-          <label style={field}>Children (under 10)
-            <input type="number" min="0" max="60" required value={form.children} onChange={e => setForm(f => ({ ...f, children: e.target.value }))} style={input} />
-          </label>
+          <div style={field}>Adults
+            <NumberField value={form.adults} label="Adults" min={1} max={60} onChange={v => setForm(f => ({ ...f, adults: v }))}
+              buttonStyle={{ width: 38, minWidth: 38, height: 38, background: input.background, color: input.color, border: input.border }} inputStyle={{ height: 38, background: input.background, color: input.color, border: input.border }} />
+          </div>
+          <div style={field}>Children (under 10)
+            <NumberField value={form.children} label="Children" min={0} max={60} onChange={v => setForm(f => ({ ...f, children: v }))}
+              buttonStyle={{ width: 38, minWidth: 38, height: 38, background: input.background, color: input.color, border: input.border }} inputStyle={{ height: 38, background: input.background, color: input.color, border: input.border }} />
+          </div>
         </div>
         {isTour && (
           <label style={{ display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12, color: c.TEXT, cursor: 'pointer' }}>
@@ -265,14 +268,16 @@ export default function EditBookingDialog({ reservation, reservations = [], onCl
               {addChoices.map(room => <option key={room.id} value={room.id}>{roomLabel(room)}</option>)}
             </select>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8 }}>
-              <label style={{ display: 'grid', gap: 4, minWidth: 0, fontSize: 11, color: c.MUTED }}>
+              <div style={{ display: 'grid', gap: 4, minWidth: 0, fontSize: 11, color: c.MUTED }}>
                 Adults
-                <input type="number" min="1" max="60" value={extra.adults} onChange={e => setExtra(x => ({ ...x, adults: e.target.value }))} style={fit} aria-label="Adults in the added room" />
-              </label>
-              <label style={{ display: 'grid', gap: 4, minWidth: 0, fontSize: 11, color: c.MUTED }}>
+                <NumberField value={extra.adults} label="Adults in the added room" min={1} max={60} onChange={v => setExtra(x => ({ ...x, adults: v }))}
+              buttonStyle={{ width: 38, minWidth: 38, height: 38, background: input.background, color: input.color, border: input.border }} inputStyle={{ height: 38, background: input.background, color: input.color, border: input.border }} />
+              </div>
+              <div style={{ display: 'grid', gap: 4, minWidth: 0, fontSize: 11, color: c.MUTED }}>
                 Children
-                <input type="number" min="0" max="60" value={extra.children} onChange={e => setExtra(x => ({ ...x, children: e.target.value }))} style={fit} aria-label="Children in the added room" />
-              </label>
+                <NumberField value={extra.children} label="Children in the added room" min={0} max={60} onChange={v => setExtra(x => ({ ...x, children: v }))}
+              buttonStyle={{ width: 38, minWidth: 38, height: 38, background: input.background, color: input.color, border: input.border }} inputStyle={{ height: 38, background: input.background, color: input.color, border: input.border }} />
+              </div>
             </div>
             {extra.error && <div style={{ fontSize: 11, color: '#dc2626' }}>{extra.error}</div>}
             {extra.roomId && (

@@ -17,6 +17,7 @@ import BookingSteps from '../components/BookingSteps';
 import { decorateRoom } from '../lib/roomCatalog';
 import { roomHasStairs } from '../../lib/roomAccess';
 import { closedPeriodMessage, findClosedPeriod } from '../../lib/closedDates';
+import { describeBooking } from '../../lib/stayDescription';
 
 const GROUP_STEPS = ['Your group', 'Dates', 'Rooms', 'Review & pay'];
 const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -381,7 +382,7 @@ export default function CorporateBooking() {
                   <label style={labelStyle}>Purchase Order no. (if you have it)<input maxLength={40} name="poNumber" value={form.poNumber} onChange={changeField} placeholder="Can be sent later" style={inputStyle} /></label>
                 </>
               )}
-              <label style={labelStyle}>Number of guests ({MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS})<input required type="number" min={MIN_GROUP_GUESTS} max={MAX_GROUP_GUESTS} step="1" name="totalGuests" value={form.totalGuests} onChange={changeField} aria-invalid={Boolean(guestError)} style={inputStyle} />{fieldError('totalGuests')}</label>
+              <label style={labelStyle}>Number of guests ({MIN_GROUP_GUESTS}–{MAX_GROUP_GUESTS})<input required type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="off" name="totalGuests" value={form.totalGuests} onChange={event => changeField({ target: { name: 'totalGuests', value: event.target.value.replace(/\D/g, '').slice(0, 3), type: 'text' } })} aria-invalid={Boolean(guestError)} style={inputStyle} />{fieldError('totalGuests')}</label>
               <p role="note" style={{ gridColumn: '1 / -1', margin: '4px 0 0', padding: '10px 12px', background: '#f6f8f1', border: '1px solid #dfe6d2', borderRadius: 10, fontSize: 12, lineHeight: 1.55, color: '#374151' }}>
                 <strong>At least one contact is required.</strong> {CONTACT_REQUIREMENT_NOTE}
               </p>
@@ -509,6 +510,12 @@ export default function CorporateBooking() {
             <>
               <h2 style={{ font: `500 30px ${SERIF}`, margin: '12px 0 5px' }}>{selectedPackage.name}</h2>
               <div style={{ color: 'rgba(255,255,255,.7)', font: `12px ${SANS}` }}>{selectedPackage.minGuests}{selectedPackage.maxGuests ? `–${selectedPackage.maxGuests}` : '+'} guests · ₱{selectedPackage.ratePerGuest.toLocaleString()} per guest</div>
+              {form.checkIn && (form.bookingType === 'daytour' || form.checkOut) && (
+                // "Bamboo Core · 20 guests · 15 nights (Nov 22 – Dec 7, 2026)"
+                <div style={{ marginTop: '12px', background: 'rgba(255,255,255,.1)', padding: '10px 12px', font: `600 13px/1.5 ${SANS}` }}>
+                  {describeBooking({ type: 'corporate', packageName: selectedPackage.name, totalGuests, bookingType: form.bookingType, checkIn: form.checkIn, checkOut: form.bookingType === 'daytour' ? form.checkIn : form.checkOut })}
+                </div>
+              )}
               <div style={{ borderTop: '1px solid rgba(255,255,255,.2)', margin: '22px 0 10px', paddingTop: '16px', display: 'grid', gap: '6px', font: `12px ${SANS}`, color: 'rgba(255,255,255,.78)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><span>{totalGuests} guests × ₱{selectedPackage.ratePerGuest.toLocaleString()}</span><span>₱{selectedPackage.perNightAmount.toLocaleString()}{form.bookingType === 'daytour' ? '' : ' / night'}</span></div>
                 {form.bookingType !== 'daytour' && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><span>× {nightLabel}{form.checkOut ? '' : ' (pick check-out)'}</span></div>}

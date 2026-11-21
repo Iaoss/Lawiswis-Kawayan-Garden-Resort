@@ -9,6 +9,7 @@ import { getOnlinePaymentAmount } from '../src/lib/paymentPolicy';
 import { createPayMongoCheckoutSession } from '../lib/paymongoCheckout';
 import { verifyStaff } from '../lib/verifyStaff';
 import { isAwaitingDiscountReview } from '../src/lib/discountReview';
+import { describeBooking } from '../src/lib/stayDescription';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -64,15 +65,11 @@ export default async function handler(req, res) {
     }
     guestName = reservation.guestName || 'Guest';
     guestEmail = reservation.email || '';
-    const units = Number(reservation.nights) || 1;
-    const unitLabel = reservation.bookingType === 'daytour' ? 'day' : 'night';
+    // What was booked, with the number of nights and the dates, e.g.
+    // "Bamboo Core · 20 guests · 15 nights (Nov 22 – Dec 7, 2026)".
     description = reservation.type === 'corporate'
-      ? `${reservation.packageName || 'Corporate'} corporate group booking · ${Number(reservation.totalGuests) || 0} guests`
-      : reservation.cottageOnly
-        ? `${reservation.roomNumber || 'Cottage'} — ${reservation.tourPeriod === 'night' ? 'night' : 'day'} tour · ${Number(reservation.totalGuests) || 0} guests`
-      : checkoutType === 'billing'
-        ? `Room ${reservation.roomNumber || ''} — ${guestName}`
-        : `Room ${reservation.roomNumber || ''} (${reservation.roomType || ''}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`;
+      ? `${describeBooking(reservation)} · corporate group booking`
+      : describeBooking(reservation);
     const balance = Number(reservation.totalAmount || 0) + Number(reservation.extraCharges || 0) - Number(reservation.amountPaid || 0);
 
     if (checkoutType === 'booking') {
@@ -100,7 +97,7 @@ export default async function handler(req, res) {
           return res.status(409).json({ error: 'A payment has already been recorded for one of these rooms' });
         }
         bookingTotal += active.reduce((sum, snap) => sum + Number(snap.data().totalAmount || 0), 0);
-        description = `${active.length + 1} rooms (${[reservation.roomNumber, ...active.map(snap => snap.data().roomNumber)].filter(Boolean).map(n => `Room ${n}`).join(', ')}) — ${units} ${unitLabel}${units === 1 ? '' : 's'}`;
+        description = describeBooking(reservation, { rooms: [reservation.roomNumber, ...active.map(snap => snap.data().roomNumber)] });
       }
       // After an ID review the guest pays the balance (with any discount).
       checkoutAmount = ['approved', 'rejected'].includes(reservation.discountReview?.status)
@@ -118,7 +115,7 @@ export default async function handler(req, res) {
       if (!Number.isFinite(checkoutAmount) || checkoutAmount <= 0 || checkoutAmount - groupBalance > 0.001) {
         return res.status(400).json({ error: 'Enter a positive amount no greater than what the rooms still owe' });
       }
-      description = `${active.length} rooms (${active.map(snap => `Room ${snap.data().roomNumber || ''}`).join(', ')}) — ${guestName}`;
+      description = describeBooking(reservation, { rooms: active.map(snap => snap.data().roomNumber) });
     } else {
       if (modificationRequestId) {
         const modification = reservation.modificationRequest;

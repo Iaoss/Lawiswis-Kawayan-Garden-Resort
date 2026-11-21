@@ -16,6 +16,7 @@ import { closedPeriodMessage, findClosedPeriod, formatClosedRange } from '../../
 import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
 import { loadPublicRooms } from '../lib/publicRooms';
 import { roomAccessLabel, roomHasStairs, roomIsStepFree } from '../../lib/roomAccess';
+import NumberField from '../../components/ui/number-field';
 
 // Step-by-step start of a booking: 1 Type (personal or group), 2 When (stay
 // type, dates, guests), 3 Choose a room (only rooms free on those dates,
@@ -275,13 +276,23 @@ export default function BookingWizard() {
   const input = { border: `1px solid ${LINE}`, padding: '12px', font: `14px ${SANS}`, color: INK, background: '#fff', minWidth: 0, width: '100%', boxSizing: 'border-box' };
   const primary = { border: 0, background: FOREST, color: '#fff', padding: '14px 22px', font: `600 13px ${SANS}`, letterSpacing: '.05em', cursor: 'pointer' };
   const secondary = { border: `1px solid ${LINE}`, background: '#fff', color: FOREST, padding: '13px 18px', font: `600 13px ${SANS}`, cursor: 'pointer' };
-  const counter = (value, setValue, min, name) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <button type="button" aria-label={`Fewer ${name}`} disabled={value <= min} onClick={() => setValue(Math.max(min, value - 1))} style={{ ...secondary, padding: '10px 14px', opacity: value <= min ? 0.5 : 1 }}>−</button>
-      <span style={{ minWidth: 28, textAlign: 'center', font: `600 16px ${SANS}`, color: INK }} aria-live="polite">{value}</span>
-      <button type="button" aria-label={`More ${name}`} disabled={value + (name === 'adults' ? Number(children) : Number(adults)) >= MAX_PERSONAL_GUESTS} onClick={() => setValue(value + 1)} style={{ ...secondary, padding: '10px 14px' }}>+</button>
-    </div>
-  );
+  // Guests: type the number or use − / +. Digits only; the box is kept
+  // within the limit for a personal booking (bigger groups book as a group).
+  const counter = (value, setValue, min, name) => {
+    const other = name === 'adults' ? Number(children) || 0 : Number(adults) || 0;
+    return (
+      <NumberField
+        value={value}
+        label={name}
+        min={min}
+        max={Math.max(min, MAX_PERSONAL_GUESTS - other)}
+        onChange={next => setValue(next === '' ? '' : Number(next))}
+        style={{ marginTop: 2 }}
+        buttonStyle={{ ...secondary, padding: 0, borderRadius: 0, width: 44, minWidth: 44, height: 44, fontSize: 16 }}
+        inputStyle={{ borderRadius: 0, border: `1px solid ${LINE}`, color: INK, font: `600 16px ${SANS}`, maxWidth: 96 }}
+      />
+    );
+  };
 
   const roomCard = (entry, badge) => {
     const { room, price } = entry;
@@ -386,8 +397,8 @@ export default function BookingWizard() {
               )}
             </div>
             <div className="keep-columns" style={{ display: 'grid', gridTemplateColumns: isPhone ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: isPhone ? 10 : 14, marginTop: 18 }}>
-              <div style={label}>Adults{counter(Number(adults), setAdults, 1, 'adults')}</div>
-              <div style={label}>Children (under 10){counter(Number(children), setChildren, 0, 'children')}</div>
+              <div style={label}>Adults{counter(adults, setAdults, 1, 'adults')}</div>
+              <div style={label}>Children (under 10){counter(children, setChildren, 0, 'children')}</div>
             </div>
             {!isTour && checkIn && checkOut && !getStayDurationError(checkIn, checkOut) && (
               <p style={{ color: FOREST, font: `600 13px ${SANS}`, margin: '16px 0 0' }}>{nights} night{nights === 1 ? '' : 's'} · {longDate(checkIn)} → {longDate(checkOut)}</p>
