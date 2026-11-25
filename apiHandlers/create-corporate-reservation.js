@@ -15,7 +15,7 @@ import { ROOM_BLOCK_TYPE } from '../lib/corporateRooms';
 // The guest can pick the rooms the group will use (optional). Rooms under
 // maintenance can't be picked.
 const MAX_GROUP_ROOMS = 30;
-const BLOCKED_ROOM_STATUS = ['maintenance', 'unavailable', 'out-of-service'];
+const BLOCKED_ROOM_STATUS = ['maintenance', 'cleaning', 'unavailable', 'out-of-service', 'out-of-order'];
 const dayKeyOf = value => {
   if (typeof value === 'string') return value.slice(0, 10);
   const date = typeof value?.toDate === 'function' ? value.toDate() : null;

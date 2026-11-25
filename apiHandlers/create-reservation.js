@@ -227,6 +227,9 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'This room could not be found.' });
     }
     const room = roomSnap.data();
+    if (['maintenance', 'cleaning', 'unavailable', 'out-of-service', 'out-of-order'].includes(String(room.status || '').toLowerCase())) {
+      return res.status(409).json({ error: 'This room is unavailable while it is being cleaned or repaired. Please choose another room.' });
+    }
     const guestCountViolation = getGuestCountViolation(room, adults, children);
     if (guestCountViolation) {
       return res.status(400).json({ error: guestCountViolation, code: 'ROOM_CAPACITY_LIMIT' });
@@ -262,6 +265,9 @@ export default async function handler(req, res) {
       const extraSnap = await adminDb.collection('rooms').doc(item.roomId).get();
       if (!extraSnap.exists) return res.status(404).json({ error: 'One of the extra rooms could not be found.' });
       const extraRoom = extraSnap.data();
+      if (['maintenance', 'cleaning', 'unavailable', 'out-of-service', 'out-of-order'].includes(String(extraRoom.status || '').toLowerCase())) {
+        return res.status(409).json({ error: `Room ${extraRoom.roomNumber || 'selected'} is unavailable while it is being cleaned or repaired. Choose another room.` });
+      }
       const extraCapacity = getGuestCountViolation(extraRoom, item.adults, item.children);
       if (extraCapacity) return res.status(400).json({ error: `Room ${extraRoom.roomNumber}: ${extraCapacity}`, code: 'ROOM_CAPACITY_LIMIT' });
       const extraBookings = await adminDb.collection('reservations').where('roomId', '==', item.roomId).get();

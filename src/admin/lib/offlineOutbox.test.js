@@ -9,6 +9,7 @@ describe('offline outbox', () => {
     expect(isQueueable('reservation-status', { action: 'set-status' })).toBe(true);
     expect(isQueueable('staff-billing', { action: 'apply-discount' })).toBe(false);
     expect(isQueueable('staff-billing', { action: 'edit-booking', preview: true })).toBe(false);
+    expect(isQueueable('housekeeping', { action: 'set-room-status', roomId: 'room-1' })).toBe(true);
   });
 
   it('sends saved changes in order and swaps in the real booking number of an offline walk-in', async () => {
@@ -42,5 +43,11 @@ describe('offline outbox', () => {
     enqueue('staff-billing', { action: 'record-payment', reservationId: `${OFFLINE_PREFIX}${walkIn.id}`, amount: 500 });
     await flushOutbox(async () => { throw Object.assign(new Error('Room taken'), { status: 409 }); });
     expect(getOutbox().map(item => item.status)).toEqual(['failed', 'failed']);
+  });
+
+  it('keeps housekeeping failures pending so the automatic sync can retry them', async () => {
+    enqueue('housekeeping', { action: 'set-room-status', roomId: 'room-1', status: 'out-of-order', maintenanceNote: 'AC leaking' });
+    await flushOutbox(async () => { throw Object.assign(new Error('Please sign in again.'), { status: 401 }); });
+    expect(getOutbox()[0]).toMatchObject({ status: 'pending', error: 'Please sign in again.' });
   });
 });

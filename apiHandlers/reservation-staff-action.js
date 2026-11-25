@@ -395,6 +395,9 @@ async function decideModification({ reservationRef, reservationId, requestId, st
         const changeError = getRoomChangeError(roomSnapshot.data(), newRoomSnapshot.data());
         if (changeError) throw new Error(changeError);
         const data = newRoomSnapshot.data();
+        if (['maintenance', 'unavailable', 'out-of-service', 'out-of-order'].includes(String(data.status || '').toLowerCase())) {
+          throw new Error(`Room ${data.roomNumber || 'selected'} is out of order and cannot be assigned.`);
+        }
         movedRoom = { roomId: newRoomId, roomNumber: data.roomNumber || '', roomType: data.type || '' };
       }
       const conflict = conflicts.docs.some(doc => {

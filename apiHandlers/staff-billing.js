@@ -212,6 +212,9 @@ async function assignCorporateRooms({ staff, reservationId, roomIds }) {
       const roomSnap = await transaction.get(adminDb.collection('rooms').doc(roomId));
       if (!roomSnap.exists) throw new BillingError(404, 'One of the rooms could not be found.');
       const room = roomSnap.data();
+      if (blockedRoomStatus(room.status, checkIn, manilaDateKey())) {
+        throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
+      }
       if (await roomIsTaken(transaction, { roomId, roomNumber: room.roomNumber, checkIn, checkOut })) {
         throw new BillingError(409, `Room ${room.roomNumber} is already booked on these dates.`);
       }

@@ -11,6 +11,7 @@ import { IS_TEST_SITE } from './firebase/firebase';
 const Login = lazy(() => import('./admin/pages/Login'));
 const AdminDashboard = lazy(() => import('./admin/pages/Dashboard'));
 const RoomManagement = lazy(() => import('./admin/pages/RoomManagement'));
+const Housekeeping = lazy(() => import('./admin/pages/Housekeeping'));
 const WalkIn = lazy(() => import('./admin/pages/WalkIn'));
 const Reservations = lazy(() => import('./admin/pages/Reservations'));
 const PhoneDisplay = lazy(() => import('./admin/pages/PhoneDisplay'));
@@ -108,6 +109,7 @@ function App() {
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<RequireStaffRoute allowedRoles={['admin']}><AdminDashboard /></RequireStaffRoute>} />
           <Route path="rooms" element={<RoomManagement />} />
+          <Route path="housekeeping" element={<Housekeeping />} />
           <Route path="promos" element={<RequireStaffRoute allowedRoles={['admin']}><PromoCodes /></RequireStaffRoute>} />
           <Route path="walkin" element={<WalkIn />} />
           <Route path="reservations" element={<Reservations />} />
@@ -136,6 +138,7 @@ function App() {
           <Route path="phone-display" element={<PhoneDisplay />} />
           <Route path="walkin" element={<WalkIn />} />
           <Route path="rooms" element={<RoomManagement />} />
+          <Route path="housekeeping" element={<Housekeeping />} />
           <Route path="billing" element={<Billing />} />
           <Route path="customers" element={<CustomerManagement />} />
           <Route path="history" element={<ReservationHistory />} />

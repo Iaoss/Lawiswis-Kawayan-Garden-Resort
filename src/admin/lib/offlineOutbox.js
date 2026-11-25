@@ -23,6 +23,7 @@ export const OFFLINE_PREFIX = 'offline-';
 const QUEUEABLE = {
   'staff-billing': ['record-payment', 'record-group-payment', 'add-charge', 'add-service', 'create-walk-in'],
   'reservation-status': ['set-status', 'set-arrived-guests'],
+  housekeeping: ['set-room-status'],
 };
 
 export const isQueueable = (path, body) => Boolean(QUEUEABLE[path]?.includes(String(body?.action || ''))) && !body?.preview;
@@ -139,6 +140,12 @@ export function flushOutbox(send, { uid = '' } = {}) {
       } catch (error) {
         // No connection or the server is briefly unavailable: try again later.
         if (isNetworkError(error) || error?.status === 429 || error?.status >= 500) break;
+        if (item.path === 'housekeeping') {
+          saveOutbox(getOutbox().map(other => (other.id === item.id
+            ? { ...other, status: 'pending', error: error?.message || 'The room update could not be saved.' }
+            : other)));
+          break;
+        }
         saveOutbox(getOutbox().map(other => (other.id === item.id ? { ...other, status: 'failed', error: error?.message || 'The server refused this change.' } : other)));
         failed += 1;
       }
