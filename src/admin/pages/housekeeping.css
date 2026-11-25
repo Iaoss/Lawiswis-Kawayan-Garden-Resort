@@ -374,6 +374,105 @@
   font-size: 12px;
 }
 
+.housekeeping-reports {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 0 32px;
+}
+
+.housekeeping-reports-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.housekeeping-reports-heading h2 {
+  margin: 4px 0;
+  font-size: 17px;
+}
+
+.housekeeping-reports-heading p {
+  margin: 0;
+  color: #7b8179;
+  font-size: 11px;
+}
+
+.housekeeping-page[data-dark="true"] .housekeeping-reports-heading p,
+.housekeeping-page[data-dark="true"] .housekeeping-report-meta {
+  color: #a3a393;
+}
+
+.housekeeping-report-filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.housekeeping-report-filters .housekeeping-filter {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.housekeeping-report-list {
+  display: grid;
+  gap: 9px;
+}
+
+.housekeeping-report-card {
+  min-width: 0;
+  padding: 13px 15px;
+  border: 1px solid;
+  border-radius: 12px;
+}
+
+.housekeeping-report-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.housekeeping-report-card-top h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.housekeeping-report-card-top p {
+  margin: 3px 0 0;
+  color: #858b82;
+  font-size: 10px;
+}
+
+.housekeeping-report-note {
+  margin: 10px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.housekeeping-report-meta {
+  color: #777f76;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.housekeeping-resolve-button {
+  width: auto;
+  min-height: 36px;
+  margin-top: 10px;
+  padding: 7px 12px;
+}
+
+.housekeeping-page[data-dark="true"] .housekeeping-report-card-top p {
+  color: #a3a393;
+}
+
+.housekeeping-page[data-dark="true"] .housekeeping-report-filters .housekeeping-filter.is-active {
+  color: #10200d;
+}
+
 @media (min-width: 620px) {
   .housekeeping-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -388,4 +487,6 @@
   .housekeeping-connection { width: fit-content; margin-top: 12px; }
   .housekeeping-header h1 { font-size: 20px; }
   .housekeeping-filters { margin-right: -12px; padding-right: 12px; }
+  .housekeeping-reports-heading { display: block; }
+  .housekeeping-report-filters { margin-top: 10px; }
 }

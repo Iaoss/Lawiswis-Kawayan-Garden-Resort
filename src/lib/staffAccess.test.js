@@ -67,6 +67,7 @@ describe('custom staff roles', () => {
 
   test('checks role names and features', () => {
     expect(getRoleError({ name: 'Admin', features: ['reports'] })).toMatch(/built in/);
+    expect(getRoleError({ name: 'Housekeeper', features: ['reports'] })).toMatch(/built in/);
     expect(getRoleError({ id: 'b', name: 'Cashier', features: ['payments'] }, [{ id: 'a', name: 'cashier' }])).toMatch(/already/);
     expect(getRoleError({ name: 'Cashier', features: [] })).toMatch(/at least one/);
     expect(getRoleError({ name: 'Cashier', features: ['payments'] })).toBe('');

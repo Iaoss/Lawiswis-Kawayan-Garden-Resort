@@ -22,6 +22,9 @@ service cloud.firestore {
     function isReceptionist() {
       return isSignedIn() && userRole() == 'receptionist';
     }
+    function isHousekeeper() {
+      return isSignedIn() && userRole() == 'housekeeper';
+    }
     function isStaff() {
       return isAdmin() || isReceptionist();
     }
@@ -37,6 +40,12 @@ service cloud.firestore {
     }
     function changedKeys() {
       return request.resource.data.diff(resource.data).affectedKeys();
+    }
+    function keepsRoomsWithOpenReportsBlocked() {
+      let reportIds = resource.data.get('openMaintenanceReportIds', []);
+      return !(reportIds is list && reportIds.size() > 0)
+        || (request.resource.data.get('status', '') == 'maintenance'
+            && request.resource.data.get('openMaintenanceReportIds', []) == reportIds);
     }
 
     // ── Users ───────────────────────────────────────────────
@@ -91,8 +100,16 @@ service cloud.firestore {
     // Receptionists can only change a room's status (e.g. mark it cleaned).
     match /rooms/{roomId} {
       allow read: if true;
-      allow update: if isAdmin() || (isReceptionist() && changedKeys().hasOnly(['status']));
+      allow update: if (isAdmin() && keepsRoomsWithOpenReportsBlocked())
+        || (isReceptionist() && changedKeys().hasOnly(['status'])
+            && keepsRoomsWithOpenReportsBlocked());
       allow create, delete: if isAdmin();
+    }
+
+    match /maintenanceReports/{reportId} {
+      allow read: if isAdmin() || isReceptionist()
+        || (isHousekeeper() && resource.data.reportedByUid == request.auth.uid);
+      allow write: if false;
     }
 
     // ── Reservations ────────────────────────────────────────

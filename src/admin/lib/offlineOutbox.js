@@ -3,7 +3,7 @@
 // When the internet is down, these staff actions are saved on this computer
 // instead of failing:
 //   payments, extra charges, add-on services, check-in / check-out,
-//   arrived guests, and walk-in bookings.
+//   arrived guests, walk-in bookings, room status updates, and maintenance reports.
 // When the connection comes back they are sent to the server in the same
 // order they were made. The server re-checks everything (prices, double
 // bookings, balances), and each change carries an id so it is never saved
@@ -23,7 +23,7 @@ export const OFFLINE_PREFIX = 'offline-';
 const QUEUEABLE = {
   'staff-billing': ['record-payment', 'record-group-payment', 'add-charge', 'add-service', 'create-walk-in'],
   'reservation-status': ['set-status', 'set-arrived-guests'],
-  housekeeping: ['set-room-status'],
+  housekeeping: ['set-room-status', 'report-issue'],
 };
 
 export const isQueueable = (path, body) => Boolean(QUEUEABLE[path]?.includes(String(body?.action || ''))) && !body?.preview;
@@ -63,6 +63,8 @@ export function describeAction(path, body = {}) {
     }
     case 'set-status': return body.status === 'checked-in' ? 'Check-in' : body.status === 'checked-out' ? 'Check-out' : `Status: ${body.status}`;
     case 'set-arrived-guests': return 'Arrived guests';
+    case 'set-room-status': return `Room ${body.roomNumber || body.roomId || ''} status: ${body.status || 'updated'}`;
+    case 'report-issue': return `Maintenance report for Room ${body.roomNumber || body.roomId || ''}`;
     default: return path;
   }
 }

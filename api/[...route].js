@@ -39,6 +39,7 @@ import chatQuickReply from '../apiHandlers/chat-quick-reply';
 import createCottageReservation from '../apiHandlers/create-cottage-reservation';
 import cottageAvailability from '../apiHandlers/cottage-availability';
 import housekeeping from '../apiHandlers/housekeeping';
+import housekeepingReports from '../apiHandlers/housekeeping-reports';
 
 // The body parser is disabled for the whole function because the PayMongo
 // webhook needs the raw body for signature checks. Other routes get req.body
@@ -85,6 +86,7 @@ const handlers = {
   'create-cottage-reservation': createCottageReservation,
   'cottage-availability': cottageAvailability,
   housekeeping,
+  'housekeeping-reports': housekeepingReports,
 };
 
 function readBody(req) {

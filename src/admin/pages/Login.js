@@ -126,7 +126,7 @@ export default function Login() {
       if (lockedFor > 0) {
         await signOut(auth);
         setError(`Too many wrong attempts. This account is locked for ${lockedFor} more minute${lockedFor === 1 ? '' : 's'}. Try again later, ask the admin to unlock it, or use Forgot password.`);
-      } else if (status === 'inactive' || !['admin', 'receptionist'].includes(role)) {
+      } else if (status === 'inactive' || !['admin', 'receptionist', 'housekeeper'].includes(role)) {
         await signOut(auth);
         setError(status === 'inactive'
           ? 'This account has been deactivated. Please contact the resort admin.'
@@ -137,10 +137,10 @@ export default function Login() {
           .then(token => loginGuard({ action: 'succeeded' }, { token, ms: 5000 }))
           .catch(() => {});
         const requestedPath = location.state?.from?.pathname || '';
-        const permittedPrefix = role === 'admin' ? '/admin/' : '/receptionist/';
+        const permittedPrefix = role === 'admin' ? '/admin/' : role === 'receptionist' ? '/receptionist/' : '/housekeeper/';
         const destination = requestedPath.startsWith(permittedPrefix)
           ? requestedPath
-          : role === 'admin' ? '/admin/dashboard' : '/receptionist/dashboard';
+          : role === 'admin' ? '/admin/dashboard' : role === 'receptionist' ? '/receptionist/dashboard' : '/housekeeper/housekeeping';
         startShift(uid);
         navigate(destination, { replace: true });
       }

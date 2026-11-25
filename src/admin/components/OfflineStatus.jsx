@@ -78,7 +78,7 @@ export default function OfflineStatus({ dark = false }) {
         <div style={amber}>
           <strong><i className="ti ti-wifi-off" aria-hidden="true" /> No internet connection.</strong>{' '}
           You are seeing the bookings and payments saved on this computer (last updated {timeLabel(lastOnline)}).
-          Payments, charges, check-ins, check-outs and walk-ins are kept and sent to the system automatically when the internet is back.
+          Payments, room updates, maintenance reports, charges, check-ins, check-outs and walk-ins are kept and sent automatically when the internet is back.
           Online payments, emails and discounts need the internet.
         </div>
       )}

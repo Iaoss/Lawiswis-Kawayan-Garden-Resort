@@ -22,7 +22,7 @@ import {
 
 const EMPTY_ROLE = { id: '', name: '', description: '', features: [] };
 const newRoleId = () => `role_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-// Role picker values: 'admin', 'receptionist' or 'custom:<roleId>'.
+// Role picker values: 'admin', 'receptionist', 'housekeeper' or 'custom:<roleId>'.
 const roleValueOf = u => (u?.role === 'receptionist' && u.customRoleId ? `custom:${u.customRoleId}` : (u?.role || 'receptionist'));
 
 const EMPTY_FORM = { name: '', email: '', password: '', role: 'receptionist' };
@@ -30,6 +30,7 @@ const FILTERS = [
   { id: 'all', label: 'All' },
   { id: 'admin', label: 'Admins' },
   { id: 'receptionist', label: 'Receptionists' },
+  { id: 'housekeeper', label: 'Housekeepers' },
   { id: 'access', label: 'With extra access' },
   { id: 'inactive', label: 'Deactivated' },
 ];
@@ -122,6 +123,7 @@ export default function UserManagement() {
     total: users.length,
     admins: users.filter(u => u.role === 'admin').length,
     receptionists: users.filter(u => u.role === 'receptionist').length,
+    housekeepers: users.filter(u => u.role === 'housekeeper').length,
     withAccess: users.filter(u => u.role === 'receptionist' && getActiveGrants(u, now).length > 0).length,
     inactive: users.filter(u => !isActive(u)).length,
   }), [users, now]);
@@ -132,6 +134,7 @@ export default function UserManagement() {
       .filter(u => {
         if (filter === 'admin' && u.role !== 'admin') return false;
         if (filter === 'receptionist' && u.role !== 'receptionist') return false;
+        if (filter === 'housekeeper' && u.role !== 'housekeeper') return false;
         if (filter === 'inactive' && isActive(u)) return false;
         if (filter === 'access' && !(u.role === 'receptionist' && getActiveGrants(u, now).length)) return false;
         return !term || [u.name, u.email, u.role, u.customRoleName].some(v => String(v || '').toLowerCase().includes(term));
@@ -155,6 +158,8 @@ export default function UserManagement() {
     const changes = { role };
     if (role === 'admin') {
       // Admins have every feature, so extra access is cleared.
+      if (user?.access) changes.access = deleteField();
+    } else if (role === 'housekeeper') {
       if (user?.access) changes.access = deleteField();
     } else {
       const plan = planRoleAccess(user, custom);
@@ -491,6 +496,7 @@ export default function UserManagement() {
               { label: 'Staff accounts', value: stats.total, icon: 'ti-users' },
               { label: 'Admins', value: stats.admins, icon: 'ti-shield-check' },
               { label: 'Receptionists', value: stats.receptionists, icon: 'ti-user' },
+              { label: 'Housekeepers', value: stats.housekeepers, icon: 'ti-broom' },
               { label: 'With extra access', value: stats.withAccess, icon: 'ti-key' },
               { label: 'Deactivated', value: stats.inactive, icon: 'ti-user-off' },
             ].map(stat => (
@@ -627,6 +633,7 @@ export default function UserManagement() {
             <label style={label}>Role
               <select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })} style={{ ...input, cursor: 'pointer' }}>
                 <option value="receptionist">Receptionist</option>
+                <option value="housekeeper">Housekeeper</option>
                 <option value="admin">Admin</option>
                 {roles.length > 0 && (
                   <optgroup label="Custom roles">
@@ -643,6 +650,11 @@ export default function UserManagement() {
                 </p>
               ) : null;
             })()}
+            {form.role === 'housekeeper' && (
+              <p style={{ gridColumn: '1 / -1', margin: 0, fontSize: 11.5, color: c.muted }}>
+                Housekeepers can update room readiness and submit maintenance reports. They can’t access reservations, billing or guest details.
+              </p>
+            )}
             <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button type="button" style={btn} onClick={() => setShowCreate(false)}>Cancel</button>
               <button type="submit" disabled={creating} style={{ ...primary, padding: '9px 18px' }}>{creating ? 'Creating…' : 'Create account'}</button>
@@ -659,6 +671,7 @@ export default function UserManagement() {
             <label style={label}>Role
               <select value={editing.role} disabled={editingUser.id === myUid} onChange={e => setEditing({ ...editing, role: e.target.value })} style={{ ...input, cursor: 'pointer' }}>
                 <option value="receptionist">Receptionist</option>
+                <option value="housekeeper">Housekeeper</option>
                 <option value="admin">Admin</option>
                 {roles.length > 0 && (
                   <optgroup label="Custom roles">
@@ -675,6 +688,11 @@ export default function UserManagement() {
                 </p>
               ) : null;
             })()}
+            {editing.role === 'housekeeper' && (
+              <p style={{ gridColumn: '1 / -1', margin: 0, fontSize: 11.5, color: c.muted }}>
+                Housekeepers can update room readiness and submit maintenance reports. They can’t access reservations, billing or guest details.
+              </p>
+            )}
             {editingUser.id === myUid && <p style={{ margin: 0, fontSize: 11.5, color: c.muted }}>You can’t change your own role.</p>}
             <p style={{ margin: 0, fontSize: 11.5, color: c.muted }}>The email is the login, so it can’t be changed here. For a new email, create a new account and deactivate this one.</p>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
@@ -790,6 +808,9 @@ export default function UserManagement() {
               </li>
               <li style={{ background: c.card2, borderRadius: 10, padding: '10px 12px', fontSize: 12, color: c.muted }}>
                 <strong style={{ color: c.text }}>Receptionist</strong> · front desk pages only (built in).
+              </li>
+              <li style={{ background: c.card2, borderRadius: 10, padding: '10px 12px', fontSize: 12, color: c.muted }}>
+                <strong style={{ color: c.text }}>Housekeeper</strong> · room readiness and maintenance reports, without access to reservations or guest details (built in).
               </li>
               {roles.map(role => (
                 <li key={role.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, border: `1px solid ${roleForm?.id === role.id ? c.accent : c.border}`, borderRadius: 10, padding: '10px 12px' }}>

@@ -83,7 +83,7 @@ export default function RequireStaffRoute({ children, allowedRoles = ['admin', '
         const status = String(data.status || 'active').trim().toLowerCase();
         // Locked after too many wrong passwords: no staff pages until it ends.
         const locked = Number(data.loginLockedUntil || 0) > Date.now();
-        const confirmedRole = locked || status === 'inactive' || !['admin', 'receptionist'].includes(role) ? null : role;
+        const confirmedRole = locked || status === 'inactive' || !['admin', 'receptionist', 'housekeeper'].includes(role) ? null : role;
         rememberAccess(user.uid, confirmedRole);
         if (active && authCheck === latestAuthCheck) setAccess({ loading: false, role: confirmedRole });
       } catch (error) {
@@ -133,7 +133,10 @@ export default function RequireStaffRoute({ children, allowedRoles = ['admin', '
   }
 
   if (!allowedRoles.includes(access.role)) {
-    return <Navigate to={access.role === 'receptionist' ? '/receptionist/dashboard' : '/admin/dashboard'} replace />;
+    const destination = access.role === 'housekeeper'
+      ? '/housekeeper/housekeeping'
+      : access.role === 'receptionist' ? '/receptionist/dashboard' : '/admin/dashboard';
+    return <Navigate to={destination} replace />;
   }
 
   return children;

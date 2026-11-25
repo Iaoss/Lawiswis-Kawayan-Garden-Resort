@@ -128,7 +128,7 @@ export function listRoles(rolesDoc) {
 
 export function getRoleError(role, existing = []) {
   if (!role.name || role.name.length < 2) return 'Give the role a name (at least 2 letters).';
-  if (['admin', 'receptionist'].includes(role.name.toLowerCase())) return 'Admin and Receptionist are built in. Choose another name.';
+  if (['admin', 'receptionist', 'housekeeper'].includes(role.name.toLowerCase())) return 'Admin, Receptionist and Housekeeper are built in. Choose another name.';
   if (existing.some(other => other.id !== role.id && other.name.toLowerCase() === role.name.toLowerCase())) return 'Another role already has that name.';
   if (!role.features.length) return 'Choose at least one feature for this role.';
   return '';
@@ -151,5 +151,7 @@ export function planRoleAccess(user, role) {
 export function roleLabel(user) {
   if (!user) return '';
   if (user.role === 'receptionist' && user.customRoleName) return user.customRoleName;
-  return user.role === 'admin' ? 'Admin' : user.role === 'receptionist' ? 'Receptionist' : (user.role || 'No role');
+  return user.role === 'admin' ? 'Admin'
+    : user.role === 'receptionist' ? 'Receptionist'
+      : user.role === 'housekeeper' ? 'Housekeeper' : (user.role || 'No role');
 }

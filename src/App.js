@@ -158,6 +158,12 @@ function App() {
           <Route path="*" element={<Navigate to="/receptionist/dashboard" replace />} />
         </Route>
 
+        <Route path="/housekeeper" element={<RequireStaffRoute allowedRoles={['housekeeper']}><Outlet /></RequireStaffRoute>}>
+          <Route index element={<Navigate to="housekeeping" replace />} />
+          <Route path="housekeeping" element={<Housekeeping />} />
+          <Route path="*" element={<Navigate to="/housekeeper/housekeeping" replace />} />
+        </Route>
+
         {/* Client Website */}
         <Route element={<ClientLayout />}>
           <Route path="/" element={<Home />} />

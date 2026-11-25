@@ -10,6 +10,7 @@ describe('offline outbox', () => {
     expect(isQueueable('staff-billing', { action: 'apply-discount' })).toBe(false);
     expect(isQueueable('staff-billing', { action: 'edit-booking', preview: true })).toBe(false);
     expect(isQueueable('housekeeping', { action: 'set-room-status', roomId: 'room-1' })).toBe(true);
+    expect(isQueueable('housekeeping', { action: 'report-issue', roomId: 'room-1' })).toBe(true);
   });
 
   it('sends saved changes in order and swaps in the real booking number of an offline walk-in', async () => {
@@ -49,5 +50,15 @@ describe('offline outbox', () => {
     enqueue('housekeeping', { action: 'set-room-status', roomId: 'room-1', status: 'out-of-order', maintenanceNote: 'AC leaking' });
     await flushOutbox(async () => { throw Object.assign(new Error('Please sign in again.'), { status: 401 }); });
     expect(getOutbox()[0]).toMatchObject({ status: 'pending', error: 'Please sign in again.' });
+  });
+
+  it('keeps maintenance reports pending when the server cannot confirm them', async () => {
+    enqueue('housekeeping', { action: 'report-issue', roomId: 'room-1', issueType: 'air-conditioning', note: 'AC leaking' });
+    await flushOutbox(async () => { throw Object.assign(new Error('Please sign in again.'), { status: 401 }); });
+    expect(getOutbox()[0]).toMatchObject({
+      body: { action: 'report-issue', roomId: 'room-1' },
+      status: 'pending',
+      error: 'Please sign in again.',
+    });
   });
 });
