@@ -5,6 +5,7 @@ import { auth } from '../../firebase/firebase';
 import { useSettings } from './SettingsContext';
 import logo from './logo-mark.png';
 import { unregisterStaffPush } from '../lib/staffPush';
+import StaffPushControl from './StaffPushControl';
 
 export default function HousekeeperLayout({ children }) {
   const navigate = useNavigate();
@@ -41,9 +42,12 @@ export default function HousekeeperLayout({ children }) {
             <div style={{ color: dark ? '#a3a393' : '#6b7280', fontSize: 10 }}>Housekeeping</div>
           </div>
         </div>
-        <button type="button" onClick={handleSignOut} style={{ minHeight: 38, padding: '0 12px', border: `1px solid ${dark ? '#44463f' : '#e5e7eb'}`, borderRadius: 9, background: surface, color: text, font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
-          Sign out
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <StaffPushControl dark={dark} />
+          <button type="button" onClick={handleSignOut} style={{ minHeight: 38, padding: '0 12px', border: `1px solid ${dark ? '#44463f' : '#e5e7eb'}`, borderRadius: 9, background: surface, color: text, font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+            Sign out
+          </button>
+        </div>
       </header>
       {error && <div role="alert" style={{ padding: '8px 18px', color: '#b42318', background: dark ? '#351d1b' : '#fef2f2', fontSize: 12 }}>{error}</div>}
       {children}
