@@ -1,4 +1,4 @@
-import { enqueue, flushOutbox, getOutbox, isQueueable, OFFLINE_PREFIX } from './offlineOutbox';
+import { enqueue, flushOutbox, getOutbox, isQueueable, OFFLINE_PREFIX, retryItem } from './offlineOutbox';
 
 beforeEach(() => window.localStorage.clear());
 
@@ -46,19 +46,22 @@ describe('offline outbox', () => {
     expect(getOutbox().map(item => item.status)).toEqual(['failed', 'failed']);
   });
 
-  it('keeps housekeeping failures pending so the automatic sync can retry them', async () => {
+  it('records temporary housekeeping network failures and keeps them retryable', async () => {
     enqueue('housekeeping', { action: 'set-room-status', roomId: 'room-1', status: 'out-of-order', maintenanceNote: 'AC leaking' });
-    await flushOutbox(async () => { throw Object.assign(new Error('Please sign in again.'), { status: 401 }); });
-    expect(getOutbox()[0]).toMatchObject({ status: 'pending', error: 'Please sign in again.' });
+    await flushOutbox(async () => { throw new TypeError('Failed to fetch'); });
+    expect(getOutbox()[0]).toMatchObject({ status: 'pending', error: 'Failed to fetch' });
   });
 
-  it('keeps maintenance reports pending when the server cannot confirm them', async () => {
+  it('surfaces rejected housekeeping requests and retries them only on request', async () => {
     enqueue('housekeeping', { action: 'report-issue', roomId: 'room-1', issueType: 'air-conditioning', note: 'AC leaking' });
     await flushOutbox(async () => { throw Object.assign(new Error('Please sign in again.'), { status: 401 }); });
     expect(getOutbox()[0]).toMatchObject({
       body: { action: 'report-issue', roomId: 'room-1' },
-      status: 'pending',
+      status: 'failed',
       error: 'Please sign in again.',
     });
+    const item = getOutbox()[0];
+    retryItem(item.id);
+    expect(getOutbox()[0]).toMatchObject({ status: 'pending', error: '' });
   });
 });

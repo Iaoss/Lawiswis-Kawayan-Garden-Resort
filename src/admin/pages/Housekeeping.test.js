@@ -4,6 +4,7 @@ import Housekeeping from './Housekeeping';
 
 const mockSendStaffRequest = jest.fn();
 const mockFlushOutbox = jest.fn();
+const mockRetryItem = jest.fn();
 const mockRoom = {
   id: 'ground-1',
   roomNumber: 'Ground 1',
@@ -32,6 +33,11 @@ jest.mock('../lib/liveCollection', () => ({
 }));
 jest.mock('../lib/offlineOutbox', () => ({
   getOutbox: () => mockQueue,
+  retryItem: id => {
+    mockRetryItem(id);
+    mockQueue = mockQueue.map(item => item.id === id ? { ...item, status: 'pending', error: '' } : item);
+    mockOutboxListener?.(mockQueue);
+  },
   subscribeOutbox: listener => {
     mockOutboxListener = listener;
     listener(mockQueue);
@@ -60,6 +66,7 @@ beforeEach(() => {
     mockOutboxListener?.(mockQueue);
     return { sent: 1, failed: 0, pending: 0 };
   });
+  mockRetryItem.mockReset();
 });
 
 test('confirms the cleaning-to-available update', async () => {
@@ -122,6 +129,25 @@ test('opens on rooms needing attention and keeps maintenance forms collapsed unt
   expect(screen.queryByLabelText('Maintenance issue type for Room Ground 1')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /All rooms/ }));
   expect(screen.getByText('Room Room 2')).toBeInTheDocument();
+});
+
+test('shows the failed sync reason and lets staff retry the queued room update', async () => {
+  mockQueue = [{
+    id: 'failed-update',
+    path: 'housekeeping',
+    uid: 'staff-1',
+    body: { action: 'set-room-status', roomId: 'ground-1', status: 'available' },
+    status: 'failed',
+    error: 'Please sign in again.',
+  }];
+  mockFlushOutbox.mockImplementation(async () => ({ sent: 0, failed: 0, pending: 1 }));
+  render(<Housekeeping />);
+  expect(document.querySelector('.housekeeping-sync')).toHaveTextContent(/Sync failed: Please sign in again\./);
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
+  });
+  expect(mockRetryItem).toHaveBeenCalledWith('failed-update');
+  expect(mockFlushOutbox).toHaveBeenCalled();
 });
 
 test('saves an offline maintenance report and immediately marks the room out of order', async () => {

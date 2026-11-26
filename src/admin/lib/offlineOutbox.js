@@ -91,6 +91,12 @@ export function dismissItem(id) {
   saveOutbox(getOutbox().filter(item => item.id !== id));
 }
 
+export function retryItem(id) {
+  saveOutbox(getOutbox().map(item => item.id === id
+    ? { ...item, status: 'pending', error: '' }
+    : item));
+}
+
 // Swap offline placeholders for real booking numbers.
 function resolvePlaceholders(body, ids) {
   const swap = value => (typeof value === 'string' && value.startsWith(OFFLINE_PREFIX) ? (ids[value.slice(OFFLINE_PREFIX.length)] || null) : value);
@@ -141,13 +147,20 @@ export function flushOutbox(send, { uid = '' } = {}) {
         sent += 1;
       } catch (error) {
         // No connection or the server is briefly unavailable: try again later.
-        if (isNetworkError(error) || error?.status === 429 || error?.status >= 500) break;
         if (item.path === 'housekeeping') {
+          const canRetry = isNetworkError(error) || error?.status === 429 || error?.status >= 500;
           saveOutbox(getOutbox().map(other => (other.id === item.id
-            ? { ...other, status: 'pending', error: error?.message || 'The room update could not be saved.' }
+            ? {
+              ...other,
+              status: canRetry ? 'pending' : 'failed',
+              error: error?.message || 'The room update could not be saved.',
+            }
             : other)));
-          break;
+          if (canRetry) break;
+          failed += 1;
+          continue;
         }
+        if (isNetworkError(error) || error?.status === 429 || error?.status >= 500) break;
         saveOutbox(getOutbox().map(other => (other.id === item.id ? { ...other, status: 'failed', error: error?.message || 'The server refused this change.' } : other)));
         failed += 1;
       }

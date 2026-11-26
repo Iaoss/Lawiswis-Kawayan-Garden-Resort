@@ -301,10 +301,29 @@
   color: #8a5708;
   font-size: 10px;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .housekeeping-sync.sync-done { color: #287044; }
 .housekeeping-sync.sync-failed { color: #b42318; }
+
+.housekeeping-retry {
+  margin: -5px 0 7px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: #245c9b;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.housekeeping-retry:disabled {
+  color: #777f76;
+  cursor: not-allowed;
+}
 
 .housekeeping-actions {
   display: grid;

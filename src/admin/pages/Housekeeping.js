@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { auth, db } from '../../firebase/firebase';
 import { collection, query, where } from 'firebase/firestore';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
-import { enqueue, flushOutbox, getOutbox, subscribeOutbox } from '../lib/offlineOutbox';
+import { enqueue, flushOutbox, getOutbox, retryItem, subscribeOutbox } from '../lib/offlineOutbox';
 import { subscribeCollection, subscribeLive } from '../lib/liveCollection';
 import { sendStaffRequest } from '../lib/staffApi';
 import './housekeeping.css';
@@ -56,6 +56,7 @@ export default function Housekeeping({ embedded = false }) {
   const [outbox, setOutbox] = useState(getOutbox);
   const [overrides, setOverrides] = useState({});
   const [syncedRooms, setSyncedRooms] = useState({});
+  const [syncingRooms, setSyncingRooms] = useState({});
   const [issueTypes, setIssueTypes] = useState({});
   const [notes, setNotes] = useState({});
   const [reportRoomId, setReportRoomId] = useState('');
@@ -63,6 +64,20 @@ export default function Housekeeping({ embedded = false }) {
   const [error, setError] = useState('');
   const [reportError, setReportError] = useState('');
   const previousOutbox = useRef(getOutbox());
+
+  const flushRoomChanges = useCallback(async roomIds => {
+    const ids = [...new Set(roomIds.filter(Boolean))];
+    setSyncingRooms(current => ids.reduce((next, id) => ({ ...next, [id]: true }), { ...current }));
+    try {
+      return await flushOutbox(sendStaffRequest, { uid: auth.currentUser?.uid || '' });
+    } finally {
+      setSyncingRooms(current => {
+        const next = { ...current };
+        ids.forEach(id => delete next[id]);
+        return next;
+      });
+    }
+  }, []);
 
   useEffect(() => subscribeCollection('rooms',
     snapshot => setRooms(snapshot.docs.map(item => ({ id: item.id, ...item.data() }))),
@@ -103,12 +118,13 @@ export default function Housekeeping({ embedded = false }) {
     let active = true;
     const sync = async () => {
       const uid = auth.currentUser?.uid || '';
-      const hasPendingHousekeeping = getOutbox().some(item => item.path === 'housekeeping'
+      const pendingRoomIds = getOutbox().filter(item => item.path === 'housekeeping'
         && item.status === 'pending'
-        && (!item.uid || !uid || item.uid === uid));
-      if (navigator.onLine === false || !hasPendingHousekeeping) return;
+        && (!item.uid || !uid || item.uid === uid))
+        .map(item => item.body?.roomId);
+      if (navigator.onLine === false || !pendingRoomIds.length) return;
       try {
-        await flushOutbox(sendStaffRequest, { uid });
+        await flushRoomChanges(pendingRoomIds);
       } catch (syncError) {
         console.error('Housekeeping changes could not sync:', syncError);
         if (active) setError('Saved room changes could not sync right now. They remain queued and will retry automatically.');
@@ -129,7 +145,7 @@ export default function Housekeeping({ embedded = false }) {
       window.removeEventListener('online', setConnection);
       window.removeEventListener('offline', setConnection);
     };
-  }, []);
+  }, [flushRoomChanges]);
 
   useEffect(() => {
     setOverrides(current => {
@@ -141,9 +157,11 @@ export default function Housekeeping({ embedded = false }) {
           delete next[room.id];
         }
       });
+      outbox.filter(item => item.path === 'housekeeping' && item.status === 'failed' && item.body?.roomId)
+        .forEach(item => { delete next[item.body.roomId]; });
       return next;
     });
-  }, [rooms]);
+  }, [rooms, outbox]);
 
   const queuedByRoom = useMemo(() => {
     const pending = new Map();
@@ -158,7 +176,11 @@ export default function Housekeeping({ embedded = false }) {
 
   const counts = useMemo(() => rooms.reduce((total, room) => {
     const queued = queuedByRoom.get(room.id);
-    const status = overrides[room.id]?.status || (queued ? queued.displayStatus : normalizeStatus(room.status));
+    const status = queued?.status !== 'failed' && overrides[room.id]?.status
+      ? overrides[room.id].status
+      : queued?.status !== 'failed' && queued
+        ? queued.displayStatus
+        : normalizeStatus(room.status);
     total[status] = (total[status] || 0) + 1;
     return total;
   }, {}), [rooms, queuedByRoom, overrides]);
@@ -167,8 +189,13 @@ export default function Housekeeping({ embedded = false }) {
     .map(room => {
       const queued = queuedByRoom.get(room.id);
       const override = overrides[room.id];
-      const status = override?.status || (queued ? queued.displayStatus : normalizeStatus(room.status));
-      const maintenanceNote = override?.maintenanceNote ?? (queued?.displayMaintenanceNote ?? room.maintenanceNote ?? '');
+      const failedQueue = queued?.status === 'failed';
+      const status = failedQueue
+        ? normalizeStatus(room.status)
+        : override?.status || (queued ? queued.displayStatus : normalizeStatus(room.status));
+      const maintenanceNote = failedQueue
+        ? room.maintenanceNote || ''
+        : override?.maintenanceNote ?? (queued?.displayMaintenanceNote ?? room.maintenanceNote ?? '');
       return { ...room, displayStatus: status, displayMaintenanceNote: maintenanceNote, queued };
     })
     .filter(room => isHousekeeper
@@ -205,7 +232,7 @@ export default function Housekeeping({ embedded = false }) {
         throw new Error('This device could not save the update for offline sync. Check available storage and try again.');
       }
       if (navigator.onLine !== false) {
-        await flushOutbox(sendStaffRequest, { uid: auth.currentUser?.uid || '' });
+        await flushRoomChanges([room.id]);
       }
     } catch (requestError) {
       console.error('Housekeeping room update failed:', requestError);
@@ -250,7 +277,7 @@ export default function Housekeeping({ embedded = false }) {
         throw new Error('This device could not save the report for offline sync. Check available storage and try again.');
       }
       if (navigator.onLine !== false) {
-        await flushOutbox(sendStaffRequest, { uid: auth.currentUser?.uid || '' });
+        await flushRoomChanges([room.id]);
       }
     } catch (requestError) {
       console.error('Housekeeping maintenance report failed:', requestError);
@@ -262,6 +289,18 @@ export default function Housekeeping({ embedded = false }) {
       setError(requestError.message || `A report for Room ${room.roomNumber} could not be saved.`);
     } finally {
       setBusyRoom('');
+    }
+  };
+
+  const retryRoomSync = async room => {
+    if (!room.queued || navigator.onLine === false) return;
+    retryItem(room.queued.id);
+    setError('');
+    try {
+      await flushRoomChanges([room.id]);
+    } catch (syncError) {
+      console.error('Housekeeping retry failed:', syncError);
+      setError(syncError.message || `Room ${room.roomNumber} could not sync.`);
     }
   };
 
@@ -355,7 +394,15 @@ export default function Housekeeping({ embedded = false }) {
             const isOccupied = room.displayStatus === 'occupied';
             const failed = room.queued?.status === 'failed';
             const syncLabel = room.queued
-              ? (failed ? 'Sync needs attention' : 'Saved Offline (Pending Sync)')
+              ? syncingRooms[room.id]
+                ? 'Syncing…'
+                : room.queued.error
+                  ? `Sync failed: ${room.queued.error}`
+                  : failed
+                    ? 'Sync failed. Retry required.'
+                    : online
+                      ? 'Waiting to sync'
+                      : 'Saved on this device · Waiting for internet'
               : (syncedRooms[room.id] ? 'Synced' : '');
             const maintenanceReport = reports.find(report => report.id === room.maintenanceReportId)
               || reports.find(report => (room.openMaintenanceReportIds || []).includes(report.id));
@@ -377,10 +424,17 @@ export default function Housekeeping({ embedded = false }) {
                 )}
 
                 {syncLabel && (
-                  <div className={`housekeeping-sync ${failed ? 'sync-failed' : syncedRooms[room.id] && !room.queued ? 'sync-done' : ''}`} role="status">
-                    {syncedRooms[room.id] && !room.queued ? '✓ ' : room.queued && !failed && online ? '↻ ' : '☁ '}
-                    {room.queued && !failed && online ? 'Syncing…' : syncLabel}
-                    {room.queued?.error ? ` · Retrying: ${room.queued.error}` : ''}
+                  <div>
+                    <div className={`housekeeping-sync ${failed || room.queued?.error ? 'sync-failed' : syncedRooms[room.id] && !room.queued ? 'sync-done' : ''}`} role="status">
+                      {syncedRooms[room.id] && !room.queued ? '✓ ' : room.queued ? (syncingRooms[room.id] ? '↻ ' : '☁ ') : ''}
+                      {syncLabel}
+                    </div>
+                    {(room.queued?.error || failed) && !syncingRooms[room.id] && (
+                      <button type="button" className="housekeeping-retry" disabled={!online}
+                        onClick={() => retryRoomSync(room)}>
+                        {online ? 'Retry sync' : 'Reconnect to retry'}
+                      </button>
+                    )}
                   </div>
                 )}
 

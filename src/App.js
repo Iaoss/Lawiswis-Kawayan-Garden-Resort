@@ -59,6 +59,17 @@ function ScrollToTopOnPageChange() {
   return null;
 }
 
+function InstalledStaffLaunchRedirect() {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+      || window.navigator.standalone === true;
+    if (pathname === '/' && standalone) navigate('/admin/login', { replace: true });
+  }, [pathname, navigate]);
+  return null;
+}
+
 function PageLoading() {
   return (
     <div role="status" aria-live="polite" style={{ minHeight: '60vh', display: 'grid', placeItems: 'center', color: '#6b7280', fontSize: '13px', fontFamily: "'Inter', sans-serif" }}>
@@ -99,6 +110,7 @@ function App() {
           TEST SITE · test data and PayMongo test mode only
         </div>
       )}
+      <InstalledStaffLaunchRedirect />
       <ScrollToTopOnPageChange />
       <Suspense fallback={<PageLoading />}>
       <Routes>
