@@ -126,12 +126,14 @@ export default function OfflineStatus({ dark = false }) {
           <strong><i className="ti ti-alert-triangle" aria-hidden="true" /> Not saved: {item.label}</strong> (made {timeLabel(Date.parse(item.createdAt))} while offline).{' '}
           {item.error}{' '}
           {item.path === 'housekeeping'
-            ? <>
-              The server did not save this room update.{' '}
-              <button type="button" disabled={!online || Boolean(retryingId)} onClick={() => retryFailed(item)} style={linkBtn}>
-                {retryingId === item.id ? 'Retrying…' : online ? 'Retry sync' : 'Reconnect to retry'}
-              </button>{' '}
-            </>
+            ? Number(item.errorStatus) === 409 || /only an available room can be sent for cleaning/i.test(item.error || '')
+              ? 'The server rejected this request because the room state changed. Check its current status and create a fresh request only if it still needs cleaning. '
+              : <>
+                The server did not save this room update.{' '}
+                <button type="button" disabled={!online || Boolean(retryingId)} onClick={() => retryFailed(item)} style={linkBtn}>
+                  {retryingId === item.id ? 'Retrying…' : online ? 'Retry sync' : 'Reconnect to retry'}
+                </button>{' '}
+              </>
             : 'Please enter it again. '}
           <button type="button" onClick={() => dismissItem(item.id)} style={linkBtn}>Dismiss</button>
         </div>

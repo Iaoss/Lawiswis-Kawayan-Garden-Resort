@@ -96,7 +96,7 @@ export function dismissItem(id) {
 
 export function retryItem(id) {
   saveOutbox(getOutbox().map(item => item.id === id
-    ? { ...item, status: 'pending', error: '' }
+    ? { ...item, status: 'pending', error: '', errorStatus: null }
     : item));
 }
 
@@ -157,6 +157,7 @@ export function flushOutbox(send, { uid = '' } = {}) {
               ...other,
               status: canRetry ? 'pending' : 'failed',
               error: error?.message || 'The room update could not be saved.',
+              errorStatus: error?.status || null,
             }
             : other)));
           if (canRetry) break;

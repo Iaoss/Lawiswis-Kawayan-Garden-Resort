@@ -35,7 +35,7 @@ beforeEach(() => {
     label: 'Room 1 status: cleaning',
     createdAt: new Date().toISOString(),
     status: 'failed',
-    error: 'Only an available room can be sent for cleaning.',
+    error: 'Failed to fetch',
   }];
   mockListener = null;
   mockDismissItem.mockReset();
@@ -49,11 +49,19 @@ beforeEach(() => {
 
 test('offers retry for previously rejected housekeeping changes', async () => {
   render(<OfflineStatus />);
-  expect(screen.getByText(/Only an available room can be sent for cleaning/)).toBeInTheDocument();
+  expect(screen.getByText(/Failed to fetch/)).toBeInTheDocument();
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
   });
   expect(mockRetryItem).toHaveBeenCalledWith('old-clean-request');
   expect(mockFlushOutbox).toHaveBeenCalled();
   expect(screen.getByText('The room update was saved.')).toBeInTheDocument();
+});
+
+test('does not blindly retry a rejected clean request after the room state changed', () => {
+  mockItems[0].error = 'Only an available room can be sent for cleaning.';
+  mockItems[0].errorStatus = 409;
+  render(<OfflineStatus />);
+  expect(screen.getByText(/room state changed/i)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry sync' })).not.toBeInTheDocument();
 });

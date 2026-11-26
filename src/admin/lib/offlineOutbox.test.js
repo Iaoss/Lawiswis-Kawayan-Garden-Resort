@@ -60,9 +60,10 @@ describe('offline outbox', () => {
       body: { action: 'report-issue', roomId: 'room-1' },
       status: 'failed',
       error: 'Please sign in again.',
+      errorStatus: 401,
     });
     const item = getOutbox()[0];
     retryItem(item.id);
-    expect(getOutbox()[0]).toMatchObject({ status: 'pending', error: '' });
+    expect(getOutbox()[0]).toMatchObject({ status: 'pending', error: '', errorStatus: null });
   });
 });

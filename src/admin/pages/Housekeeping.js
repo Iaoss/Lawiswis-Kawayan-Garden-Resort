@@ -28,6 +28,9 @@ const statusLabel = status => ({
   maintenance: 'Out of Order',
   occupied: 'Occupied',
 }[status] || status || 'Unknown');
+const canRetryQueuedRoom = item => item
+  && !(item.status === 'failed' && (item.errorStatus === 409
+    || /only an available room can be sent for cleaning/i.test(item.error || '')));
 
 const ISSUE_TYPES = [
   { id: 'air-conditioning', label: 'Air conditioning / AC' },
@@ -437,11 +440,14 @@ export default function Housekeeping({ embedded = false }) {
                       {syncedRooms[room.id] && !room.queued ? '✓ ' : room.queued ? (syncingRooms[room.id] ? '↻ ' : '☁ ') : ''}
                       {syncLabel}
                     </div>
-                    {(room.queued?.error || failed) && !syncingRooms[room.id] && (
+                    {(room.queued?.error || failed) && canRetryQueuedRoom(room.queued) && !syncingRooms[room.id] && (
                       <button type="button" className="housekeeping-retry" disabled={!online}
                         onClick={() => retryRoomSync(room)}>
                         {online ? 'Retry sync' : 'Reconnect to retry'}
                       </button>
+                    )}
+                    {failed && !canRetryQueuedRoom(room.queued) && (
+                      <div className="housekeeping-sync sync-failed">Check the current room status, then send a new cleaning request if needed.</div>
                     )}
                   </div>
                 )}
