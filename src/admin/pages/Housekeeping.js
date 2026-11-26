@@ -47,7 +47,7 @@ export default function Housekeeping({ embedded = false }) {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
   const isHousekeeper = window.location.pathname.startsWith('/housekeeper');
-  const [filter, setFilter] = useState(() => (isHousekeeper ? 'attention' : 'all'));
+  const [filter, setFilter] = useState('attention');
   const [rooms, setRooms] = useState([]);
   const [reports, setReports] = useState([]);
   const [roomType, setRoomType] = useState('all');
@@ -58,6 +58,7 @@ export default function Housekeeping({ embedded = false }) {
   const [syncedRooms, setSyncedRooms] = useState({});
   const [issueTypes, setIssueTypes] = useState({});
   const [notes, setNotes] = useState({});
+  const [reportRoomId, setReportRoomId] = useState('');
   const [busyRoom, setBusyRoom] = useState('');
   const [error, setError] = useState('');
   const [reportError, setReportError] = useState('');
@@ -377,8 +378,8 @@ export default function Housekeeping({ embedded = false }) {
 
                 {syncLabel && (
                   <div className={`housekeeping-sync ${failed ? 'sync-failed' : syncedRooms[room.id] && !room.queued ? 'sync-done' : ''}`} role="status">
-                    {syncedRooms[room.id] && !room.queued ? '✓ ' : '☁ '}
-                    {syncLabel}
+                    {syncedRooms[room.id] && !room.queued ? '✓ ' : room.queued && !failed && online ? '↻ ' : '☁ '}
+                    {room.queued && !failed && online ? 'Syncing…' : syncLabel}
                     {room.queued?.error ? ` · Retrying: ${room.queued.error}` : ''}
                   </div>
                 )}
@@ -411,8 +412,14 @@ export default function Housekeeping({ embedded = false }) {
                             {busyRoom === room.id ? 'Saving…' : 'Mark Repaired & Available'}
                           </button>
                     )}
-                    <div className="housekeeping-report">
-                      <label htmlFor={`issue-${room.id}`}>Report a maintenance issue</label>
+                    {room.displayStatus !== 'maintenance' && <>
+                      <button type="button" className="housekeeping-report-toggle"
+                        aria-expanded={reportRoomId === room.id}
+                        onClick={() => setReportRoomId(current => current === room.id ? '' : room.id)}>
+                        {reportRoomId === room.id ? 'Cancel report' : 'Report issue'}
+                      </button>
+                      {reportRoomId === room.id && <div className="housekeeping-report">
+                      <label htmlFor={`issue-${room.id}`}>Issue type</label>
                       <select id={`issue-${room.id}`} aria-label={`Maintenance issue type for Room ${room.roomNumber}`}
                         value={issueTypes[room.id] || ''}
                         onChange={event => setIssueTypes(current => ({ ...current, [room.id]: event.target.value }))}>
@@ -422,12 +429,13 @@ export default function Housekeeping({ embedded = false }) {
                       <textarea aria-label={`Maintenance note for Room ${room.roomNumber}`}
                         value={notes[room.id] || ''}
                         onChange={event => setNotes(current => ({ ...current, [room.id]: event.target.value }))}
-                        placeholder="Describe the problem (e.g. AC is leaking)" maxLength={500} rows={2} />
+                        placeholder="Describe the problem" maxLength={500} rows={2} />
                       <button type="button" className="housekeeping-danger" disabled={Boolean(busyRoom)}
                         onClick={() => submitReport(room)}>
-                        {busyRoom === room.id ? 'Saving…' : 'Report Issue & Block Room'}
+                        {busyRoom === room.id ? 'Saving…' : 'Report & Block Room'}
                       </button>
-                    </div>
+                      </div>}
+                    </>}
                   </div>
                 )}
               </article>

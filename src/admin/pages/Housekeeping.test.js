@@ -70,6 +70,7 @@ test('confirms the cleaning-to-available update', async () => {
   });
   expect(mockFlushOutbox).toHaveBeenCalled();
   expect(mockQueue).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: /All rooms/ }));
   expect(screen.getByText(/Synced/)).toBeInTheDocument();
   expect(mockEnqueued[0]).toMatchObject({
     path: 'housekeeping',
@@ -99,6 +100,7 @@ test('housekeepers only see rooms needing attention without staff filters', () =
 test('allows staff to notify housekeeping that an available room needs cleaning', async () => {
   mockRoom.status = 'available';
   render(<Housekeeping />);
+  fireEvent.click(screen.getByRole('button', { name: /All rooms/ }));
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Notify Housekeeper to Clean' }));
   });
@@ -109,13 +111,27 @@ test('allows staff to notify housekeeping that an available room needs cleaning'
   });
 });
 
-test('saves an offline maintenance report and immediately marks the room out of order', async () => {
+test('opens on rooms needing attention and keeps maintenance forms collapsed until requested', () => {
+  mockRooms = [
+    { ...mockRoom, status: 'cleaning' },
+    { ...mockRoom, id: 'room-2', roomNumber: 'Room 2', status: 'available' },
+  ];
   render(<Housekeeping />);
+  expect(screen.getByText('Room Ground 1')).toBeInTheDocument();
+  expect(screen.queryByText('Room Room 2')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Maintenance issue type for Room Ground 1')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /All rooms/ }));
+  expect(screen.getByText('Room Room 2')).toBeInTheDocument();
+});
+
+test('saves an offline maintenance report and immediately marks the room out of order', async () => {
   Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+  render(<Housekeeping />);
+  fireEvent.click(screen.getByRole('button', { name: 'Report issue' }));
   fireEvent.change(screen.getByLabelText('Maintenance issue type for Room Ground 1'), { target: { value: 'air-conditioning' } });
   fireEvent.change(screen.getByLabelText('Maintenance note for Room Ground 1'), { target: { value: 'AC is leaking' } });
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Report Issue & Block Room' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Report & Block Room' }));
   });
   expect(mockEnqueued[0]).toMatchObject({
     path: 'housekeeping',
@@ -135,10 +151,11 @@ test('saves an offline maintenance report and immediately marks the room out of 
 test('automatically syncs a queued maintenance report when the device reconnects', async () => {
   Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
   render(<Housekeeping />);
+  fireEvent.click(screen.getByRole('button', { name: 'Report issue' }));
   fireEvent.change(screen.getByLabelText('Maintenance issue type for Room Ground 1'), { target: { value: 'air-conditioning' } });
   fireEvent.change(screen.getByLabelText('Maintenance note for Room Ground 1'), { target: { value: 'AC is leaking' } });
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Report Issue & Block Room' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Report & Block Room' }));
   });
   expect(screen.getByText('Saved Offline (Pending Sync)')).toBeInTheDocument();
 
