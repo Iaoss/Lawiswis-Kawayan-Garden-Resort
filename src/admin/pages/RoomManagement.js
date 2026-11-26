@@ -1,5 +1,6 @@
 import PillTabs from '../components/PillTabs';
 import RoomBookingsList from '../components/RoomBookingsList';
+import Housekeeping from './Housekeeping';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from '../../firebase/firebase';
@@ -110,6 +111,9 @@ export default function RoomManagement() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
   const isReceptionist = window.location.pathname.startsWith('/receptionist');
+  const [activeSection, setActiveSection] = useState(() => (
+    new URLSearchParams(window.location.search).get('section') === 'housekeeping' ? 'housekeeping' : 'rooms'
+  ));
 
   const BG      = dark ? '#020b09' : '#f9fafb';
   const CARD    = dark ? '#1c1c1c' : '#ffffff';
@@ -383,6 +387,40 @@ export default function RoomManagement() {
   const deleteTargetRoom = rooms.find(r => r.id === confirmDeleteId);
   const formImagePreviewSrc = imagePreview || (removeImage ? '' : form.imageUrl);
 
+  const selectSection = section => {
+    setActiveSection(section);
+    const queryString = section === 'housekeeping' ? '?section=housekeeping' : '';
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${queryString}`);
+  };
+  const sectionTabs = (
+    <nav aria-label="Room management sections" style={{ display: 'flex', gap: 6, margin: '16px 20px 0', padding: 5, width: 'fit-content', maxWidth: 'calc(100% - 40px)', border: `1px solid ${BORDER}`, borderRadius: 12, background: CARD }}>
+      {[
+        { id: 'rooms', label: 'Rooms' },
+        { id: 'housekeeping', label: 'Housekeeping' },
+      ].map(tab => (
+        <button key={tab.id} type="button" aria-current={activeSection === tab.id ? 'page' : undefined}
+          onClick={() => selectSection(tab.id)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, border: 0, borderRadius: 8, padding: '9px 13px', background: activeSection === tab.id ? (dark ? '#30352c' : '#eef3e8') : 'transparent', color: TEXT, fontSize: 12, fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}>
+          {tab.label}
+          {tab.id === 'housekeeping' && (
+            <span style={{ minWidth: 18, padding: '1px 5px', borderRadius: 10, background: dark ? '#4a3a1c' : '#fef3c7', color: dark ? '#fbbf24' : '#92400e', fontSize: 10, textAlign: 'center' }}>
+              {rooms.filter(room => ['cleaning', 'maintenance'].includes(String(room.status || '').toLowerCase())).length}
+            </span>
+          )}
+        </button>
+      ))}
+    </nav>
+  );
+
+  if (activeSection === 'housekeeping') {
+    return (
+      <PageLayout>
+        {sectionTabs}
+        <Housekeeping embedded />
+      </PageLayout>
+    );
+  }
+
   // ── One room card ──
   const renderCard = (room, i) => {
     const m = ROOM_META[room.type] || {};
@@ -582,6 +620,7 @@ export default function RoomManagement() {
 
   return (
     <PageLayout>
+      {sectionTabs}
       <div style={{ fontFamily: "'Poppins', sans-serif", background: BG, minHeight: '100vh', padding: 20 }}>
 
         {/* ── Page header ── */}

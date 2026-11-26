@@ -36,7 +36,6 @@ loadCottageCatalogOnce();
 const navItems = [
   { label: 'Dashboard',      path: '/admin/dashboard',    icon: 'ti-layout-dashboard' },
   { label: 'Room Management',path: '/admin/rooms',         icon: 'ti-bed' },
-  { label: 'Housekeeping',   path: '/admin/housekeeping',   icon: 'ti-broom' },
   { label: 'Reservations',   path: '/admin/reservations',  icon: 'ti-calendar-event' },
   { label: 'Walk-in',        path: '/admin/walkin',        icon: 'ti-walk' },
   { label: 'Billing',        path: '/admin/billing',       icon: 'ti-receipt' },

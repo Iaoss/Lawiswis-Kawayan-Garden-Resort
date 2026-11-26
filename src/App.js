@@ -109,7 +109,7 @@ function App() {
           <Route index element={<Navigate to="dashboard" replace />} />
           <Route path="dashboard" element={<RequireStaffRoute allowedRoles={['admin']}><AdminDashboard /></RequireStaffRoute>} />
           <Route path="rooms" element={<RoomManagement />} />
-          <Route path="housekeeping" element={<Housekeeping />} />
+          <Route path="housekeeping" element={<Navigate to="/admin/rooms?section=housekeeping" replace />} />
           <Route path="promos" element={<RequireStaffRoute allowedRoles={['admin']}><PromoCodes /></RequireStaffRoute>} />
           <Route path="walkin" element={<WalkIn />} />
           <Route path="reservations" element={<Reservations />} />
@@ -138,7 +138,7 @@ function App() {
           <Route path="phone-display" element={<PhoneDisplay />} />
           <Route path="walkin" element={<WalkIn />} />
           <Route path="rooms" element={<RoomManagement />} />
-          <Route path="housekeeping" element={<Housekeeping />} />
+          <Route path="housekeeping" element={<Navigate to="/receptionist/rooms?section=housekeeping" replace />} />
           <Route path="billing" element={<Billing />} />
           <Route path="customers" element={<CustomerManagement />} />
           <Route path="history" element={<ReservationHistory />} />

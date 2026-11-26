@@ -55,3 +55,13 @@ test('Edit inside the room details window also goes straight to the form', () =>
   expect(scrolled.length).toBeGreaterThan(0);
   jest.useRealTimers();
 });
+
+test('Room Management opens housekeeping from its section tab and can return to rooms', () => {
+  window.history.replaceState({}, '', '/admin/rooms?section=housekeeping');
+  render(<RoomManagement />);
+  expect(screen.getByRole('heading', { name: 'Housekeeping & Maintenance' })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Rooms' }));
+  expect(screen.getByText(/rooms total/)).toBeInTheDocument();
+  expect(window.location.search).toBe('');
+});

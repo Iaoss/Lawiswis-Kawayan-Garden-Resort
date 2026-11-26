@@ -66,7 +66,7 @@ test('confirms the cleaning-to-available update', async () => {
   render(<Housekeeping />);
   expect(screen.getByText('Room Ground 1')).toBeInTheDocument();
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Mark as Available' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Available' }));
   });
   expect(mockFlushOutbox).toHaveBeenCalled();
   expect(mockQueue).toHaveLength(0);
@@ -78,20 +78,21 @@ test('confirms the cleaning-to-available update', async () => {
   });
 });
 
-test('defaults housekeepers to rooms needing attention and can filter by room type', () => {
+test('housekeepers only see rooms needing attention without staff filters', () => {
   mockRooms = [
     { ...mockRoom, status: 'cleaning' },
     { ...mockRoom, id: 'room-2', roomNumber: 'Room 2', type: 'Deluxe', status: 'available' },
+    { ...mockRoom, id: 'room-3', roomNumber: 'Room 3', status: 'maintenance', maintenanceNote: 'Leaking pipe' },
   ];
   window.history.pushState({}, '', '/housekeeper/housekeeping');
   render(<Housekeeping />);
+  expect(screen.getByRole('heading', { name: 'Rooms to clean' })).toBeInTheDocument();
   expect(screen.getByText('Room Ground 1')).toBeInTheDocument();
   expect(screen.queryByText('Room Room 2')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: /All rooms/ }));
-  expect(screen.getByText('Room Room 2')).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText('Filter by room type'), { target: { value: 'Deluxe' } });
-  expect(screen.queryByText('Room Ground 1')).not.toBeInTheDocument();
-  expect(screen.getByText('Room Room 2')).toBeInTheDocument();
+  expect(screen.getByText('Room Room 3')).toBeInTheDocument();
+  expect(screen.getByText('Leaking pipe')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /All rooms/ })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Filter by room type')).not.toBeInTheDocument();
   window.history.pushState({}, '', '/');
 });
 

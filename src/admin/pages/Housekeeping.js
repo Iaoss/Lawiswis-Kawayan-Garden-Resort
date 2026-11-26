@@ -43,7 +43,7 @@ const reportDate = value => {
   return Number.isNaN(date.getTime()) ? new Date(0) : date;
 };
 
-export default function Housekeeping() {
+export default function Housekeeping({ embedded = false }) {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
   const isHousekeeper = window.location.pathname.startsWith('/housekeeper');
@@ -170,11 +170,13 @@ export default function Housekeeping() {
       const maintenanceNote = override?.maintenanceNote ?? (queued?.displayMaintenanceNote ?? room.maintenanceNote ?? '');
       return { ...room, displayStatus: status, displayMaintenanceNote: maintenanceNote, queued };
     })
-    .filter(room => filter === 'all'
-      || (filter === 'attention' && ['cleaning', 'maintenance'].includes(room.displayStatus))
-      || room.displayStatus === filter)
+    .filter(room => isHousekeeper
+      ? ['cleaning', 'maintenance'].includes(room.displayStatus)
+      : filter === 'all'
+        || (filter === 'attention' && ['cleaning', 'maintenance'].includes(room.displayStatus))
+        || room.displayStatus === filter)
     .filter(room => roomType === 'all' || room.type === roomType)
-    .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), undefined, { numeric: true })), [rooms, queuedByRoom, overrides, filter, roomType]);
+    .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), undefined, { numeric: true })), [rooms, queuedByRoom, overrides, filter, roomType, isHousekeeper]);
 
   const roomTypes = useMemo(() => [...new Set(rooms.map(room => String(room.type || '').trim()).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b)), [rooms]);
@@ -306,22 +308,21 @@ export default function Housekeeping() {
     ? { bg: '#020b09', card: '#1c1c1c', border: '#282827', text: '#e8e8d8', muted: '#a3a393' }
     : { bg: '#f4f6f4', card: '#ffffff', border: '#e5e7eb', text: '#1f2937', muted: '#6b7280' };
 
-  return (
-    <PageLayout>
-      <main className="housekeeping-page" data-dark={dark ? 'true' : 'false'} style={{ background: palette.bg, color: palette.text, fontFamily: "'Poppins', sans-serif" }}>
+  const content = (
+      <main className={`housekeeping-page${embedded ? ' housekeeping-embedded' : ''}`} data-dark={dark ? 'true' : 'false'} style={{ background: palette.bg, color: palette.text, fontFamily: "'Poppins', sans-serif" }}>
         <header className="housekeeping-header">
           <div>
             <div className="housekeeping-eyebrow">STAFF · ROOMS</div>
-            <h1>Housekeeping &amp; Maintenance</h1>
-            <p>{isHousekeeper ? 'Update room readiness and report maintenance issues. Your updates sync automatically when you reconnect.' : 'Review room readiness and the latest maintenance reports.'}</p>
+            <h1>{isHousekeeper ? 'Rooms to clean' : 'Housekeeping & Maintenance'}</h1>
+            <p>{isHousekeeper ? 'Mark a room Available when cleaning is complete, or report a maintenance issue.' : 'Review room readiness and the latest maintenance reports.'}</p>
           </div>
-          <div className={`housekeeping-connection ${online ? 'is-online' : 'is-offline'}`} role="status">
+          {!isHousekeeper && <div className={`housekeeping-connection ${online ? 'is-online' : 'is-offline'}`} role="status">
             <span aria-hidden="true" className="housekeeping-connection-dot" />
             {online ? 'Online · Sync enabled' : 'Offline · Changes saved on this device'}
-          </div>
+          </div>}
         </header>
 
-        <section className="housekeeping-filters" aria-label="Filter rooms">
+        {!isHousekeeper && <section className="housekeeping-filters" aria-label="Filter rooms">
           {FILTERS.map(item => (
             <button key={item.id} type="button" aria-pressed={filter === item.id}
               onClick={() => setFilter(item.id)}
@@ -339,7 +340,7 @@ export default function Housekeeping() {
               {roomTypes.map(type => <option key={type} value={type}>{type}</option>)}
             </select>
           </label>
-        </section>
+        </section>}
 
         {error && <div className="housekeeping-error" role="alert">{error}</div>}
         {!online && (
@@ -395,7 +396,7 @@ export default function Housekeeping() {
                     {room.displayStatus === 'cleaning' && (
                       <button type="button" className="housekeeping-primary" disabled={Boolean(busyRoom)}
                         onClick={() => setRoomStatus(room, 'available')}>
-                        {busyRoom === room.id ? 'Saving…' : 'Mark as Available'}
+                        {busyRoom === room.id ? 'Saving…' : 'Mark Available'}
                       </button>
                     )}
                     {room.displayStatus === 'maintenance' && (
@@ -439,7 +440,7 @@ export default function Housekeeping() {
           )}
         </section>
 
-        <section className="housekeeping-reports" aria-labelledby="maintenance-reports-heading">
+        {!isHousekeeper && <section className="housekeeping-reports" aria-labelledby="maintenance-reports-heading">
           <div className="housekeeping-reports-heading">
             <div>
               <div className="housekeeping-eyebrow">SHARED STAFF INBOX</div>
@@ -497,8 +498,8 @@ export default function Housekeeping() {
               No {reportFilter === 'all' ? '' : `${reportFilter} `}maintenance reports.
             </div>
           )}
-        </section>
+        </section>}
       </main>
-    </PageLayout>
   );
+  return embedded ? content : <PageLayout>{content}</PageLayout>;
 }
