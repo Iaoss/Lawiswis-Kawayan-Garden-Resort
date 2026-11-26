@@ -65,12 +65,21 @@ export default async function handler(req, res) {
   const staff = await verifyStaff(req, { allowedRoles: validRoles });
   if (!staff) return res.status(401).json({ error: 'Please sign in with an active staff account.' });
 
-  if (!['register', 'unregister'].includes(action) || typeof token !== 'string' || token.length < 20 || token.length > 4096) {
+  if (!['register', 'unregister', 'status'].includes(action) || typeof token !== 'string' || token.length < 20 || token.length > 4096) {
     return res.status(400).json({ error: 'Provide a valid push registration.' });
   }
   const ref = adminDb.collection('staffPushTokens').doc(`${staff.uid}_${tokenId(token)}`);
   try {
-    if (action === 'register') {
+    if (action === 'status') {
+      const snapshot = await ref.get();
+      const registration = snapshot.data() || {};
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({
+        enabled: snapshot.exists
+          && registration.role === staff.role
+          && Number(registration.expiresAt || 0) > Date.now(),
+      });
+    } else if (action === 'register') {
       await ref.set({
         uid: staff.uid,
         role: staff.role,

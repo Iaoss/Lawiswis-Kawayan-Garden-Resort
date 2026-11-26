@@ -126,6 +126,9 @@ export default async function handler(req, res) {
         if (openReportIds.length && status !== 'maintenance') {
           throw requestError('Resolve the open maintenance reports before changing this room status.', 409);
         }
+        if (staff.role !== 'housekeeper' && status === 'cleaning' && currentStatus === 'cleaning') {
+          return { roomId, roomNumber: room.roomNumber || roomId, status, maintenanceNote: '', alreadySaved: true };
+        }
         if (staff.role === 'housekeeper') {
           if (status === 'available' && currentStatus === 'available') {
             return { roomId, roomNumber: room.roomNumber || roomId, status, maintenanceNote: '', alreadySaved: true };

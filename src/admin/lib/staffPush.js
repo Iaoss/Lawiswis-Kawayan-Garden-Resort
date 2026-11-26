@@ -16,6 +16,26 @@ async function updateToken(action, token) {
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || 'Phone alert registration failed.');
+  return result;
+}
+
+async function getMessagingToken() {
+  const vapidKey = process.env.REACT_APP_FIREBASE_VAPID_KEY;
+  if (!vapidKey) throw new Error('Phone alerts are not configured. Add the Firebase web-push VAPID key to the site environment.');
+  if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+    throw new Error('This browser does not support background phone alerts.');
+  }
+  if (Notification.permission !== 'granted') return '';
+  const registration = await navigator.serviceWorker.ready;
+  return getToken(getMessaging(firebaseApp), { vapidKey, serviceWorkerRegistration: registration });
+}
+
+export async function getStaffPushEnabled() {
+  if (!auth.currentUser || !('Notification' in window) || Notification.permission !== 'granted') return false;
+  const token = await getMessagingToken();
+  if (!token) return false;
+  const result = await updateToken('status', token);
+  return result.enabled === true;
 }
 
 export async function registerStaffPush() {
@@ -37,7 +57,7 @@ export async function registerStaffPush() {
 export async function unregisterStaffPush() {
   if (!('serviceWorker' in navigator) || !auth.currentUser) return;
   const vapidKey = process.env.REACT_APP_FIREBASE_VAPID_KEY;
-  if (!vapidKey) return;
+  if (!vapidKey) throw new Error('Phone alerts are not configured on this site.');
   const registration = await navigator.serviceWorker.ready;
   const messaging = getMessaging(firebaseApp);
   const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: registration });

@@ -111,11 +111,23 @@ test('allows staff to notify housekeeping that an available room needs cleaning'
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Notify Housekeeper to Clean' }));
   });
-  expect(mockEnqueued[0].body).toMatchObject({
+  expect(mockSendStaffRequest).toHaveBeenCalledWith('housekeeping', {
     action: 'set-room-status',
     roomId: 'ground-1',
     status: 'cleaning',
   });
+  expect(mockEnqueued).toHaveLength(0);
+});
+
+test('does not queue a cleaning notification when offline', async () => {
+  mockRoom.status = 'available';
+  Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+  render(<Housekeeping />);
+  fireEvent.click(screen.getByRole('button', { name: /All rooms/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Notify Housekeeper to Clean' }));
+  expect(mockEnqueued).toHaveLength(0);
+  expect(screen.getByRole('alert')).toHaveTextContent(/Connect to the internet to notify a housekeeper/);
+  Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
 });
 
 test('opens on rooms needing attention and keeps maintenance forms collapsed until requested', () => {

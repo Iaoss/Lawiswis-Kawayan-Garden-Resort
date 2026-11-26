@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { dismissItem, flushOutbox, getOutbox, subscribeOutbox } from '../lib/offlineOutbox';
+import { dismissItem, flushOutbox, getOutbox, retryItem, subscribeOutbox } from '../lib/offlineOutbox';
 import { sendStaffRequest } from '../lib/staffApi';
 import { auth } from '../../firebase/firebase';
 
@@ -26,6 +26,7 @@ export default function OfflineStatus({ dark = false }) {
   const [notice, setNotice] = useState('');
   const [open, setOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [retryingId, setRetryingId] = useState('');
 
   useEffect(() => subscribeOutbox(setItems), []);
 
@@ -66,6 +67,22 @@ export default function OfflineStatus({ dark = false }) {
   const failed = mine.filter(item => item.status === 'failed');
   if (online && !pending.length && !failed.length && !notice) return null;
 
+  const retryFailed = async item => {
+    if (!online || retryingId) return;
+    setRetryingId(item.id);
+    retryItem(item.id);
+    try {
+      const { sent, failed: stillFailed } = await flushOutbox(sendStaffRequest, { uid: auth.currentUser?.uid || '' });
+      if (sent) setNotice('The room update was saved.');
+      else if (stillFailed) setNotice('The update was rejected again. Check the room status and error before retrying.');
+    } catch (error) {
+      console.error('Could not retry the saved room update:', error);
+      setNotice(error.message || 'The room update could not be retried.');
+    } finally {
+      setRetryingId('');
+    }
+  };
+
   const bar = (bg, color, border) => ({ background: bg, color, border: `1px solid ${border}`, borderRadius: 12, padding: '10px 14px', fontSize: 12.5, lineHeight: 1.55, marginBottom: 12 });
   const amber = dark ? bar('rgba(251,191,36,0.12)', '#fcd34d', 'rgba(251,191,36,0.35)') : bar('#fffbeb', '#92400e', '#fde68a');
   const red = dark ? bar('rgba(248,113,113,0.12)', '#fca5a5', 'rgba(248,113,113,0.35)') : bar('#fef2f2', '#991b1b', '#fecaca');
@@ -89,7 +106,17 @@ export default function OfflineStatus({ dark = false }) {
           {' · '}<button type="button" onClick={() => setOpen(value => !value)} style={linkBtn}>{open ? 'Hide' : 'Show'}</button>
           {open && (
             <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
-              {pending.map(item => <li key={item.id}>{item.label} · {timeLabel(Date.parse(item.createdAt))}</li>)}
+              {pending.map(item => (
+                <li key={item.id}>
+                  {item.label} · {timeLabel(Date.parse(item.createdAt))}
+                  {item.error && <> · {item.error}</>}
+                  {item.path === 'housekeeping' && item.error && (
+                    <> · <button type="button" disabled={!online || Boolean(retryingId)} onClick={() => retryFailed(item)} style={linkBtn}>
+                      {retryingId === item.id ? 'Retrying…' : online ? 'Retry sync' : 'Reconnect to retry'}
+                    </button></>
+                  )}
+                </li>
+              ))}
             </ul>
           )}
         </div>
@@ -97,7 +124,15 @@ export default function OfflineStatus({ dark = false }) {
       {failed.map(item => (
         <div key={item.id} style={red}>
           <strong><i className="ti ti-alert-triangle" aria-hidden="true" /> Not saved: {item.label}</strong> (made {timeLabel(Date.parse(item.createdAt))} while offline).{' '}
-          {item.error} Please enter it again.{' '}
+          {item.error}{' '}
+          {item.path === 'housekeeping'
+            ? <>
+              The server did not save this room update.{' '}
+              <button type="button" disabled={!online || Boolean(retryingId)} onClick={() => retryFailed(item)} style={linkBtn}>
+                {retryingId === item.id ? 'Retrying…' : online ? 'Retry sync' : 'Reconnect to retry'}
+              </button>{' '}
+            </>
+            : 'Please enter it again. '}
           <button type="button" onClick={() => dismissItem(item.id)} style={linkBtn}>Dismiss</button>
         </div>
       ))}

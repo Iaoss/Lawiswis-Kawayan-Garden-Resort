@@ -211,6 +211,10 @@ export default function Housekeeping({ embedded = false }) {
 
   const setRoomStatus = async (room, status) => {
     if (busyRoom || room.displayStatus === 'occupied') return;
+    if (status === 'cleaning' && navigator.onLine === false) {
+      setError('Connect to the internet to notify a housekeeper. Cleaning requests are not queued while offline.');
+      return;
+    }
 
     setError('');
     setBusyRoom(room.id);
@@ -227,12 +231,16 @@ export default function Housekeeping({ embedded = false }) {
         roomId: room.id,
         status,
       };
-      const queued = enqueue('housekeeping', body, 'POST', auth.currentUser?.uid || '');
-      if (!getOutbox().some(item => item.id === queued.id)) {
-        throw new Error('This device could not save the update for offline sync. Check available storage and try again.');
-      }
-      if (navigator.onLine !== false) {
-        await flushRoomChanges([room.id]);
+      if (status === 'cleaning') {
+        await sendStaffRequest('housekeeping', body);
+      } else {
+        const queued = enqueue('housekeeping', body, 'POST', auth.currentUser?.uid || '');
+        if (!getOutbox().some(item => item.id === queued.id)) {
+          throw new Error('This device could not save the update for offline sync. Check available storage and try again.');
+        }
+        if (navigator.onLine !== false) {
+          await flushRoomChanges([room.id]);
+        }
       }
     } catch (requestError) {
       console.error('Housekeeping room update failed:', requestError);

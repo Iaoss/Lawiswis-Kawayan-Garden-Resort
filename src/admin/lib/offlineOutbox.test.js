@@ -10,6 +10,7 @@ describe('offline outbox', () => {
     expect(isQueueable('staff-billing', { action: 'apply-discount' })).toBe(false);
     expect(isQueueable('staff-billing', { action: 'edit-booking', preview: true })).toBe(false);
     expect(isQueueable('housekeeping', { action: 'set-room-status', roomId: 'room-1' })).toBe(true);
+    expect(isQueueable('housekeeping', { action: 'set-room-status', roomId: 'room-1', status: 'cleaning' })).toBe(false);
     expect(isQueueable('housekeeping', { action: 'report-issue', roomId: 'room-1' })).toBe(true);
   });
 

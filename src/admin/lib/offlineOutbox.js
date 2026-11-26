@@ -26,7 +26,10 @@ const QUEUEABLE = {
   housekeeping: ['set-room-status', 'report-issue'],
 };
 
-export const isQueueable = (path, body) => Boolean(QUEUEABLE[path]?.includes(String(body?.action || ''))) && !body?.preview;
+export const isQueueable = (path, body) => {
+  if (path === 'housekeeping' && body?.action === 'set-room-status' && body.status === 'cleaning') return false;
+  return Boolean(QUEUEABLE[path]?.includes(String(body?.action || ''))) && !body?.preview;
+};
 
 const listeners = new Set();
 const read = (key, fallback) => {
