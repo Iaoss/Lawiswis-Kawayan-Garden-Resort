@@ -59,6 +59,7 @@ import { normalizePhMobile } from '../src/lib/phoneNumber';
 import { staffStamp } from '../src/lib/staffLabel';
 import { runOnce } from '../lib/offlineRequests';
 import { checkResortCapacity } from '../lib/resortCapacity';
+import { roomHasStairs } from '../src/lib/roomAccess';
 
 // The resort has no card terminal: guests pay at the counter by cash or QR
 // (GCash / QR Ph). 'card' stays accepted only for older bookings.
@@ -191,11 +192,16 @@ async function recordPayment({ staff, reservationId, amount, method, officialRec
 // Rooms for a corporate / group booking. Staff pick the rooms; each gets a
 // 0-peso room block on the group's dates so no one else can book it.
 // Sending the full list replaces the previous one.
-async function assignCorporateRooms({ staff, reservationId, roomIds }) {
-  if (!Array.isArray(roomIds) || roomIds.length > 60 || roomIds.some(id => typeof id !== 'string' || !id)) {
-    throw new BillingError(400, 'Choose up to 60 rooms.');
+async function assignCorporateRooms({ staff, reservationId, roomIds, extraRoomIds, stepFree }) {
+  if (!Array.isArray(roomIds) || roomIds.length > MAX_ROOMS_PER_BOOKING || roomIds.some(id => typeof id !== 'string' || !id)) {
+    throw new BillingError(400, `A group can have up to ${MAX_ROOMS_PER_BOOKING} rooms.`);
   }
   const wanted = [...new Set(roomIds)];
+  if ((extraRoomIds !== undefined && (!Array.isArray(extraRoomIds)
+    || extraRoomIds.some(id => typeof id !== 'string' || !wanted.includes(id))))
+    || (stepFree !== undefined && typeof stepFree !== 'boolean')) {
+    throw new BillingError(400, 'Choose valid rooms and mobility preferences.');
+  }
   return adminDb.runTransaction(async transaction => {
     const { ref, reservation } = await getReservation(transaction, reservationId);
     if (reservation.type !== 'corporate') throw new BillingError(409, 'Rooms can only be assigned to a corporate or group booking.');
@@ -203,23 +209,75 @@ async function assignCorporateRooms({ staff, reservationId, roomIds }) {
     const checkIn = String(reservation.checkIn || '').slice(0, 10);
     const checkOut = String(reservation.checkOut || reservation.checkIn || '').slice(0, 10);
     const current = Array.isArray(reservation.assignedRooms) ? reservation.assignedRooms : [];
+    const extrasWanted = extraRoomIds === undefined
+      ? current.filter(item => item.isExtra && wanted.includes(item.roomId)).map(item => item.roomId)
+      : [...new Set(extraRoomIds)];
     const keep = current.filter(item => wanted.includes(item.roomId));
     const remove = current.filter(item => !wanted.includes(item.roomId));
     const addIds = wanted.filter(id => !current.some(item => item.roomId === id));
-    // Reads first.
+    if (remove.length + addIds.length + 1 > 500) {
+      throw new BillingError(400, 'This room change exceeds the transaction limit. Save the changes in smaller groups.');
+    }
+    const existingStepFree = stepFree === undefined ? Boolean(reservation.stepFree) : stepFree;
     const added = [];
-    for (const roomId of addIds) {
+    const selected = [];
+    for (const roomId of wanted) {
       const roomSnap = await transaction.get(adminDb.collection('rooms').doc(roomId));
       if (!roomSnap.exists) throw new BillingError(404, 'One of the rooms could not be found.');
       const room = roomSnap.data();
-      if (blockedRoomStatus(room.status, checkIn, manilaDateKey())) {
-        throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
+      const alreadyAssigned = current.some(item => item.roomId === roomId);
+      if (!alreadyAssigned) {
+        if (blockedRoomStatus(room.status, checkIn, manilaDateKey())) {
+          throw new BillingError(409, `Room ${room.roomNumber} isn’t available right now.`);
+        }
+        if (await roomIsTaken(transaction, { roomId, roomNumber: room.roomNumber, checkIn, checkOut })) {
+          throw new BillingError(409, `Room ${room.roomNumber} is already booked on these dates.`);
+        }
+        added.push({ roomId, room, ref: adminDb.collection('reservations').doc() });
       }
-      if (await roomIsTaken(transaction, { roomId, roomNumber: room.roomNumber, checkIn, checkOut })) {
-        throw new BillingError(409, `Room ${room.roomNumber} is already booked on these dates.`);
+      selected.push({ roomId, room });
+      if (existingStepFree && roomHasStairs(room)) {
+        throw new BillingError(400, 'Rooms with stairs can’t be selected when a guest needs step-free access.');
       }
-      added.push({ roomId, room, ref: adminDb.collection('reservations').doc() });
     }
+    const includedCapacity = selected
+      .filter(({ roomId }) => !extrasWanted.includes(roomId))
+      .reduce((sum, { room }) => sum + (Number(getRoomMaximumGuests(room)) || 0), 0);
+    if (selected.length && includedCapacity < Number(reservation.totalGuests || reservation.adults || 0)) {
+      throw new BillingError(400, 'Rooms marked as included need enough capacity for everyone. Mark only additional rooms as extra.');
+    }
+
+    const seasonPeriods = extrasWanted.length ? await readSeasonPeriods() : [];
+    const extraRoomItems = selected.filter(({ roomId }) => extrasWanted.includes(roomId)).map(({ roomId, room }) => {
+      const roomBookingType = reservation.roomBookingType === 'daytour' ? 'daytour' : 'overnight';
+      const amount = priceBookingDetails(room, {
+        bookingType: roomBookingType,
+        tourPeriod: roomBookingType === 'daytour' ? 'day' : '',
+        checkIn,
+        checkOut,
+        nights: Number(reservation.nights) || 1,
+        adults: 1,
+        children: 0,
+        checkInTime: reservation.checkInTime || '',
+        checkOutTime: reservation.checkOutTime || '',
+      }, { seasonPeriods }).subtotalAmount;
+      return {
+        id: `corporate-extra-room-${roomId}`,
+        kind: 'corporate-extra-room',
+        roomId,
+        description: `Extra room · Room ${room.roomNumber || roomId}`,
+        amount: money(amount),
+        addedAt: new Date().toISOString(),
+      };
+    });
+    const previousItems = Array.isArray(reservation.extraChargeItems) ? reservation.extraChargeItems : [];
+    const otherItems = previousItems.filter(item => item.kind !== 'corporate-extra-room');
+    const previousRoomCharges = previousItems
+      .filter(item => item.kind === 'corporate-extra-room')
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const otherCharges = money(Number(reservation.extraCharges || 0) - previousRoomCharges);
+    const extraCharges = money(otherCharges + extraRoomItems.reduce((sum, item) => sum + item.amount, 0));
+    const total = money(Number(reservation.totalAmount || 0) + extraCharges);
     remove.forEach(item => { if (item.blockId) transaction.delete(adminDb.collection('reservations').doc(item.blockId)); });
     const groupName = reservation.companyName || reservation.guestName || 'Group';
     added.forEach(({ roomId, room, ref: blockRef }) => {
@@ -236,7 +294,8 @@ async function assignCorporateRooms({ staff, reservationId, roomIds }) {
         checkOut,
         checkInTime: reservation.checkInTime || '',
         checkOutTime: reservation.checkOutTime || '',
-        bookingType: reservation.bookingType || 'corporate',
+        bookingType: 'corporate',
+        roomBookingType: reservation.roomBookingType || 'overnight',
         status: reservation.status,
         totalAmount: 0,
         amountPaid: 0,
@@ -254,9 +313,17 @@ async function assignCorporateRooms({ staff, reservationId, roomIds }) {
         roomId, roomNumber: room.roomNumber || '', roomType: room.type || '',
         maxGuests: getRoomMaximumGuests(room) || null, blockId: blockRef.id,
       })),
-    ];
-    transaction.update(ref, { assignedRooms, assignedRoomCount: assignedRooms.length, roomsAssignedBy: staff.name || staff.email || staff.uid });
-    return { assignedRooms, added: added.length, removed: remove.length, companyName: groupName };
+    ].map(item => ({ ...item, isExtra: extrasWanted.includes(item.roomId) }));
+    transaction.update(ref, {
+      assignedRooms,
+      assignedRoomCount: assignedRooms.length,
+      roomsAssignedBy: staff.name || staff.email || staff.uid,
+      stepFree: existingStepFree,
+      extraCharges,
+      extraChargeItems: [...otherItems, ...extraRoomItems],
+      paymentStatus: paymentStatusFor(total, Number(reservation.amountPaid || 0)),
+    });
+    return { assignedRooms, added: added.length, removed: remove.length, extraCharges, extraRoomItems, companyName: groupName };
   });
 }
 

@@ -52,6 +52,8 @@ import { normalizeSeniorPwdDeclared } from '../src/lib/seniorPwdGuests';
 import { checkResortCapacity } from '../lib/resortCapacity';
 import crypto from 'crypto';
 import { discountKindsFor, MAX_DISCOUNT_IDS } from '../src/lib/discountReview';
+import { sendStaffPush } from '../lib/staffPush';
+import { roomHasStairs } from '../src/lib/roomAccess';
 
 function dateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -101,6 +103,7 @@ export default async function handler(req, res) {
       dayVisitors: submittedDayVisitors,
       contactLink,
       additionalRooms, // more rooms for the same stay: [{ roomId, adults, children }]
+      stepFree,
       extraGuestMeal, // day / night tour: extra guests add a ₱350 meal each
       seniorPwd, // { senior, pwd }: how many in the group (discount applied at the desk)
       discountRequest, // true: the guest will upload their IDs and pay after staff approve
@@ -140,8 +143,9 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Please fill in all required fields.' });
     }
     if ((address !== undefined && typeof address !== 'string')
-      || (notes !== undefined && typeof notes !== 'string')) {
-      return res.status(400).json({ error: 'Address and special requests must be text.' });
+      || (notes !== undefined && typeof notes !== 'string')
+      || (stepFree !== undefined && typeof stepFree !== 'boolean')) {
+      return res.status(400).json({ error: 'Provide text for address and special requests, and a valid mobility preference.' });
     }
     // Email and mobile are optional, but the preferred method must be filled in.
     const contactError = getContactDetailsError({ preferredContactMethod, email, phone, contactLink });
@@ -294,6 +298,13 @@ export default async function handler(req, res) {
     const seniorPwdCheck = normalizeSeniorPwdDeclared(seniorPwd || {}, groupGuests);
     if (seniorPwdCheck.error) return res.status(400).json({ error: seniorPwdCheck.error });
     const seniorPwdDeclared = seniorPwdCheck.value;
+    const needsStepFree = stepFree === true || seniorPwdDeclared.senior + seniorPwdDeclared.pwd > 0;
+    if (needsStepFree && [room, ...extraRooms.map(extra => extra.room)].some(roomItem => roomHasStairs(roomItem))) {
+      return res.status(400).json({
+        error: 'Choose rooms without stairs for guests who need step-free access.',
+        code: 'STEP_FREE_ROOM_REQUIRED',
+      });
+    }
     // Discount requested online: the guest sends their IDs, staff check them,
     // and only then is a payment link issued. One room per request.
     const reviewKinds = discountRequest === true ? discountKindsFor(seniorPwdDeclared) : [];
@@ -391,6 +402,7 @@ export default async function handler(req, res) {
       extraGuestCharge: pricing.extraGuestCharge,
       ...extraGuestMealFields(pricing),
       ...(seniorPwdDeclared.senior + seniorPwdDeclared.pwd > 0 ? { seniorPwdDeclared } : {}),
+      stepFree: needsStepFree,
       cottageId: pricing.cottageId,
       cottageFee: pricing.cottageFee,
       dayVisitorAdults: pricing.dayVisitorAdults,
@@ -502,6 +514,12 @@ export default async function handler(req, res) {
     // logged so you can spot delivery problems in Vercel's function logs.
     try {
       const bookingRef = docRef.id.slice(0, 8).toUpperCase();
+      await sendStaffPush({
+        roles: ['admin', 'receptionist'],
+        title: 'New room booking',
+        body: `${normalizedGuestName} · Room ${room.roomNumber} · ${checkIn}`,
+        url: '/admin/reservations',
+      });
       if (cleanEmail) await sendReservationPendingEmail(
         {
           guestName: normalizedGuestName,

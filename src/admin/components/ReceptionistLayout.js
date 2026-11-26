@@ -13,6 +13,7 @@ import NotificationBell from './NotificationBell';
 import CheckInReminder from './CheckInReminder';
 import FloatingClock from './FloatingClock';
 import StaffToaster from './StaffToaster';
+import StaffPushControl from './StaffPushControl';
 import {
   AnimatedSidebarInset,
   AnimatedSidebarProvider,
@@ -221,6 +222,7 @@ export default function ReceptionistLayout({ children }) {
             />
 
             <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/receptionist" showInquiries={access.can('inquiries')} feedbackPath={access.can('feedback') ? '/receptionist/feedback' : '/receptionist/dashboard'} />
+            <StaffPushControl dark={dark} />
 
             <TopbarIconButton
               icon="ti-settings"

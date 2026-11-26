@@ -10,9 +10,37 @@ import { ExpirationPlugin } from 'workbox-expiration';
 import { createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
 import { registerRoute } from 'workbox-routing';
 import { CacheFirst, StaleWhileRevalidate } from 'workbox-strategies';
+import { initializeApp } from 'firebase/app';
+import { getMessaging, onBackgroundMessage } from 'firebase/messaging/sw';
+import { firebaseConfig } from './firebase/firebaseConfig';
 
 clientsClaim();
 self.skipWaiting();
+
+const firebaseApp = initializeApp(firebaseConfig);
+const messaging = getMessaging(firebaseApp);
+onBackgroundMessage(messaging, payload => {
+  self.registration.showNotification(payload.notification?.title || 'Resort staff alert', {
+    body: payload.notification?.body || '',
+    icon: '/logo192.png',
+    badge: '/favicon.ico',
+    vibrate: [250, 120, 250],
+    data: { url: payload.data?.url || '/' },
+  });
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+    const existing = clients.find(client => client.url.startsWith(self.location.origin));
+    if (existing) {
+      existing.navigate(target);
+      return existing.focus();
+    }
+    return self.clients.openWindow(target);
+  }));
+});
 
 // The app's built files (JavaScript, CSS, index.html).
 precacheAndRoute(self.__WB_MANIFEST);

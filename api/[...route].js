@@ -40,6 +40,7 @@ import createCottageReservation from '../apiHandlers/create-cottage-reservation'
 import cottageAvailability from '../apiHandlers/cottage-availability';
 import housekeeping from '../apiHandlers/housekeeping';
 import housekeepingReports from '../apiHandlers/housekeeping-reports';
+import staffPush from '../apiHandlers/staff-push';
 
 // The body parser is disabled for the whole function because the PayMongo
 // webhook needs the raw body for signature checks. Other routes get req.body
@@ -87,6 +88,7 @@ const handlers = {
   'cottage-availability': cottageAvailability,
   housekeeping,
   'housekeeping-reports': housekeepingReports,
+  'staff-push': staffPush,
 };
 
 function readBody(req) {

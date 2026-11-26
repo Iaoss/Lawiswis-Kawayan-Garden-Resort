@@ -106,7 +106,7 @@ export function buildAvailabilityAnswer({ rooms = [], reservations = [], seasonP
   if (!entries.length) {
     const biggest = [...free].sort((a, b) => (getRoomMaximumGuests(b) || 0) - (getRoomMaximumGuests(a) || 0)).slice(0, 3);
     return [
-      `No single free room holds ${guests} guests for ${stay}, but you can book up to 3 rooms together:`,
+      `No single free room holds ${guests} guests for ${stay}, but you can book multiple rooms together:`,
       ...biggest.map(room => `• ${roomName(room)}: up to ${getRoomMaximumGuests(room) || '?'} guests`),
       `Book here: ${bookLink}`,
     ].join('\n');

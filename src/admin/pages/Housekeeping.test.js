@@ -15,13 +15,14 @@ const mockRoom = {
 let mockQueue = [];
 let mockEnqueued = [];
 let mockOutboxListener;
+let mockRooms = [mockRoom];
 
 jest.mock('../../firebase/firebase', () => ({ auth: { currentUser: { uid: 'staff-1' } }, db: {} }));
 jest.mock('../components/PageLayout', () => ({ children }) => <div>{children}</div>);
 jest.mock('../components/SettingsContext', () => ({ useSettings: () => ({ settings: {} }) }));
 jest.mock('../lib/liveCollection', () => ({
   subscribeCollection: (_name, onNext) => {
-    onNext({ docs: [{ id: mockRoom.id, data: () => mockRoom }] });
+    onNext({ docs: mockRooms.map(room => ({ id: room.id, data: () => room })) });
     return () => {};
   },
   subscribeLive: (_key, _makeQuery, onNext) => {
@@ -50,6 +51,8 @@ jest.mock('../lib/staffApi', () => ({ sendStaffRequest: (...args) => mockSendSta
 beforeEach(() => {
   mockQueue = [];
   mockEnqueued = [];
+  mockRooms = [mockRoom];
+  mockRoom.status = 'cleaning';
   mockOutboxListener = null;
   mockSendStaffRequest.mockReset();
   mockFlushOutbox.mockReset().mockImplementation(async () => {
@@ -59,10 +62,9 @@ beforeEach(() => {
   });
 });
 
-test('shows step-free/PWD tags and confirms the cleaning-to-available update', async () => {
+test('confirms the cleaning-to-available update', async () => {
   render(<Housekeeping />);
-  expect(screen.getByText('No stairs · ground floor')).toBeInTheDocument();
-  expect(screen.getByText('PWD-friendly')).toBeInTheDocument();
+  expect(screen.getByText('Room Ground 1')).toBeInTheDocument();
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Mark as Available' }));
   });
@@ -73,6 +75,36 @@ test('shows step-free/PWD tags and confirms the cleaning-to-available update', a
     path: 'housekeeping',
     uid: 'staff-1',
     body: { action: 'set-room-status', roomId: 'ground-1', status: 'available' },
+  });
+});
+
+test('defaults housekeepers to rooms needing attention and can filter by room type', () => {
+  mockRooms = [
+    { ...mockRoom, status: 'cleaning' },
+    { ...mockRoom, id: 'room-2', roomNumber: 'Room 2', type: 'Deluxe', status: 'available' },
+  ];
+  window.history.pushState({}, '', '/housekeeper/housekeeping');
+  render(<Housekeeping />);
+  expect(screen.getByText('Room Ground 1')).toBeInTheDocument();
+  expect(screen.queryByText('Room Room 2')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /All rooms/ }));
+  expect(screen.getByText('Room Room 2')).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Filter by room type'), { target: { value: 'Deluxe' } });
+  expect(screen.queryByText('Room Ground 1')).not.toBeInTheDocument();
+  expect(screen.getByText('Room Room 2')).toBeInTheDocument();
+  window.history.pushState({}, '', '/');
+});
+
+test('allows staff to notify housekeeping that an available room needs cleaning', async () => {
+  mockRoom.status = 'available';
+  render(<Housekeeping />);
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Notify Housekeeper to Clean' }));
+  });
+  expect(mockEnqueued[0].body).toMatchObject({
+    action: 'set-room-status',
+    roomId: 'ground-1',
+    status: 'cleaning',
   });
 });
 

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../firebase/firebase';
 import { dismissToast, pushToast } from './staffToasts';
+import { unregisterStaffPush } from './staffPush';
 
 // Staff session helpers: when the shift started (for the end-of-shift
 // summary) and signing out a shared front-desk computer after inactivity.
@@ -26,6 +27,11 @@ export function getShiftStart(uid) {
 
 export async function signOutTo(path = '/admin/login', reason = '') {
   try { localStorage.removeItem(SHIFT_KEY); } catch { /* storage unavailable */ }
+  try {
+    await unregisterStaffPush();
+  } catch (error) {
+    console.error('Staff phone alerts could not be unregistered during sign-out:', error);
+  }
   await signOut(auth);
   window.location.href = reason ? `${path}?reason=${encodeURIComponent(reason)}` : path;
 }

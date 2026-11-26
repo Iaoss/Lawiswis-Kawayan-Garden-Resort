@@ -26,6 +26,7 @@ import { useIdleLogout } from '../lib/staffSession';
 import { CheckInIdHost } from './CheckInIdDialog';
 import { loadCottageCatalogOnce } from '../../lib/useCottageCatalog';
 import OfflineStatus from './OfflineStatus';
+import StaffPushControl from './StaffPushControl';
 import { subscribeLive } from '../lib/liveCollection';
 
 // Start loading the admin's cottage list as soon as the site opens.
@@ -220,6 +221,7 @@ export default function Layout({ children }) {
             />
 
             <NotificationBell dark={dark} accent={ACCENT} soundAlerts={settings?.soundAlerts} prefix="/admin" showInquiries showEmails />
+            <StaffPushControl dark={dark} />
 
             <TopbarIconButton
               icon="ti-settings"

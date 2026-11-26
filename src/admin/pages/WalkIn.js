@@ -20,7 +20,7 @@ import { staffApi } from '../lib/staffApi';
 import OnlinePaymentQr from '../components/OnlinePaymentQr';
 import CorporateWalkInForm from '../components/CorporateWalkInForm';
 import AssignRoomsDialog from '../components/AssignRoomsDialog';
-import { MAX_ROOMS_PER_BOOKING, splitGuestsAcrossRooms } from '../../lib/groupBooking';
+import { splitGuestsAcrossRooms } from '../../lib/groupBooking';
 import { appAlert } from '../../components/ui/app-dialog';
 import { IMAGE_WIDTHS, optimizeImage, optimizeImageMap } from '../../lib/imageUrl';
 import { useSeasonPeriods } from '../../lib/useSeasonPeriods';
@@ -339,7 +339,7 @@ export default function WalkIn() {
     : 0;
   const toggleExtraRoom = room => setExtraRoomIds(current => (current.includes(room.id)
     ? current.filter(id => id !== room.id)
-    : current.length >= MAX_ROOMS_PER_BOOKING - 1 ? current : [...current, room.id]));
+    : [...current, room.id]));
   // Today's times that have passed: move to the next open one.
   useEffect(() => {
     if (!form.checkIn) return;
@@ -989,7 +989,6 @@ export default function WalkIn() {
                                   </div>
                                   {selectedRoom && selectedRoom.id !== 'cottage-only' && !picked && (
                                     <button type="button" onClick={event => { event.stopPropagation(); toggleExtraRoom(room); }}
-                                      disabled={!extraRoomIds.includes(room.id) && extraRoomIds.length >= MAX_ROOMS_PER_BOOKING - 1}
                                       style={{ marginTop: 8, width: '100%', background: extraRoomIds.includes(room.id) ? ACCENT : 'transparent', color: extraRoomIds.includes(room.id) ? ACCENT_TEXT : TEXT, border: `1px solid ${ACCENT}`, borderRadius: 8, padding: '5px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
                                       {extraRoomIds.includes(room.id) ? '✓ Added to group' : '+ Add room'}
                                     </button>

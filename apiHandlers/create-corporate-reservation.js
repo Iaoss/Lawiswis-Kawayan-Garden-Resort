@@ -2,19 +2,22 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { sendReservationPendingEmail } from '../lib/email';
 import { getCorporateNights, getCorporatePackage, getGroupAdvanceNoticeError, getGroupGuestError } from '../src/lib/corporatePackages';
 import { NAME_PATTERN, joinGuestName, splitGuestName } from '../src/lib/nameValidation';
-import { getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
+import { calculateBookingPrice, getResortNow, getStayDurationError } from '../src/lib/bookingPricing';
 import { getContactDetailsError } from '../src/lib/preferredContactMethods';
 import { closedPeriodMessage, findClosedPeriod } from '../src/lib/closedDates';
 import { DEFAULT_PAYMENT_TERMS_DAYS, normalizeAgencyDetails } from '../src/lib/agencyBilling';
 import { staffStamp } from '../src/lib/staffLabel';
 import { checkResortCapacity } from '../lib/resortCapacity';
 import { getRoomMaximumGuests, stayRangesOverlap } from '../src/lib/bookingPricing';
+import { readSeasonPeriods } from '../lib/seasonStore';
 import { holdsRoom } from '../src/lib/unpaidBookings';
 import { ROOM_BLOCK_TYPE } from '../lib/corporateRooms';
+import { roomHasStairs } from '../src/lib/roomAccess';
+import { sendStaffPush } from '../lib/staffPush';
+import { MAX_ROOMS_PER_BOOKING } from '../src/lib/groupBooking';
 
 // The guest can pick the rooms the group will use (optional). Rooms under
 // maintenance can't be picked.
-const MAX_GROUP_ROOMS = 30;
 const BLOCKED_ROOM_STATUS = ['maintenance', 'cleaning', 'unavailable', 'out-of-service', 'out-of-order'];
 const dayKeyOf = value => {
   if (typeof value === 'string') return value.slice(0, 10);
@@ -66,11 +69,18 @@ export async function createCorporateReservation(body, staff = null) {
       clientType,
       agency,
       roomIds, // rooms the group picked (optional)
+      extraRoomIds,
+      stepFree,
     } = body || {};
     const isFamily = clientType === 'family';
     const wantedRooms = Array.isArray(roomIds) ? [...new Set(roomIds)] : [];
-    if (wantedRooms.length > MAX_GROUP_ROOMS || wantedRooms.some(id => typeof id !== 'string' || !id || id.length > 100)) {
-      return reply(400, { error: `Choose up to ${MAX_GROUP_ROOMS} rooms.` });
+    const wantedExtraRoomIds = Array.isArray(extraRoomIds) ? [...new Set(extraRoomIds)] : [];
+    if (wantedRooms.length > MAX_ROOMS_PER_BOOKING || wantedRooms.some(id => typeof id !== 'string' || !id || id.length > 100)) {
+      return reply(400, { error: `A booking can include up to ${MAX_ROOMS_PER_BOOKING} rooms in one transaction.` });
+    }
+    if ((extraRoomIds !== undefined && (!Array.isArray(extraRoomIds) || wantedExtraRoomIds.some(id => typeof id !== 'string' || !id || !wantedRooms.includes(id))))
+      || (stepFree !== undefined && typeof stepFree !== 'boolean')) {
+      return reply(400, { error: 'Choose valid rooms and mobility preferences.' });
     }
     // Government agencies (per diem): no online deposit, billed to the agency.
     const isGovernment = clientType === 'government';
@@ -169,6 +179,7 @@ export async function createCorporateReservation(body, staff = null) {
     const reservation = {
       type: 'corporate',
       bookingType: 'corporate',
+      roomBookingType: bookingType,
       companyName: String(companyName || '').trim() || (isFamily ? `${contactLastName} family` : ''),
       packageId: packageDetails.id,
       packageName: packageDetails.name,
@@ -209,6 +220,7 @@ export async function createCorporateReservation(body, staff = null) {
       status: staff ? 'confirmed' : 'pending',
       ...(staff ? { source: 'walk-in', ...staffStamp(staff, 'createdBy') } : {}),
       accommodationInterest: Boolean(accommodationInterest),
+      stepFree: stepFree === true,
       notes: typeof notes === 'string' ? notes.trim() : '',
       createdAt: FieldValue.serverTimestamp(),
     };
@@ -218,7 +230,7 @@ export async function createCorporateReservation(body, staff = null) {
       // Hold the rooms the group picked: each gets a room-block booking on the
       // same dates (like rooms staff assign), checked for double bookings.
       try {
-        await adminDb.runTransaction(async transaction => {
+        const assigned = await adminDb.runTransaction(async transaction => {
           const picked = [];
           for (const roomId of wantedRooms) {
             const roomSnap = await transaction.get(adminDb.collection('rooms').doc(roomId));
@@ -235,18 +247,48 @@ export async function createCorporateReservation(body, staff = null) {
             if (taken) throw Object.assign(new Error(`Room ${room.roomNumber} was just booked for these dates. Pick another room.`), { code: 409 });
             picked.push({ roomId, room, blockRef: adminDb.collection('reservations').doc() });
           }
-          // Rooms are held at no charge, so a group can't hold more than it
-          // needs: without its smallest room the group must no longer fit.
-          const beds = picked.map(({ room }) => Number(getRoomMaximumGuests(room)) || 0).sort((a, b) => a - b);
-          const totalBeds = beds.reduce((sum, n) => sum + n, 0);
-          if (picked.length > 1 && totalBeds - beds[0] >= totalGuests) {
-            throw Object.assign(new Error(`Your ${totalGuests} guests fit in fewer rooms. Remove a room you don't need.`), { code: 400 });
+          if (stepFree && picked.some(({ room }) => roomHasStairs(room))) {
+            throw Object.assign(new Error('Rooms with stairs can’t be selected when a guest needs step-free access.'), { code: 400 });
           }
+          const includedCapacity = picked
+            .filter(({ roomId }) => !wantedExtraRoomIds.includes(roomId))
+            .reduce((sum, { room }) => sum + (Number(getRoomMaximumGuests(room)) || 0), 0);
+          if (picked.length && includedCapacity < totalGuests) {
+            throw Object.assign(new Error('Rooms marked as included need enough capacity for everyone. Mark only additional rooms as extra.'), { code: 400 });
+          }
+          const seasonPeriods = wantedExtraRoomIds.length ? await readSeasonPeriods() : [];
+          const extraRoomItems = picked.filter(({ roomId }) => wantedExtraRoomIds.includes(roomId)).map(({ roomId, room }) => {
+            const price = calculateBookingPrice({
+              room,
+              bookingType: bookingType === 'daytour' ? 'daytour' : 'overnight',
+              nights,
+              adults: 1,
+              children: 0,
+              ...(bookingType === 'daytour' ? { tourPeriod: 'day' } : {}),
+              season: { periods: seasonPeriods, checkIn, checkOut },
+            }).subtotalAmount;
+            return {
+              id: `corporate-extra-room-${roomId}`,
+              kind: 'corporate-extra-room',
+              roomId,
+              description: `Extra room · Room ${room.roomNumber || roomId}`,
+              amount: price,
+              addedAt: new Date().toISOString(),
+            };
+          });
+          const extraCharges = extraRoomItems.reduce((sum, item) => sum + item.amount, 0);
           const groupName = reservation.companyName || normalizedGuestName;
           transaction.create(reservationRef, {
             ...reservation,
+            extraCharges,
+            extraChargeItems: extraRoomItems,
             assignedRooms: picked.map(({ roomId, room, blockRef }) => ({
-              roomId, roomNumber: room.roomNumber || '', roomType: room.type || '', maxGuests: getRoomMaximumGuests(room) || null, blockId: blockRef.id,
+              roomId,
+              roomNumber: room.roomNumber || '',
+              roomType: room.type || '',
+              maxGuests: getRoomMaximumGuests(room) || null,
+              blockId: blockRef.id,
+              isExtra: wantedExtraRoomIds.includes(roomId),
             })),
             assignedRoomCount: picked.length,
             roomsAssignedBy: staff ? (staff.name || staff.email || staff.uid) : 'Guest (online booking)',
@@ -265,6 +307,7 @@ export async function createCorporateReservation(body, staff = null) {
             checkInTime: reservation.checkInTime,
             checkOutTime: reservation.checkOutTime,
             bookingType: 'corporate',
+            roomBookingType: bookingType,
             status: reservation.status,
             totalAmount: 0,
             amountPaid: 0,
@@ -274,13 +317,25 @@ export async function createCorporateReservation(body, staff = null) {
             notes: `Room for the ${groupName} group (booking #${reservationRef.id.slice(0, 8).toUpperCase()}).`,
             createdAt: FieldValue.serverTimestamp(),
           }));
+          return { extraCharges, extraChargeItems: extraRoomItems };
         });
+        if (assigned) {
+          reservation.extraCharges = assigned.extraCharges;
+          reservation.extraChargeItems = assigned.extraChargeItems;
+        }
       } catch (roomError) {
         if (roomError.code === 400) return reply(400, { error: roomError.message, code: 'TOO_MANY_ROOMS' });
         if (roomError.code === 404 || roomError.code === 409) return reply(roomError.code, { error: roomError.message, code: 'ROOM_TAKEN' });
         throw roomError;
       }
     }
+
+    await sendStaffPush({
+      roles: ['admin', 'receptionist'],
+      title: 'New group booking',
+      body: `${normalizedGuestName} · ${totalGuests} guests · ${checkIn}`,
+      url: '/admin/reservations',
+    });
 
     try {
       if (cleanEmail) await sendReservationPendingEmail({
@@ -290,7 +345,7 @@ export async function createCorporateReservation(body, staff = null) {
         roomType: `${totalGuests}-guest group package`,
         checkIn,
         checkOut,
-        totalAmount,
+        totalAmount: reservation.totalAmount + reservation.extraCharges,
         nights,
         paymentMethod: isGovernment ? 'agency' : staff ? 'cash' : 'online',
       }, reservationRef.id.slice(0, 8).toUpperCase());
@@ -298,7 +353,12 @@ export async function createCorporateReservation(body, staff = null) {
       console.error('Failed to send corporate reservation-received email:', emailError);
     }
 
-    return reply(200, { reservationId: reservationRef.id, totalAmount, packageName: packageDetails.name, chargeToAgency: isGovernment });
+    return reply(200, {
+      reservationId: reservationRef.id,
+      totalAmount: reservation.totalAmount + reservation.extraCharges,
+      packageName: packageDetails.name,
+      chargeToAgency: isGovernment,
+    });
   } catch (error) {
     console.error('create-corporate-reservation error:', error);
     return reply(500, { error: 'Could not create the group reservation. Please try again.' });

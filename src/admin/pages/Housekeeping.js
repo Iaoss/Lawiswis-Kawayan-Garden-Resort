@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { auth, db } from '../../firebase/firebase';
 import { collection, query, where } from 'firebase/firestore';
-import { roomAccessLabel, roomIsStepFree } from '../../lib/roomAccess';
 import PageLayout from '../components/PageLayout';
 import { useSettings } from '../components/SettingsContext';
 import { enqueue, flushOutbox, getOutbox, subscribeOutbox } from '../lib/offlineOutbox';
@@ -11,8 +10,8 @@ import './housekeeping.css';
 
 const FILTERS = [
   { id: 'all', label: 'All rooms' },
+  { id: 'attention', label: 'Needs attention' },
   { id: 'cleaning', label: 'Cleaning' },
-  { id: 'available', label: 'Available' },
   { id: 'maintenance', label: 'Out of Order' },
 ];
 
@@ -30,7 +29,6 @@ const statusLabel = status => ({
   occupied: 'Occupied',
 }[status] || status || 'Unknown');
 
-const roomIsAccessible = room => /wheelchair|pwd.?friendly|accessible/i.test(String(room.amenities || ''));
 const ISSUE_TYPES = [
   { id: 'air-conditioning', label: 'Air conditioning / AC' },
   { id: 'plumbing', label: 'Plumbing' },
@@ -49,9 +47,10 @@ export default function Housekeeping() {
   const { settings } = useSettings();
   const dark = settings?.darkMode;
   const isHousekeeper = window.location.pathname.startsWith('/housekeeper');
+  const [filter, setFilter] = useState(() => (isHousekeeper ? 'attention' : 'all'));
   const [rooms, setRooms] = useState([]);
   const [reports, setReports] = useState([]);
-  const [filter, setFilter] = useState('all');
+  const [roomType, setRoomType] = useState('all');
   const [reportFilter, setReportFilter] = useState('all');
   const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine !== false);
   const [outbox, setOutbox] = useState(getOutbox);
@@ -76,7 +75,7 @@ export default function Housekeeping() {
     if (!uid) return undefined;
     const key = isHousekeeper ? `maintenanceReports:housekeeper:${uid}` : 'maintenanceReports:staff';
     const makeQuery = () => isHousekeeper
-      ? query(collection(db, 'maintenanceReports'), where('reportedByUid', '==', uid))
+      ? query(collection(db, 'maintenanceReports'), where('status', '==', 'open'))
       : collection(db, 'maintenanceReports');
     return subscribeLive(key, makeQuery, snapshot => {
       setReports(snapshot.docs.map(item => ({ id: item.id, ...item.data() })));
@@ -171,8 +170,14 @@ export default function Housekeeping() {
       const maintenanceNote = override?.maintenanceNote ?? (queued?.displayMaintenanceNote ?? room.maintenanceNote ?? '');
       return { ...room, displayStatus: status, displayMaintenanceNote: maintenanceNote, queued };
     })
-    .filter(room => filter === 'all' || room.displayStatus === filter)
-    .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), undefined, { numeric: true })), [rooms, queuedByRoom, overrides, filter]);
+    .filter(room => filter === 'all'
+      || (filter === 'attention' && ['cleaning', 'maintenance'].includes(room.displayStatus))
+      || room.displayStatus === filter)
+    .filter(room => roomType === 'all' || room.type === roomType)
+    .sort((a, b) => String(a.roomNumber || '').localeCompare(String(b.roomNumber || ''), undefined, { numeric: true })), [rooms, queuedByRoom, overrides, filter, roomType]);
+
+  const roomTypes = useMemo(() => [...new Set(rooms.map(room => String(room.type || '').trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b)), [rooms]);
 
   const setRoomStatus = async (room, status) => {
     if (busyRoom || room.displayStatus === 'occupied') return;
@@ -322,9 +327,18 @@ export default function Housekeeping() {
               onClick={() => setFilter(item.id)}
               className={`housekeeping-filter ${filter === item.id ? 'is-active' : ''}`}>
               {item.label}
-              <span>{item.id === 'all' ? rooms.length : counts[item.id] || 0}</span>
+              <span>{item.id === 'all' ? rooms.length : item.id === 'attention'
+                ? (counts.cleaning || 0) + (counts.maintenance || 0)
+                : counts[item.id] || 0}</span>
             </button>
           ))}
+          <label className="housekeeping-type-filter">
+            Room type
+            <select aria-label="Filter by room type" value={roomType} onChange={event => setRoomType(event.target.value)}>
+              <option value="all">All types</option>
+              {roomTypes.map(type => <option key={type} value={type}>{type}</option>)}
+            </select>
+          </label>
         </section>
 
         {error && <div className="housekeeping-error" role="alert">{error}</div>}
@@ -336,13 +350,13 @@ export default function Housekeeping() {
 
         <section className="housekeeping-grid" aria-label="Room list">
           {visibleRooms.map(room => {
-            const access = roomAccessLabel(room);
             const isOccupied = room.displayStatus === 'occupied';
             const failed = room.queued?.status === 'failed';
             const syncLabel = room.queued
               ? (failed ? 'Sync needs attention' : 'Saved Offline (Pending Sync)')
               : (syncedRooms[room.id] ? 'Synced' : '');
-            const accessible = roomIsAccessible(room);
+            const maintenanceReport = reports.find(report => report.id === room.maintenanceReportId)
+              || reports.find(report => (room.openMaintenanceReportIds || []).includes(report.id));
             return (
               <article key={room.id} className="housekeeping-card" style={{ background: palette.card, borderColor: palette.border }}>
                 <div className="housekeeping-card-heading">
@@ -353,15 +367,10 @@ export default function Housekeeping() {
                   <span className={`housekeeping-status status-${room.displayStatus}`}>{statusLabel(room.displayStatus)}</span>
                 </div>
 
-                <div className="housekeeping-tags">
-                  <span className={`housekeeping-tag access-${access.tone}`}>{access.text}</span>
-                  {roomIsStepFree(room) && <span className="housekeeping-tag access-ok">Step-free</span>}
-                  {accessible && <span className="housekeeping-tag access-ok">PWD-friendly</span>}
-                </div>
-
-                {room.displayStatus === 'maintenance' && room.displayMaintenanceNote && (
+                {room.displayStatus === 'maintenance' && (maintenanceReport || room.displayMaintenanceNote) && (
                   <div className="housekeeping-maintenance-note">
-                    <strong>Issue:</strong> {room.displayMaintenanceNote}
+                    <strong>{ISSUE_TYPES.find(item => item.id === maintenanceReport?.issueType)?.label || 'Issue'}:</strong>{' '}
+                    {maintenanceReport?.note || room.displayMaintenanceNote}
                   </div>
                 )}
 
@@ -377,6 +386,12 @@ export default function Housekeeping() {
                   <p className="housekeeping-readonly">Occupied rooms cannot be changed here.</p>
                 ) : (
                   <div className="housekeeping-actions">
+                    {!isHousekeeper && room.displayStatus === 'available' && (
+                      <button type="button" className="housekeeping-primary" disabled={Boolean(busyRoom)}
+                        onClick={() => setRoomStatus(room, 'cleaning')}>
+                        {busyRoom === room.id ? 'Sending…' : 'Notify Housekeeper to Clean'}
+                      </button>
+                    )}
                     {room.displayStatus === 'cleaning' && (
                       <button type="button" className="housekeeping-primary" disabled={Boolean(busyRoom)}
                         onClick={() => setRoomStatus(room, 'available')}>

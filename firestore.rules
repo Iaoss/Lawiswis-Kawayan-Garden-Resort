@@ -108,7 +108,7 @@ service cloud.firestore {
 
     match /maintenanceReports/{reportId} {
       allow read: if isAdmin() || isReceptionist()
-        || (isHousekeeper() && resource.data.reportedByUid == request.auth.uid);
+        || (isHousekeeper() && resource.data.status == 'open');
       allow write: if false;
     }
 

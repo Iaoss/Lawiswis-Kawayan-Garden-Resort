@@ -225,6 +225,7 @@ export default function BookRoom() {
     checkOut: params.get('checkOut') || '',
     adults: 1,
     children: 0,
+    stepFree: false,
     // Same-day dates can only be booked as a day tour.
     bookingType: params.get('checkIn') && params.get('checkIn') === params.get('checkOut') ? 'daytour' : 'overnight',
     tourPeriod: 'day',
@@ -363,7 +364,7 @@ export default function BookRoom() {
   const [availableRooms, setAvailableRooms] = useState([]);
   // Several rooms (picked on "Choose a room"): the group the guest entered is
   // split across them automatically, cheapest split first.
-  const [extraRoomIds] = useState(() => (Array.isArray(location.state?.extraRoomIds) ? location.state.extraRoomIds.slice(0, 2) : []));
+  const [extraRoomIds] = useState(() => (Array.isArray(location.state?.extraRoomIds) ? location.state.extraRoomIds : []));
   // Day / night tour: the extra guests can add a meal (₱350 each).
   const [extraGuestMeal, setExtraGuestMeal] = useState(false);
   // Senior citizens / PWDs in the group (the discount is applied at the front desk).
@@ -932,6 +933,7 @@ export default function BookRoom() {
           additionalRooms: extraRooms.map(item => ({ roomId: item.roomId, adults: Number(item.adults), children: Number(item.children) })),
           extraGuestMeal: mealChosen && tourExtraGuests > 0,
           seniorPwd: seniorPwdCheck.value || { senior: 0, pwd: 0 },
+          stepFree: Boolean(form.stepFree),
           discountRequest: discountActive,
           website: form.website,
         }),
@@ -1279,6 +1281,15 @@ export default function BookRoom() {
                     <option value="night" disabled={nightTourClosed}>Night tour (5:00 PM–10:00 PM){nightTourClosed ? ' — closed for today' : ''}</option>
                   </select>
                 </div>
+                <label style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'flex-start', gap: '9px', padding: '10px 12px', border: '1px solid #d8e7db', borderRadius: '9px', color: '#355a42', fontSize: '12px', lineHeight: 1.5 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.stepFree)}
+                    onChange={event => setForm(previous => ({ ...previous, stepFree: event.target.checked }))}
+                    style={{ marginTop: '3px' }}
+                  />
+                  <span>We need step-free access or mobility assistance. Show rooms without stairs.</span>
+                </label>
                 {form.bookingType === 'overnight' ? (
                   <div>
                     <label htmlFor="overnight-time-slot" style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Check-in / Check-out Time</label>

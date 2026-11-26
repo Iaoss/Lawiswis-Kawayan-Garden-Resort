@@ -2,6 +2,7 @@ import { adminDb, FieldValue } from '../lib/firebaseAdmin';
 import { logActivity } from '../lib/activityLog';
 import { runOnce } from '../lib/offlineRequests';
 import { verifyStaff } from '../lib/verifyStaff';
+import { sendStaffPush } from '../lib/staffPush';
 
 const MAX_NOTE_LENGTH = 500;
 const HOUSEKEEPING_ROLES = ['admin', 'receptionist', 'housekeeper'];
@@ -58,9 +59,15 @@ async function reportIssue(staff, body) {
       statusUpdatedAt: FieldValue.serverTimestamp(),
       statusUpdatedBy: staff.uid,
     });
-    return { roomId, reportId, status: 'open' };
+    return { roomId, roomNumber: String(room.roomNumber || roomId).slice(0, 80), reportId, status: 'open' };
   });
   if (!result.alreadySaved) {
+    await sendStaffPush({
+      roles: ['admin', 'receptionist'],
+      title: `Maintenance · Room ${result.roomNumber || roomId}`,
+      body: `${issueType.replace('-', ' ')}: ${note}`,
+      url: '/admin/housekeeping',
+    });
     await logActivity(staff, {
       action: 'maintenance_report_created',
       summary: `Reported a ${issueType.replace('-', ' ')} issue in Room ${roomId.slice(0, 40)}`,
@@ -126,6 +133,8 @@ export default async function handler(req, res) {
           if (status !== 'available' || currentStatus !== 'cleaning') {
             throw requestError('Housekeepers can only mark a cleaning room as available. Report maintenance issues instead.', 403);
           }
+        } else if (status === 'cleaning' && !['available', 'cleaning'].includes(currentStatus)) {
+          throw requestError('Only an available room can be sent for cleaning.', 409);
         }
 
         transaction.update(roomRef, {
@@ -138,6 +147,14 @@ export default async function handler(req, res) {
       });
     });
     if (!result.alreadySaved) {
+      if (staff.role !== 'housekeeper' && status === 'cleaning') {
+        await sendStaffPush({
+          roles: ['housekeeper'],
+          title: `Room ${result.roomNumber} needs cleaning`,
+          body: 'Please clean and inspect this room, then mark it Available.',
+          url: '/housekeeper/housekeeping',
+        });
+      }
       await logActivity(staff, {
         action: 'room_status_changed',
         summary: `Changed Room ${String(result.roomNumber || roomId).slice(0, 40)} to ${status === 'maintenance' ? 'Out of Order' : status}`,

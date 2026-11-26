@@ -3,6 +3,7 @@ import { staffApi } from '../lib/staffApi';
 import { getRoomMaximumGuests } from '../../lib/bookingPricing';
 import { CORPORATE_FEATURE_ROWS, isCorporateFeatureIncluded } from '../../lib/corporatePackages';
 import { getCollectionSnapshot } from '../lib/liveCollection';
+import { roomHasStairs } from '../../lib/roomAccess';
 
 // Picks rooms for a corporate / group booking. Shows the package inclusions,
 // the rooms free on the group's dates and how many guests they hold.
@@ -17,6 +18,7 @@ export default function AssignRoomsDialog({ reservation, colors, onClose, onSave
   const [rooms, setRooms] = useState([]);
   const [freeIds, setFreeIds] = useState(null);
   const [picked, setPicked] = useState(() => assigned.map(item => item.roomId));
+  const [extraPicked, setExtraPicked] = useState(() => assigned.filter(item => item.isExtra).map(item => item.roomId));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -28,10 +30,13 @@ export default function AssignRoomsDialog({ reservation, colors, onClose, onSave
     ]).then(([snap, availability]) => {
       if (!active) return;
       setRooms(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setFreeIds(availability.availableRoomIds || []);
+      const availableIds = availability.availableRoomIds || [];
+      setFreeIds(availableIds);
+      setPicked(current => current.filter(id => assigned.some(item => item.roomId === id) || availableIds.includes(id)));
+      setExtraPicked(current => current.filter(id => assigned.some(item => item.roomId === id) || availableIds.includes(id)));
     }).catch(() => { if (active) { setFreeIds([]); setError('Could not load the rooms. Try again.'); } });
     return () => { active = false; };
-  }, [checkIn, checkOut]);
+  }, [assigned, checkIn, checkOut]);
 
   // Rooms this group already holds count as free for it.
   const choices = rooms
@@ -39,26 +44,46 @@ export default function AssignRoomsDialog({ reservation, colors, onClose, onSave
     .map(room => ({ room, max: getRoomMaximumGuests(room) || 0 }))
     .sort((a, b) => b.max - a.max || String(a.room.roomNumber).localeCompare(String(b.room.roomNumber), undefined, { numeric: true }));
   const capacity = choices.filter(c => picked.includes(c.room.id)).reduce((sum, c) => sum + c.max, 0);
+  const includedCapacity = choices.filter(c => picked.includes(c.room.id) && !extraPicked.includes(c.room.id))
+    .reduce((sum, c) => sum + c.max, 0);
   const inclusions = CORPORATE_FEATURE_ROWS.filter(row => isCorporateFeatureIncluded(reservation.packageId, nights, row.id));
   const wholeProperty = inclusions.some(row => row.id === 'whole-property');
+  const stepFree = Boolean(reservation.stepFree);
+  const eligibleChoices = choices.filter(({ room }) => !stepFree || !roomHasStairs(room));
 
   const suggest = () => {
     const next = [];
     let total = 0;
-    for (const c of choices) {
+    for (const c of eligibleChoices) {
       if (total >= guests) break;
       next.push(c.room.id);
       total += c.max;
     }
     setPicked(next);
+    setExtraPicked([]);
   };
-  const toggle = id => setPicked(current => (current.includes(id) ? current.filter(x => x !== id) : [...current, id]));
+  const toggle = id => setPicked(current => {
+    if (current.includes(id)) {
+      setExtraPicked(extras => extras.filter(roomId => roomId !== id));
+      return current.filter(x => x !== id);
+    }
+    return [...current, id];
+  });
+  const toggleExtra = id => setExtraPicked(current => (
+    current.includes(id) ? current.filter(roomId => roomId !== id) : [...current, id]
+  ));
 
   const save = async () => {
     setBusy(true);
     setError('');
     try {
-      const result = await staffApi('staff-billing', { action: 'assign-corporate-rooms', reservationId: reservation.id, roomIds: picked });
+      const result = await staffApi('staff-billing', {
+        action: 'assign-corporate-rooms',
+        reservationId: reservation.id,
+        roomIds: picked,
+        extraRoomIds: extraPicked,
+        stepFree,
+      });
       onSaved?.(result);
     } catch (saveError) {
       setError(saveError.message || 'The rooms could not be saved.');
@@ -83,18 +108,22 @@ export default function AssignRoomsDialog({ reservation, colors, onClose, onSave
           {inclusions.length ? inclusions.map(row => <div key={row.id}>✓ {row.label}</div>) : <div style={{ color: MUTED }}>No extra inclusions.</div>}
           <div style={{ color: MUTED, marginTop: 6 }}>
             {wholeProperty
-              ? 'Whole-property rental is included: you can assign every free room.'
-              : 'Rooms are optional for this package. Assign them if the group asked for accommodation; add any room charge in Billing.'}
+              ? 'Whole-property rental is included. Mark rooms beyond the group’s included capacity as extra to bill them at the published room rate.'
+              : 'Mark the rooms that cover the group’s capacity as included. Any extra room is charged separately at its published rate.'}
           </div>
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: capacity >= guests ? '#16a34a' : TEXT }}>
-            {picked.length} room{picked.length === 1 ? '' : 's'} · holds {capacity} of {guests} guests
+            {picked.length} room{picked.length === 1 ? '' : 's'} · {includedCapacity} included beds for {guests} guests
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button type="button" onClick={suggest} disabled={!choices.length} style={btn}>Suggest rooms</button>
-            {wholeProperty && <button type="button" onClick={() => setPicked(choices.map(c => c.room.id))} style={btn}>All free rooms</button>}
+            {wholeProperty && <button type="button" onClick={() => {
+              const allIds = eligibleChoices.map(c => c.room.id);
+              setPicked(allIds);
+              setExtraPicked(allIds.filter(id => !picked.includes(id)));
+            }} style={btn}>All free rooms</button>}
             <button type="button" onClick={() => setPicked([])} style={btn}>Clear</button>
           </div>
         </div>
@@ -105,14 +134,22 @@ export default function AssignRoomsDialog({ reservation, colors, onClose, onSave
           <div style={{ fontSize: 12, color: MUTED, padding: 12 }}>No rooms are free on these dates.</div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8 }}>
-            {choices.map(({ room, max }) => {
+            {eligibleChoices.map(({ room, max }) => {
               const on = picked.includes(room.id);
               return (
-                <button key={room.id} type="button" onClick={() => toggle(room.id)} aria-pressed={on}
-                  style={{ textAlign: 'left', border: `2px solid ${on ? ACCENT : BORDER}`, background: on ? `${ACCENT}22` : CARD2, color: TEXT, borderRadius: 10, padding: 10, cursor: 'pointer', fontFamily: 'inherit' }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{on ? '✓ ' : ''}Room {room.roomNumber}</div>
-                  <div style={{ fontSize: 11, color: MUTED }}>{room.type} · up to {max || '?'} guests</div>
-                </button>
+                <div key={room.id} style={{ border: `2px solid ${on ? ACCENT : BORDER}`, background: on ? `${ACCENT}22` : CARD2, color: TEXT, borderRadius: 10, padding: 10 }}>
+                  <button type="button" onClick={() => toggle(room.id)} aria-pressed={on}
+                    style={{ textAlign: 'left', width: '100%', border: 0, background: 'transparent', color: TEXT, padding: 0, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{on ? '✓ ' : ''}Room {room.roomNumber}</div>
+                    <div style={{ fontSize: 11, color: MUTED }}>{room.type} · up to {max || '?'} guests</div>
+                  </button>
+                  {on && (
+                    <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, fontSize: 11, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={extraPicked.includes(room.id)} onChange={() => toggleExtra(room.id)} />
+                      Extra room · charged separately
+                    </label>
+                  )}
+                </div>
               );
             })}
           </div>

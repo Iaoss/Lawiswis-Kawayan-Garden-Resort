@@ -122,6 +122,7 @@ export default function CorporateBooking() {
   const [allRooms, setAllRooms] = useState([]);
   const [freeRoomIds, setFreeRoomIds] = useState(null); // null = not checked yet
   const [roomIds, setRoomIds] = useState([]);
+  const [extraRoomIds, setExtraRoomIds] = useState([]);
   const stayEnd = form.bookingType === 'daytour' ? form.checkIn : form.checkOut;
   useEffect(() => {
     loadPublicRooms()
@@ -143,19 +144,32 @@ export default function CorporateBooking() {
       .catch(() => { if (active) setFreeRoomIds([]); });
     return () => { active = false; };
   }, [form.checkIn, stayEnd, dateValid, noticeError]);
-  const freeRooms = freeRoomIds ? allRooms.filter(room => freeRoomIds.includes(room.id) && (!stepFree || !roomHasStairs(room) || roomIds.includes(room.id))) : [];
-  const stairRoomsHidden = stepFree && freeRoomIds ? allRooms.filter(room => freeRoomIds.includes(room.id) && roomHasStairs(room) && !roomIds.includes(room.id)).length : 0;
+  const freeRooms = freeRoomIds ? allRooms.filter(room => freeRoomIds.includes(room.id) && (!stepFree || !roomHasStairs(room))) : [];
+  const stairRoomsHidden = stepFree && freeRoomIds ? allRooms.filter(room => freeRoomIds.includes(room.id) && roomHasStairs(room)).length : 0;
   const [photoIndex, setPhotoIndex] = useState({});
   const movePhoto = (room, by) => setPhotoIndex(current => ({ ...current, [room.id]: ((current[room.id] || 0) + by + room.gallery.length) % room.gallery.length }));
   const pickedRooms = allRooms.filter(room => roomIds.includes(room.id));
-  const pickedBeds = pickedRooms.reduce((sum, room) => sum + (getRoomMaximumGuests(room) || 0), 0);
-  // Once the picked rooms sleep the whole group, no more rooms can be added
-  // (rooms are held at no charge, so extra ones would block other guests).
-  const groupFits = totalGuests > 0 && pickedBeds >= totalGuests;
-  const toggleRoom = id => setRoomIds(current => {
-    if (current.includes(id)) return current.filter(x => x !== id);
-    return groupFits ? current : [...current, id];
-  });
+  const includedBeds = pickedRooms.filter(room => !extraRoomIds.includes(room.id))
+    .reduce((sum, room) => sum + (getRoomMaximumGuests(room) || 0), 0);
+  const groupFits = totalGuests > 0 && includedBeds >= totalGuests;
+  const toggleRoom = id => {
+    if (roomIds.includes(id)) {
+      setRoomIds(current => current.filter(roomId => roomId !== id));
+      setExtraRoomIds(current => current.filter(roomId => roomId !== id));
+      return;
+    }
+    if (groupFits) setExtraRoomIds(current => [...current, id]);
+    setRoomIds(current => [...current, id]);
+  };
+  const toggleExtraRoom = id => setExtraRoomIds(current => (
+    current.includes(id) ? current.filter(roomId => roomId !== id) : [...current, id]
+  ));
+  useEffect(() => {
+    if (!stepFree || !allRooms.length) return;
+    const inaccessible = new Set(allRooms.filter(room => roomHasStairs(room)).map(room => room.id));
+    setRoomIds(current => current.filter(id => !inaccessible.has(id)));
+    setExtraRoomIds(current => current.filter(id => !inaccessible.has(id)));
+  }, [stepFree, allRooms]);
   // Longest stay: 30 nights (same as other bookings).
   const lastCheckOut = (() => {
     if (!form.checkIn) return maxDate;
@@ -211,6 +225,11 @@ export default function CorporateBooking() {
       setErrorMessage(noticeError);
       return;
     }
+    if (roomIds.length && includedBeds < totalGuests) {
+      setErrorMessage('The rooms marked as included need enough capacity for everyone. Mark only additional rooms as extra.');
+      setGroupStep(2);
+      return;
+    }
     if (!dateValid) {
       setErrorMessage(`Choose dates from ${formatLongDate(earliestDate)} through ${formatLongDate(maxDate)}.`);
       return;
@@ -241,6 +260,8 @@ export default function CorporateBooking() {
           body: JSON.stringify({
             companyName: form.companyName.trim(),
             roomIds,
+            extraRoomIds,
+            stepFree,
             firstName: form.firstName.trim(),
             lastName: form.lastName.trim(),
             guestName,
@@ -485,10 +506,16 @@ export default function CorporateBooking() {
                         <strong style={{ font: `500 18px ${SERIF}`, color: INK }}>{room.title}</strong>
                         <span>{room.groupTitle} · up to {getRoomMaximumGuests(room) || '?'} guests</span>
                         {room.location && <span>{room.location}</span>}
-                        <button type="button" aria-pressed={on} disabled={!on && groupFits} onClick={() => toggleRoom(room.id)} title={!on && groupFits ? 'Your group already has enough beds' : undefined}
-                          style={{ marginTop: '8px', border: `1px solid ${!on && groupFits ? LINE : FOREST}`, background: on ? FOREST : '#fff', color: on ? '#fff' : !on && groupFits ? '#9a9a8c' : FOREST, padding: '9px', font: `600 12px ${SANS}`, cursor: !on && groupFits ? 'not-allowed' : 'pointer' }}>
-                          {on ? '✓ Selected' : groupFits ? 'Group already fits' : 'Select room'}
+                        <button type="button" aria-pressed={on} onClick={() => toggleRoom(room.id)}
+                          style={{ marginTop: '8px', border: `1px solid ${FOREST}`, background: on ? FOREST : '#fff', color: on ? '#fff' : FOREST, padding: '9px', font: `600 12px ${SANS}`, cursor: 'pointer' }}>
+                          {on ? '✓ Selected' : 'Select room'}
                         </button>
+                        {on && (
+                          <label style={{ display: 'flex', gap: 7, alignItems: 'center', marginTop: 8, color: INK, font: `12px ${SANS}` }}>
+                            <input type="checkbox" checked={extraRoomIds.includes(room.id)} onChange={() => toggleExtraRoom(room.id)} />
+                            Extra room · charged separately
+                          </label>
+                        )}
                       </div>
                     </article>
                   );
@@ -497,8 +524,8 @@ export default function CorporateBooking() {
             )}
             {roomIds.length > 0 && (
               <p role="status" style={{ margin: '12px 0 0', color: FOREST, font: `600 13px/1.6 ${SANS}` }}>
-                {roomIds.length} room{roomIds.length === 1 ? '' : 's'} selected, sleeping up to {pickedBeds} of your {totalGuests || 0} guests.
-                {groupFits ? ' That\u2019s enough beds for everyone, so no more rooms can be added. Unselect one to pick a different room.' : ` ${Math.max(0, (totalGuests || 0) - pickedBeds)} more to place.`}
+                {roomIds.length} room{roomIds.length === 1 ? '' : 's'} selected, {includedBeds} included beds for {totalGuests || 0} guests.
+                {extraRoomIds.length ? ` ${extraRoomIds.length} extra room${extraRoomIds.length === 1 ? '' : 's'} will be charged at the selected room rate.` : ''}
                 {' '}They are held for your group once you book.
               </p>
             )}
@@ -552,6 +579,11 @@ export default function CorporateBooking() {
                 {form.bookingType !== 'daytour' && <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><span>× {nightLabel}{form.checkOut ? '' : ' (pick check-out)'}</span></div>}
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '14px', font: `600 15px ${SANS}` }}><span>Total</span><span>₱{selectedPackage.totalAmount.toLocaleString()}</span></div>
+              {extraRoomIds.length > 0 && (
+                <p style={{ margin: '-6px 0 14px', color: '#e4d4a7', font: `11px/1.5 ${SANS}` }}>
+                  {extraRoomIds.length} extra room{extraRoomIds.length === 1 ? '' : 's'} billed at the published room rate. Extra-room charges are added to the total and deposit at checkout.
+                </p>
+              )}
               {isGovernment ? (
                 <div style={{ display: 'grid', gap: '8px', color: 'rgba(255,255,255,.82)', font: `12px/1.6 ${SANS}` }}>
                   <div style={{ color: '#e4d4a7', fontWeight: 600 }}>{PAY_LATER_LABEL}: no payment now</div>

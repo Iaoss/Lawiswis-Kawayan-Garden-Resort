@@ -10,7 +10,21 @@ test('extra room checks', () => {
   expect(getAdditionalRoomsError('a', [{ roomId: 'b', adults: 2, children: 1 }])).toBe('');
   expect(getAdditionalRoomsError('a', [{ roomId: 'a', adults: 2, children: 0 }])).toMatch(/only be added once/);
   expect(getAdditionalRoomsError('a', [{ roomId: 'b', adults: 0, children: 0 }])).toMatch(/1 adult/);
-  expect(getAdditionalRoomsError('a', [{ roomId: 'b', adults: 1, children: 0 }, { roomId: 'c', adults: 1, children: 0 }, { roomId: 'd', adults: 1, children: 0 }])).toMatch(/up to 3/);
+  expect(getAdditionalRoomsError('a', [{ roomId: 'b', adults: 1, children: 0 }, { roomId: 'c', adults: 1, children: 0 }, { roomId: 'd', adults: 1, children: 0 }])).toBe('');
+});
+
+test('allows large room groups up to the Firestore transaction limit', () => {
+  const maximumExtraRooms = Array.from({ length: 498 }, (_, index) => ({
+    roomId: `room-${index}`,
+    adults: 1,
+    children: 0,
+  }));
+  expect(getAdditionalRoomsError('main-room', maximumExtraRooms)).toBe('');
+  expect(getAdditionalRoomsError('main-room', [...maximumExtraRooms, {
+    roomId: 'room-over-limit',
+    adults: 1,
+    children: 0,
+  }])).toMatch(/up to 499 rooms/);
 });
 
 test('splits a group of 5 across a couple room and a bigger room', () => {

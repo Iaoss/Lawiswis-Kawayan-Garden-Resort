@@ -4,6 +4,7 @@ import { db } from '../../firebase/firebase';
 import { collection, addDoc, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
+import { notifyStaffOfGuestMessage } from '../lib/guestChatPush';
 import { BeamAvatar, guestAvatarSeed } from '../../components/ui/beam-avatar.tsx';
 import { askForAutoAnswer, loadQuickQuestions, sendQuickQuestion, sortChatMessages } from '../lib/chatAutoAnswer';
 import ChatText from '../components/ChatText';
@@ -199,7 +200,7 @@ export default function GuestChat() {
     setSendingMessage(true);
     setChatError('');
     try {
-      await addDoc(collection(db, 'conversations', convId, 'messages'), {
+      const messageRef = await addDoc(collection(db, 'conversations', convId, 'messages'), {
         sender: 'guest',
         text,
         timestamp: serverTimestamp(),
@@ -209,6 +210,7 @@ export default function GuestChat() {
         lastMessageAt: serverTimestamp(),
         unread: true,
       }, { merge: true });
+      await notifyStaffOfGuestMessage(convId, messageRef.id);
       setNewMsg('');
       // Known questions (rates, times, location…) are answered right away.
       askForAutoAnswer(convId, text);

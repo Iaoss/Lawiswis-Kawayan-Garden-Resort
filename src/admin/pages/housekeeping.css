@@ -117,6 +117,27 @@
   background: #c8f06e;
 }
 
+.housekeeping-type-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: #687160;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.housekeeping-type-filter select {
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid #e5e7eb;
+  border-radius: 11px;
+  background: #fff;
+  color: #273128;
+  font: inherit;
+}
+
 .housekeeping-page[data-dark="true"] .housekeeping-filter {
   color: #d3d8cd;
   background: #1c1c1c;
@@ -137,6 +158,13 @@
 .housekeeping-page[data-dark="true"] .housekeeping-filter.is-active span {
   color: #10200d;
   background: rgba(16, 32, 13, .12);
+}
+
+.housekeeping-page[data-dark="true"] .housekeeping-type-filter { color: #a3a393; }
+.housekeeping-page[data-dark="true"] .housekeeping-type-filter select {
+  color: #e8e8d8;
+  background: #282827;
+  border-color: #44463f;
 }
 
 .housekeeping-offline-note,
@@ -487,6 +515,7 @@
   .housekeeping-connection { width: fit-content; margin-top: 12px; }
   .housekeeping-header h1 { font-size: 20px; }
   .housekeeping-filters { margin-right: -12px; padding-right: 12px; }
+  .housekeeping-type-filter { margin-left: 0; }
   .housekeeping-reports-heading { display: block; }
   .housekeeping-report-filters { margin-top: 10px; }
 }

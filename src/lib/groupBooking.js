@@ -1,7 +1,9 @@
 // Booking several rooms in one go (e.g. a family of 5: a couple room and a
 // room with an extra bed). Each room is its own linked booking; the guest
 // pays once for all of them.
-export const MAX_ROOMS_PER_BOOKING = 3;
+// Firestore limits a transaction to 500 writes. A room group can therefore
+// contain at most 499 linked room records plus its parent booking write.
+export const MAX_ROOMS_PER_BOOKING = 499;
 
 const cents = n => Math.round(Number(n || 0) * 100);
 
@@ -24,7 +26,7 @@ export function splitGroupPayment(amount, totals) {
 export function getAdditionalRoomsError(mainRoomId, additionalRooms) {
   if (additionalRooms === undefined || additionalRooms === null) return '';
   if (!Array.isArray(additionalRooms)) return 'Extra rooms must be a list.';
-  if (additionalRooms.length > MAX_ROOMS_PER_BOOKING - 1) return `You can book up to ${MAX_ROOMS_PER_BOOKING} rooms at once.`;
+  if (additionalRooms.length > MAX_ROOMS_PER_BOOKING - 1) return `A booking can include up to ${MAX_ROOMS_PER_BOOKING} rooms in one transaction.`;
   const ids = [mainRoomId];
   for (const item of additionalRooms) {
     if (!item || typeof item.roomId !== 'string' || !item.roomId) return 'Choose a room for each extra room.';

@@ -3,6 +3,7 @@ import { db } from '../../firebase/firebase';
 import { collection, addDoc, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { NAME_ALLOWED_CHARACTERS, NAME_PATTERN, joinGuestName, splitGuestName } from '../../lib/nameValidation';
 import { ensureGuestAuth, guestAuthErrorMessage } from '../../lib/guestAuth';
+import { notifyStaffOfGuestMessage } from '../lib/guestChatPush';
 import { askForAutoAnswer, loadQuickQuestions, sendQuickQuestion, sortChatMessages } from '../lib/chatAutoAnswer';
 import ChatText from './ChatText';
 import ChatAvailability from './ChatAvailability';
@@ -204,7 +205,7 @@ export default function ChatWidget() {
     setSendingMessage(true);
     setChatError('');
     try {
-      await addDoc(collection(db, 'conversations', convId, 'messages'), {
+      const messageRef = await addDoc(collection(db, 'conversations', convId, 'messages'), {
         sender: 'guest',
         text,
         timestamp: serverTimestamp(),
@@ -214,6 +215,7 @@ export default function ChatWidget() {
         lastMessageAt: serverTimestamp(),
         unread: true,
       }, { merge: true });
+      await notifyStaffOfGuestMessage(convId, messageRef.id);
       setNewMsg('');
       // Known questions (rates, times, location…) are answered right away.
       askForAutoAnswer(convId, text);

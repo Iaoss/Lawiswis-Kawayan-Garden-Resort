@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { auth } from '../../firebase/firebase';
 import { useSettings } from './SettingsContext';
 import logo from './logo-mark.png';
+import { unregisterStaffPush } from '../lib/staffPush';
 
 export default function HousekeeperLayout({ children }) {
   const navigate = useNavigate();
@@ -17,6 +18,11 @@ export default function HousekeeperLayout({ children }) {
   const handleSignOut = async () => {
     setError('');
     try {
+      try {
+        await unregisterStaffPush();
+      } catch (unregisterError) {
+        console.error('Housekeeper phone alerts could not be unregistered during sign-out:', unregisterError);
+      }
       await signOut(auth);
       navigate('/admin/login', { replace: true });
     } catch (signOutError) {
