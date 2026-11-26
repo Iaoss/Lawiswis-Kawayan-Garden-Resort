@@ -248,11 +248,11 @@ function PortalGlobalSearch({ navItems, portalName }) {
                 <a
                   key={result.id}
                   href={result.path}
-                  onMouseDown={openResult}
                   onClick={(event) => {
                     // Switch pages inside the app instead of reloading it.
                     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
                     event.preventDefault();
+                    openResult();
                     navigate(result.path);
                   }}
                   className="flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-foreground no-underline transition-colors hover:bg-muted"

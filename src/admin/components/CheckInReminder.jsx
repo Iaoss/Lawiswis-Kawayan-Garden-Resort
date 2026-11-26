@@ -75,7 +75,7 @@ export default function CheckInReminder({ prefix = '/admin', soundAlerts = true 
     due.forEach(item => {
       const booking = bookings.find(b => b.id === item.id);
       const rooms = (item.ids || [item.id]).map(id => bookings.find(b => b.id === id)).filter(Boolean);
-      const ready = rooms.length > 0 ? rooms.every(isReadyToCheckIn) : isReadyToCheckIn(booking);
+      const ready = rooms.length > 0 ? rooms.every(room => isReadyToCheckIn(room)) : isReadyToCheckIn(booking);
       const key = pushToast({
         id: `checkin-soon_${item.key}`,
         variant: 'warning',
